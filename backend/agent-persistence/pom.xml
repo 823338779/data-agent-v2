@@ -15,11 +15,6 @@
 
   <dependencies>
     <dependency>
-      <groupId>com.datagent</groupId>
-      <artifactId>agent-platform</artifactId>
-      <version>${project.version}</version>
-    </dependency>
-    <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-jdbc</artifactId>
     </dependency>

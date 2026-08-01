@@ -1,10 +1,9 @@
-import { LogOut, MessageSquarePlus, PanelLeft } from 'lucide-react';
+import { LogOut, PanelLeftOpen } from 'lucide-react';
 import { ReactNode, useState } from 'react';
 
 interface AppShellProps {
   subject: string;
   historyOpen: boolean;
-  onNewSession: () => void;
   onToggleHistory: () => void;
   onLogout: () => Promise<void>;
   children: ReactNode;
@@ -13,7 +12,6 @@ interface AppShellProps {
 export function AppShell({
   subject,
   historyOpen,
-  onNewSession,
   onToggleHistory,
   onLogout,
   children,
@@ -26,22 +24,17 @@ export function AppShell({
         <div className="brand">
           <span className="brand-mark">D</span>
           <span>Data Agent</span>
+          {!historyOpen && (
+            <button
+              className="icon-button header-sidebar-toggle"
+              type="button"
+              aria-label="展开会话列表"
+              onClick={onToggleHistory}
+            >
+              <PanelLeftOpen size={18} />
+            </button>
+          )}
         </div>
-        <nav aria-label="工作区操作">
-          <button
-            className="icon-button"
-            type="button"
-            aria-label="会话历史"
-            aria-pressed={historyOpen}
-            onClick={onToggleHistory}
-          >
-            <PanelLeft size={18} />
-          </button>
-          <button className="new-session-button" type="button" onClick={onNewSession}>
-            <MessageSquarePlus size={17} />
-            新会话
-          </button>
-        </nav>
         <div className="account">
           <button
             className="account-trigger"

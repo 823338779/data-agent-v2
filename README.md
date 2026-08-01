@@ -4,12 +4,10 @@ Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多�
 
 ## 目录
 
-- `backend/agent-contracts`：阶段 0 的 REST、SSE 与完整性契约测试
-- `backend/agent-platform`：ID、时钟、租户与操作者上下文
-- `backend/agent-persistence`：数据库迁移、MyBatis-Plus 与审计持久化约定
+- `backend/agent-persistence`：数据库迁移、MyBatis-Plus、审计持久化，以及 ID、时钟和请求上下文基础能力
 - `backend/agent-auth`：认证、登录会话与操作者上下文
-- `backend/agent-conversation`：会话、消息、运行、流式事件、Redis 与 Ollama 编排
-- `backend/agent-server`：唯一可执行模块，负责 Spring Boot 启动与运行时装配
+- `backend/agent-web`：REST/SSE 接口、BFF、认证安全链、会话编排与契约测试
+- `backend/agent-server`：唯一可执行模块，负责 Spring Boot 启动、服务级全局拦截器、异常边界与运行时装配
 - `backend/agent-evals`：独立评测模块
 - `contracts`：REST、SSE、示例与完整性清单
 - `docs`：仓库内设计和验证说明
@@ -20,7 +18,7 @@ Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多�
 在仓库根目录执行：
 
 ```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-contracts test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-web -Dtest='com.datagent.agentv2.contracts.*Test' test
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-persistence -am test
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am test
 .\backend\mvnw.cmd -f .\backend\pom.xml -B verify

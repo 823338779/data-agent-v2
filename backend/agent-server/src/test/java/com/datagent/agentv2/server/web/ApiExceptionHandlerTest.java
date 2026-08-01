@@ -14,6 +14,7 @@ import org.springframework.boot.security.autoconfigure.SecurityAutoConfiguration
 import org.springframework.boot.security.autoconfigure.web.servlet.ServletWebSecurityAutoConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
             ServletWebSecurityAutoConfiguration.class
         })
 @Import({ApiExceptionHandler.class, RequestContextFilter.class, PrefixedUuidIdGenerator.class})
+@ContextConfiguration(classes = ApiExceptionHandlerTest.FailureFixtureController.class)
 class ApiExceptionHandlerTest {
 
     @Autowired private MockMvc mvc;

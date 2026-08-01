@@ -59,9 +59,6 @@ class AgentV2ApplicationTest {
     @Autowired private MockMvc mvc;
 
     @Test
-    void contextLoads() {}
-
-    @Test
     void authenticationFailureUsesCorrelatedProblemDetail() throws Exception {
         mvc.perform(get("/api/v1/auth/session").header("X-Request-Id", "request_auth_test"))
                 .andExpect(status().isUnauthorized())

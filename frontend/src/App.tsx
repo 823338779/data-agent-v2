@@ -1,4 +1,13 @@
-import { ArrowRight, ArrowUp, Bot, RefreshCw, Search, UserRound } from 'lucide-react';
+import {
+  ArrowRight,
+  ArrowUp,
+  Bot,
+  MessageSquarePlus,
+  PanelLeftClose,
+  RefreshCw,
+  Search,
+  UserRound,
+} from 'lucide-react';
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -21,6 +30,12 @@ interface AppProps {
   onLogout?: () => Promise<void>;
   onAuthenticationRequired?: () => void;
   client?: AgentBackendClient;
+}
+
+const narrowScreenQuery = '(max-width: 820px)';
+
+function isNarrowScreen(): boolean {
+  return window.matchMedia?.(narrowScreenQuery).matches ?? false;
 }
 
 function runLabel(status?: string): string {
@@ -48,7 +63,7 @@ export default function App({
   const backend = useMemo(() => client ?? createFetchAgentBackendClient(), [client]);
   const [route, setRoute] = useState<WorkspaceRoute>(parseWorkspaceRoute);
   const [sessions, setSessions] = useState<AgentSession[]>([]);
-  const [historyOpen, setHistoryOpen] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(() => !isNarrowScreen());
   const [search, setSearch] = useState('');
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(true);
@@ -58,7 +73,9 @@ export default function App({
   const messagesRef = useRef<HTMLDivElement>(null);
 
   const active =
-    route.kind === 'session' ? sessions.find((session) => session.id === route.sessionId) : undefined;
+    route.kind === 'session'
+      ? sessions.find((session) => session.id === route.sessionId)
+      : undefined;
   const visibleSessions = sessions.filter((session) =>
     `${session.title} ${session.tag}`.toLowerCase().includes(search.trim().toLowerCase()),
   );
@@ -98,6 +115,15 @@ export default function App({
 
   useEffect(() => subscribeWorkspaceRoute(setRoute), []);
   useEffect(() => {
+    if (!window.matchMedia) return;
+    const media = window.matchMedia(narrowScreenQuery);
+    const collapseOnNarrowScreen = (event: MediaQueryListEvent) => {
+      if (event.matches) setHistoryOpen(false);
+    };
+    media.addEventListener('change', collapseOnNarrowScreen);
+    return () => media.removeEventListener('change', collapseOnNarrowScreen);
+  }, []);
+  useEffect(() => {
     void loadSessions();
     // 首次加载由后端会话列表决定可用页面。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -107,7 +133,11 @@ export default function App({
     if (!active) return;
     const close = backend.subscribeEvents(
       active.id,
-      () => void backend.getSession(active.id).then(replaceSession),
+      () =>
+        void backend
+          .getSession(active.id)
+          .then(replaceSession)
+          .catch((failure) => handleFailure(failure, '无法刷新最新运行状态。')),
       () => setError('实时状态连接已中断；会话内容仍可继续查看。'),
     );
     return close;
@@ -126,6 +156,7 @@ export default function App({
       const session = await backend.createSession('新会话', '');
       replaceSession(session);
       navigateWorkspace({ kind: 'session', sessionId: session.id });
+      if (isNarrowScreen()) setHistoryOpen(false);
     } catch (failure) {
       handleFailure(failure, '新会话创建失败，请稍后重试。');
     } finally {
@@ -156,20 +187,43 @@ export default function App({
     void sendPrompt();
   }
 
+  function openSession(sessionId: string) {
+    navigateWorkspace({ kind: 'session', sessionId });
+    if (isNarrowScreen()) setHistoryOpen(false);
+  }
+
   return (
     <AppShell
       subject={subject}
       historyOpen={historyOpen}
-      onNewSession={() => void createSession()}
       onToggleHistory={() => setHistoryOpen((open) => !open)}
       onLogout={onLogout}
     >
       {historyOpen && (
         <aside className="session-sidebar" aria-label="会话列表">
           <div className="session-sidebar-heading">
-            <strong>会话</strong>
-            <span>{sessions.length}</span>
+            <span className="session-sidebar-title">
+              <strong>会话</strong>
+              <small>{sessions.length}</small>
+            </span>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="收起会话列表"
+              onClick={() => setHistoryOpen(false)}
+            >
+              <PanelLeftClose size={17} />
+            </button>
           </div>
+          <button
+            className="sidebar-new-session"
+            type="button"
+            onClick={() => void createSession()}
+            disabled={creating}
+          >
+            <MessageSquarePlus size={17} />
+            {creating ? '正在创建…' : '新会话'}
+          </button>
           <label className="session-search">
             <Search size={15} />
             <span className="sr-only">搜索会话</span>
@@ -185,7 +239,7 @@ export default function App({
                 className={active?.id === session.id ? 'session-link active' : 'session-link'}
                 key={session.id}
                 type="button"
-                onClick={() => navigateWorkspace({ kind: 'session', sessionId: session.id })}
+                onClick={() => openSession(session.id)}
               >
                 <span>{session.title}</span>
                 <small>{formatTimestamp(session.updatedAt)}</small>
@@ -193,6 +247,14 @@ export default function App({
             ))}
           </nav>
         </aside>
+      )}
+      {historyOpen && (
+        <button
+          className="sidebar-backdrop"
+          type="button"
+          aria-label="关闭会话列表"
+          onClick={() => setHistoryOpen(false)}
+        />
       )}
 
       {route.kind === 'home' && (
@@ -210,11 +272,7 @@ export default function App({
             <div className="recent-sessions">
               <span>最近会话</span>
               {sessions.slice(0, 3).map((session) => (
-                <button
-                  key={session.id}
-                  type="button"
-                  onClick={() => navigateWorkspace({ kind: 'session', sessionId: session.id })}
-                >
+                <button key={session.id} type="button" onClick={() => openSession(session.id)}>
                   <strong>{session.title}</strong>
                   <small>{formatTimestamp(session.updatedAt)}</small>
                 </button>
@@ -269,7 +327,9 @@ export default function App({
                 <div className="message-avatar">
                   <Bot size={16} />
                 </div>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{active.run.stream.answer}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {active.run.stream.answer}
+                </ReactMarkdown>
               </article>
             )}
           </div>

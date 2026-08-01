@@ -55,7 +55,7 @@ export function AuthenticatedApp() {
         <form className="auth-card" onSubmit={submit}>
           <p className="auth-eyebrow">DATA AGENT</p>
           <h1>登录数据工作区</h1>
-          <p>登录后可管理数据源，或进入 Agent 对话完成分析任务。</p>
+          <p>登录后进入 Agent 会话，提交并跟踪你的分析任务。</p>
           <label>
             用户名
             <input
