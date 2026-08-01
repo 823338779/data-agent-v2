@@ -63,6 +63,8 @@ class RunStreamCheckpointIntegrationTest {
         registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
         registry.add("spring.data.redis.username", () -> "default");
         registry.add("spring.data.redis.password", () -> REDIS_PASSWORD);
+        registry.add("spring.data.redis.timeout", () -> "200ms");
+        registry.add("spring.data.redis.connect-timeout", () -> "200ms");
     }
 
     @AfterAll
@@ -167,6 +169,9 @@ class RunStreamCheckpointIntegrationTest {
                                                 timedAt.plusSeconds(60),
                                                 timedAt.plusMillis(1))))
                 .isFalse();
+
+        // Redis 停服不影响 owner 继续执行；checkpoint 仍以数据库为权威持久化。
+        REDIS.stop();
 
         // 切换 turn 会清空当前投影和序号；旧 turn 随后的强制写入必须被 fencing 拒绝。
         TenantContext.run(TENANT_ID, () -> checkpoints.beginTurn(run, 2, timedAt.plusMillis(1)));
