@@ -3,10 +3,15 @@ data-agent:
     max-concurrent-executions-per-instance: ${DATA_AGENT_MAX_CONCURRENT_EXECUTIONS_PER_INSTANCE:256}
     queue-scan-interval: ${DATA_AGENT_QUEUE_SCAN_INTERVAL:1s}
     control-poll-interval: ${DATA_AGENT_CONTROL_POLL_INTERVAL:1s}
+    session-event-reconcile-interval: ${DATA_AGENT_SESSION_EVENT_RECONCILE_INTERVAL:1s}
+    activity-reconcile-interval: ${DATA_AGENT_ACTIVITY_RECONCILE_INTERVAL:2s}
     execution-budget: ${DATA_AGENT_EXECUTION_BUDGET:10m}
     lease-duration: ${DATA_AGENT_EXECUTION_LEASE_DURATION:60s}
     heartbeat-interval: ${DATA_AGENT_EXECUTION_HEARTBEAT_INTERVAL:15s}
     scheduling-enabled: ${DATA_AGENT_RUNTIME_SCHEDULING_ENABLED:true}
+  react:
+    limits:
+      reasoning-retention: ${DATA_AGENT_REASONING_RETENTION:30d}
   auth:
     session:
       secure-cookie: ${DATA_AGENT_SESSION_SECURE_COOKIE:false}
@@ -14,3 +19,8 @@ data-agent:
     bootstrap:
       enabled: ${DATA_AGENT_BOOTSTRAP_ENABLED:true}
       password: ${DATA_AGENT_BOOTSTRAP_PASSWORD:admin}
+  reasoning-retention:
+    enabled: ${DATA_AGENT_REASONING_RETENTION_ENABLED:true}
+    batch-size: ${DATA_AGENT_REASONING_RETENTION_BATCH_SIZE:200}
+    max-batches: ${DATA_AGENT_REASONING_RETENTION_MAX_BATCHES:20}
+    scan-interval: ${DATA_AGENT_REASONING_RETENTION_SCAN_INTERVAL:1h}

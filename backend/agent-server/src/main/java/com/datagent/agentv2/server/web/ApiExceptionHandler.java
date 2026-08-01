@@ -1,5 +1,6 @@
 package com.datagent.agentv2.server.web;
 
+import com.datagent.agentv2.conversation.activity.SessionOrderConflictException;
 import com.datagent.agentv2.conversation.application.ActiveExecutionConflictException;
 import com.datagent.agentv2.conversation.application.IdempotencyKeyReusedException;
 import com.datagent.agentv2.server.context.RequestContext;
@@ -42,6 +43,18 @@ public final class ApiExceptionHandler {
                 "urn:data-agent:problem:idempotency-key-reused",
                 "Idempotency Key Reused",
                 "IDEMPOTENCY_KEY_REUSED",
+                exception.getMessage(),
+                request);
+    }
+
+    @ExceptionHandler(SessionOrderConflictException.class)
+    ResponseEntity<ProblemDetail> handleSessionOrderConflict(
+            SessionOrderConflictException exception, HttpServletRequest request) {
+        return problem(
+                HttpStatus.CONFLICT,
+                "urn:data-agent:problem:session-order-conflict",
+                "Session Order Conflict",
+                "SESSION_ORDER_CONFLICT",
                 exception.getMessage(),
                 request);
     }

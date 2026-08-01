@@ -13,4 +13,18 @@
 
   <artifactId>agent-evals</artifactId>
   <packaging>jar</packaging>
+
+  <dependencies>
+    <!-- 验收模块只依赖通用测试/JSON库，不依赖任何 Data Agent 运行时模块。 -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
 </project>

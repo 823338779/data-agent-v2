@@ -1,0 +1,18 @@
+schema: ConversationActivitySnapshot
+value:
+  type: activity_snapshot
+  orderingVersion: 4
+  sessions:
+    - conversationSessionId: session_background
+      status: done
+      unread: true
+      lastNotifiableEventSequence: 12
+      sortOrder: 0
+      updatedAt: 2026-08-01T08:03:00Z
+    - conversationSessionId: session_current
+      status: running
+      unread: false
+      lastNotifiableEventSequence: 8
+      sortOrder: 1
+      updatedAt: 2026-08-01T08:02:00Z
+  snapshotAt: 2026-08-01T08:03:02Z

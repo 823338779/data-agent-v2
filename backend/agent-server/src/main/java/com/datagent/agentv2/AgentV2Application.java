@@ -6,7 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
-@ConfigurationPropertiesScan("com.datagent.agentv2.conversation.runtime")
+@ConfigurationPropertiesScan("com.datagent.agentv2.conversation")
 @EnableScheduling
 public class AgentV2Application {
 

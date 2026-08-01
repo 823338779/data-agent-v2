@@ -79,4 +79,9 @@ public class AgentExecutionStreamCheckpointService
                         now)
                 == 1;
     }
+
+    /** 清理一页已到期终态执行检查点 reasoning。 */
+    public int clearExpiredReasoning(Instant now, int limit) {
+        return baseMapper.clearExpiredReasoning(now, limit);
+    }
 }

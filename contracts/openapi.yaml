@@ -71,6 +71,36 @@ paths:
               schema: { $ref: '#/components/schemas/ConversationSession' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/AuthenticationRequired' }
+  /api/v1/agent-sessions/activity-events:
+    get:
+      operationId: streamConversationActivity
+      description: Sends current per-user conversation activity snapshots and subsequent version changes. Clients reconnect by listing sessions before reopening this stream; permanent event replay is not provided.
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Current activity snapshot followed by changed snapshots
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/ConversationActivitySnapshot' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+  /api/v1/agent-sessions:reorder:
+    post:
+      operationId: reorderConversationSessions
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReorderConversationSessionsRequest' }
+      responses:
+        '200':
+          description: Complete visible session order after the versioned update
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReorderConversationSessionsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '409': { $ref: '#/components/responses/SessionOrderConflict' }
   /api/v1/agent-sessions/{conversationSessionId}:
     get:
       operationId: getConversationSession
@@ -83,6 +113,26 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ConversationSession' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/agent-sessions/{conversationSessionId}:mark-read:
+    post:
+      operationId: markConversationSessionRead
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationSessionId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MarkConversationSessionReadRequest' }
+      responses:
+        '200':
+          description: Session activity after advancing the per-user read cursor
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationSession' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/AuthenticationRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/agent-sessions/{conversationSessionId}/metric-platform-credential:
@@ -814,6 +864,20 @@ components:
             code: IDEMPOTENCY_KEY_REUSED
             requestId: request_demo
             errors: []
+    SessionOrderConflict:
+      description: Conversation ordering changed on another device
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+          example:
+            type: about:blank
+            title: Conflict
+            status: 409
+            detail: Conversation ordering version is stale
+            instance: /api/v1/agent-sessions:reorder
+            code: SESSION_ORDER_CONFLICT
+            requestId: request_demo
+            errors: []
     Gone:
       description: Resource is no longer available
       content:
@@ -858,6 +922,22 @@ components:
       required: [content]
       properties:
         content: { type: string, minLength: 1, maxLength: 8000 }
+    MarkConversationSessionReadRequest:
+      type: object
+      additionalProperties: false
+      required: [upToSequence]
+      properties:
+        upToSequence: { type: integer, format: int64, minimum: 0 }
+    ReorderConversationSessionsRequest:
+      type: object
+      additionalProperties: false
+      required: [conversationSessionIds, expectedOrderingVersion]
+      properties:
+        conversationSessionIds:
+          type: array
+          uniqueItems: true
+          items: { type: string, minLength: 1 }
+        expectedOrderingVersion: { type: integer, format: int64, minimum: 0 }
     ConfirmActionRequest:
       type: object
       required: [approved]
@@ -891,6 +971,10 @@ components:
         - updatedAt
         - version
         - metricPlatformCredentialBindingVersion
+        - unread
+        - lastNotifiableEventSequence
+        - sortOrder
+        - orderingVersion
         - messages
       properties:
         conversationSessionId: { type: string }
@@ -901,6 +985,10 @@ components:
         updatedAt: { type: string, format: date-time }
         version: { type: integer, format: int64 }
         metricPlatformCredentialBindingVersion: { type: integer, format: int64 }
+        unread: { type: boolean }
+        lastNotifiableEventSequence: { type: integer, format: int64, minimum: 0 }
+        sortOrder: { type: integer, format: int64 }
+        orderingVersion: { type: integer, format: int64, minimum: 0 }
         metricPlatformCredential:
           oneOf:
             - { $ref: '#/components/schemas/MetricPlatformCredentialBinding' }
@@ -912,6 +1000,36 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/AgentExecution' }
             - { type: 'null' }
+    ConversationActivityItem:
+      type: object
+      required: [conversationSessionId, status, unread, lastNotifiableEventSequence, sortOrder, updatedAt]
+      properties:
+        conversationSessionId: { type: string }
+        status:
+          type: string
+          enum: [idle, queued, running, waiting_for_user, waiting_confirmation, done, cancelled, failed]
+        unread: { type: boolean }
+        lastNotifiableEventSequence: { type: integer, format: int64, minimum: 0 }
+        sortOrder: { type: integer, format: int64 }
+        updatedAt: { type: string, format: date-time }
+    ConversationActivitySnapshot:
+      type: object
+      required: [type, orderingVersion, sessions, snapshotAt]
+      properties:
+        type: { type: string, const: activity_snapshot }
+        orderingVersion: { type: integer, format: int64, minimum: 0 }
+        sessions:
+          type: array
+          items: { $ref: '#/components/schemas/ConversationActivityItem' }
+        snapshotAt: { type: string, format: date-time }
+    ReorderConversationSessionsResponse:
+      type: object
+      required: [orderingVersion, sessions]
+      properties:
+        orderingVersion: { type: integer, format: int64, minimum: 0 }
+        sessions:
+          type: array
+          items: { $ref: '#/components/schemas/ConversationSession' }
     MetricPlatformCredentialBinding:
       type: object
       required: [metricPlatformCredentialId]

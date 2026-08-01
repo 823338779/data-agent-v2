@@ -89,4 +89,9 @@ public class ModelInvocationService
                         now)
                 == 1;
     }
+
+    /** 清理一页已到期终态模型调用 reasoning。 */
+    public int clearExpiredReasoning(Instant now, int limit) {
+        return baseMapper.clearExpiredReasoning(now, limit);
+    }
 }

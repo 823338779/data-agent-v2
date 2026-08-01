@@ -1,5 +1,6 @@
 package com.datagent.agentv2.persistence.service.mapper;
 
+import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.datagent.agentv2.persistence.entity.AgentExecutionStreamCheckpointEntity;
 import java.time.Instant;
@@ -88,4 +89,27 @@ public interface AgentExecutionStreamCheckpointMapper
             @Param("ownerInstanceId") String ownerInstanceId,
             @Param("answer") String answer,
             @Param("now") Instant now);
+
+    /** 使用 SKIP LOCKED 分页清空已到期终态执行的 reasoning，不触碰 answer。 */
+    @InterceptorIgnore(tenantLine = "true")
+    @Update(
+            """
+            with candidates as (
+                select checkpoint.id
+                  from agent_execution_stream_checkpoint checkpoint
+                  join agent_execution execution
+                    on execution.tenant_id = checkpoint.tenant_id
+                   and execution.execution_id = checkpoint.execution_id
+                 where execution.status in ('done', 'failed', 'cancelled')
+                   and checkpoint.reasoning_expires_at <= #{now}
+                   and checkpoint.reasoning <> ''
+                 order by checkpoint.reasoning_expires_at, checkpoint.id
+                 limit #{limit} for update of checkpoint skip locked
+            )
+            update agent_execution_stream_checkpoint checkpoint
+               set reasoning = '', reasoning_expires_at = null,
+                   updated_at = current_timestamp, version = version + 1
+             where checkpoint.id in (select id from candidates)
+            """)
+    int clearExpiredReasoning(@Param("now") Instant now, @Param("limit") int limit);
 }

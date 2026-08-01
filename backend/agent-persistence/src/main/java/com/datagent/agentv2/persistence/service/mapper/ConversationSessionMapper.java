@@ -2,6 +2,7 @@ package com.datagent.agentv2.persistence.service.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.datagent.agentv2.persistence.entity.ConversationSessionEntity;
+import java.time.Instant;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -38,4 +39,24 @@ public interface ConversationSessionMapper extends BaseMapper<ConversationSessio
             """)
     int incrementConversationMessageSequence(
             @Param("conversationSessionId") String conversationSessionId);
+
+    /** 记录会话活动；仅可通知事件携带非空水位并推进未读边界。 */
+    @Update(
+            """
+            update conversation_session
+               set last_activity_at = greatest(last_activity_at, #{occurredAt}),
+                   last_notifiable_event_sequence = case
+                       when #{notifiableSequence,jdbcType=BIGINT} is null
+                           then last_notifiable_event_sequence
+                       else greatest(
+                           last_notifiable_event_sequence,
+                           #{notifiableSequence,jdbcType=BIGINT}) end,
+                   updated_at = current_timestamp, version = version + 1
+             where conversation_session_id = #{conversationSessionId}
+               and is_deleted = false
+            """)
+    int recordActivity(
+            @Param("conversationSessionId") String conversationSessionId,
+            @Param("notifiableSequence") Long notifiableSequence,
+            @Param("occurredAt") Instant occurredAt);
 }

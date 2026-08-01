@@ -15,7 +15,7 @@ public class ReactLimitsProperties {
     private int maxToolCalls = 32;
 
     /** reasoning 检查点在 stream 和 Model Turn 中的保留时长。 */
-    private Duration reasoningRetention = Duration.ofHours(24);
+    private Duration reasoningRetention = Duration.ofDays(30);
 
     public ReactLimitsProperties() {}
 

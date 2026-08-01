@@ -1,9 +1,11 @@
 package com.datagent.agentv2.web.conversation;
 
+import com.datagent.agentv2.conversation.activity.ActivityEventStreamFacade;
 import com.datagent.agentv2.conversation.application.AgentExecutionControlService;
 import com.datagent.agentv2.conversation.application.ConversationApplicationService;
 import com.datagent.agentv2.conversation.application.ConversationView;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.net.URI;
@@ -29,11 +31,13 @@ public class ConversationController {
             "/{conversationSessionId}/executions/{executionId}:cancel";
     private static final String RETRY_EXECUTION_PATH =
             "/{conversationSessionId}/executions/{executionId}:retry";
+    private static final String MARK_READ_PATH = "/{conversationSessionId}:mark-read";
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 
     private final ConversationApplicationService conversations;
     private final AgentExecutionControlService controls;
     private final ConversationEventStreamFacade eventStreams;
+    private final ActivityEventStreamFacade activityEvents;
 
     @GetMapping
     List<ConversationView> list() {
@@ -52,6 +56,18 @@ public class ConversationController {
     @GetMapping("/{conversationSessionId}")
     ConversationView get(@PathVariable String conversationSessionId) {
         return conversations.get(conversationSessionId);
+    }
+
+    @GetMapping(value = "/activity-events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    SseEmitter streamActivity() {
+        return activityEvents.open();
+    }
+
+    @PostMapping(MARK_READ_PATH)
+    ConversationView markRead(
+            @PathVariable String conversationSessionId,
+            @Valid @RequestBody MarkConversationSessionReadRequest request) {
+        return conversations.markRead(conversationSessionId, request.upToSequence());
     }
 
     @GetMapping(
@@ -108,4 +124,7 @@ public class ConversationController {
 
     /** 向指定对话会话提交用户消息的请求。 */
     record SubmitConversationMessageRequest(@NotBlank @Size(max = 8000) String content) {}
+
+    /** 精确推进当前用户对一个会话的已读游标。 */
+    record MarkConversationSessionReadRequest(@Min(0) long upToSequence) {}
 }

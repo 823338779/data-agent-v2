@@ -16,6 +16,10 @@ public record ConversationView(
         long version,
         long metricPlatformCredentialBindingVersion,
         Object metricPlatformCredential,
+        boolean unread,
+        long lastNotifiableEventSequence,
+        long sortOrder,
+        long orderingVersion,
         List<MessageView> messages,
         AgentExecutionView execution) {
 

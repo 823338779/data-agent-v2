@@ -33,6 +33,22 @@ class Phase1MigrationTest {
                     "tool_execution",
                     "user_account");
     private static final List<String> AUDITED_TABLES = TABLES;
+    private static final List<String> APPLICATION_TABLES =
+            List.of(
+                    "agent_execution",
+                    "agent_execution_attempt",
+                    "agent_execution_event",
+                    "agent_execution_stream_checkpoint",
+                    "conversation_message",
+                    "conversation_preference",
+                    "conversation_session",
+                    "conversation_session_user_state",
+                    "model_invocation",
+                    "notification_outbox_message",
+                    "tenant",
+                    "tenant_membership",
+                    "tool_execution",
+                    "user_account");
     private static final Map<String, String> BUSINESS_ID_COLUMNS =
             Map.ofEntries(
                     Map.entry("conversation_message", "conversation_message_id"),
@@ -65,7 +81,7 @@ class Phase1MigrationTest {
                                 POSTGRES.getPassword())
                         .locations("classpath:db/migration")
                         .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(9);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(10);
     }
 
     @AfterAll
@@ -75,7 +91,7 @@ class Phase1MigrationTest {
 
     @Test
     void emptyDatabaseMigratesWithoutPostgresLoginSessions() throws SQLException {
-        assertThat(applicationTables()).containsExactlyElementsOf(TABLES);
+        assertThat(applicationTables()).containsExactlyElementsOf(APPLICATION_TABLES);
     }
 
     @Test

@@ -13,6 +13,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   AgentBackendClient,
+  applyExecutionStreamEvent,
   BackendApiError,
   createFetchAgentBackendClient,
 } from './api/backendAgentClient';
@@ -23,6 +24,9 @@ import {
   WorkspaceRoute,
 } from './app/workspaceRoute';
 import { AppShell } from './components/shell/AppShell';
+import { ConversationList } from './components/ConversationList';
+import { ConversationStatus } from './components/ConversationStatus';
+import { RunStreamPanel } from './components/RunStreamPanel';
 import { ConversationSession, formatTimestamp } from './domain/agentPrototype';
 
 interface AppProps {
@@ -36,22 +40,6 @@ const narrowScreenQuery = '(max-width: 820px)';
 
 function isNarrowScreen(): boolean {
   return window.matchMedia?.(narrowScreenQuery).matches ?? false;
-}
-
-function executionStatusLabel(status?: string): string {
-  switch (status) {
-    case 'running':
-      return '处理中';
-    case 'completed':
-    case 'done':
-      return '已完成';
-    case 'failed':
-      return '失败';
-    case 'cancelled':
-      return '已取消';
-    default:
-      return '就绪';
-  }
 }
 
 export default function App({
@@ -69,8 +57,10 @@ export default function App({
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [reordering, setReordering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const readCursorRef = useRef<Record<string, number>>({});
 
   const active =
     route.kind === 'session'
@@ -149,19 +139,85 @@ export default function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backend]);
 
+  // activity SSE 跨会话常驻，只合并轻量字段；sortOrder 才能改变列表顺序。
+  useEffect(() => {
+    const close = backend.subscribeActivity(
+      (snapshot) => {
+        const activityById = new Map(
+          snapshot.sessions.map((activity) => [activity.conversationSessionId, activity]),
+        );
+        setSessions((current) =>
+          current
+            .map((session) => {
+              const activity = activityById.get(session.conversationSessionId);
+              return activity
+                ? {
+                    ...session,
+                    activityStatus: activity.status,
+                    unread: activity.unread,
+                    lastNotifiableEventSequence: activity.lastNotifiableEventSequence,
+                    sortOrder: activity.sortOrder,
+                    orderingVersion: snapshot.orderingVersion,
+                    updatedAt: activity.updatedAt,
+                  }
+                : session;
+            })
+            .sort((left, right) => left.sortOrder - right.sortOrder),
+        );
+      },
+      () => {
+        setError('会话活动连接已中断，正在重新同步。');
+        void loadSessions();
+      },
+    );
+    return close;
+    // activity 连接不随当前会话切换而重建。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backend]);
+
   useEffect(() => {
     if (!active) return;
-    const close = backend.subscribeEvents(
-      active.conversationSessionId,
+    const conversationSessionId = active.conversationSessionId;
+    const close = backend.subscribeExecutionEvents(
+      conversationSessionId,
+      (event) =>
+        setSessions((current) =>
+          current.map((session) =>
+            session.conversationSessionId === conversationSessionId && session.execution
+              ? {
+                  ...session,
+                  execution: {
+                    ...session.execution,
+                    streamCheckpoint: applyExecutionStreamEvent(
+                      session.execution.streamCheckpoint,
+                      event,
+                    ),
+                  },
+                }
+              : session,
+          ),
+        ),
       () =>
         void backend
-          .getSession(active.conversationSessionId)
+          .getSession(conversationSessionId)
           .then(replaceSession)
           .catch((failure) => handleFailure(failure, '无法刷新最新运行状态。')),
       () => setError('实时状态连接已中断；会话内容仍可继续查看。'),
     );
     return close;
   }, [active?.conversationSessionId, backend]);
+
+  // 当前会话的通知已提交到 DOM 后，按活动快照中的精确序号推进已读游标。
+  useEffect(() => {
+    if (!active?.unread || active.lastNotifiableEventSequence <= 0) return;
+    const sequence = active.lastNotifiableEventSequence;
+    if ((readCursorRef.current[active.conversationSessionId] ?? 0) >= sequence) return;
+    readCursorRef.current[active.conversationSessionId] = sequence;
+    void backend
+      .markRead(active.conversationSessionId, sequence)
+      .then(replaceSession)
+      .catch((failure) => handleFailure(failure, '无法更新会话已读状态。'));
+  }, [active?.conversationSessionId, active?.unread, active?.lastNotifiableEventSequence, backend]);
 
   useEffect(() => {
     const element = messagesRef.current;
@@ -215,6 +271,55 @@ export default function App({
     if (isNarrowScreen()) setHistoryOpen(false);
   }
 
+  async function reorderSessions(visibleIds: string[]) {
+    if (reordering) return;
+    const visible = new Set(visibleIds);
+    const completeIds = [
+      ...visibleIds,
+      ...sessions
+        .filter((item) => !visible.has(item.conversationSessionId))
+        .map((item) => item.conversationSessionId),
+    ];
+    const previous = sessions;
+    const byId = new Map(sessions.map((item) => [item.conversationSessionId, item]));
+    setSessions(completeIds.map((id, index) => ({ ...byId.get(id)!, sortOrder: index })));
+    setReordering(true);
+    try {
+      const result = await backend.reorderSessions(completeIds, sessions[0]?.orderingVersion ?? 0);
+      setSessions(result.sessions);
+    } catch (failure) {
+      if (failure instanceof BackendApiError && failure.status === 409) {
+        await loadSessions();
+        setError('会话顺序已在另一设备更新，已恢复服务端顺序。');
+      } else {
+        setSessions(previous);
+        handleFailure(failure, '会话排序失败，已恢复原顺序。');
+      }
+    } finally {
+      setReordering(false);
+    }
+  }
+
+  async function cancelActiveExecution() {
+    if (!active?.execution) return;
+    try {
+      await backend.cancelExecution(active.conversationSessionId, active.execution.executionId);
+      replaceSession(await backend.getSession(active.conversationSessionId));
+    } catch (failure) {
+      handleFailure(failure, '取消运行失败，请稍后重试。');
+    }
+  }
+
+  async function retryActiveExecution() {
+    if (!active?.execution) return;
+    try {
+      await backend.retryExecution(active.conversationSessionId, active.execution.executionId);
+      replaceSession(await backend.getSession(active.conversationSessionId));
+    } catch (failure) {
+      handleFailure(failure, '重试运行失败，请稍后重试。');
+    }
+  }
+
   return (
     <AppShell
       subject={subject}
@@ -256,23 +361,12 @@ export default function App({
               placeholder="搜索会话"
             />
           </label>
-          <nav>
-            {visibleSessions.map((session) => (
-              <button
-                className={
-                  active?.conversationSessionId === session.conversationSessionId
-                    ? 'session-link active'
-                    : 'session-link'
-                }
-                key={session.conversationSessionId}
-                type="button"
-                onClick={() => openSession(session.conversationSessionId)}
-              >
-                <span>{session.title}</span>
-                <small>{formatTimestamp(session.updatedAt)}</small>
-              </button>
-            ))}
-          </nav>
+          <ConversationList
+            sessions={visibleSessions}
+            activeSessionId={active?.conversationSessionId}
+            onOpen={openSession}
+            onReorder={(ids) => void reorderSessions(ids)}
+          />
         </aside>
       )}
       {historyOpen && (
@@ -320,9 +414,11 @@ export default function App({
               <h1>{active.title}</h1>
               {active.tag && <span>{active.tag}</span>}
             </div>
-            <span className={`execution-status ${active.execution?.status ?? 'idle'}`}>
-              {executionStatusLabel(active.execution?.status)}
-            </span>
+            <ConversationStatus
+              status={active.execution?.status ?? 'idle'}
+              onCancel={() => void cancelActiveExecution()}
+              onRetry={() => void retryActiveExecution()}
+            />
           </header>
 
           <div className="message-list" aria-label="消息列表" ref={messagesRef}>
@@ -345,33 +441,21 @@ export default function App({
                   </header>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
                   {message.role === 'assistant' && message.execution && (
-                    <details className="execution-detail message-execution-detail">
-                      <summary>查看运行过程</summary>
-                      {message.execution.streamCheckpoint?.thinking && (
-                        <p>{message.execution.streamCheckpoint.thinking}</p>
-                      )}
-                    </details>
+                    <RunStreamPanel
+                      historical
+                      hideAnswer
+                      status={message.execution.status}
+                      checkpoint={message.execution.streamCheckpoint}
+                    />
                   )}
                 </div>
               </article>
             ))}
-            {!activeExecutionAnswerPersisted && active.execution?.streamCheckpoint?.thinking && (
-              <details className="execution-detail">
-                <summary>查看运行过程</summary>
-                <p>{active.execution.streamCheckpoint.thinking}</p>
-              </details>
-            )}
-            {!activeExecutionAnswerPersisted && active.execution?.streamCheckpoint?.answer && (
-              <article className="message assistant stream-answer">
-                <div className="message-avatar">
-                  <Bot size={16} />
-                </div>
-                <div className="message-content">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {active.execution.streamCheckpoint.answer}
-                  </ReactMarkdown>
-                </div>
-              </article>
+            {!activeExecutionAnswerPersisted && active.execution && (
+              <RunStreamPanel
+                status={active.execution.status}
+                checkpoint={active.execution.streamCheckpoint}
+              />
             )}
           </div>
 

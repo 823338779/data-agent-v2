@@ -45,4 +45,13 @@ public class ConversationSessionService
                 .eq(ConversationSessionEntity::getConversationSessionId, conversationSessionId)
                 .one();
     }
+
+    /** 更新共享活动时间，并在需要时推进可通知事件水位。 */
+    public void recordActivity(
+            String conversationSessionId, Long notifiableSequence, java.time.Instant occurredAt) {
+        if (baseMapper.recordActivity(conversationSessionId, notifiableSequence, occurredAt) != 1) {
+            throw new IllegalStateException(
+                    "conversation session not found: " + conversationSessionId);
+        }
+    }
 }

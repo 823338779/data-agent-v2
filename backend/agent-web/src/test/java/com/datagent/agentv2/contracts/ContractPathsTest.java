@@ -13,6 +13,10 @@ import org.junit.jupiter.api.Test;
 
 class ContractPathsTest {
 
+    private static final String ACTIVITY_EVENTS_PATH = "/api/v1/agent-sessions/activity-events";
+    private static final String MARK_READ_PATH =
+            "/api/v1/agent-sessions/{conversationSessionId}:mark-read";
+    private static final String REORDER_PATH = "/api/v1/agent-sessions:reorder";
     private static final YAMLMapper YAML = new YAMLMapper();
     private static final Set<String> HTTP_METHODS =
             Set.of("get", "post", "put", "delete", "patch", "head", "options", "trace");
@@ -38,7 +42,7 @@ class ContractPathsTest {
     void openApiDeclaresEveryFrozenV1ControllerOperation() throws IOException {
         JsonNode paths = YAML.readTree(ContractFiles.openApi().toFile()).path("paths");
 
-        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(40);
+        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(43);
         assertThat(REQUIRED)
                 .allSatisfy(
                         (path, methods) -> {
@@ -163,13 +167,73 @@ class ContractPathsTest {
                 .isEqualTo("IDEMPOTENCY_KEY_REUSED");
     }
 
+    @Test
+    void openApiFreezesPerUserActivityAndOrderingContracts() throws IOException {
+        JsonNode api = YAML.readTree(ContractFiles.openApi().toFile());
+        JsonNode schemas = api.path("components").path("schemas");
+
+        // 会话投影必须携带跨设备未读游标和用户排序版本。
+        JsonNode session = schemas.path("ConversationSession");
+        assertThat(session.path("required").toString())
+                .contains("unread", "lastNotifiableEventSequence", "sortOrder", "orderingVersion");
+        assertThat(session.path("properties").path("unread").path("type").asText())
+                .isEqualTo("boolean");
+
+        // mark-read 只允许提交精确通知序号，避免客户端覆盖服务端状态。
+        JsonNode markReadRequest = schemas.path("MarkConversationSessionReadRequest");
+        assertThat(markReadRequest.path("additionalProperties").asBoolean()).isFalse();
+        assertThat(markReadRequest.path("required").toString()).contains("upToSequence");
+        assertThat(markReadRequest.path("properties").size()).isOne();
+
+        // reorder 必须提交完整可见集合及乐观锁版本，冲突码与执行冲突保持独立。
+        JsonNode reorderRequest = schemas.path("ReorderConversationSessionsRequest");
+        assertThat(reorderRequest.path("required").toString())
+                .contains("conversationSessionIds", "expectedOrderingVersion");
+        assertThat(
+                        api.path("paths")
+                                .path(REORDER_PATH)
+                                .path("post")
+                                .path("responses")
+                                .path("409")
+                                .path("$ref")
+                                .asText())
+                .isEqualTo("#/components/responses/SessionOrderConflict");
+        assertThat(
+                        api.path("components")
+                                .path("responses")
+                                .path("SessionOrderConflict")
+                                .path("content")
+                                .path("application/problem+json")
+                                .path("example")
+                                .path("code")
+                                .asText())
+                .isEqualTo("SESSION_ORDER_CONFLICT");
+
+        // Activity SSE 是可收敛快照流，不接收 Last-Event-ID 历史游标。
+        JsonNode activityEvents = api.path("paths").path(ACTIVITY_EVENTS_PATH).path("get");
+        assertThat(activityEvents.path("parameters")).isEmpty();
+        assertThat(
+                        activityEvents
+                                .path("responses")
+                                .path("200")
+                                .path("content")
+                                .path("text/event-stream")
+                                .path("schema")
+                                .path("$ref")
+                                .asText())
+                .isEqualTo("#/components/schemas/ConversationActivitySnapshot");
+    }
+
     private static Map<String, Set<String>> requiredOperations() {
         Map<String, Set<String>> required = new LinkedHashMap<>();
         required.put("/api/v1/auth/login", Set.of("post"));
         required.put("/api/v1/auth/session", Set.of("get"));
         required.put("/api/v1/auth/logout", Set.of("post"));
         required.put("/api/v1/agent-sessions", Set.of("get", "post"));
+        required.put(ACTIVITY_EVENTS_PATH, Set.of("get"));
+        required.put(REORDER_PATH, Set.of("post"));
         required.put("/api/v1/agent-sessions/{conversationSessionId}", Set.of("get"));
+        required.put(MARK_READ_PATH, Set.of("post"));
         required.put(
                 "/api/v1/agent-sessions/{conversationSessionId}/metric-platform-credential",
                 Set.of("put"));

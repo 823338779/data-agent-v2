@@ -1,5 +1,6 @@
 package com.datagent.agentv2.persistence.service.mapper;
 
+import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.datagent.agentv2.persistence.entity.ModelInvocationEntity;
 import java.time.Instant;
@@ -95,4 +96,28 @@ public interface ModelInvocationMapper extends BaseMapper<ModelInvocationEntity>
             @Param("newOwnerInstanceId") String newOwnerInstanceId,
             @Param("newExecutionAttemptNumber") long newExecutionAttemptNumber,
             @Param("now") Instant now);
+
+    /** 使用 SKIP LOCKED 分页清空终态模型调用的到期 reasoning。 */
+    @InterceptorIgnore(tenantLine = "true")
+    @Update(
+            """
+            with candidates as (
+                select invocation.id
+                  from model_invocation invocation
+                  join agent_execution execution
+                    on execution.tenant_id = invocation.tenant_id
+                   and execution.execution_id = invocation.execution_id
+                 where execution.status in ('done', 'failed', 'cancelled')
+                   and invocation.status in ('completed', 'abandoned', 'failed')
+                   and invocation.reasoning_expires_at <= #{now}
+                   and coalesce(invocation.reasoning, '') <> ''
+                 order by invocation.reasoning_expires_at, invocation.id
+                 limit #{limit} for update of invocation skip locked
+            )
+            update model_invocation invocation
+               set reasoning = '', reasoning_expires_at = null,
+                   updated_at = current_timestamp, version = version + 1
+             where invocation.id in (select id from candidates)
+            """)
+    int clearExpiredReasoning(@Param("now") Instant now, @Param("limit") int limit);
 }

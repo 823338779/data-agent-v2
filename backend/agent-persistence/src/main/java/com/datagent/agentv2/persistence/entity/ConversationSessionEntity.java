@@ -2,6 +2,7 @@ package com.datagent.agentv2.persistence.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
+import java.time.Instant;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -31,6 +32,12 @@ public final class ConversationSessionEntity extends TenantAuditedEntity {
 
     /** 当前已分配的最大执行事件序号。 */
     private Long executionEventSequence;
+
+    /** 最近一次影响会话列表状态或内容的活动时间，供 activity reconciliation 增量扫描。 */
+    private Instant lastActivityAt;
+
+    /** 最近一个会触发用户未读提示的执行事件序号。 */
+    private Long lastNotifiableEventSequence;
 
     /** 乐观锁版本，防止并发追加消息或事件时覆盖序号水位。 */
     @Version private Long version;

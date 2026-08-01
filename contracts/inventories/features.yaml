@@ -3,6 +3,8 @@ features:
   - { id: session-crud, entry: "会话列表、创建和详情", success: "只返回当前租户可见会话", failure: "未知或跨租户会话不可枚举", security: "租户拦截器和 Cookie 主体", phase: 1 }
   - { id: message-execution, entry: "提交用户消息并创建 Agent 执行", success: "保存消息后由同一节点调用 Ollama", failure: "活动 Agent 执行 冲突返回 409", security: "事务边界和同租户外键", phase: 1 }
   - { id: session-sse, entry: "会话 SSE", success: "重放检查点后继续实时事件", failure: "断线后刷新恢复", security: "订阅前验证会话租户", phase: 1 }
+  - { id: session-user-activity, entry: "跨设备未读与用户排序", success: "按用户游标和乐观版本同步可见会话", failure: "陈旧排序版本返回 SESSION_ORDER_CONFLICT", security: "租户、用户和会话联合隔离", phase: 1 }
+  - { id: activity-sse, entry: "用户级 activity SSE", success: "建连发送快照并仅在版本变化时收敛", failure: "重连先读取会话列表且不承诺永久事件历史", security: "只轮询并推送当前认证用户的可见会话", phase: 1 }
   - { id: metric-platform-credential, entry: "Metric Platform Credential CRUD 与验证", success: "凭据可绑定并验证", failure: "无权凭据不可枚举", security: "密钥加密与角色授权", phase: 4 }
   - { id: tenant-control-plane, entry: "租户和成员管理", success: "平台管理员创建租户、租户管理员管理成员", failure: "越权请求拒绝", security: "平台和租户角色守卫", phase: 3 }
   - { id: artifacts, entry: "Artifact 元数据、预览和下载", success: "生成受限下载链接", failure: "过期或无权下载拒绝", security: "签名下载和租户校验", phase: 10 }
