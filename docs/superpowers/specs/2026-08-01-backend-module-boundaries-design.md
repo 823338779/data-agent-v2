@@ -4,18 +4,19 @@
 
 阶段 1 已在 `agent-server` 中建立启动边界、数据库迁移和 MyBatis-Plus 基础能力。认证、对话、Redis、SSE 和 Ollama 即将进入实现，如果继续放入同一个模块，编译依赖和职责边界会快速混杂。
 
-本次调整将后端组织为六个 Maven 模块。它仍是一个模块化单体，只生成并部署一个 `agent-server` 服务，不增加服务发现、内部 RPC 或独立部署单元。
+本次调整将后端组织为七个 Maven 模块。它仍是一个模块化单体，只生成并部署一个 `agent-server` 服务，不增加服务发现、内部 RPC 或独立部署单元。
 
 ## 方案选择
 
-采用按业务能力拆分的六模块方案：
+采用按业务能力拆分并独立持久化基础层的七模块方案：
 
 1. `agent-contracts`：保存阶段 0 契约验证测试。
-2. `agent-platform`：保存跨功能的 ID、上下文、时钟、审计、MyBatis-Plus 配置和 Flyway 迁移。
-3. `agent-auth`：保存用户、成员关系、登录会话、认证应用服务、安全过滤器和认证 HTTP 接口。
-4. `agent-conversation`：保存会话、消息、Run、事件、流检查点、Redis、SSE、Ollama 和对话 HTTP 接口。
-5. `agent-server`：保存 Spring Boot 启动类、全局 Web 异常边界和部署配置，并装配认证与对话模块。
-6. `agent-evals`：保持独立评测模块，不依赖 `agent-server` 实现类。
+2. `agent-platform`：保存与存储技术无关的 ID、上下文和时钟。
+3. `agent-persistence`：保存 MyBatis-Plus 配置、审计基类、Flyway 迁移和持久化集成测试。
+4. `agent-auth`：保存用户、成员关系、登录会话、认证应用服务、安全过滤器和认证 HTTP 接口。
+5. `agent-conversation`：保存会话、消息、Run、事件、流检查点、Redis、SSE、Ollama 和对话 HTTP 接口。
+6. `agent-server`：保存 Spring Boot 启动类、全局 Web 异常边界和部署配置，并装配认证与对话模块。
+7. `agent-evals`：保持独立评测模块，不依赖 `agent-server` 实现类。
 
 没有采用仅拆出一个共享模块的方案，因为它仍会让认证和对话在 `agent-server` 中互相渗透；也没有按 API、domain、application、persistence 为每项能力继续细拆，因为阶段 1 尚不需要如此多的构建单元。
 
@@ -26,19 +27,20 @@ agent-contracts                  agent-evals
       （独立）                       （独立）
 
 agent-server
-  ├── agent-auth ───────────────> agent-platform
-  ├── agent-conversation ───────> agent-platform
+  ├── agent-auth ───────────────> agent-persistence ──> agent-platform
+  ├── agent-conversation ───────> agent-persistence
   └── agent-platform
 ```
 
 - `agent-platform` 不依赖认证、对话或服务模块。
+- `agent-persistence` 只依赖 `agent-platform`，不依赖任何业务模块。
 - `agent-auth` 与 `agent-conversation` 不直接互相依赖。
 - 跨功能的当前租户、请求关联和已认证操作者抽象放在 `agent-platform`；认证模块负责建立这些上下文，对话模块只消费抽象。
 - `agent-server` 是唯一可执行模块，负责运行时组合，不承载认证或对话业务逻辑。
 - `agent-contracts` 只依赖契约测试所需库，不成为任何运行时模块的依赖。
 - `agent-evals` 后续只能依赖公开接口或契约，不得导入 `agent-server` 类。
 
-Maven reactor 顺序固定为：`agent-contracts`、`agent-platform`、`agent-auth`、`agent-conversation`、`agent-server`、`agent-evals`。
+Maven reactor 顺序固定为：`agent-contracts`、`agent-platform`、`agent-persistence`、`agent-auth`、`agent-conversation`、`agent-server`、`agent-evals`。
 
 ## 文件归属
 
@@ -51,10 +53,15 @@ Maven reactor 顺序固定为：`agent-contracts`、`agent-platform`、`agent-au
 
 - `platform.id`：前缀 ID 生成。
 - `platform.context`：租户和跨模块操作者上下文，不包含 Servlet 过滤器。
-- `platform.config`：时钟和 MyBatis-Plus 配置。
-- `platform.persistence`：审计实体、审计填充器和 `AuditedServiceImpl`。
+- `platform.config`：时钟等与具体存储技术无关的配置。
+
+### agent-persistence
+
+- `persistence.config`：MyBatis-Plus 配置和租户、乐观锁等拦截器。
+- `persistence`：审计实体、审计填充器和 `AuditedServiceImpl`。
 - `db/migration`：单一、有序的 Flyway 迁移序列。认证和对话模块拥有实体与服务，但 Schema 变更集中在这里，避免多个 JAR 产生 Flyway 版本冲突。
 - PostgreSQL 迁移与 MyBatis-Plus 集成测试。
+- 业务专属 Entity、Mapper 和 `ServiceImpl` 留在对应业务模块的 `persistence` 包；本模块不反向依赖业务模块，也不集中堆放业务逻辑。
 
 ### agent-auth
 
@@ -96,7 +103,8 @@ Maven reactor 顺序固定为：`agent-contracts`、`agent-platform`、`agent-au
 
 - 每个模块运行自己的聚焦测试；`mvn verify` 必须验证完整 reactor。
 - `agent-contracts` 负责 REST/SSE/清单契约测试。
-- `agent-platform` 负责迁移、审计、租户隔离、逻辑删除和乐观锁测试。
+- `agent-platform` 负责 ID、时钟和上下文测试。
+- `agent-persistence` 负责迁移、审计、租户隔离、逻辑删除和乐观锁测试。
 - `agent-auth` 负责认证 HTTP 与持久化测试。
 - `agent-conversation` 负责对话持久化、REST、Redis、SSE 和 Ollama 测试。
 - `agent-server` 负责启动上下文、全局 Problem Detail 和跨模块验收测试。
@@ -104,9 +112,9 @@ Maven reactor 顺序固定为：`agent-contracts`、`agent-platform`、`agent-au
 
 ## 迁移顺序
 
-1. 先创建六个模块 POM 和单向依赖。
+1. 先创建七个模块 POM 和单向依赖。
 2. 将契约测试机械迁移到 `agent-contracts`。
-3. 将数据库迁移、MyBatis-Plus 和共享平台代码迁移到 `agent-platform`，改用平台测试启动夹具。
+3. 将数据库迁移和 MyBatis-Plus 基础迁移到 `agent-persistence`，让 `agent-platform` 保持存储技术无关。
 4. 将启动与全局 HTTP 边界留在精简后的 `agent-server`。
 5. 创建空的 `agent-auth` 和 `agent-conversation` 骨架，后续阶段 1 任务直接在各自模块中实现。
 6. 运行模块聚焦测试和完整 reactor，确认没有同级 V1 路径依赖。

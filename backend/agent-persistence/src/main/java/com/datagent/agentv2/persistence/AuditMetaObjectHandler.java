@@ -1,4 +1,4 @@
-package com.datagent.agentv2.platform.persistence;
+package com.datagent.agentv2.persistence;
 
 import com.baomidou.mybatisplus.core.handlers.MetaObjectHandler;
 import com.datagent.agentv2.platform.context.TenantContext;

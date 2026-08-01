@@ -1,4 +1,4 @@
-package com.datagent.agentv2.platform.config;
+package com.datagent.agentv2.persistence.config;
 
 import com.baomidou.mybatisplus.annotation.DbType;
 import com.baomidou.mybatisplus.autoconfigure.ConfigurationCustomizer;

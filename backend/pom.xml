@@ -19,6 +19,7 @@
   <modules>
     <module>agent-contracts</module>
     <module>agent-platform</module>
+    <module>agent-persistence</module>
     <module>agent-auth</module>
     <module>agent-conversation</module>
     <module>agent-server</module>

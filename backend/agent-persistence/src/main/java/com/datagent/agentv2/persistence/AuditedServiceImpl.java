@@ -1,4 +1,4 @@
-package com.datagent.agentv2.platform.persistence;
+package com.datagent.agentv2.persistence;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;

@@ -1,8 +1,8 @@
-package com.datagent.agentv2.platform.persistence;
+package com.datagent.agentv2.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.datagent.agentv2.platform.AgentPlatformTestApplication;
+import com.datagent.agentv2.persistence.AgentPersistenceTestApplication;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.Clock;
 import java.time.Instant;
@@ -23,7 +23,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
-@SpringBootTest(classes = AgentPlatformTestApplication.class)
+@SpringBootTest(classes = AgentPersistenceTestApplication.class)
 @Import({
     AuditFixtureService.class,
     MybatisPlusAuditIntegrationTest.FixedClockConfiguration.class,

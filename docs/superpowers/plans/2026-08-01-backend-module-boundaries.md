@@ -1,10 +1,10 @@
-# Data Agent V2 后端六模块重构实施计划
+# Data Agent V2 后端七模块重构实施计划
 
 > **面向智能体执行者：** 必须使用子技能 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans`，逐项任务实施本计划。步骤使用复选框（`- [ ]`）跟踪。
 
-**目标：** 在不改变阶段 0/1 行为的前提下，将后端重构为 `agent-contracts`、`agent-platform`、`agent-auth`、`agent-conversation`、`agent-server` 和 `agent-evals` 六个 Maven 模块。
+**目标：** 在不改变阶段 0/1 行为的前提下，将后端重构为 `agent-contracts`、`agent-platform`、`agent-persistence`、`agent-auth`、`agent-conversation`、`agent-server` 和 `agent-evals` 七个 Maven 模块。
 
-**架构：** 保持单个可部署的模块化 Spring Boot 单体。`agent-auth` 和 `agent-conversation` 只依赖 `agent-platform`，`agent-server` 依赖并装配三个运行时模块；契约测试和评测模块保持独立。
+**架构：** 保持单个可部署的模块化 Spring Boot 单体。`agent-persistence` 只依赖存储无关的 `agent-platform`；`agent-auth` 和 `agent-conversation` 依赖二者，`agent-server` 负责运行时装配；契约测试和评测模块保持独立。
 
 **技术栈：** Java 21、Maven、Spring Boot 4.1.0、MyBatis-Plus 3.5.16、Flyway、PostgreSQL、JUnit 5、Testcontainers。
 
@@ -25,6 +25,7 @@ backend/
   pom.xml
   agent-contracts/
   agent-platform/
+  agent-persistence/
   agent-auth/
   agent-conversation/
   agent-server/
@@ -33,19 +34,20 @@ backend/
 
 ---
 
-### 任务 1：建立六模块 Maven reactor 和单向依赖
+### 任务 1：建立七模块 Maven reactor 和单向依赖
 
 **文件：**
 - 修改：`backend/pom.xml`
 - 创建：`backend/agent-contracts/pom.xml`
 - 创建：`backend/agent-platform/pom.xml`
+- 创建：`backend/agent-persistence/pom.xml`
 - 创建：`backend/agent-auth/pom.xml`
 - 创建：`backend/agent-conversation/pom.xml`
 - 修改：`backend/agent-server/pom.xml`
 
 **接口：**
 - 输入：当前 `agent-server` 的依赖集合。
-- 输出：六模块 reactor；`agent-auth -> agent-platform`、`agent-conversation -> agent-platform`、`agent-server -> agent-platform + agent-auth + agent-conversation`。
+- 输出：七模块 reactor；`agent-persistence -> agent-platform`，认证与对话依赖平台和持久化模块，server 负责装配。
 
 - [ ] **步骤 1：记录重构前验证基线**
 
@@ -63,6 +65,7 @@ backend/
 <modules>
   <module>agent-contracts</module>
   <module>agent-platform</module>
+  <module>agent-persistence</module>
   <module>agent-auth</module>
   <module>agent-conversation</module>
   <module>agent-server</module>
@@ -73,9 +76,10 @@ backend/
 依赖归属：
 
 - `agent-contracts`：`spring-boot-starter-test`、Jackson YAML、networknt JSON Schema Validator，均为测试范围。
-- `agent-platform`：JDBC、Flyway、PostgreSQL、MyBatis-Plus Boot 4 Starter、JSqlParser 和 Lombok；测试加入 Spring Boot Test 与 PostgreSQL Testcontainers。
-- `agent-auth`：依赖 `agent-platform`，并加入 Web MVC、Validation、Security、Jackson 和 Lombok。
-- `agent-conversation`：依赖 `agent-platform`，并加入 Web MVC、Validation、Jackson 和 Lombok。
+- `agent-platform`：时钟、ID 和上下文等与存储技术无关的基础能力。
+- `agent-persistence`：依赖 `agent-platform`，包含 JDBC、Flyway、PostgreSQL、MyBatis-Plus、JSqlParser、Lombok 和 PostgreSQL Testcontainers。
+- `agent-auth`：依赖 `agent-platform` 与 `agent-persistence`，并加入 Web MVC、Validation、Security、Jackson 和 Lombok。
+- `agent-conversation`：依赖 `agent-platform` 与 `agent-persistence`，并加入 Web MVC、Validation、Jackson 和 Lombok。
 - `agent-server`：依赖 `agent-platform`、`agent-auth`、`agent-conversation`，并保留 Web MVC、Security、Actuator、Jackson 和 Web MVC Test。
 
 - [ ] **步骤 3：验证 Maven 依赖图可解析**
@@ -86,7 +90,7 @@ backend/
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-conversation dependency:tree
 ```
 
-预期：六个子模块均构建；认证依赖树中没有 `agent-conversation`，对话依赖树中没有 `agent-auth`。
+预期：七个子模块均构建；认证依赖树中没有 `agent-conversation`，对话依赖树中没有 `agent-auth`。
 
 - [ ] **步骤 4：提交模块骨架**
 
@@ -132,7 +136,7 @@ git add backend/agent-contracts backend/agent-server/src/test/java/com/datagent/
 git commit -m "refactor: isolate contract verification module"
 ```
 
-### 任务 3：将数据库和 MyBatis-Plus 基础迁入 agent-platform
+### 任务 3：将数据库和 MyBatis-Plus 基础迁入 agent-persistence
 
 **文件：**
 - 移动：`backend/agent-server/src/main/java/com/datagent/agentv2/platform/config/{ClockConfiguration,MybatisPlusConfiguration}.java`
@@ -140,17 +144,17 @@ git commit -m "refactor: isolate contract verification module"
 - 移动：`backend/agent-server/src/main/java/com/datagent/agentv2/platform/id/*`
 - 移动：`backend/agent-server/src/main/java/com/datagent/agentv2/platform/persistence/*`
 - 移动：`backend/agent-server/src/main/resources/db/migration/*`
-- 移动：迁移和 MyBatis-Plus 集成测试到 `backend/agent-platform/src/test/java`
-- 创建：`backend/agent-platform/src/test/java/com/datagent/agentv2/platform/AgentPlatformTestApplication.java`
+- 移动：迁移和 MyBatis-Plus 集成测试到 `backend/agent-persistence/src/test/java`
+- 创建：`backend/agent-persistence/src/test/java/com/datagent/agentv2/persistence/AgentPersistenceTestApplication.java`
 - 修改：`MybatisPlusAuditIntegrationTest.java`
 
 **接口：**
 - 输入：现有迁移、审计、租户、逻辑删除和乐观锁实现。
-- 输出：可单独测试的共享平台模块，向认证与对话模块提供稳定基础类型。
+- 输出：可单独测试的持久化基础模块；业务专属 Entity、Mapper 和 `ServiceImpl` 仍归对应业务模块。
 
 - [ ] **步骤 1：移动生产代码、迁移和测试**
 
-保持生产 package 不变。将 `Phase1MigrationTest` package 改为 `com.datagent.agentv2.platform.persistence`，使平台测试归属明确。
+将共享持久化 package 统一为 `com.datagent.agentv2.persistence`，并让平台模块不再依赖 MyBatis-Plus 或 Flyway。
 
 - [ ] **步骤 2：添加平台测试启动夹具**
 
@@ -176,7 +180,7 @@ class AgentPlatformTestApplication {}
 - [ ] **步骤 3：运行平台聚焦测试**
 
 ```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-platform `
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-persistence -am `
   -Dtest='Phase1MigrationTest,MybatisPlusAuditIntegrationTest' test
 ```
 
@@ -256,16 +260,16 @@ git commit -m "refactor: reduce server to runtime assembly"
 - 修改：`AGENTS.md`
 
 **接口：**
-- 输入：完成后的六模块 reactor。
+- 输入：完成后的七模块 reactor。
 - 输出：可复现的模块验证命令和后续任务归属规则。
 
 - [ ] **步骤 1：记录模块职责和验证命令**
 
-README 必须列出六个模块和以下命令：
+README 必须列出七个模块和以下命令：
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-contracts test
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-platform test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-persistence -am test
 .\backend\mvnw.cmd -f .\backend\pom.xml -B verify
 ```
 
@@ -278,7 +282,7 @@ AGENTS 必须明确认证代码进入 `agent-auth`、对话/Redis/Ollama 代码�
 .\backend\mvnw.cmd -f .\backend\pom.xml -B verify
 ```
 
-预期：六模块 reactor 全部成功；现有 30 项测试按模块重新分布后全部通过。
+预期：七模块 reactor 全部成功；既有测试按模块重新分布后全部通过。
 
 - [ ] **步骤 3：检查依赖和旧路径残留**
 

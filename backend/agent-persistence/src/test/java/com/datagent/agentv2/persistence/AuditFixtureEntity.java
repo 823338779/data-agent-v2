@@ -1,4 +1,4 @@
-package com.datagent.agentv2.platform.persistence;
+package com.datagent.agentv2.persistence;
 
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;

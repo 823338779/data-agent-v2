@@ -1,4 +1,4 @@
-package com.datagent.agentv2.platform.persistence;
+package com.datagent.agentv2.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
