@@ -105,7 +105,14 @@ class ContractPathsTest {
                 .contains("cancellationRequestedAt");
         assertThat(schemas.path("RunStream").path("properties").fieldNames())
                 .toIterable()
-                .contains("executionAttempt", "phase", "sequence", "thinking", "answer");
+                .contains(
+                        "executionAttempt",
+                        "modelTurnSequence",
+                        "phase",
+                        "streamSequence",
+                        "reasoning",
+                        "answer",
+                        "checkpointedAt");
     }
 
     @Test

@@ -21,12 +21,18 @@ import tools.jackson.databind.json.JsonMapper;
 
 class ContractExamplesTest {
 
+    private static final String COMPOSITE_CURSOR_PATTERN =
+            "^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$";
+    private static final String STREAM_SNAPSHOT = "stream_snapshot";
+
     private static final YAMLMapper YAML = new YAMLMapper();
     private static final JsonMapper JSON = new JsonMapper();
     private static final Dialect CONTRACT_DIALECT =
             Dialect.builder(Draft202012.getInstance())
                     .keyword(new NonValidationKeyword("x-v2-extension"))
                     .keyword(new NonValidationKeyword("x-frontend-projection"))
+                    .keyword(new NonValidationKeyword("x-sse-event-id"))
+                    .keyword(new NonValidationKeyword("x-sensitive-payload-fields-forbidden"))
                     .build();
     private static final Set<String> SESSION_EVENTS =
             Set.of(
@@ -35,6 +41,7 @@ class ContractExamplesTest {
                     "assistant_message",
                     "reasoning_delta",
                     "assistant_delta",
+                    STREAM_SNAPSHOT,
                     "run_phase_changed",
                     "skill_activated",
                     "context_compaction_started",
@@ -114,6 +121,48 @@ class ContractExamplesTest {
     }
 
     @Test
+    void sessionStreamingContractFreezesCheckpointAndCompositeCursorFields() throws IOException {
+        JsonNode openapi = YAML.readTree(ContractFiles.root().resolve("openapi.yaml").toFile());
+        JsonNode runStream = openapi.path("components").path("schemas").path("RunStream");
+        JsonNode eventPath =
+                openapi.path("paths").path("/api/v1/agent-sessions/{sessionId}/events").path("get");
+        tools.jackson.databind.JsonNode schema =
+                JSON.readTree(ContractFiles.schema("session-sse-event.schema.json"));
+
+        // RunStream 始终暴露当前 attempt/turn 的完整 checkpoint；queued 投影允许零值。
+        assertThat(runStream.path("required").toString())
+                .contains(
+                        "executionAttempt",
+                        "modelTurnSequence",
+                        "streamSequence",
+                        "reasoning",
+                        "answer",
+                        "checkpointedAt");
+        assertThat(runStream.path("properties").path("executionAttempt").path("minimum").asInt())
+                .isZero();
+        assertThat(runStream.path("properties").path("modelTurnSequence").path("minimum").asInt())
+                .isZero();
+
+        // Last-Event-ID 使用稳定 e/a/t/s 编码，同时恢复持久事件与瞬时流位置。
+        JsonNode lastEventId = eventPath.path("parameters").path(1);
+        assertThat(lastEventId.path("name").asText()).isEqualTo("Last-Event-ID");
+        assertThat(lastEventId.path("schema").path("pattern").asText())
+                .isEqualTo(COMPOSITE_CURSOR_PATTERN);
+        assertThat(schema.path("x-sse-event-id").path("pattern").asString())
+                .isEqualTo(COMPOSITE_CURSOR_PATTERN);
+
+        // Delta 带完整流坐标，snapshot 额外携带可收敛的累计正文与 checkpoint 时间。
+        assertThat(schema.path("properties").path("type").path("enum").toString())
+                .contains(STREAM_SNAPSHOT);
+        assertThat(schema.path("properties").has("modelTurnSequence")).isTrue();
+        assertThat(schema.path("properties").has("reasoning")).isTrue();
+        assertThat(schema.path("properties").has("answer")).isTrue();
+        assertThat(schema.path("properties").has("checkpointedAt")).isTrue();
+        assertThat(schema.path("x-sensitive-payload-fields-forbidden").toString())
+                .contains("reasoning", "prompt", "toolInput", "toolOutput");
+    }
+
+    @Test
     void everySessionSseExampleConformsToTheSchema() throws IOException {
         tools.jackson.databind.JsonNode schemaNode =
                 JSON.readTree(ContractFiles.schema("session-sse-event.schema.json"));
@@ -123,7 +172,7 @@ class ContractExamplesTest {
             examples = paths.filter(path -> path.toString().endsWith(".json")).sorted().toList();
         }
 
-        assertThat(examples).hasSize(6);
+        assertThat(examples).hasSize(7);
         for (java.nio.file.Path example : examples) {
             tools.jackson.databind.JsonNode value = JSON.readTree(example);
             assertThat(schema.validate(value)).as(example.getFileName().toString()).isEmpty();

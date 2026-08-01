@@ -14,6 +14,7 @@
         "assistant_message",
         "reasoning_delta",
         "assistant_delta",
+        "stream_snapshot",
         "run_phase_changed",
         "skill_activated",
         "context_compaction_started",
@@ -36,9 +37,13 @@
     "sessionId": { "type": "string", "minLength": 1 },
     "runId": { "type": "string", "minLength": 1 },
     "sequence": { "type": "integer", "minimum": 1 },
-    "executionAttempt": { "type": "integer", "minimum": 1 },
-    "streamSequence": { "type": "integer", "minimum": 1 },
+    "executionAttempt": { "type": "integer", "minimum": 0 },
+    "modelTurnSequence": { "type": "integer", "minimum": 0 },
+    "streamSequence": { "type": "integer", "minimum": 0 },
     "delta": { "type": "string" },
+    "reasoning": { "type": "string" },
+    "answer": { "type": "string" },
+    "checkpointedAt": { "type": ["string", "null"], "format": "date-time" },
     "occurredAt": { "type": "string", "format": "date-time" },
     "phase": {
       "type": "string",
@@ -53,7 +58,14 @@
         "FAILED"
       ]
     },
-    "payload": { "type": "object" }
+    "payload": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "enum": ["reasoning", "prompt", "input", "output", "toolInput", "toolOutput"]
+        }
+      }
+    }
   },
   "oneOf": [
     {
@@ -88,13 +100,28 @@
     {
       "title": "思考增量",
       "properties": { "type": { "const": "reasoning_delta" } },
-      "required": ["runId", "executionAttempt", "streamSequence", "delta", "occurredAt"]
+      "required": ["runId", "executionAttempt", "modelTurnSequence", "streamSequence", "delta", "occurredAt"]
     },
     {
       "title": "回答增量",
       "x-v2-extension": true,
       "properties": { "type": { "const": "assistant_delta" } },
-      "required": ["runId", "executionAttempt", "streamSequence", "delta", "occurredAt"]
+      "required": ["runId", "executionAttempt", "modelTurnSequence", "streamSequence", "delta", "occurredAt"]
+    },
+    {
+      "title": "流检查点快照",
+      "x-v2-extension": true,
+      "properties": { "type": { "const": "stream_snapshot" } },
+      "required": [
+        "runId",
+        "executionAttempt",
+        "modelTurnSequence",
+        "streamSequence",
+        "reasoning",
+        "answer",
+        "checkpointedAt",
+        "occurredAt"
+      ]
     },
     {
       "title": "运行阶段变化",
@@ -106,6 +133,19 @@
   "x-frontend-projection": {
     "reasoning_delta": "reasoning.delta",
     "assistant_delta": "assistant.draft",
+    "stream_snapshot": "run.stream",
     "run_phase_changed": "run.timeline"
-  }
+  },
+  "x-sse-event-id": {
+    "encoding": "e={sessionEventSequence};a={executionAttempt};t={modelTurnSequence};s={streamSequence}",
+    "pattern": "^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$"
+  },
+  "x-sensitive-payload-fields-forbidden": [
+    "reasoning",
+    "prompt",
+    "input",
+    "output",
+    "toolInput",
+    "toolOutput"
+  ]
 }

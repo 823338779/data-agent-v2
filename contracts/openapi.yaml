@@ -165,6 +165,13 @@ paths:
       security: [{ sessionCookie: [] }]
       parameters:
         - { $ref: '#/components/parameters/SessionId' }
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: Stable composite cursor restoring both persisted events and stream position.
+          schema:
+            type: string
+            pattern: '^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$'
       responses:
         '200':
           description: Replay followed by live session events
@@ -965,14 +972,15 @@ components:
             - { type: 'null' }
     RunStream:
       type: object
-      required: [executionAttempt, modelTurnSequence, phase, sequence, thinking, answer]
+      required: [executionAttempt, modelTurnSequence, phase, streamSequence, reasoning, answer, checkpointedAt]
       properties:
         executionAttempt: { type: integer, minimum: 0 }
         modelTurnSequence: { type: integer, minimum: 0 }
         phase: { type: string }
-        sequence: { type: integer, format: int64, minimum: 0 }
-        thinking: { type: string }
+        streamSequence: { type: integer, format: int64, minimum: 0 }
+        reasoning: { type: string }
         answer: { type: string }
+        checkpointedAt: { type: [string, 'null'], format: date-time }
     RunEvent:
       type: object
       required: [id, sequence, type, occurredAt, runId, input, output]
