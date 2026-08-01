@@ -23,8 +23,7 @@ public class NotificationOutboxService
         return baseMapper.selectDue(notificationType, now, limit);
     }
 
-    public boolean markPublished(
-            String notificationId, long expectedVersion, Instant publishedAt) {
+    public boolean markPublished(String notificationId, long expectedVersion, Instant publishedAt) {
         return baseMapper.markPublished(notificationId, expectedVersion, publishedAt) == 1;
     }
 
@@ -35,11 +34,7 @@ public class NotificationOutboxService
             String lastError,
             Instant failedAt) {
         return baseMapper.markFailed(
-                        notificationId,
-                        expectedVersion,
-                        nextAttemptAt,
-                        lastError,
-                        failedAt)
+                        notificationId, expectedVersion, nextAttemptAt, lastError, failedAt)
                 == 1;
     }
 }

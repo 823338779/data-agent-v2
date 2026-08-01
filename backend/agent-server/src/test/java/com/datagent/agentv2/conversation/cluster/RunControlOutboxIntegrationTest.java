@@ -95,7 +95,8 @@ class RunControlOutboxIntegrationTest {
         assertThat(publisher.publishDueNow()).isEqualTo(1);
         org.awaitility.Awaitility.await()
                 .atMost(Duration.ofSeconds(3))
-                .untilAsserted(() -> assertThat(runStatus(delivered.runId())).isEqualTo("cancelled"));
+                .untilAsserted(
+                        () -> assertThat(runStatus(delivered.runId())).isEqualTo("cancelled"));
         assertThat(publishedAt(delivered.runId())).isNotNull();
         assertThat(unrelatedPublishedAt()).isNull();
         RunControlEnvelope deliveredEnvelope = envelope(delivered.runId());
@@ -120,8 +121,7 @@ class RunControlOutboxIntegrationTest {
         assertThat(publishedAt(fallback.runId())).isNull();
         assertThat(attemptCount(fallback.runId())).isEqualTo(1);
         RunExecutionPort.OwnedRun owned =
-                new RunExecutionPort.OwnedRun(
-                        TENANT_ID, fallback.runId(), identity.id(), 1);
+                new RunExecutionPort.OwnedRun(TENANT_ID, fallback.runId(), identity.id(), 1);
         assertThat(TenantContext.call(TENANT_ID, () -> leases.cancelIfRequested(owned))).isTrue();
         assertThat(runStatus(fallback.runId())).isEqualTo("cancelled");
     }

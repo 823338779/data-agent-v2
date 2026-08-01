@@ -7,10 +7,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.listener.ChannelTopic;
-import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
@@ -55,7 +55,9 @@ public final class RedisStreamDeltaBridge
     public boolean publish(StreamDeltaEnvelope envelope) {
         registry.publish(envelope);
         try {
-            redis.convertAndSend(channel(envelope.tenantId(), envelope.sessionId()), json.writeValueAsString(envelope));
+            redis.convertAndSend(
+                    channel(envelope.tenantId(), envelope.sessionId()),
+                    json.writeValueAsString(envelope));
             return true;
         } catch (RuntimeException failure) {
             return false;
@@ -105,7 +107,8 @@ public final class RedisStreamDeltaBridge
     private void receive(byte[] body) {
         try {
             StreamDeltaEnvelope envelope =
-                    json.readValue(new String(body, StandardCharsets.UTF_8), StreamDeltaEnvelope.class);
+                    json.readValue(
+                            new String(body, StandardCharsets.UTF_8), StreamDeltaEnvelope.class);
             registry.publish(envelope);
         } catch (Exception ignored) {
             // 非法或不兼容消息只丢弃，checkpoint reconciliation 负责最终收敛。

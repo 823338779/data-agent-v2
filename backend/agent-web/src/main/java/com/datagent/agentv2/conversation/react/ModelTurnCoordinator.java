@@ -7,12 +7,12 @@ import static com.datagent.agentv2.conversation.RunConstants.MESSAGE_ROLE_ASSIST
 import static com.datagent.agentv2.conversation.RunConstants.MESSAGE_VISIBILITY_INTERNAL;
 import static com.datagent.agentv2.conversation.RunConstants.MESSAGE_VISIBILITY_USER;
 
+import com.datagent.agentv2.conversation.cluster.RedisStreamDeltaBridge;
+import com.datagent.agentv2.conversation.cluster.StreamDeltaEnvelope;
 import com.datagent.agentv2.conversation.model.ModelDelta;
 import com.datagent.agentv2.conversation.runtime.RunExecutionPort;
 import com.datagent.agentv2.conversation.runtime.RunOwnershipLostException;
 import com.datagent.agentv2.conversation.stream.RunStreamCheckpointService;
-import com.datagent.agentv2.conversation.cluster.RedisStreamDeltaBridge;
-import com.datagent.agentv2.conversation.cluster.StreamDeltaEnvelope;
 import com.datagent.agentv2.persistence.entity.AgentMessageEntity;
 import com.datagent.agentv2.persistence.entity.AgentModelTurnEntity;
 import com.datagent.agentv2.persistence.entity.AgentRunEntity;

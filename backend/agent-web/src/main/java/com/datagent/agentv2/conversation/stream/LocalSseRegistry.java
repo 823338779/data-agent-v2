@@ -37,7 +37,7 @@ public final class LocalSseRegistry {
                     }
                     return values;
                 });
-        return new Registration(() -> remove(key, connection));
+        return new Registration(connection, () -> remove(key, connection));
     }
 
     /** owner 本地投递和 Redis 入站消息共用同一连接级排序规则。 */
@@ -83,10 +83,16 @@ public final class LocalSseRegistry {
     public static final class Registration implements AutoCloseable {
 
         private final Runnable closeAction;
+        private final Connection connection;
         private final AtomicBoolean closed = new AtomicBoolean();
 
-        private Registration(Runnable closeAction) {
+        private Registration(Connection connection, Runnable closeAction) {
+            this.connection = connection;
             this.closeAction = closeAction;
+        }
+
+        public void resume(String runId, long attempt, long turn, long sequence) {
+            connection.resume(runId, attempt, turn, sequence);
         }
 
         @Override
@@ -104,6 +110,10 @@ public final class LocalSseRegistry {
 
         private Connection(Subscriber subscriber) {
             this.subscriber = Objects.requireNonNull(subscriber, "subscriber");
+        }
+
+        private synchronized void resume(String runId, long attempt, long turn, long sequence) {
+            cursors.put(runId, new Cursor(attempt, turn, sequence));
         }
 
         private synchronized void deliver(StreamDeltaEnvelope envelope) {

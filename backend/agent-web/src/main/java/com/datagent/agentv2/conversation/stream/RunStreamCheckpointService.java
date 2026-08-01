@@ -4,8 +4,8 @@ import com.datagent.agentv2.conversation.model.ModelDelta;
 import com.datagent.agentv2.conversation.react.ReactLimitsProperties;
 import com.datagent.agentv2.conversation.runtime.RunExecutionPort;
 import com.datagent.agentv2.conversation.runtime.RunOwnershipLostException;
-import com.datagent.agentv2.persistence.entity.AgentRunStreamEntity;
 import com.datagent.agentv2.persistence.entity.AgentRunEntity;
+import com.datagent.agentv2.persistence.entity.AgentRunStreamEntity;
 import com.datagent.agentv2.persistence.service.AgentRunService;
 import com.datagent.agentv2.persistence.service.AgentRunStreamService;
 import java.time.Instant;
@@ -52,10 +52,7 @@ public final class RunStreamCheckpointService {
 
     /** 每个 delta 都获得序号；达到阈值时同步写入完整累计投影。 */
     public PublishedDelta append(
-            RunExecutionPort.OwnedRun run,
-            long modelTurnSequence,
-            ModelDelta delta,
-            Instant now) {
+            RunExecutionPort.OwnedRun run, long modelTurnSequence, ModelDelta delta, Instant now) {
         StreamAccumulator accumulator = accumulator(run, modelTurnSequence, now);
         synchronized (accumulator) {
             long sequence = accumulator.append(delta);
@@ -79,10 +76,7 @@ public final class RunStreamCheckpointService {
 
     /** phase、turn、终态和 lease release 边界强制收敛尚未落库的短增量。 */
     public void flush(
-            RunExecutionPort.OwnedRun run,
-            long modelTurnSequence,
-            Boundary boundary,
-            Instant now) {
+            RunExecutionPort.OwnedRun run, long modelTurnSequence, Boundary boundary, Instant now) {
         Objects.requireNonNull(boundary, "boundary");
         StreamAccumulator accumulator = accumulator(run, modelTurnSequence, now);
         synchronized (accumulator) {
@@ -115,8 +109,7 @@ public final class RunStreamCheckpointService {
                 ignored -> {
                     AgentRunStreamEntity stream = requireStream(run.runId());
                     if (!Objects.equals(stream.getExecutionAttempt(), run.executionAttempt())
-                            || !Objects.equals(
-                                    stream.getModelTurnSequence(), modelTurnSequence)) {
+                            || !Objects.equals(stream.getModelTurnSequence(), modelTurnSequence)) {
                         throw new RunOwnershipLostException(run.runId());
                     }
                     return from(stream, now);

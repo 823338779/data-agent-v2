@@ -128,7 +128,8 @@ class OllamaAgentModelGatewayTest {
             List<ModelInputMessage> messages,
             List<ModelToolDefinition> tools,
             Consumer<ModelDelta> deltaConsumer) {
-        return TenantContext.call(TENANT_ID, () -> gateway.complete(messages, tools, deltaConsumer));
+        return TenantContext.call(
+                TENANT_ID, () -> gateway.complete(messages, tools, deltaConsumer));
     }
 
     private void respond(HttpExchange exchange) throws IOException {

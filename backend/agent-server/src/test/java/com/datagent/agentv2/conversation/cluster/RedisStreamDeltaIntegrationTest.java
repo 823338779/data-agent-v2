@@ -38,11 +38,13 @@ class RedisStreamDeltaIntegrationTest {
 
     @Test
     void forwardsAcrossInstancesAndTurnsDuplicateOrGapIntoSafeDeliveryState() {
-        try (TestInstance browserInstance = instance(); TestInstance ownerInstance = instance()) {
+        try (TestInstance browserInstance = instance();
+                TestInstance ownerInstance = instance()) {
             CopyOnWriteArrayList<StreamDeltaEnvelope> delivered = new CopyOnWriteArrayList<>();
             CopyOnWriteArrayList<StreamDeltaEnvelope> gaps = new CopyOnWriteArrayList<>();
             LocalSseRegistry.Registration registration =
-                    browserInstance.registry()
+                    browserInstance
+                            .registry()
                             .register(
                                     TENANT_ID,
                                     SESSION_ID,
@@ -79,7 +81,8 @@ class RedisStreamDeltaIntegrationTest {
 
             // Redis 中断后仍先完成 owner 本地投递，并把远端 publish 明确降级为 false。
             CopyOnWriteArrayList<StreamDeltaEnvelope> ownerLocal = new CopyOnWriteArrayList<>();
-            ownerInstance.registry()
+            ownerInstance
+                    .registry()
                     .register(
                             TENANT_ID,
                             SESSION_ID,

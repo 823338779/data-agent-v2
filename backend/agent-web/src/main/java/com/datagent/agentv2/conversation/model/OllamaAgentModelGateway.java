@@ -104,7 +104,9 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
 
         private final Consumer<ModelDelta> deltaConsumer;
 
-        /** Tenant restored around callbacks that Reactor dispatches on provider event-loop threads. */
+        /**
+         * Tenant restored around callbacks that Reactor dispatches on provider event-loop threads.
+         */
         private final String tenantId;
 
         private final StringBuilder answer = new StringBuilder();

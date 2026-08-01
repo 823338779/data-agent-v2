@@ -2,11 +2,11 @@ package com.datagent.agentv2.conversation.cluster;
 
 import static com.datagent.agentv2.conversation.RunConstants.NOTIFICATION_RUN_CONTROL_REQUESTED;
 
+import com.datagent.agentv2.conversation.runtime.RunRuntimeProperties;
 import com.datagent.agentv2.persistence.entity.NotificationOutboxEntity;
 import com.datagent.agentv2.persistence.service.NotificationOutboxService;
 import com.datagent.agentv2.persistence.service.TenantService;
 import com.datagent.agentv2.platform.context.TenantContext;
-import com.datagent.agentv2.conversation.runtime.RunRuntimeProperties;
 import java.time.Duration;
 import java.time.Instant;
 import org.springframework.data.redis.core.StringRedisTemplate;

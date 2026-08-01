@@ -51,8 +51,10 @@ public class ConversationController {
     }
 
     @GetMapping(value = "/{sessionId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    SseEmitter events(@PathVariable String sessionId) {
-        return eventStreams.open(sessionId);
+    SseEmitter events(
+            @PathVariable String sessionId,
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId) {
+        return eventStreams.open(sessionId, lastEventId);
     }
 
     @PostMapping("/{sessionId}/messages")

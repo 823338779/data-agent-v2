@@ -21,8 +21,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 class ContractExamplesTest {
 
-    private static final String COMPOSITE_CURSOR_PATTERN =
-            "^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$";
+    private static final String COMPOSITE_CURSOR_PATTERN = "^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$";
     private static final String STREAM_SNAPSHOT = "stream_snapshot";
 
     private static final YAMLMapper YAML = new YAMLMapper();

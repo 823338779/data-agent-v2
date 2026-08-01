@@ -62,8 +62,7 @@ public final class RedisRunControlListener implements AutoCloseable {
 
     public boolean handle(RunControlEnvelope envelope) {
         String idempotencyKey = envelope.notificationId() + ":" + envelope.controlVersion();
-        if (!identity.id().equals(envelope.ownerInstanceId())
-                || !processed.add(idempotencyKey)) {
+        if (!identity.id().equals(envelope.ownerInstanceId()) || !processed.add(idempotencyKey)) {
             return false;
         }
         return TenantContext.call(envelope.tenantId(), () -> handleOwned(envelope));
@@ -99,7 +98,8 @@ public final class RedisRunControlListener implements AutoCloseable {
     private void receive(byte[] body) {
         try {
             RunControlEnvelope envelope =
-                    json.readValue(new String(body, StandardCharsets.UTF_8), RunControlEnvelope.class);
+                    json.readValue(
+                            new String(body, StandardCharsets.UTF_8), RunControlEnvelope.class);
             handle(envelope);
         } catch (Exception ignored) {
             // 非法消息不影响数据库轮询兜底。

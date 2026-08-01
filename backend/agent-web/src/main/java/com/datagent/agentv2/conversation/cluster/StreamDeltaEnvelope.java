@@ -38,12 +38,9 @@ public record StreamDeltaEnvelope(
         }
     }
 
-    public static StreamDeltaEnvelope from(
-            RunStreamCheckpointService.PublishedDelta published) {
+    public static StreamDeltaEnvelope from(RunStreamCheckpointService.PublishedDelta published) {
         String deltaType =
-                published.kind() == ModelDelta.Kind.REASONING
-                        ? DELTA_REASONING
-                        : DELTA_ASSISTANT;
+                published.kind() == ModelDelta.Kind.REASONING ? DELTA_REASONING : DELTA_ASSISTANT;
         return new StreamDeltaEnvelope(
                 TYPE_STREAM_DELTA,
                 published.tenantId(),

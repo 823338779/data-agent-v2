@@ -108,7 +108,9 @@ class RunStreamCheckpointIntegrationTest {
         RunStreamCheckpointService.PublishedDelta sized =
                 TenantContext.call(
                         TENANT_ID,
-                        () -> checkpoints.append(run, 1, ModelDelta.reasoning(remainder), STARTED_AT));
+                        () ->
+                                checkpoints.append(
+                                        run, 1, ModelDelta.reasoning(remainder), STARTED_AT));
         assertThat(sized.streamSequence()).isEqualTo(2);
         assertThat(sized.checkpointed()).isTrue();
         assertStream(run.runId(), 1, 1, 2, "a" + remainder, "");
@@ -182,9 +184,7 @@ class RunStreamCheckpointIntegrationTest {
         assertStream(run.runId(), 1, 2, 1, "", "new");
         TenantContext.run(
                 TENANT_ID,
-                () ->
-                        checkpoints.append(
-                                run, 2, ModelDelta.answer("!"), timedAt.plusMillis(4)));
+                () -> checkpoints.append(run, 2, ModelDelta.answer("!"), timedAt.plusMillis(4)));
         TenantContext.run(
                 TENANT_ID,
                 () ->
@@ -202,7 +202,8 @@ class RunStreamCheckpointIntegrationTest {
                                                 checkpoints.flush(
                                                         run,
                                                         1,
-                                                        RunStreamCheckpointService.Boundary.TERMINAL,
+                                                        RunStreamCheckpointService.Boundary
+                                                                .TERMINAL,
                                                         timedAt.plusMillis(6))))
                 .isInstanceOf(RunOwnershipLostException.class);
     }
