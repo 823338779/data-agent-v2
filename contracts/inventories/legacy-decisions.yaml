@@ -1,0 +1,9 @@
+decisions:
+  - id: assistant-delta
+    v1Status: compatibility-input-only
+    v2Status: phase-1-production-event
+    rationale: "已批准的 V2 界面需要回答 Token 流式输出。"
+  - id: query-scope-interaction
+    v1Status: incomplete-production-chain
+    v2Status: do-not-migrate-until-a-producing-path-is-proven
+    rationale: "只有枚举而缺少完整创建和解决链路，不构成有效生产行为。"

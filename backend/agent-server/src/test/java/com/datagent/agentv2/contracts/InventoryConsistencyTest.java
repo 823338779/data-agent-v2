@@ -43,6 +43,49 @@ class InventoryConsistencyTest {
                         });
     }
 
+    @Test
+    void toolsAndSkillsAreCompleteAndCrossReferenced() throws IOException {
+        JsonNode tools = YAML.readTree(ContractFiles.inventory("tools.yaml").toFile());
+        JsonNode skills = YAML.readTree(ContractFiles.inventory("skills.yaml").toFile());
+
+        assertThat(tools.path("tools")).hasSize(56);
+        assertThat(skills.path("skills")).hasSize(8);
+        assertThat(values(tools, "tools", "name")).doesNotHaveDuplicates();
+        assertThat(values(skills, "skills", "name")).doesNotHaveDuplicates();
+        assertThat(values(skills, "skills", "name"))
+                .containsAll(valuesFlattened(tools, "tools", "allowedSkills"));
+        tools.path("tools")
+                .forEach(
+                        tool -> {
+                            assertThat(tool.path("name").asText()).isNotBlank();
+                            assertThat(tool.path("description").asText()).isNotBlank();
+                            assertThat(tool.path("inputSchema").isObject()).isTrue();
+                            assertThat(tool.path("risk").asText()).isNotBlank();
+                            assertThat(tool.path("idempotent").isBoolean()).isTrue();
+                            assertThat(tool.path("requiredScopes").isArray()).isTrue();
+                            assertThat(tool.path("allowedSkills").isArray()).isTrue();
+                            assertThat(tool.path("interactionMode").asText()).isNotBlank();
+                            assertThat(tool.path("resultCodes").isArray()).isTrue();
+                            assertThat(tool.path("phase").isIntegralNumber()).isTrue();
+                        });
+        skills.path("skills")
+                .forEach(
+                        skill -> assertThat(skill.path("sha256").asText()).matches("[0-9a-f]{64}"));
+    }
+
+    @Test
+    void legacyDecisionsResolveStreamingAndQueryScopeAmbiguity() throws IOException {
+        JsonNode decisions =
+                YAML.readTree(ContractFiles.inventory("legacy-decisions.yaml").toFile());
+
+        assertThat(values(decisions, "decisions", "id"))
+                .containsExactlyInAnyOrder("assistant-delta", "query-scope-interaction");
+        assertThat(decisions.toString())
+                .contains(
+                        "phase-1-production-event",
+                        "do-not-migrate-until-a-producing-path-is-proven");
+    }
+
     private static List<String> values(JsonNode root, String array, String field) {
         return StreamSupport.stream(root.path(array).spliterator(), false)
                 .map(node -> node.path(field).asText())
