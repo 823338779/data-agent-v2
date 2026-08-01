@@ -21,28 +21,32 @@ class Phase1MigrationTest {
     private static final List<String> TABLES =
             List.of(
                     "agent_message",
+                    "agent_model_turn",
                     "agent_run",
                     "agent_run_attempt",
                     "agent_run_event",
                     "agent_run_stream",
                     "agent_session",
+                    "agent_tool_execution",
                     "notification_outbox",
                     "tenant",
                     "tenant_membership",
                     "user_account");
     private static final List<String> AUDITED_TABLES = TABLES;
     private static final Map<String, String> BUSINESS_ID_COLUMNS =
-            Map.of(
-                    "agent_message", "message_id",
-                    "agent_run", "run_id",
-                    "agent_run_attempt", "attempt_id",
-                    "agent_run_event", "event_id",
-                    "agent_run_stream", "stream_id",
-                    "agent_session", "session_id",
-                    "notification_outbox", "notification_id",
-                    "tenant", "tenant_id",
-                    "tenant_membership", "membership_id",
-                    "user_account", "user_id");
+            Map.ofEntries(
+                    Map.entry("agent_message", "message_id"),
+                    Map.entry("agent_model_turn", "model_turn_id"),
+                    Map.entry("agent_run", "run_id"),
+                    Map.entry("agent_run_attempt", "attempt_id"),
+                    Map.entry("agent_run_event", "event_id"),
+                    Map.entry("agent_run_stream", "stream_id"),
+                    Map.entry("agent_session", "session_id"),
+                    Map.entry("agent_tool_execution", "tool_execution_id"),
+                    Map.entry("notification_outbox", "notification_id"),
+                    Map.entry("tenant", "tenant_id"),
+                    Map.entry("tenant_membership", "membership_id"),
+                    Map.entry("user_account", "user_id"));
 
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
@@ -60,7 +64,7 @@ class Phase1MigrationTest {
                                 POSTGRES.getPassword())
                         .locations("classpath:db/migration")
                         .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(5);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(6);
     }
 
     @AfterAll

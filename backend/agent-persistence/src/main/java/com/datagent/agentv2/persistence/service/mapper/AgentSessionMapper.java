@@ -23,4 +23,15 @@ public interface AgentSessionMapper extends BaseMapper<AgentSessionEntity> {
                and is_deleted = false
             """)
     int incrementEventSequence(@Param("sessionId") String sessionId);
+
+    @Update(
+            """
+            update agent_session
+               set message_sequence = message_sequence + 1,
+                   version = version + 1,
+                   updated_at = current_timestamp
+             where session_id = #{sessionId}
+               and is_deleted = false
+            """)
+    int incrementMessageSequence(@Param("sessionId") String sessionId);
 }

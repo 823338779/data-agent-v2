@@ -219,4 +219,46 @@ public interface AgentRunMapper extends BaseMapper<AgentRunEntity> {
             @Param("executionAttempt") long executionAttempt,
             @Param("activeExecutionMs") long activeExecutionMs,
             @Param("now") Instant now);
+
+    @Update(
+            """
+            update agent_run
+               set status = 'done', phase = 'COMPLETED', completed_at = #{now},
+                   active_execution_ms = active_execution_ms + greatest(0,
+                       (extract(epoch from (#{now} - active_segment_started_at)) * 1000)::bigint),
+                   owner_instance_id = null, active_segment_started_at = null,
+                   heartbeat_at = null, lease_expires_at = null, hard_deadline_at = null,
+                   updated_at = #{now}, version = version + 1
+             where run_id = #{runId} and status = 'running'
+               and owner_instance_id = #{ownerInstanceId}
+               and execution_attempt = #{executionAttempt}
+               and is_deleted = false
+            """)
+    int completeOwned(
+            @Param("runId") String runId,
+            @Param("ownerInstanceId") String ownerInstanceId,
+            @Param("executionAttempt") long executionAttempt,
+            @Param("now") Instant now);
+
+    @Update(
+            """
+            update agent_run
+               set status = 'failed', phase = 'FAILED', failure_code = 'RECOVERY_EXHAUSTED',
+                   failed_at = #{now}, active_execution_ms = #{activeExecutionMs},
+                   owner_instance_id = null, active_segment_started_at = null,
+                   heartbeat_at = null, lease_expires_at = null, hard_deadline_at = null,
+                   updated_at = #{now}, version = version + 1
+             where run_id = #{runId} and status = 'running'
+               and owner_instance_id = #{ownerInstanceId}
+               and execution_attempt = #{executionAttempt}
+               and version = #{version} and lease_expires_at <= #{now}
+               and is_deleted = false
+            """)
+    int failExpiredRecovery(
+            @Param("runId") String runId,
+            @Param("version") long version,
+            @Param("ownerInstanceId") String ownerInstanceId,
+            @Param("executionAttempt") long executionAttempt,
+            @Param("activeExecutionMs") long activeExecutionMs,
+            @Param("now") Instant now);
 }

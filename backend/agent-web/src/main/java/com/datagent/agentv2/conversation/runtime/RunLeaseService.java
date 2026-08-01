@@ -1,6 +1,7 @@
 package com.datagent.agentv2.conversation.runtime;
 
 import static com.datagent.agentv2.conversation.RunConstants.FAILURE_LEASE_EXPIRED;
+import static com.datagent.agentv2.conversation.RunConstants.FAILURE_RECOVERY_EXHAUSTED;
 import static com.datagent.agentv2.conversation.RunConstants.FAILURE_RUN_DEADLINE_EXCEEDED;
 import static com.datagent.agentv2.conversation.RunConstants.RESUME_LEASE_TAKEOVER;
 import static com.datagent.agentv2.conversation.RunConstants.STATUS_CANCELLED;
@@ -21,6 +22,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public final class RunLeaseService {
+
+    private static final int MAX_INFRASTRUCTURE_RECOVERY_ATTEMPTS = 3;
 
     private final AgentRunService runs;
     private final AgentRunAttemptService attempts;
@@ -94,6 +97,18 @@ public final class RunLeaseService {
         }
         long accumulated = accumulatedAt(run, now);
         long budget = run.getExecutionBudgetMs();
+        if (run.getRecoveryAttemptCount() >= MAX_INFRASTRUCTURE_RECOVERY_ATTEMPTS) {
+            if (runs.failExpiredRecovery(run, accumulated, now)) {
+                attempts.finish(
+                        run.getRunId(),
+                        run.getExecutionAttempt(),
+                        STATUS_FAILED,
+                        now,
+                        FAILURE_RECOVERY_EXHAUSTED);
+                return RecoveryResult.terminal();
+            }
+            return RecoveryResult.none();
+        }
         if (accumulated >= budget) {
             if (runs.failExpiredBudget(run, accumulated, now)) {
                 attempts.finish(

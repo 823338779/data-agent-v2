@@ -20,8 +20,10 @@ public final class RunConstants {
     public static final String PHASE_COMPLETED = "COMPLETED";
     public static final String EVENT_RUN_QUEUED = "run_queued";
     public static final String EVENT_RUN_STARTED = "run_started";
+    public static final String EVENT_RUN_DONE = "run_done";
     public static final String FAILURE_RUN_DEADLINE_EXCEEDED = "RUN_DEADLINE_EXCEEDED";
     public static final String FAILURE_LEASE_EXPIRED = "LEASE_EXPIRED";
+    public static final String FAILURE_RECOVERY_EXHAUSTED = "RECOVERY_EXHAUSTED";
     public static final String RESUME_LEASE_TAKEOVER = "LEASE_TAKEOVER";
     public static final String REQUEST_MESSAGE_SUBMISSION = "message_submission";
     public static final String REQUEST_RUN_RETRY = "run_retry";
@@ -37,6 +39,9 @@ public final class RunConstants {
     public static final String REQUEST_ID_UNKNOWN = "request_unknown";
     public static final String EMPTY_TEXT = "";
     public static final String MESSAGE_ROLE_USER = "user";
+    public static final String MESSAGE_ROLE_ASSISTANT = "assistant";
+    public static final String MESSAGE_VISIBILITY_USER = "user";
+    public static final String MESSAGE_VISIBILITY_INTERNAL = "internal";
     public static final String SESSION_TYPE_INTERACTIVE = "INTERACTIVE";
     public static final String HASH_ALGORITHM_SHA_256 = "SHA-256";
     public static final String PAYLOAD_NOTIFICATION_ID = "notificationId";

@@ -95,12 +95,7 @@ public class ConversationApplicationService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_AGENT_RUN_NOT_FOUND);
         }
         List<ConversationView.MessageView> messageViews =
-                messages
-                        .lambdaQuery()
-                        .eq(AgentMessageEntity::getSessionId, sessionId)
-                        .orderByAsc(AgentMessageEntity::getSequence)
-                        .list()
-                        .stream()
+                messages.findUserVisibleBySessionId(sessionId).stream()
                         .map(this::messageView)
                         .toList();
         return runView(run, messageViews);
@@ -116,12 +111,7 @@ public class ConversationApplicationService {
 
     private ConversationView snapshot(AgentSessionEntity session) {
         List<ConversationView.MessageView> messageViews =
-                messages
-                        .lambdaQuery()
-                        .eq(AgentMessageEntity::getSessionId, session.getSessionId())
-                        .orderByAsc(AgentMessageEntity::getSequence)
-                        .list()
-                        .stream()
+                messages.findUserVisibleBySessionId(session.getSessionId()).stream()
                         .map(this::messageView)
                         .toList();
         ConversationView.RunView runView =

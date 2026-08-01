@@ -137,4 +137,20 @@ public class AgentRunService extends ServiceImpl<AgentRunMapper, AgentRunEntity>
                         .count()
                 > 0;
     }
+
+    public boolean completeOwned(
+            String runId, String ownerInstanceId, long executionAttempt, Instant now) {
+        return baseMapper.completeOwned(runId, ownerInstanceId, executionAttempt, now) == 1;
+    }
+
+    public boolean failExpiredRecovery(AgentRunEntity run, long activeExecutionMs, Instant now) {
+        return baseMapper.failExpiredRecovery(
+                        run.getRunId(),
+                        run.getVersion(),
+                        run.getOwnerInstanceId(),
+                        run.getExecutionAttempt(),
+                        activeExecutionMs,
+                        now)
+                == 1;
+    }
 }
