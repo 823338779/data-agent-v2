@@ -4,4 +4,9 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.boot.test.context.TestComponent;
 
 @TestComponent
-public class AuditFixtureService extends ServiceImpl<AuditFixtureMapper, AuditFixtureEntity> {}
+public class AuditFixtureService extends ServiceImpl<AuditFixtureMapper, AuditFixtureEntity> {
+
+    AuditFixtureEntity findByUuid(String uuid) {
+        return lambdaQuery().eq(AuditFixtureEntity::getUuid, uuid).one();
+    }
+}

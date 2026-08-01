@@ -38,7 +38,7 @@ class ContractPathsTest {
     void openApiDeclaresEveryFrozenV1ControllerOperation() throws IOException {
         JsonNode paths = YAML.readTree(ContractFiles.openApi().toFile()).path("paths");
 
-        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(38);
+        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(40);
         assertThat(REQUIRED)
                 .allSatisfy(
                         (path, methods) -> {
@@ -93,15 +93,63 @@ class ContractPathsTest {
                 .extracting(JsonNode::asText)
                 .containsExactly(
                         "idle",
+                        "queued",
                         "running",
                         "waiting_for_user",
                         "waiting_confirmation",
                         "done",
                         "cancelled",
                         "failed");
+        assertThat(schemas.path("AgentRun").path("properties").fieldNames())
+                .toIterable()
+                .contains("cancellationRequestedAt");
         assertThat(schemas.path("RunStream").path("properties").fieldNames())
                 .toIterable()
                 .contains("executionAttempt", "phase", "sequence", "thinking", "answer");
+    }
+
+    @Test
+    void openApiFreezesIdempotentSubmissionAndRunControls() throws IOException {
+        JsonNode api = YAML.readTree(ContractFiles.openApi().toFile());
+        JsonNode paths = api.path("paths");
+
+        assertThat(
+                        paths.path("/api/v1/agent-sessions/{sessionId}/messages")
+                                .path("post")
+                                .path("parameters"))
+                .extracting(node -> node.path("$ref").asText())
+                .contains("#/components/parameters/IdempotencyKey");
+
+        JsonNode cancel =
+                paths.path("/api/v1/agent-sessions/{sessionId}/runs/{runId}:cancel").path("post");
+        assertThat(cancel.path("responses").path("202").isObject()).isTrue();
+        assertThat(
+                        cancel.path("responses")
+                                .path("202")
+                                .path("content")
+                                .path("application/json")
+                                .path("schema")
+                                .path("$ref")
+                                .asText())
+                .isEqualTo("#/components/schemas/AgentRun");
+
+        JsonNode retry =
+                paths.path("/api/v1/agent-sessions/{sessionId}/runs/{runId}:retry").path("post");
+        assertThat(retry.path("responses").path("202").isObject()).isTrue();
+        assertThat(retry.path("parameters"))
+                .extracting(node -> node.path("$ref").asText())
+                .contains("#/components/parameters/IdempotencyKey");
+
+        assertThat(
+                        api.path("components")
+                                .path("responses")
+                                .path("IdempotencyKeyReused")
+                                .path("content")
+                                .path("application/problem+json")
+                                .path("example")
+                                .path("code")
+                                .asText())
+                .isEqualTo("IDEMPOTENCY_KEY_REUSED");
     }
 
     private static Map<String, Set<String>> requiredOperations() {
@@ -113,6 +161,8 @@ class ContractPathsTest {
         required.put("/api/v1/agent-sessions/{sessionId}", Set.of("get"));
         required.put("/api/v1/agent-sessions/{sessionId}/metric-identity", Set.of("put"));
         required.put("/api/v1/agent-sessions/{sessionId}/messages", Set.of("post"));
+        required.put("/api/v1/agent-sessions/{sessionId}/runs/{runId}:cancel", Set.of("post"));
+        required.put("/api/v1/agent-sessions/{sessionId}/runs/{runId}:retry", Set.of("post"));
         required.put("/api/v1/agent-sessions/{sessionId}/events", Set.of("get"));
         required.put(
                 "/api/v1/agent-sessions/{sessionId}/confirmations/{confirmationId}",

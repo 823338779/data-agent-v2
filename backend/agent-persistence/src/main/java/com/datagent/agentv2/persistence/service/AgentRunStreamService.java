@@ -6,5 +6,9 @@ import com.datagent.agentv2.persistence.service.mapper.AgentRunStreamMapper;
 import org.springframework.stereotype.Service;
 
 @Service
-public class AgentRunStreamService
-        extends ServiceImpl<AgentRunStreamMapper, AgentRunStreamEntity> {}
+public class AgentRunStreamService extends ServiceImpl<AgentRunStreamMapper, AgentRunStreamEntity> {
+
+    public AgentRunStreamEntity findByRunId(String runId) {
+        return lambdaQuery().eq(AgentRunStreamEntity::getRunId, runId).one();
+    }
+}

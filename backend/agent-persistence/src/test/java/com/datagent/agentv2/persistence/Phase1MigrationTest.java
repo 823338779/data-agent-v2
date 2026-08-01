@@ -21,6 +21,7 @@ class Phase1MigrationTest {
             List.of(
                     "agent_message",
                     "agent_run",
+                    "agent_run_attempt",
                     "agent_run_event",
                     "agent_run_stream",
                     "agent_session",
@@ -28,8 +29,7 @@ class Phase1MigrationTest {
                     "tenant",
                     "tenant_membership",
                     "user_account");
-    private static final List<String> AUDITED_TABLES =
-            TABLES.stream().filter(table -> !table.equals("notification_outbox")).toList();
+    private static final List<String> AUDITED_TABLES = TABLES;
 
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
@@ -47,7 +47,7 @@ class Phase1MigrationTest {
                                 POSTGRES.getPassword())
                         .locations("classpath:db/migration")
                         .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(2);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(4);
     }
 
     @AfterAll
@@ -77,22 +77,38 @@ class Phase1MigrationTest {
     }
 
     @Test
+    void everyBusinessTableUsesIdentityPrimaryKeyAndUniqueBusinessUuid() throws SQLException {
+        for (String table : TABLES) {
+            assertThat(primaryKey(table))
+                    .as("primary key for %s", table)
+                    .isEqualTo("primary key (id)");
+            assertThat(identityFlag(table, "id")).as("identity id for %s", table).isEqualTo("YES");
+            assertThat(nullableFlag(table, "uuid"))
+                    .as("non-null uuid for %s", table)
+                    .isEqualTo("NO");
+            assertThat(uniqueConstraints(table))
+                    .as("unique uuid for %s", table)
+                    .contains("unique (uuid)");
+        }
+    }
+
+    @Test
     void tenantReferencesUseCompositeKeys() throws SQLException {
         assertForeignKey(
                 "tenant_membership",
-                "foreign key (tenant_id, user_id) references user_account(tenant_id, id)");
+                "foreign key (tenant_id, user_id) references user_account(tenant_id, uuid)");
         assertForeignKey(
                 "agent_message",
-                "foreign key (tenant_id, session_id) references agent_session(tenant_id, id)");
+                "foreign key (tenant_id, session_id) references agent_session(tenant_id, uuid)");
         assertForeignKey(
                 "agent_run",
-                "foreign key (tenant_id, session_id) references agent_session(tenant_id, id)");
+                "foreign key (tenant_id, session_id) references agent_session(tenant_id, uuid)");
         assertForeignKey(
                 "agent_run_event",
-                "foreign key (tenant_id, run_id) references agent_run(tenant_id, id)");
+                "foreign key (tenant_id, run_id) references agent_run(tenant_id, uuid)");
         assertForeignKey(
                 "agent_run_stream",
-                "foreign key (tenant_id, run_id) references agent_run(tenant_id, id)");
+                "foreign key (tenant_id, run_id) references agent_run(tenant_id, uuid)");
     }
 
     @Test
@@ -113,7 +129,7 @@ class Phase1MigrationTest {
                 .anySatisfy(
                         definition ->
                                 assertThat(definition).contains("tenant_id", "run_id", "sequence"));
-        assertThat(primaryKey("agent_run_stream")).contains("(run_id)");
+        assertThat(primaryKey("agent_run_stream")).isEqualTo("primary key (id)");
         assertThat(uniqueConstraints("agent_run_stream"))
                 .anySatisfy(definition -> assertThat(definition).contains("tenant_id", "run_id"));
     }
@@ -160,6 +176,26 @@ class Phase1MigrationTest {
 
     private static String primaryKey(String table) throws SQLException {
         return constraints(table, "p").getFirst();
+    }
+
+    private static String identityFlag(String table, String column) throws SQLException {
+        return columnMetadata(table, column, "is_identity");
+    }
+
+    private static String nullableFlag(String table, String column) throws SQLException {
+        return columnMetadata(table, column, "is_nullable");
+    }
+
+    private static String columnMetadata(String table, String column, String metadataColumn)
+            throws SQLException {
+        return query(
+                        "select "
+                                + metadataColumn
+                                + " from information_schema.columns "
+                                + "where table_schema = 'public' and table_name = ? and column_name = ?",
+                        table,
+                        column)
+                .getFirst();
     }
 
     private static List<String> constraints(String table, String type) throws SQLException {

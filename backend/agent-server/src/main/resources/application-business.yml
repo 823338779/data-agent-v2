@@ -1,4 +1,12 @@
 data-agent:
+  runtime:
+    max-running-runs-per-instance: ${DATA_AGENT_MAX_RUNNING_RUNS_PER_INSTANCE:256}
+    queue-scan-interval: ${DATA_AGENT_QUEUE_SCAN_INTERVAL:1s}
+    control-poll-interval: ${DATA_AGENT_CONTROL_POLL_INTERVAL:1s}
+    run-execution-budget: ${DATA_AGENT_RUN_EXECUTION_BUDGET:10m}
+    lease-duration: ${DATA_AGENT_RUN_LEASE_DURATION:60s}
+    heartbeat-interval: ${DATA_AGENT_RUN_HEARTBEAT_INTERVAL:15s}
+    scheduling-enabled: ${DATA_AGENT_RUNTIME_SCHEDULING_ENABLED:true}
   auth:
     session:
       secure-cookie: ${DATA_AGENT_SESSION_SECURE_COOKIE:false}

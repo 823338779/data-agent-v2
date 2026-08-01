@@ -1,5 +1,24 @@
 package com.datagent.agentv2.conversation.application;
 
+import static com.datagent.agentv2.conversation.RunConstants.DEFAULT_CONVERSATION_TITLE;
+import static com.datagent.agentv2.conversation.RunConstants.EMPTY_TEXT;
+import static com.datagent.agentv2.conversation.RunConstants.ERROR_AGENT_RUN_NOT_FOUND;
+import static com.datagent.agentv2.conversation.RunConstants.ERROR_AGENT_SESSION_NOT_FOUND;
+import static com.datagent.agentv2.conversation.RunConstants.EVENT_DETAIL_RUN_QUEUED;
+import static com.datagent.agentv2.conversation.RunConstants.EVENT_DETAIL_RUN_STARTED;
+import static com.datagent.agentv2.conversation.RunConstants.EVENT_RUN_QUEUED;
+import static com.datagent.agentv2.conversation.RunConstants.EVENT_TITLE_RUN_QUEUED;
+import static com.datagent.agentv2.conversation.RunConstants.EVENT_TITLE_RUN_STARTED;
+import static com.datagent.agentv2.conversation.RunConstants.ID_PREFIX_SESSION;
+import static com.datagent.agentv2.conversation.RunConstants.PHASE_ANSWERING;
+import static com.datagent.agentv2.conversation.RunConstants.PHASE_COMPLETED;
+import static com.datagent.agentv2.conversation.RunConstants.PHASE_CONNECTING_MODEL;
+import static com.datagent.agentv2.conversation.RunConstants.PHASE_PERSISTING;
+import static com.datagent.agentv2.conversation.RunConstants.PHASE_PREPARING_CONTEXT;
+import static com.datagent.agentv2.conversation.RunConstants.PHASE_RECEIVED;
+import static com.datagent.agentv2.conversation.RunConstants.PHASE_THINKING;
+import static com.datagent.agentv2.conversation.RunConstants.SESSION_TYPE_INTERACTIVE;
+
 import com.datagent.agentv2.persistence.entity.AgentMessageEntity;
 import com.datagent.agentv2.persistence.entity.AgentRunEntity;
 import com.datagent.agentv2.persistence.entity.AgentRunEventEntity;
@@ -12,12 +31,8 @@ import com.datagent.agentv2.persistence.service.AgentRunStreamService;
 import com.datagent.agentv2.persistence.service.AgentSessionService;
 import com.datagent.agentv2.platform.context.OperatorContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -33,17 +48,16 @@ public class ConversationApplicationService {
     private final AgentRunService runs;
     private final AgentRunEventService events;
     private final AgentRunStreamService streams;
+    private final RunSubmissionService submissions;
     private final IdGenerator ids;
-    private final Clock clock;
-    private final String instanceId = "instance_" + UUID.randomUUID();
 
     @Transactional
     public ConversationView create(String title, String tag) {
         AgentSessionEntity session = new AgentSessionEntity();
-        session.setId(ids.next("session"));
+        session.setUuid(ids.next(ID_PREFIX_SESSION));
         session.setTitle(normalizedTitle(title));
         session.setTag(tag);
-        session.setSessionType("INTERACTIVE");
+        session.setSessionType(SESSION_TYPE_INTERACTIVE);
         session.setCreatedBy(OperatorContext.requiredOperator().userId());
         session.setMessageSequence(0L);
         session.setEventSequence(0L);
@@ -70,87 +84,32 @@ public class ConversationApplicationService {
         return conversation.run() == null ? List.of() : conversation.run().events();
     }
 
-    @Transactional
-    public ConversationView submitMessage(String sessionId, String content, String requestId) {
-        AgentSessionEntity session = requiredSession(sessionId);
-        if (hasActiveRun(sessionId)) {
-            throw new ActiveRunConflictException();
-        }
-        long messageSequence = session.getMessageSequence() + 1;
-        long eventSequence = session.getEventSequence() + 1;
-        session.setMessageSequence(messageSequence);
-        session.setEventSequence(eventSequence);
-        if (!sessions.updateById(session)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "session changed concurrently");
-        }
-
-        AgentMessageEntity message = new AgentMessageEntity();
-        message.setId(ids.next("message"));
-        message.setSessionId(sessionId);
-        message.setRole("user");
-        message.setContent(content);
-        message.setSequence(messageSequence);
-        message.setAuthorUserId(OperatorContext.requiredOperator().userId());
-        message.setVersion(0L);
-        messages.save(message);
-
-        Instant now = clock.instant();
-        AgentRunEntity run = new AgentRunEntity();
-        run.setId(ids.next("run"));
-        run.setSessionId(sessionId);
-        run.setTriggeringMessageId(message.getId());
-        run.setStatus("running");
-        run.setPhase("RECEIVED");
-        run.setExecutionAttempt(1L);
-        run.setOwnerInstanceId(instanceId);
-        run.setRequestId(requestId);
-        run.setStartedAt(now);
-        run.setHardDeadlineAt(now.plus(Duration.ofMinutes(5)));
-        run.setVersion(0L);
-        runs.save(run);
-
-        message.setRunId(run.getId());
-        messages.updateById(message);
-
-        AgentRunEventEntity event = new AgentRunEventEntity();
-        event.setId(ids.next("event"));
-        event.setSessionId(sessionId);
-        event.setRunId(run.getId());
-        event.setSequence(eventSequence);
-        event.setType("run_started");
-        event.setOccurredAt(now);
-        event.setVersion(0L);
-        events.save(event);
-
-        AgentRunStreamEntity stream = new AgentRunStreamEntity();
-        stream.setRunId(run.getId());
-        stream.setExecutionAttempt(1L);
-        stream.setPhase("RECEIVED");
-        stream.setStreamSequence(0L);
-        stream.setThinking("");
-        stream.setAnswer("");
-        stream.setVersion(0L);
-        streams.save(stream);
-
-        return snapshot(session);
+    public ConversationView submitMessage(
+            String sessionId, String content, String idempotencyKey, String requestId) {
+        return snapshot(submissions.submit(sessionId, content, idempotencyKey, requestId));
     }
 
-    private boolean hasActiveRun(String sessionId) {
-        return runs.lambdaQuery()
-                        .eq(AgentRunEntity::getSessionId, sessionId)
-                        .in(
-                                AgentRunEntity::getStatus,
-                                "running",
-                                "waiting_for_user",
-                                "waiting_confirmation")
-                        .count()
-                > 0;
+    @Transactional(readOnly = true)
+    public ConversationView.RunView controlView(String sessionId, AgentRunEntity run) {
+        if (!sessionId.equals(run.getSessionId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_AGENT_RUN_NOT_FOUND);
+        }
+        List<ConversationView.MessageView> messageViews =
+                messages
+                        .lambdaQuery()
+                        .eq(AgentMessageEntity::getSessionId, sessionId)
+                        .orderByAsc(AgentMessageEntity::getSequence)
+                        .list()
+                        .stream()
+                        .map(this::messageView)
+                        .toList();
+        return runView(run, messageViews);
     }
 
     private AgentSessionEntity requiredSession(String sessionId) {
-        AgentSessionEntity session = sessions.getById(sessionId);
+        AgentSessionEntity session = sessions.findByUuid(sessionId);
         if (session == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "agent session not found");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_AGENT_SESSION_NOT_FOUND);
         }
         return session;
     }
@@ -159,7 +118,7 @@ public class ConversationApplicationService {
         List<ConversationView.MessageView> messageViews =
                 messages
                         .lambdaQuery()
-                        .eq(AgentMessageEntity::getSessionId, session.getId())
+                        .eq(AgentMessageEntity::getSessionId, session.getUuid())
                         .orderByAsc(AgentMessageEntity::getSequence)
                         .list()
                         .stream()
@@ -168,7 +127,7 @@ public class ConversationApplicationService {
         ConversationView.RunView runView =
                 runs
                         .lambdaQuery()
-                        .eq(AgentRunEntity::getSessionId, session.getId())
+                        .eq(AgentRunEntity::getSessionId, session.getUuid())
                         .orderByDesc(AgentRunEntity::getCreatedAt)
                         .list()
                         .stream()
@@ -176,9 +135,9 @@ public class ConversationApplicationService {
                         .map(run -> runView(run, messageViews))
                         .orElse(null);
         return new ConversationView(
-                session.getId(),
+                session.getUuid(),
                 session.getTitle(),
-                session.getTag() == null ? "" : session.getTag(),
+                session.getTag() == null ? EMPTY_TEXT : session.getTag(),
                 session.getSessionType(),
                 session.getCreatedAt(),
                 session.getUpdatedAt(),
@@ -193,7 +152,7 @@ public class ConversationApplicationService {
         String author =
                 message.getAuthorUserId() == null ? message.getRole() : message.getAuthorUserId();
         return new ConversationView.MessageView(
-                message.getId(),
+                message.getUuid(),
                 message.getRole(),
                 author,
                 message.getContent(),
@@ -206,24 +165,25 @@ public class ConversationApplicationService {
         List<ConversationView.RunEventView> eventViews =
                 events
                         .lambdaQuery()
-                        .eq(AgentRunEventEntity::getRunId, run.getId())
+                        .eq(AgentRunEventEntity::getRunId, run.getUuid())
                         .orderByAsc(AgentRunEventEntity::getSequence)
                         .list()
                         .stream()
                         .map(event -> eventView(event, run))
                         .toList();
-        AgentRunStreamEntity stream = streams.getById(run.getId());
+        AgentRunStreamEntity stream = streams.findByRunId(run.getUuid());
         String objective =
                 messageViews.stream()
                         .filter(message -> message.id().equals(run.getTriggeringMessageId()))
                         .map(ConversationView.MessageView::content)
                         .findFirst()
-                        .orElse("");
+                        .orElse(EMPTY_TEXT);
         return new ConversationView.RunView(
-                run.getId(),
+                run.getUuid(),
                 run.getStatus(),
                 progress(run.getPhase()),
                 objective,
+                run.getCancellationRequestedAt(),
                 eventViews,
                 null,
                 null,
@@ -231,22 +191,27 @@ public class ConversationApplicationService {
                         ? null
                         : new ConversationView.RunStreamView(
                                 stream.getExecutionAttempt(),
+                                stream.getModelTurnSequence(),
                                 stream.getPhase(),
                                 stream.getStreamSequence(),
-                                stream.getThinking(),
+                                stream.getReasoning(),
                                 stream.getAnswer()));
     }
 
     private ConversationView.RunEventView eventView(AgentRunEventEntity event, AgentRunEntity run) {
         return new ConversationView.RunEventView(
-                event.getId(),
+                event.getUuid(),
                 event.getSequence(),
                 event.getType(),
                 event.getOccurredAt(),
                 event.getRunId(),
                 run.getTriggeringMessageId(),
-                "Run started",
-                "Preparing the model request",
+                event.getType().equals(EVENT_RUN_QUEUED)
+                        ? EVENT_TITLE_RUN_QUEUED
+                        : EVENT_TITLE_RUN_STARTED,
+                event.getType().equals(EVENT_RUN_QUEUED)
+                        ? EVENT_DETAIL_RUN_QUEUED
+                        : EVENT_DETAIL_RUN_STARTED,
                 null,
                 Map.of(),
                 Map.of(),
@@ -257,18 +222,18 @@ public class ConversationApplicationService {
 
     private static int progress(String phase) {
         return switch (phase) {
-            case "RECEIVED" -> 5;
-            case "PREPARING_CONTEXT" -> 15;
-            case "CONNECTING_MODEL" -> 25;
-            case "THINKING" -> 45;
-            case "ANSWERING" -> 70;
-            case "PERSISTING" -> 90;
-            case "COMPLETED" -> 100;
+            case PHASE_RECEIVED -> 5;
+            case PHASE_PREPARING_CONTEXT -> 15;
+            case PHASE_CONNECTING_MODEL -> 25;
+            case PHASE_THINKING -> 45;
+            case PHASE_ANSWERING -> 70;
+            case PHASE_PERSISTING -> 90;
+            case PHASE_COMPLETED -> 100;
             default -> 0;
         };
     }
 
     private static String normalizedTitle(String title) {
-        return title == null || title.isBlank() ? "New conversation" : title.trim();
+        return title == null || title.isBlank() ? DEFAULT_CONVERSATION_TITLE : title.trim();
     }
 }

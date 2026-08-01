@@ -67,7 +67,7 @@ class RunLeaseRecoveryIntegrationTest {
         assertThat(inTenant(() -> leases.heartbeat(oldOwner))).isTrue();
         Instant renewed =
                 jdbc.queryForObject(
-                        "select lease_expires_at from agent_run where uuid='run_lease'",
+                                "select lease_expires_at from agent_run where uuid='run_lease'",
                                 Timestamp.class)
                         .toInstant();
         assertThat(renewed).isAfter(Instant.now().plusSeconds(50));
@@ -108,7 +108,8 @@ class RunLeaseRecoveryIntegrationTest {
         assertThat(inTenant(recovery::recoverNext)).isFalse();
         assertThat(
                         jdbc.queryForObject(
-                                "select status from agent_run where uuid='run_budget'", String.class))
+                                "select status from agent_run where uuid='run_budget'",
+                                String.class))
                 .isEqualTo("failed");
         assertThat(
                         jdbc.queryForObject(
@@ -182,7 +183,8 @@ class RunLeaseRecoveryIntegrationTest {
                 activeExecutionMs);
         jdbc.update("update agent_message set run_id=? where uuid=?", runId, messageId);
         jdbc.update(
-                "insert into agent_run_attempt(tenant_id, run_id, execution_attempt, owner_instance_id, status, started_at) values ('tenant_local', ?, ?, ?, 'running', ?)",
+                "insert into agent_run_attempt(uuid, tenant_id, run_id, execution_attempt, owner_instance_id, status, started_at) values (?, 'tenant_local', ?, ?, ?, 'running', ?)",
+                "attempt_" + suffix,
                 runId,
                 attempt,
                 ownerInstanceId,

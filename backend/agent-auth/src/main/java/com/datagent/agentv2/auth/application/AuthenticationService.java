@@ -74,7 +74,7 @@ public class AuthenticationService {
         byte[] random = new byte[32];
         secureRandom.nextBytes(random);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(random);
-        loginSessions.save(token, account.getTenantId(), account.getId(), lifetime());
+        loginSessions.save(token, account.getTenantId(), account.getUuid(), lifetime());
         return new LoginToken(token, lifetime());
     }
 
@@ -86,7 +86,7 @@ public class AuthenticationService {
     }
 
     private Optional<AuthenticatedUser> activeUser(String userId) {
-        UserAccountEntity account = userAccounts.getById(userId);
+        UserAccountEntity account = userAccounts.findByUuid(userId);
         if (account == null || !"active".equals(account.getStatus())) {
             return Optional.empty();
         }
@@ -101,7 +101,7 @@ public class AuthenticationService {
                         .collect(Collectors.toUnmodifiableSet());
         return Optional.of(
                 new AuthenticatedUser(
-                        account.getTenantId(), account.getId(), account.getUsername(), roles));
+                        account.getTenantId(), account.getUuid(), account.getUsername(), roles));
     }
 
     private static String externalRole(String role) {

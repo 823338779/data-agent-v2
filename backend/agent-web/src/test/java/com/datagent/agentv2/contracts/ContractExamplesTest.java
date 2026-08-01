@@ -59,6 +59,7 @@ class ContractExamplesTest {
                 "auth-login-failed.yaml",
                 "auth-session.yaml",
                 "session-create.yaml",
+                "session-queued.yaml",
                 "session-running.yaml",
                 "problem-validation.yaml"
             })
@@ -68,6 +69,24 @@ class ContractExamplesTest {
 
         assertThat(example.path("schema").asText()).isNotBlank();
         assertThat(example.path("value").isMissingNode()).isFalse();
+    }
+
+    @Test
+    void sessionExamplesFreezeQueuedAndCancellationFields() throws IOException {
+        JsonNode queued =
+                YAML.readTree(
+                        ContractFiles.root().resolve("examples/rest/session-queued.yaml").toFile());
+        JsonNode running =
+                YAML.readTree(
+                        ContractFiles.root()
+                                .resolve("examples/rest/session-running.yaml")
+                                .toFile());
+
+        assertThat(queued.path("value").path("run").path("status").asText()).isEqualTo("queued");
+        assertThat(queued.path("value").path("run").path("stream").path("executionAttempt").asInt())
+                .isZero();
+        assertThat(queued.path("value").path("run").has("cancellationRequestedAt")).isTrue();
+        assertThat(running.path("value").path("run").has("cancellationRequestedAt")).isTrue();
     }
 
     @Test

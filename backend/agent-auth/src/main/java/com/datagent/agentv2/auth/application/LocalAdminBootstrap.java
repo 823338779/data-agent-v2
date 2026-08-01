@@ -43,11 +43,11 @@ public class LocalAdminBootstrap implements ApplicationRunner {
     }
 
     private void ensureTenant(AuthProperties.Bootstrap bootstrap) {
-        if (tenants.getById(bootstrap.getTenantId()) != null) {
+        if (tenants.findByUuid(bootstrap.getTenantId()) != null) {
             return;
         }
         TenantEntity tenant = new TenantEntity();
-        tenant.setId(bootstrap.getTenantId());
+        tenant.setUuid(bootstrap.getTenantId());
         tenant.setName(bootstrap.getTenantName());
         tenant.setStatus("active");
         tenant.setVersion(0L);
@@ -55,11 +55,11 @@ public class LocalAdminBootstrap implements ApplicationRunner {
     }
 
     private void ensureUser(AuthProperties.Bootstrap bootstrap) {
-        if (userAccounts.getById(bootstrap.getUserId()) != null) {
+        if (userAccounts.findByUuid(bootstrap.getUserId()) != null) {
             return;
         }
         UserAccountEntity account = new UserAccountEntity();
-        account.setId(bootstrap.getUserId());
+        account.setUuid(bootstrap.getUserId());
         account.setUsername(bootstrap.getUsername());
         account.setPasswordHash(passwordEncoder.encode(bootstrap.getPassword()));
         account.setStatus("active");
@@ -68,11 +68,11 @@ public class LocalAdminBootstrap implements ApplicationRunner {
     }
 
     private void ensureMembership(AuthProperties.Bootstrap bootstrap) {
-        if (memberships.getById(bootstrap.getMembershipId()) != null) {
+        if (memberships.findByUuid(bootstrap.getMembershipId()) != null) {
             return;
         }
         TenantMembershipEntity membership = new TenantMembershipEntity();
-        membership.setId(bootstrap.getMembershipId());
+        membership.setUuid(bootstrap.getMembershipId());
         membership.setUserId(bootstrap.getUserId());
         membership.setRole("ADMIN");
         membership.setVersion(0L);

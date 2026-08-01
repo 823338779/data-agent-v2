@@ -30,6 +30,7 @@ public record ConversationView(
             String status,
             int progress,
             String objective,
+            Instant cancellationRequestedAt,
             List<RunEventView> events,
             Object pendingConfirmation,
             Object pendingInteraction,
@@ -52,5 +53,10 @@ public record ConversationView(
             String status) {}
 
     public record RunStreamView(
-            long executionAttempt, String phase, long sequence, String thinking, String answer) {}
+            long executionAttempt,
+            long modelTurnSequence,
+            String phase,
+            long sequence,
+            String thinking,
+            String answer) {}
 }

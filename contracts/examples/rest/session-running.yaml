@@ -21,6 +21,7 @@ value:
     status: running
     progress: 35
     objective: Summarize local revenue by month
+    cancellationRequestedAt: null
     events:
       - id: event_demo
         sequence: 1
@@ -40,6 +41,7 @@ value:
     pendingInteraction: null
     stream:
       executionAttempt: 1
+      modelTurnSequence: 1
       phase: planning
       sequence: 1
       thinking: Preparing the metric query

@@ -11,10 +11,12 @@ import static com.datagent.agentv2.conversation.RunConstants.ID_PREFIX_EVENT;
 import static com.datagent.agentv2.conversation.RunConstants.ID_PREFIX_MESSAGE;
 import static com.datagent.agentv2.conversation.RunConstants.ID_PREFIX_RUN;
 import static com.datagent.agentv2.conversation.RunConstants.ID_PREFIX_STREAM;
+import static com.datagent.agentv2.conversation.RunConstants.LINE_SEPARATOR;
 import static com.datagent.agentv2.conversation.RunConstants.MESSAGE_ROLE_USER;
 import static com.datagent.agentv2.conversation.RunConstants.PHASE_QUEUED;
 import static com.datagent.agentv2.conversation.RunConstants.REQUEST_MESSAGE_SUBMISSION;
 import static com.datagent.agentv2.conversation.RunConstants.STATUS_QUEUED;
+import static com.datagent.agentv2.conversation.RunConstants.WINDOWS_LINE_SEPARATOR;
 
 import com.datagent.agentv2.persistence.entity.AgentMessageEntity;
 import com.datagent.agentv2.persistence.entity.AgentRunEntity;
@@ -210,7 +212,8 @@ public final class RunSubmissionService {
     static String payloadHash(String content) {
         String normalized =
                 Normalizer.normalize(
-                        content.replace("\r\n", "\n").replace('\r', '\n'), Normalizer.Form.NFC);
+                        content.replace(WINDOWS_LINE_SEPARATOR, LINE_SEPARATOR).replace('\r', '\n'),
+                        Normalizer.Form.NFC);
         try {
             byte[] digest =
                     MessageDigest.getInstance(HASH_ALGORITHM_SHA_256)

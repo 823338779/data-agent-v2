@@ -7,4 +7,9 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class TenantMembershipService
-        extends ServiceImpl<TenantMembershipMapper, TenantMembershipEntity> {}
+        extends ServiceImpl<TenantMembershipMapper, TenantMembershipEntity> {
+
+    public TenantMembershipEntity findByUuid(String membershipId) {
+        return lambdaQuery().eq(TenantMembershipEntity::getUuid, membershipId).one();
+    }
+}

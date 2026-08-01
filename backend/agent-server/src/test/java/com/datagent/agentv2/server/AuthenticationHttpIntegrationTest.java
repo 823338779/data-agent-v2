@@ -92,9 +92,9 @@ class AuthenticationHttpIntegrationTest {
     void bootstrapCreatesLocalAdminWithBCryptPassword() {
         var account =
                 jdbc.queryForMap(
-                        "select id, tenant_id, username, password_hash from user_account where username = 'admin'");
+                        "select uuid, tenant_id, username, password_hash from user_account where username = 'admin'");
 
-        assertThat(account.get("id")).isEqualTo("user_admin");
+        assertThat(account.get("uuid")).isEqualTo("user_admin");
         assertThat(account.get("tenant_id")).isEqualTo("tenant_local");
         assertThat(account.get("username")).isEqualTo("admin");
         assertThat(account.get("password_hash")).asString().startsWith("$2");
@@ -187,6 +187,7 @@ class AuthenticationHttpIntegrationTest {
         mvc.perform(
                         post("/api/v1/agent-sessions/{sessionId}/messages", sessionId)
                                 .cookie(sessionCookie(token))
+                                .header("Idempotency-Key", "first-message")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"content\":\"First message\"}"))
                 .andExpect(status().isAccepted());
@@ -194,6 +195,7 @@ class AuthenticationHttpIntegrationTest {
         mvc.perform(
                         post("/api/v1/agent-sessions/{sessionId}/messages", sessionId)
                                 .cookie(sessionCookie(token))
+                                .header("Idempotency-Key", "second-message")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"content\":\"Second message\"}"))
                 .andExpect(status().isConflict())

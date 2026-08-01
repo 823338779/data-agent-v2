@@ -56,16 +56,16 @@ class MybatisPlusAuditIntegrationTest {
     @BeforeEach
     void seedTenantsAndUsers() {
         jdbc.execute("truncate table tenant cascade");
-        jdbc.update("insert into tenant (id, name) values ('tenant_local', 'Local')");
-        jdbc.update("insert into tenant (id, name) values ('tenant_two', 'Two')");
+        jdbc.update("insert into tenant (uuid, name) values ('tenant_local', 'Local')");
+        jdbc.update("insert into tenant (uuid, name) values ('tenant_two', 'Two')");
         jdbc.update(
                 """
-                insert into user_account (id, tenant_id, username, password_hash)
+                insert into user_account (uuid, tenant_id, username, password_hash)
                 values ('user_admin', 'tenant_local', 'admin', 'not-used')
                 """);
         jdbc.update(
                 """
-                insert into user_account (id, tenant_id, username, password_hash)
+                insert into user_account (uuid, tenant_id, username, password_hash)
                 values ('user_two', 'tenant_two', 'two', 'not-used')
                 """);
     }
@@ -94,7 +94,7 @@ class MybatisPlusAuditIntegrationTest {
 
         TenantContext.run(
                 "tenant_two",
-                () -> assertThat(auditFixtureService.getById("session_one")).isNull());
+                () -> assertThat(auditFixtureService.findByUuid("session_one")).isNull());
     }
 
     @Test
@@ -110,7 +110,7 @@ class MybatisPlusAuditIntegrationTest {
 
         var deleted =
                 jdbc.queryForMap(
-                        "select is_deleted, deleted_at from agent_session where id = ?",
+                        "select is_deleted, deleted_at from agent_session where uuid = ?",
                         "session_deleted");
         assertThat(deleted.get("is_deleted")).isEqualTo(true);
         assertThat(deleted.get("deleted_at")).isNotNull();
@@ -127,6 +127,7 @@ class MybatisPlusAuditIntegrationTest {
 
                     AuditFixtureEntity stale =
                             AuditFixtureEntity.session("session_version", "Stale");
+                    stale.setId(current.getId());
                     stale.setVersion(current.getVersion());
                     current.setTitle("Current");
 

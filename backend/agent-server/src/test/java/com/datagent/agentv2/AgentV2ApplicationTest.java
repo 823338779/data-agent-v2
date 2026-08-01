@@ -114,15 +114,16 @@ class AgentV2ApplicationTest {
         mvc.perform(
                         post("/api/v1/agent-sessions/{id}/messages", id)
                                 .cookie(session)
+                                .header("Idempotency-Key", "message-test")
                                 .header("X-Request-Id", "request_message_test")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"content\":\"hello ollama\"}"))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.messages[0].role").value("user"))
                 .andExpect(jsonPath("$.messages[0].content").value("hello ollama"))
-                .andExpect(jsonPath("$.run.status").value("running"))
-                .andExpect(jsonPath("$.run.events[0].type").value("run_started"))
-                .andExpect(jsonPath("$.run.stream.phase").value("RECEIVED"));
+                .andExpect(jsonPath("$.run.status").value("queued"))
+                .andExpect(jsonPath("$.run.events[0].type").value("run_queued"))
+                .andExpect(jsonPath("$.run.stream.phase").value("QUEUED"));
     }
 
     @Test
@@ -142,6 +143,7 @@ class AgentV2ApplicationTest {
         mvc.perform(
                         post("/api/v1/agent-sessions/{id}/messages", id)
                                 .cookie(session)
+                                .header("Idempotency-Key", "stream-test")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"content\":\"stream this\"}"))
                 .andExpect(status().isAccepted());
@@ -153,7 +155,7 @@ class AgentV2ApplicationTest {
                 .andExpect(status().isOk())
                 .andExpect(header().string(HttpHeaders.CONTENT_TYPE, "text/event-stream"))
                 .andExpect(
-                        content().string(org.hamcrest.Matchers.containsString("event:run_started")))
+                        content().string(org.hamcrest.Matchers.containsString("event:run_queued")))
                 .andExpect(request().asyncStarted());
     }
 

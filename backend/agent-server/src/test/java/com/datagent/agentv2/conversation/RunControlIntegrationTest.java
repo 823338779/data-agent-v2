@@ -215,7 +215,8 @@ class RunControlIntegrationTest {
                 Timestamp.from(now.plusSeconds(600)),
                 runId);
         jdbc.update(
-                "insert into agent_run_attempt(tenant_id, run_id, execution_attempt, owner_instance_id, status, started_at) values ('tenant_local', ?, 1, 'instance_control', 'running', ?)",
+                "insert into agent_run_attempt(uuid, tenant_id, run_id, execution_attempt, owner_instance_id, status, started_at) values (?, 'tenant_local', ?, 1, 'instance_control', 'running', ?)",
+                "attempt_control_" + runId,
                 runId,
                 Timestamp.from(now));
     }
