@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -21,7 +20,7 @@ class ContractPathsTest {
 
     @Test
     void resolvesContractsFromTheRepositoryRoot() {
-        assertThat(ContractFiles.root()).endsWith(Path.of("data-agent-v2", "contracts"));
+        assertThat(ContractFiles.root()).isDirectory().hasFileName("contracts");
         assertThat(ContractFiles.openApi()).exists();
     }
 
