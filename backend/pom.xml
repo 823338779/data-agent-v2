@@ -17,6 +17,10 @@
   <packaging>pom</packaging>
 
   <modules>
+    <module>agent-contracts</module>
+    <module>agent-platform</module>
+    <module>agent-auth</module>
+    <module>agent-conversation</module>
     <module>agent-server</module>
     <module>agent-evals</module>
   </modules>
