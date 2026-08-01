@@ -3,23 +3,19 @@ package com.datagent.agentv2.persistence;
 import com.baomidou.mybatisplus.core.handlers.MetaObjectHandler;
 import com.datagent.agentv2.persistence.entity.TenantAuditedEntity;
 import com.datagent.agentv2.platform.context.TenantContext;
-import java.time.Clock;
-import java.time.Instant;
-import lombok.RequiredArgsConstructor;
+import java.time.LocalDateTime;
 import org.apache.ibatis.reflection.MetaObject;
 import org.springframework.stereotype.Component;
 
 @Component
-@RequiredArgsConstructor
 public final class AuditMetaObjectHandler implements MetaObjectHandler {
-
-    private final Clock clock;
 
     @Override
     public void insertFill(MetaObject metaObject) {
-        Instant now = clock.instant();
-        strictInsertFill(metaObject, "createdAt", Instant.class, now);
-        strictInsertFill(metaObject, "updatedAt", Instant.class, now);
+        // 使用服务端本地时间统一填充新增记录的审计时间。
+        LocalDateTime now = LocalDateTime.now();
+        strictInsertFill(metaObject, "createdAt", LocalDateTime.class, now);
+        strictInsertFill(metaObject, "updatedAt", LocalDateTime.class, now);
         // 仅租户隔离实体从上下文填充 tenantId；TenantEntity.tenantId 是自身业务标识。
         if (tenantAuditedEntity(metaObject) != null) {
             strictInsertFill(
@@ -29,8 +25,9 @@ public final class AuditMetaObjectHandler implements MetaObjectHandler {
 
     @Override
     public void updateFill(MetaObject metaObject) {
-        Instant now = clock.instant();
-        strictUpdateFill(metaObject, "updatedAt", Instant.class, now);
+        // 使用服务端本地时间刷新记录的最后更新时间。
+        LocalDateTime now = LocalDateTime.now();
+        strictUpdateFill(metaObject, "updatedAt", LocalDateTime.class, now);
     }
 
     private static TenantAuditedEntity tenantAuditedEntity(MetaObject metaObject) {

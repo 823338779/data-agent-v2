@@ -1,5 +1,6 @@
 package com.datagent.agentv2;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -19,6 +20,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
@@ -157,6 +159,41 @@ class AgentV2ApplicationTest {
                 .andExpect(
                         content().string(org.hamcrest.Matchers.containsString("event:run_queued")))
                 .andExpect(request().asyncStarted());
+    }
+
+    @Test
+    void eventStreamPublishesEventsPersistedAfterConnectionOpens() throws Exception {
+        Cookie session = login();
+        String created =
+                mvc.perform(
+                                post("/api/v1/agent-sessions")
+                                        .cookie(session)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"title\":\"SSE live\"}"))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        String id = created.replaceAll(".*\\\"id\\\":\\\"([^\\\"]+)\\\".*", "$1");
+
+        // Open the stream before the event exists to verify live delivery rather than replay.
+        MvcResult stream =
+                mvc.perform(
+                                get("/api/v1/agent-sessions/{id}/events", id)
+                                        .cookie(session)
+                                        .accept(MediaType.TEXT_EVENT_STREAM))
+                        .andExpect(status().isOk())
+                        .andExpect(request().asyncStarted())
+                        .andReturn();
+        mvc.perform(
+                        post("/api/v1/agent-sessions/{id}/messages", id)
+                                .cookie(session)
+                                .header("Idempotency-Key", "stream-live-test")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"content\":\"stream live\"}"))
+                .andExpect(status().isAccepted());
+
+        assertThat(stream.getResponse().getContentAsString()).contains("event:run_queued");
     }
 
     private Cookie login() throws Exception {

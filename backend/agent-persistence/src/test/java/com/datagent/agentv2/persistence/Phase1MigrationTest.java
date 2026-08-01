@@ -64,7 +64,7 @@ class Phase1MigrationTest {
                                 POSTGRES.getPassword())
                         .locations("classpath:db/migration")
                         .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(6);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(7);
     }
 
     @AfterAll
@@ -83,6 +83,15 @@ class Phase1MigrationTest {
             assertThat(columns(table))
                     .as("audit columns for %s", table)
                     .contains("created_at", "updated_at", "deleted_at", "is_deleted");
+            assertThat(columnMetadata(table, "created_at", "data_type"))
+                    .as("local created_at type for %s", table)
+                    .isEqualTo("timestamp without time zone");
+            assertThat(columnMetadata(table, "updated_at", "data_type"))
+                    .as("local updated_at type for %s", table)
+                    .isEqualTo("timestamp without time zone");
+            assertThat(columnMetadata(table, "deleted_at", "data_type"))
+                    .as("local deleted_at type for %s", table)
+                    .isEqualTo("timestamp without time zone");
             assertThat(checkConstraints(table))
                     .as("soft-delete constraint for %s", table)
                     .anySatisfy(

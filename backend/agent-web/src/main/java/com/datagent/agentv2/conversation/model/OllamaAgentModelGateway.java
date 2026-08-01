@@ -2,6 +2,7 @@ package com.datagent.agentv2.conversation.model;
 
 import com.datagent.agentv2.conversation.react.ModelInputMessage;
 import com.datagent.agentv2.conversation.react.ToolCallDocument;
+import com.datagent.agentv2.platform.context.TenantContext;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,6 +38,7 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
             List<ModelInputMessage> messages,
             List<ModelToolDefinition> tools,
             Consumer<ModelDelta> deltaConsumer) {
+        String tenantId = TenantContext.requiredTenantId();
         OllamaApi.ChatRequest request =
                 OllamaApi.ChatRequest.builder(properties.getModel())
                         .messages(messages.stream().map(this::toProviderMessage).toList())
@@ -45,7 +47,7 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
                         .enableThinking()
                         .stream(true)
                         .build();
-        StreamAccumulator accumulator = new StreamAccumulator(deltaConsumer);
+        StreamAccumulator accumulator = new StreamAccumulator(deltaConsumer, tenantId);
 
         // 只有 provider 明确返回 done 后才允许把累积内容提升为完整 ModelTurnResult。
         try {
@@ -101,12 +103,17 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
     private final class StreamAccumulator {
 
         private final Consumer<ModelDelta> deltaConsumer;
+
+        /** Tenant restored around callbacks that Reactor dispatches on provider event-loop threads. */
+        private final String tenantId;
+
         private final StringBuilder answer = new StringBuilder();
         private final Map<String, ToolCallDocument> toolCalls = new LinkedHashMap<>();
         private boolean done;
 
-        private StreamAccumulator(Consumer<ModelDelta> deltaConsumer) {
+        private StreamAccumulator(Consumer<ModelDelta> deltaConsumer, String tenantId) {
             this.deltaConsumer = deltaConsumer;
+            this.tenantId = tenantId;
         }
 
         private void accept(OllamaApi.ChatResponse response) {
@@ -121,15 +128,20 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
 
         private void appendReasoning(String content) {
             if (content != null && !content.isEmpty()) {
-                deltaConsumer.accept(ModelDelta.reasoning(content));
+                emit(ModelDelta.reasoning(content));
             }
         }
 
         private void appendAnswer(String content) {
             if (content != null && !content.isEmpty()) {
                 answer.append(content);
-                deltaConsumer.accept(ModelDelta.answer(content));
+                emit(ModelDelta.answer(content));
             }
+        }
+
+        private void emit(ModelDelta delta) {
+            // Persistence checkpoints require the request tenant even on Reactor callback threads.
+            TenantContext.run(tenantId, () -> deltaConsumer.accept(delta));
         }
 
         private void appendToolCalls(List<OllamaApi.Message.ToolCall> calls) {

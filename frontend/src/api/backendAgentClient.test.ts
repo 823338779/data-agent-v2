@@ -38,6 +38,11 @@ describe('backend agent client', () => {
       '/api/v1/agent-sessions/session_1/messages',
       expect.objectContaining({
         method: 'POST',
+        headers: expect.objectContaining({
+          'Idempotency-Key': expect.stringMatching(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+          ),
+        }),
         body: JSON.stringify({ content: '分析订单延迟' }),
       }),
     );
@@ -75,5 +80,22 @@ describe('backend agent client', () => {
     expect(mapped.messages[0]).toMatchObject({ role: 'user', content: '分析订单延迟' });
     expect(mapped.run).toMatchObject({ status: 'running', progress: 5 });
     expect(mapped).not.toHaveProperty('metricIdentity');
+  });
+
+  it('refreshes for every persisted run lifecycle event', () => {
+    const addEventListener = vi.fn();
+    const close = vi.fn();
+    const source = { addEventListener, close, onerror: null } as unknown as EventSource;
+    const client = createFetchAgentBackendClient({ eventSourceFactory: () => source });
+
+    const unsubscribe = client.subscribeEvents('session_1', vi.fn(), vi.fn());
+
+    expect(addEventListener.mock.calls.map(([eventName]) => eventName)).toEqual([
+      'run_queued',
+      'run_started',
+      'run_done',
+    ]);
+    unsubscribe();
+    expect(close).toHaveBeenCalledOnce();
   });
 });

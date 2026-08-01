@@ -1,6 +1,7 @@
 package com.datagent.agentv2.conversation.application;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -9,8 +10,8 @@ public record ConversationView(
         String title,
         String tag,
         String sessionType,
-        Instant createdAt,
-        Instant updatedAt,
+        LocalDateTime createdAt,
+        LocalDateTime updatedAt,
         long version,
         long metricIdentityBindingVersion,
         Object metricIdentity,
@@ -22,7 +23,7 @@ public record ConversationView(
             String role,
             String author,
             String content,
-            Instant createdAt,
+            LocalDateTime createdAt,
             List<Object> citations) {}
 
     public record RunView(

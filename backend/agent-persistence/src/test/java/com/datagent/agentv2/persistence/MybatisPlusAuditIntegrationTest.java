@@ -3,9 +3,7 @@ package com.datagent.agentv2.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.datagent.agentv2.platform.context.TenantContext;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneOffset;
+import java.time.LocalDateTime;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,9 +11,7 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -25,12 +21,10 @@ import org.testcontainers.utility.DockerImageName;
 @SpringBootTest(classes = AgentPersistenceTestApplication.class)
 @Import({
     AuditFixtureService.class,
-    MybatisPlusAuditIntegrationTest.FixedClockConfiguration.class,
     MybatisPlusAuditIntegrationTest.FixtureMapperConfiguration.class
 })
 class MybatisPlusAuditIntegrationTest {
 
-    private static final Instant INSTANT = Instant.parse("2026-08-01T08:00:00Z");
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
 
@@ -75,14 +69,23 @@ class MybatisPlusAuditIntegrationTest {
         TenantContext.run(
                 "tenant_local",
                 () -> {
+                    LocalDateTime beforeSave = LocalDateTime.now();
                     AuditFixtureEntity entity =
                             AuditFixtureEntity.session("session_audit", "Audit");
                     assertThat(auditFixtureService.save(entity)).isTrue();
-                    assertThat(entity.getCreatedAt()).isEqualTo(INSTANT);
-                    assertThat(entity.getUpdatedAt()).isEqualTo(INSTANT);
+                    LocalDateTime afterSave = LocalDateTime.now();
+                    assertThat(entity.getCreatedAt()).isBetween(beforeSave, afterSave);
+                    assertThat(entity.getUpdatedAt()).isBetween(beforeSave, afterSave);
                     assertThat(entity.isDeleted()).isFalse();
                     assertThat(entity.getDeletedAt()).isNull();
                     assertThat(entity.getTenantId()).isEqualTo("tenant_local");
+
+                    // 重新读取以验证 PostgreSQL 本地时间字段可以映射为 LocalDateTime。
+                    AuditFixtureEntity reloaded =
+                            auditFixtureService.findBySessionId("session_audit");
+                    assertThat(reloaded).isNotNull();
+                    assertThat(reloaded.getCreatedAt()).isBetween(beforeSave, afterSave);
+                    assertThat(reloaded.getUpdatedAt()).isBetween(beforeSave, afterSave);
                 });
     }
 
@@ -135,16 +138,6 @@ class MybatisPlusAuditIntegrationTest {
                     assertThat(current.getVersion()).isEqualTo(1);
                     assertThat(auditFixtureService.updateById(stale)).isFalse();
                 });
-    }
-
-    @TestConfiguration(proxyBeanMethods = false)
-    static class FixedClockConfiguration {
-
-        @Bean
-        @Primary
-        Clock fixedClock() {
-            return Clock.fixed(INSTANT, ZoneOffset.UTC);
-        }
     }
 
     @TestConfiguration(proxyBeanMethods = false)

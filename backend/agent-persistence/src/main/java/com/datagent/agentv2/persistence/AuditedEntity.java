@@ -5,7 +5,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
-import java.time.Instant;
+import java.time.LocalDateTime;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -18,15 +18,15 @@ public abstract class AuditedEntity {
     private Long id;
 
     @TableField(value = "created_at", fill = FieldFill.INSERT)
-    private Instant createdAt;
+    private LocalDateTime createdAt;
 
     @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
-    private Instant updatedAt;
+    private LocalDateTime updatedAt;
 
     @TableField("deleted_at")
-    private Instant deletedAt;
+    private LocalDateTime deletedAt;
 
-    @TableLogic(value = "false", delval = "true, deleted_at = CURRENT_TIMESTAMP")
+    @TableLogic(value = "false", delval = "true, deleted_at = LOCALTIMESTAMP")
     @TableField(value = "is_deleted", fill = FieldFill.INSERT)
     private boolean deleted;
 }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.datagent.agentv2.conversation.react.ModelInputMessage;
+import com.datagent.agentv2.platform.context.TenantContext;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -14,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +25,7 @@ import tools.jackson.databind.json.JsonMapper;
 class OllamaAgentModelGatewayTest {
 
     private static final String MODEL_NAME = "test-model";
+    private static final String TENANT_ID = "tenant-model-test";
     private static final String FINAL_STREAM =
             """
             {"model":"test-model","created_at":"2026-08-01T00:00:00Z","message":{"role":"assistant","thinking":"inspect","content":""},"done":false}
@@ -63,15 +66,20 @@ class OllamaAgentModelGatewayTest {
     @Test
     void streamsReasoningAndAnswerSeparatelyThenReturnsFinalAnswer() {
         List<ModelDelta> deltas = new ArrayList<>();
+        List<String> callbackTenants = new ArrayList<>();
 
         ModelTurnResult result =
-                gateway.complete(
+                complete(
                         List.of(ModelInputMessage.plain("user", "question")),
                         List.of(),
-                        deltas::add);
+                        delta -> {
+                            callbackTenants.add(TenantContext.requiredTenantId());
+                            deltas.add(delta);
+                        });
 
         assertThat(deltas)
                 .containsExactly(ModelDelta.reasoning("inspect"), ModelDelta.answer("answer"));
+        assertThat(callbackTenants).containsOnly(TENANT_ID);
         assertThat(result).isEqualTo(new ModelTurnResult.FinalAnswer("answer"));
         assertThat(request.get()).contains("\"model\":\"test-model\"", "\"num_predict\":512");
     }
@@ -81,7 +89,7 @@ class OllamaAgentModelGatewayTest {
         response.set(TOOL_STREAM);
 
         ModelTurnResult result =
-                gateway.complete(
+                complete(
                         List.of(ModelInputMessage.plain("user", "question")),
                         List.of(
                                 new ModelToolDefinition(
@@ -109,11 +117,18 @@ class OllamaAgentModelGatewayTest {
 
         assertThatThrownBy(
                         () ->
-                                gateway.complete(
+                                complete(
                                         List.of(ModelInputMessage.plain("user", "question")),
                                         List.of(),
                                         ignored -> {}))
                 .isInstanceOf(ModelStreamInterruptedException.class);
+    }
+
+    private ModelTurnResult complete(
+            List<ModelInputMessage> messages,
+            List<ModelToolDefinition> tools,
+            Consumer<ModelDelta> deltaConsumer) {
+        return TenantContext.call(TENANT_ID, () -> gateway.complete(messages, tools, deltaConsumer));
     }
 
     private void respond(HttpExchange exchange) throws IOException {

@@ -84,6 +84,25 @@ public class ConversationApplicationService {
         return conversation.run() == null ? List.of() : conversation.run().events();
     }
 
+    @Transactional(readOnly = true)
+    public void requireAccessibleSession(String sessionId) {
+        // Resolve through the tenant-filtered persistence service before registering an SSE client.
+        requiredSession(sessionId);
+    }
+
+    @Transactional(readOnly = true)
+    public ConversationView.RunEventView eventView(AgentRunEventEntity event) {
+        // Re-read the committed Run so live and replayed events expose the same public shape.
+        AgentRunEntity run =
+                runs.lambdaQuery()
+                        .eq(AgentRunEntity::getRunId, event.getRunId())
+                        .one();
+        if (run == null || !event.getSessionId().equals(run.getSessionId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_AGENT_RUN_NOT_FOUND);
+        }
+        return eventView(event, run);
+    }
+
     public ConversationView submitMessage(
             String sessionId, String content, String idempotencyKey, String requestId) {
         return snapshot(submissions.submit(sessionId, content, idempotencyKey, requestId));

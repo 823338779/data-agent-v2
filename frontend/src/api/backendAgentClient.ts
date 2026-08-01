@@ -1,5 +1,8 @@
 import { AgentSession, MessageRole } from '../domain/agentPrototype';
 
+const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
+const SESSION_EVENT_TYPES = ['run_queued', 'run_started', 'run_done'] as const;
+
 interface BackendMessage {
   id: string;
   role: string;
@@ -122,15 +125,19 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
       return request(`/${encodeURIComponent(sessionId)}`);
     },
     submitMessage(sessionId, content) {
+      // Each new user submission gets its own key so an accidental replay cannot create another run.
+      const idempotencyKey = crypto.randomUUID();
       return request(`/${encodeURIComponent(sessionId)}/messages`, {
         method: 'POST',
+        headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
         body: JSON.stringify({ content }),
       });
     },
     subscribeEvents(sessionId, onEvent, onError) {
       if (!eventSourceFactory) return () => undefined;
       const source = eventSourceFactory(`${baseUrl}/${encodeURIComponent(sessionId)}/events`);
-      source.addEventListener('run_started', onEvent);
+      // Every persisted lifecycle transition can change the visible session snapshot.
+      SESSION_EVENT_TYPES.forEach((eventType) => source.addEventListener(eventType, onEvent));
       source.onerror = onError;
       return () => source.close();
     },
