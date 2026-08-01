@@ -1,6 +1,12 @@
 spring:
   application:
     name: data-agent-v2
+  datasource:
+    url: ${DATA_AGENT_DB_URL:jdbc:postgresql://localhost:5432/data_agent_v2}
+    username: ${DATA_AGENT_DB_USERNAME:data_agent_v2}
+    password: ${DATA_AGENT_DB_PASSWORD:data_agent_v2}
+  flyway:
+    enabled: true
 
 management:
   endpoint:
