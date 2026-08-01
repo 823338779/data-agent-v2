@@ -1,12 +1,15 @@
 package com.datagent.agentv2.conversation.api;
 
 import com.datagent.agentv2.conversation.application.ConversationApplicationService;
+import com.datagent.agentv2.conversation.application.ConversationEventStreamService;
 import com.datagent.agentv2.conversation.application.ConversationView;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.net.URI;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,16 +18,15 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 @RequestMapping("/api/v1/agent-sessions")
+@RequiredArgsConstructor
 public class ConversationController {
 
     private final ConversationApplicationService conversations;
-
-    public ConversationController(ConversationApplicationService conversations) {
-        this.conversations = conversations;
-    }
+    private final ConversationEventStreamService eventStreams;
 
     @GetMapping
     List<ConversationView> list() {
@@ -41,6 +43,11 @@ public class ConversationController {
     @GetMapping("/{sessionId}")
     ConversationView get(@PathVariable String sessionId) {
         return conversations.get(sessionId);
+    }
+
+    @GetMapping(value = "/{sessionId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    SseEmitter events(@PathVariable String sessionId) {
+        return eventStreams.open(sessionId);
     }
 
     @PostMapping("/{sessionId}/messages")

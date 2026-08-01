@@ -98,14 +98,14 @@ class MybatisPlusAuditIntegrationTest {
     }
 
     @Test
-    void removeByIdFillsLogicalDeleteAuditFields() {
+    void removeByIdFillsLogicalDeleteAuditFieldsWithoutCustomServiceBaseClass() {
         TenantContext.run(
                 "tenant_local",
                 () -> {
                     AuditFixtureEntity entity =
                             AuditFixtureEntity.session("session_deleted", "Delete");
                     auditFixtureService.save(entity);
-                    assertThat(auditFixtureService.removeById(entity)).isTrue();
+                    assertThat(auditFixtureService.removeById(entity.getId())).isTrue();
                 });
 
         var deleted =

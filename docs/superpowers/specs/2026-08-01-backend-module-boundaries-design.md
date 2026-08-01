@@ -58,7 +58,7 @@ Maven reactor 顺序固定为：`agent-contracts`、`agent-platform`、`agent-pe
 ### agent-persistence
 
 - `persistence.config`：MyBatis-Plus 配置和租户、乐观锁等拦截器。
-- `persistence`：审计实体、审计填充器和 `AuditedServiceImpl`。
+- `persistence`：审计实体、审计填充器和基于逻辑删除映射的删除时间填充。
 - `persistence.auth`、`persistence.conversation` 等能力子包：统一保存各业务能力的 Entity、Mapper 和 `ServiceImpl`，但不保存应用编排或领域规则。
 - `db/migration`：单一、有序的 Flyway 迁移序列，避免多个 JAR 产生 Flyway 版本冲突。
 - PostgreSQL 迁移与 MyBatis-Plus 集成测试。

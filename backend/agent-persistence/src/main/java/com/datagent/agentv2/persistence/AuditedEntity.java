@@ -17,10 +17,10 @@ public abstract class AuditedEntity {
     @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
     private Instant updatedAt;
 
-    @TableField(value = "deleted_at", fill = FieldFill.UPDATE)
+    @TableField("deleted_at")
     private Instant deletedAt;
 
-    @TableLogic(value = "false", delval = "true")
+    @TableLogic(value = "false", delval = "true, deleted_at = CURRENT_TIMESTAMP")
     @TableField(value = "is_deleted", fill = FieldFill.INSERT)
     private boolean deleted;
 }

@@ -1,0 +1,99 @@
+.app-shell {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.global-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 8px;
+  background: var(--color-navigation);
+  border-right: 1px solid var(--color-line);
+}
+
+.global-brand-mark,
+.global-rail button {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-text);
+}
+
+.global-brand-mark {
+  background: var(--color-primary-action);
+}
+
+.global-rail nav {
+  display: grid;
+  gap: 6px;
+}
+
+.global-rail button:hover,
+.global-rail button[aria-pressed='true'] {
+  background: var(--color-surface);
+  color: var(--color-accent);
+}
+
+.global-rail .account-trigger {
+  margin-top: auto;
+  background: var(--color-surface);
+}
+
+.workspace-content {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.task-home {
+  display: grid;
+  width: min(680px, calc(100% - 48px));
+  margin: clamp(80px, 18vh, 180px) auto;
+  gap: 12px;
+}
+
+.task-home p {
+  margin: 0;
+  color: var(--color-muted);
+}
+
+.task-home h1 {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 44px);
+}
+
+.task-home .primary-action {
+  width: fit-content;
+  margin-top: 12px;
+}
+
+.account-menu {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: grid;
+  gap: 10px;
+  min-width: 156px;
+  padding: 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.account-menu button {
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+}

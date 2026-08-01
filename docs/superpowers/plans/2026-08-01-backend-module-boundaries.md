@@ -15,7 +15,7 @@
 - 不改变 REST/SSE 契约、数据库 Schema、认证/对话行为或双实例部署模型。
 - `agent-server` 是唯一声明 Spring Boot 可执行插件和启动类的模块。
 - `agent-auth` 与 `agent-conversation` 不得互相依赖。
-- 业务组件不得注入 `BaseMapper`；持久化访问继续通过 `ServiceImpl`/`AuditedServiceImpl`。
+- 业务组件不得注入 `BaseMapper`；持久化访问继续通过 `ServiceImpl`。
 - 每次提交只暂存本任务涉及的 V2 文件，不提交根目录未跟踪 `pom.xml`。
 
 ## 目标结构

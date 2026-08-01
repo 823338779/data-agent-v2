@@ -1,14 +1,14 @@
 package com.datagent.agentv2.conversation.application;
 
 import com.datagent.agentv2.persistence.entity.AgentMessageEntity;
-import com.datagent.agentv2.persistence.service.AgentMessageService;
 import com.datagent.agentv2.persistence.entity.AgentRunEntity;
 import com.datagent.agentv2.persistence.entity.AgentRunEventEntity;
+import com.datagent.agentv2.persistence.entity.AgentRunStreamEntity;
+import com.datagent.agentv2.persistence.entity.AgentSessionEntity;
+import com.datagent.agentv2.persistence.service.AgentMessageService;
 import com.datagent.agentv2.persistence.service.AgentRunEventService;
 import com.datagent.agentv2.persistence.service.AgentRunService;
-import com.datagent.agentv2.persistence.entity.AgentRunStreamEntity;
 import com.datagent.agentv2.persistence.service.AgentRunStreamService;
-import com.datagent.agentv2.persistence.entity.AgentSessionEntity;
 import com.datagent.agentv2.persistence.service.AgentSessionService;
 import com.datagent.agentv2.platform.context.OperatorContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
@@ -18,12 +18,14 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
+@RequiredArgsConstructor
 public class ConversationApplicationService {
 
     private final AgentSessionService sessions;
@@ -34,23 +36,6 @@ public class ConversationApplicationService {
     private final IdGenerator ids;
     private final Clock clock;
     private final String instanceId = "instance_" + UUID.randomUUID();
-
-    public ConversationApplicationService(
-            AgentSessionService sessions,
-            AgentMessageService messages,
-            AgentRunService runs,
-            AgentRunEventService events,
-            AgentRunStreamService streams,
-            IdGenerator ids,
-            Clock clock) {
-        this.sessions = sessions;
-        this.messages = messages;
-        this.runs = runs;
-        this.events = events;
-        this.streams = streams;
-        this.ids = ids;
-        this.clock = clock;
-    }
 
     @Transactional
     public ConversationView create(String title, String tag) {
@@ -77,6 +62,12 @@ public class ConversationApplicationService {
     @Transactional(readOnly = true)
     public ConversationView get(String sessionId) {
         return snapshot(requiredSession(sessionId));
+    }
+
+    @Transactional(readOnly = true)
+    public List<ConversationView.RunEventView> replayEvents(String sessionId) {
+        ConversationView conversation = snapshot(requiredSession(sessionId));
+        return conversation.run() == null ? List.of() : conversation.run().events();
     }
 
     @Transactional

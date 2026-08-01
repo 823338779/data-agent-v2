@@ -12,6 +12,7 @@ import com.datagent.agentv2.platform.context.TenantContext;
 import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.HexFormat;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
@@ -21,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -30,6 +32,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -40,9 +43,14 @@ class AuthenticationHttpIntegrationTest {
 
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
+    private static final GenericContainer<?> REDIS =
+            new GenericContainer<>(DockerImageName.parse("redis:7.4-alpine"))
+                    .withCommand("redis-server", "--requirepass", "redis_test")
+                    .withExposedPorts(6379);
 
     static {
         POSTGRES.start();
+        REDIS.start();
     }
 
     @DynamicPropertySource
@@ -50,6 +58,10 @@ class AuthenticationHttpIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("spring.data.redis.host", REDIS::getHost);
+        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+        registry.add("spring.data.redis.username", () -> "default");
+        registry.add("spring.data.redis.password", () -> "redis_test");
         registry.add("data-agent.auth.bootstrap.enabled", () -> "true");
         registry.add("data-agent.auth.bootstrap.password", () -> "admin");
         registry.add("data-agent.auth.session.secure-cookie", () -> "false");
@@ -57,16 +69,21 @@ class AuthenticationHttpIntegrationTest {
 
     @AfterAll
     static void stopDatabase() {
+        REDIS.stop();
         POSTGRES.stop();
     }
 
     @Autowired private MockMvc mvc;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private StringRedisTemplate redis;
     @Autowired private PasswordEncoder passwordEncoder;
 
     @BeforeEach
     void clearLoginSessions() {
-        jdbc.execute("truncate table login_session");
+        var keys = redis.keys("data-agent-v2:auth:session:*");
+        if (keys != null && !keys.isEmpty()) {
+            redis.delete(keys);
+        }
     }
 
     @Test
@@ -84,7 +101,7 @@ class AuthenticationHttpIntegrationTest {
     }
 
     @Test
-    void loginStoresOnlyTokenHashAndCookieRestoresSession() throws Exception {
+    void loginStoresOnlyTokenHashInRedisWithTtlAndCookieRestoresSession() throws Exception {
         String setCookie = login();
         String token = cookieValue(setCookie);
 
@@ -95,9 +112,12 @@ class AuthenticationHttpIntegrationTest {
                 .contains("SameSite=Lax")
                 .doesNotContain("Secure");
 
-        var stored = jdbc.queryForMap("select token_hash, expires_at from login_session");
-        assertThat(stored.get("token_hash")).isEqualTo(sha256(token));
-        assertThat(stored.get("token_hash")).isNotEqualTo(token);
+        String key = "data-agent-v2:auth:session:" + sha256(token);
+        assertThat(redis.hasKey(key)).isTrue();
+        assertThat(redis.hasKey("data-agent-v2:auth:session:" + token)).isFalse();
+        assertThat(redis.getExpire(key))
+                .isPositive()
+                .isLessThanOrEqualTo(Duration.ofHours(8).toSeconds());
 
         mvc.perform(get("/api/v1/auth/session").cookie(sessionCookie(token)))
                 .andExpect(status().isOk())
@@ -131,10 +151,7 @@ class AuthenticationHttpIntegrationTest {
                                         HttpHeaders.SET_COOKIE,
                                         org.hamcrest.Matchers.containsString("Max-Age=0")));
 
-        assertThat(
-                        jdbc.queryForObject(
-                                "select revoked_at is not null from login_session", Boolean.class))
-                .isTrue();
+        assertThat(redis.hasKey("data-agent-v2:auth:session:" + sha256(token))).isFalse();
         mvc.perform(get("/api/v1/auth/session").cookie(sessionCookie(token)))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"));

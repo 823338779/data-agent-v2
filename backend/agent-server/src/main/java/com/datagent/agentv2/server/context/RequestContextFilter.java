@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.regex.Pattern;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.MDC;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -15,6 +16,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 @Component("agentRequestContextFilter")
 @Order(Ordered.HIGHEST_PRECEDENCE)
+@RequiredArgsConstructor
 public final class RequestContextFilter extends OncePerRequestFilter {
 
     public static final String REQUEST_ID_HEADER = "X-Request-Id";
@@ -22,10 +24,6 @@ public final class RequestContextFilter extends OncePerRequestFilter {
     private static final Pattern VALID_REQUEST_ID = Pattern.compile("[A-Za-z0-9._-]{1,64}");
 
     private final IdGenerator idGenerator;
-
-    public RequestContextFilter(IdGenerator idGenerator) {
-        this.idGenerator = idGenerator;
-    }
 
     @Override
     protected void doFilterInternal(

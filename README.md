@@ -1,6 +1,6 @@
 # Data Agent V2
 
-Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多模块工程、REST/SSE 契约、完整性清单以及后续前端迁移目录；旧 `data-agent` 仅作为已冻结行为的提取来源，不是本仓库的运行时或测试依赖。
+Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多模块工程、REST/SSE 契约、完整性清单以及从 V1 当前文件快照迁移的前端；旧 `data-agent` 仅作为已冻结行为的提取来源，不是本仓库的运行时或测试依赖。
 
 ## 目录
 
@@ -27,3 +27,28 @@ Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多�
 ```
 
 契约来源、权威边界和独立验证要求见 [docs/contracts.md](docs/contracts.md)。
+
+## 本地前后端联调
+
+本地开发使用 Vite 同源代理：浏览器只访问前端域名，`/api`（包括 SSE）由 Vite 转发到 V2 后端，因此 HttpOnly Cookie 可以正常工作。默认后端地址是 `http://127.0.0.1:8080`；需要切换实例或 Nginx 时，将 `frontend/.env.example` 复制为 `frontend/.env.local` 并修改 `VITE_BACKEND_ORIGIN`。
+
+先准备 PostgreSQL 数据库 `data_agent_v2` 和 Redis。PostgreSQL 默认本地连接参数为 `data_agent/data_agent_local_dev`，可通过 `DATA_AGENT_DB_URL`、`DATA_AGENT_DB_USERNAME`、`DATA_AGENT_DB_PASSWORD` 覆盖；Redis 默认连接 `localhost:6379`，用户名和密码为 `default/redis_local_dev`，可通过 `SPRING_DATA_REDIS_HOST`、`SPRING_DATA_REDIS_PORT`、`SPRING_DATA_REDIS_USERNAME`、`SPRING_DATA_REDIS_PASSWORD` 覆盖。然后分别启动：
+
+```powershell
+# 终端 1：V2 后端
+.\backend\mvnw.cmd -f .\backend\pom.xml -pl agent-server -am spring-boot:run
+
+# 终端 2：V2 前端
+cd .\frontend
+npm.cmd ci
+npm.cmd run dev
+```
+
+打开 `http://127.0.0.1:5173`，使用本地初始化账号 `admin/admin` 登录。当前可联调认证、会话创建/列表/详情和消息提交；Ollama 逐 Token SSE、Redis 跨节点通知尚在阶段 1 后续切片中实现。
+
+前端生产构建：
+
+```powershell
+cd .\frontend
+npm.cmd run build
+```

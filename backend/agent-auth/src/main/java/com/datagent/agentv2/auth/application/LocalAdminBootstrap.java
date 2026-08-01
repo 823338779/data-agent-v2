@@ -3,11 +3,12 @@ package com.datagent.agentv2.auth.application;
 import com.datagent.agentv2.auth.config.AuthProperties;
 import com.datagent.agentv2.persistence.entity.TenantEntity;
 import com.datagent.agentv2.persistence.entity.TenantMembershipEntity;
+import com.datagent.agentv2.persistence.entity.UserAccountEntity;
 import com.datagent.agentv2.persistence.service.TenantMembershipService;
 import com.datagent.agentv2.persistence.service.TenantService;
-import com.datagent.agentv2.persistence.entity.UserAccountEntity;
 import com.datagent.agentv2.persistence.service.UserAccountService;
 import com.datagent.agentv2.platform.context.TenantContext;
+import lombok.RequiredArgsConstructor;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Component;
         name = "data-agent.auth.bootstrap.enabled",
         havingValue = "true",
         matchIfMissing = true)
+@RequiredArgsConstructor
 public class LocalAdminBootstrap implements ApplicationRunner {
 
     private final TenantService tenants;
@@ -27,19 +29,6 @@ public class LocalAdminBootstrap implements ApplicationRunner {
     private final TenantMembershipService memberships;
     private final PasswordEncoder passwordEncoder;
     private final AuthProperties properties;
-
-    public LocalAdminBootstrap(
-            TenantService tenants,
-            UserAccountService userAccounts,
-            TenantMembershipService memberships,
-            PasswordEncoder passwordEncoder,
-            AuthProperties properties) {
-        this.tenants = tenants;
-        this.userAccounts = userAccounts;
-        this.memberships = memberships;
-        this.passwordEncoder = passwordEncoder;
-        this.properties = properties;
-    }
 
     @Override
     public void run(ApplicationArguments args) {

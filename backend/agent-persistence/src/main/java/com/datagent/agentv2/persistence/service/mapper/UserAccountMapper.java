@@ -5,4 +5,4 @@ import com.datagent.agentv2.persistence.entity.UserAccountEntity;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper
-interface UserAccountMapper extends BaseMapper<UserAccountEntity> {}
+public interface UserAccountMapper extends BaseMapper<UserAccountEntity> {}

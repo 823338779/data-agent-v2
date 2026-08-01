@@ -2,8 +2,10 @@ package com.datagent.agentv2;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.servlet.http.Cookie;
@@ -17,6 +19,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -26,9 +29,14 @@ class AgentV2ApplicationTest {
 
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
+    private static final GenericContainer<?> REDIS =
+            new GenericContainer<>(DockerImageName.parse("redis:7.4-alpine"))
+                    .withCommand("redis-server", "--requirepass", "redis_test")
+                    .withExposedPorts(6379);
 
     static {
         POSTGRES.start();
+        REDIS.start();
     }
 
     @DynamicPropertySource
@@ -36,10 +44,15 @@ class AgentV2ApplicationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("spring.data.redis.host", REDIS::getHost);
+        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+        registry.add("spring.data.redis.username", () -> "default");
+        registry.add("spring.data.redis.password", () -> "redis_test");
     }
 
     @AfterAll
     static void stopDatabase() {
+        REDIS.stop();
         POSTGRES.stop();
     }
 
@@ -113,6 +126,38 @@ class AgentV2ApplicationTest {
                 .andExpect(jsonPath("$.run.status").value("running"))
                 .andExpect(jsonPath("$.run.events[0].type").value("run_started"))
                 .andExpect(jsonPath("$.run.stream.phase").value("RECEIVED"));
+    }
+
+    @Test
+    void eventStreamReplaysPersistedRunEventsAndStaysOpen() throws Exception {
+        Cookie session = login();
+        String created =
+                mvc.perform(
+                                post("/api/v1/agent-sessions")
+                                        .cookie(session)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"title\":\"SSE replay\"}"))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        String id = created.replaceAll(".*\\\"id\\\":\\\"([^\\\"]+)\\\".*", "$1");
+        mvc.perform(
+                        post("/api/v1/agent-sessions/{id}/messages", id)
+                                .cookie(session)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"content\":\"stream this\"}"))
+                .andExpect(status().isAccepted());
+
+        mvc.perform(
+                        get("/api/v1/agent-sessions/{id}/events", id)
+                                .cookie(session)
+                                .accept(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CONTENT_TYPE, "text/event-stream"))
+                .andExpect(
+                        content().string(org.hamcrest.Matchers.containsString("event:run_started")))
+                .andExpect(request().asyncStarted());
     }
 
     private Cookie login() throws Exception {

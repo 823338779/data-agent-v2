@@ -5,4 +5,4 @@ import com.datagent.agentv2.persistence.entity.TenantMembershipEntity;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper
-interface TenantMembershipMapper extends BaseMapper<TenantMembershipEntity> {}
+public interface TenantMembershipMapper extends BaseMapper<TenantMembershipEntity> {}

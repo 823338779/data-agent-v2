@@ -24,7 +24,6 @@ class Phase1MigrationTest {
                     "agent_run_event",
                     "agent_run_stream",
                     "agent_session",
-                    "login_session",
                     "notification_outbox",
                     "tenant",
                     "tenant_membership",
@@ -48,7 +47,7 @@ class Phase1MigrationTest {
                                 POSTGRES.getPassword())
                         .locations("classpath:db/migration")
                         .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(2);
     }
 
     @AfterAll
@@ -57,7 +56,7 @@ class Phase1MigrationTest {
     }
 
     @Test
-    void emptyDatabaseMigratesToExactlyTenApplicationTables() throws SQLException {
+    void emptyDatabaseMigratesWithoutPostgresLoginSessions() throws SQLException {
         assertThat(applicationTables()).containsExactlyElementsOf(TABLES);
     }
 
@@ -81,9 +80,6 @@ class Phase1MigrationTest {
     void tenantReferencesUseCompositeKeys() throws SQLException {
         assertForeignKey(
                 "tenant_membership",
-                "foreign key (tenant_id, user_id) references user_account(tenant_id, id)");
-        assertForeignKey(
-                "login_session",
                 "foreign key (tenant_id, user_id) references user_account(tenant_id, id)");
         assertForeignKey(
                 "agent_message",

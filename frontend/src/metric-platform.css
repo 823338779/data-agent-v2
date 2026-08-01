@@ -1,0 +1,489 @@
+.rail-metric-identity {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--color-sidebar-line);
+  border-radius: 10px;
+  background: rgba(255, 253, 249, 0.62);
+}
+
+.pending-interaction-card,
+.metric-result-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  padding: 14px;
+  background: var(--color-surface);
+}
+
+.pending-interaction-options {
+  display: grid;
+  gap: 8px;
+}
+
+.pending-interaction-options button {
+  display: grid;
+  gap: 3px;
+  justify-items: start;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  padding: 10px 12px;
+  background: transparent;
+  text-align: left;
+}
+
+.pending-interaction-options button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.pending-interaction-options small,
+.metric-result-card small,
+.metric-result-card details {
+  color: var(--color-muted);
+}
+
+.secret-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.secret-input-row input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  padding: 9px 11px;
+  background: var(--color-surface);
+}
+
+.secret-input-card > small {
+  color: var(--color-muted);
+}
+
+.citation-token {
+  display: inline;
+  border: 0;
+  padding: 0 2px;
+  background: transparent;
+  color: var(--color-accent);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.metric-result-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.metric-result-card header > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.artifact-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.artifact-actions button {
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  padding: 5px 9px;
+  background: transparent;
+}
+
+.metric-result-table-wrap {
+  max-width: 100%;
+  overflow: auto;
+}
+
+.metric-result-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.metric-result-table-wrap th,
+.metric-result-table-wrap td {
+  border-bottom: 1px solid var(--color-line);
+  padding: 7px 9px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.artifact-warning,
+.metric-result-card.error {
+  color: #a44b15;
+}
+
+.metric-result-card dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 5px 10px;
+  margin: 10px 0 0;
+}
+
+.metric-result-card dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.metric-identity-selector {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.metric-identity-selector > span,
+.metric-identity-form label > span,
+.metric-replace-form label > span {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.metric-identity-selector select,
+.metric-identity-form input,
+.metric-identity-form select,
+.metric-replace-form input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.metric-identity-selector small {
+  color: var(--color-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.metric-manage-trigger,
+.metric-secondary-button,
+.metric-row-actions button,
+.metric-replace-form > button,
+.metric-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.metric-manage-trigger {
+  width: 100%;
+  font-size: 12px;
+}
+
+.conversation-metric-identity {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-width: min(370px, 42vw);
+}
+
+.metric-identity-selector.compact {
+  flex: 1;
+}
+
+.metric-identity-selector.compact select {
+  min-height: 34px;
+}
+
+.metric-manage-trigger.compact {
+  width: auto;
+  padding: 0 12px;
+}
+
+.metric-manager-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(32, 30, 27, 0.46);
+  backdrop-filter: blur(3px);
+}
+
+.metric-manager {
+  display: grid;
+  gap: 20px;
+  width: min(920px, 100%);
+  max-height: min(860px, calc(100vh - 56px));
+  overflow: auto;
+  border: 1px solid var(--color-line);
+  border-radius: 16px;
+  padding: 24px;
+  background: var(--color-surface);
+  box-shadow: 0 24px 70px rgba(42, 37, 32, 0.22);
+}
+
+.metric-manager-header,
+.metric-identity-list-heading,
+.metric-identity-title-row,
+.metric-row-actions,
+.metric-form-heading {
+  display: flex;
+  align-items: center;
+}
+
+.metric-manager-header,
+.metric-identity-list-heading {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.metric-manager-header h2,
+.metric-identity-list-heading h3 {
+  margin: 0;
+}
+
+.metric-manager-header h2 {
+  margin-top: 3px;
+  font-size: 22px;
+}
+
+.metric-manager-header p {
+  margin: 6px 0 0;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.metric-manager-eyebrow {
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.metric-icon-button {
+  width: 36px;
+  flex: 0 0 auto;
+}
+
+.metric-manager-notice {
+  border: 1px solid #c9ded8;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary-deep);
+  font-size: 12px;
+}
+
+.metric-identity-form {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--color-surface-soft);
+}
+
+.metric-form-heading {
+  gap: 10px;
+}
+
+.metric-form-heading strong,
+.metric-form-heading small {
+  display: block;
+}
+
+.metric-form-heading small {
+  margin-top: 2px;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.metric-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metric-form-grid label,
+.metric-replace-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.metric-password-field {
+  grid-column: 1 / -1;
+}
+
+.metric-primary-button {
+  justify-self: start;
+  min-height: 36px;
+  border: 1px solid var(--color-primary);
+  border-radius: 8px;
+  padding: 0 14px;
+  background: var(--color-primary);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+}
+
+.metric-identity-list-heading h3 {
+  font-size: 15px;
+}
+
+.metric-identity-list-heading span {
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.metric-secondary-button,
+.metric-row-actions button,
+.metric-replace-form > button {
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.metric-identity-list {
+  display: grid;
+  gap: 10px;
+}
+
+.metric-identity-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  border: 1px solid var(--color-line);
+  border-radius: 11px;
+  padding: 14px;
+}
+
+.metric-identity-title-row,
+.metric-row-actions {
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.metric-identity-row-main p {
+  margin: 5px 0 8px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.metric-identity-row-main > small {
+  display: block;
+  margin-top: 8px;
+  color: var(--color-muted);
+  font-size: 10px;
+}
+
+.metric-status,
+.metric-visibility,
+.metric-scopes span {
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.metric-status.active {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-deep);
+}
+
+.metric-status.warning {
+  background: var(--color-approval-soft);
+  color: var(--color-approval);
+}
+
+.metric-status.disabled {
+  background: var(--color-surface-soft);
+  color: var(--color-muted);
+}
+
+.metric-visibility,
+.metric-scopes span {
+  background: var(--color-tool-soft);
+  color: var(--color-tool);
+}
+
+.metric-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.metric-row-actions {
+  align-content: start;
+  justify-content: flex-end;
+  max-width: 260px;
+}
+
+.metric-row-actions .danger {
+  border-color: #efd2d9;
+  color: var(--color-danger);
+}
+
+.metric-replace-form {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  align-items: end;
+  gap: 8px;
+  border-top: 1px solid var(--color-line);
+  padding-top: 12px;
+}
+
+.metric-empty-state {
+  border: 1px dashed var(--color-line);
+  border-radius: 10px;
+  padding: 24px;
+  color: var(--color-muted);
+  text-align: center;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .rail-metric-identity {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+  }
+
+  .rail-metric-identity .metric-manage-trigger {
+    width: auto;
+    padding: 0 12px;
+  }
+
+  .conversation-metric-identity {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .metric-manager-backdrop {
+    padding: 12px;
+  }
+
+  .metric-manager {
+    max-height: calc(100vh - 24px);
+    padding: 18px;
+  }
+
+  .metric-form-grid,
+  .metric-identity-row,
+  .metric-replace-form {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-row-actions {
+    justify-content: flex-start;
+    max-width: none;
+  }
+}

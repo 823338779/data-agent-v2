@@ -2,58 +2,32 @@ package com.datagent.agentv2.auth.application;
 
 import com.datagent.agentv2.auth.config.AuthProperties;
 import com.datagent.agentv2.auth.security.AuthenticatedUser;
-import com.datagent.agentv2.persistence.entity.LoginSessionEntity;
-import com.datagent.agentv2.persistence.service.LoginSessionService;
 import com.datagent.agentv2.persistence.entity.TenantMembershipEntity;
-import com.datagent.agentv2.persistence.service.TenantMembershipService;
 import com.datagent.agentv2.persistence.entity.UserAccountEntity;
+import com.datagent.agentv2.persistence.service.TenantMembershipService;
 import com.datagent.agentv2.persistence.service.UserAccountService;
 import com.datagent.agentv2.platform.context.TenantContext;
-import com.datagent.agentv2.platform.id.IdGenerator;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
-import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Base64;
-import java.util.HexFormat;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class AuthenticationService {
 
     private final UserAccountService userAccounts;
     private final TenantMembershipService memberships;
-    private final LoginSessionService loginSessions;
+    private final RedisLoginSessionStore loginSessions;
     private final PasswordEncoder passwordEncoder;
-    private final IdGenerator idGenerator;
     private final AuthProperties properties;
-    private final Clock clock;
     private final SecureRandom secureRandom = new SecureRandom();
-
-    public AuthenticationService(
-            UserAccountService userAccounts,
-            TenantMembershipService memberships,
-            LoginSessionService loginSessions,
-            PasswordEncoder passwordEncoder,
-            IdGenerator idGenerator,
-            AuthProperties properties,
-            Clock clock) {
-        this.userAccounts = userAccounts;
-        this.memberships = memberships;
-        this.loginSessions = loginSessions;
-        this.passwordEncoder = passwordEncoder;
-        this.idGenerator = idGenerator;
-        this.properties = properties;
-        this.clock = clock;
-    }
 
     @Transactional
     public Optional<LoginToken> login(String username, String password) {
@@ -78,33 +52,18 @@ public class AuthenticationService {
 
     @Transactional
     public Optional<AuthenticatedUser> authenticate(String token) {
-        return findSession(token, true)
+        return findSession(token)
                 .flatMap(
                         session ->
                                 TenantContext.call(
-                                        session.getTenantId(),
-                                        () -> {
-                                            Optional<AuthenticatedUser> user =
-                                                    activeUser(session.getUserId());
-                                            if (user.isPresent()) {
-                                                session.setLastSeenAt(clock.instant());
-                                                loginSessions.updateById(session);
-                                            }
-                                            return user;
-                                        }));
+                                        session.tenantId(), () -> activeUser(session.userId())));
     }
 
     @Transactional
     public void logout(String token) {
-        findSession(token, false)
-                .ifPresent(
-                        session ->
-                                TenantContext.run(
-                                        session.getTenantId(),
-                                        () -> {
-                                            session.setRevokedAt(clock.instant());
-                                            loginSessions.updateById(session);
-                                        }));
+        if (token != null && !token.isBlank()) {
+            loginSessions.delete(token);
+        }
     }
 
     public Duration lifetime() {
@@ -115,27 +74,15 @@ public class AuthenticationService {
         byte[] random = new byte[32];
         secureRandom.nextBytes(random);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(random);
-        Instant now = clock.instant();
-
-        LoginSessionEntity session = new LoginSessionEntity();
-        session.setId(idGenerator.next("login_session"));
-        session.setUserId(account.getId());
-        session.setTokenHash(hash(token));
-        session.setExpiresAt(now.plus(lifetime()));
-        session.setLastSeenAt(now);
-        session.setVersion(0L);
-        loginSessions.save(session);
+        loginSessions.save(token, account.getTenantId(), account.getId(), lifetime());
         return new LoginToken(token, lifetime());
     }
 
-    private Optional<LoginSessionEntity> findSession(String token, boolean requireUnexpired) {
+    private Optional<RedisLoginSessionStore.LoginSession> findSession(String token) {
         if (token == null || token.isBlank()) {
             return Optional.empty();
         }
-        String tokenHash = hash(token);
-        return requireUnexpired
-                ? loginSessions.findActiveByTokenHash(tokenHash, clock.instant())
-                : loginSessions.findRevocableByTokenHash(tokenHash);
+        return loginSessions.find(token);
     }
 
     private Optional<AuthenticatedUser> activeUser(String userId) {
@@ -163,17 +110,6 @@ public class AuthenticationService {
             case "USER" -> "TENANT_VIEWER";
             default -> role;
         };
-    }
-
-    private static String hash(String token) {
-        try {
-            byte[] digest =
-                    MessageDigest.getInstance("SHA-256")
-                            .digest(token.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest);
-        } catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException("SHA-256 is unavailable", impossible);
-        }
     }
 
     public record LoginToken(String value, Duration lifetime) {}

@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Import;
 @SpringBootConfiguration
 @EnableAutoConfiguration
 @ComponentScan(
-        basePackages = {"com.datagent.agentv2.auth", "com.datagent.agentv2.persistence.auth"})
+        basePackages = {"com.datagent.agentv2.auth", "com.datagent.agentv2.persistence.service"})
 @Import({
     ClockConfiguration.class,
     PrefixedUuidIdGenerator.class,

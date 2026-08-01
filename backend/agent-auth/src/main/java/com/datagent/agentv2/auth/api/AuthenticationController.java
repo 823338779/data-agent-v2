@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.time.Duration;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseCookie;
@@ -21,16 +22,11 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/auth")
+@RequiredArgsConstructor
 public class AuthenticationController {
 
     private final AuthenticationService authentication;
     private final AuthProperties properties;
-
-    public AuthenticationController(
-            AuthenticationService authentication, AuthProperties properties) {
-        this.authentication = authentication;
-        this.properties = properties;
-    }
 
     @PostMapping("/login")
     ResponseEntity<?> login(
