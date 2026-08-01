@@ -1,7 +1,7 @@
 package com.datagent.agentv2.auth;
 
 import com.datagent.agentv2.persistence.AuditMetaObjectHandler;
-import com.datagent.agentv2.persistence.config.MybatisPlusConfiguration;
+import com.datagent.agentv2.persistence.MybatisPlusConfiguration;
 import com.datagent.agentv2.platform.config.ClockConfiguration;
 import com.datagent.agentv2.platform.id.PrefixedUuidIdGenerator;
 import org.springframework.boot.SpringBootConfiguration;

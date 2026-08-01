@@ -2,12 +2,12 @@ package com.datagent.agentv2.auth.application;
 
 import com.datagent.agentv2.auth.config.AuthProperties;
 import com.datagent.agentv2.auth.security.AuthenticatedUser;
-import com.datagent.agentv2.persistence.auth.LoginSessionEntity;
-import com.datagent.agentv2.persistence.auth.LoginSessionService;
-import com.datagent.agentv2.persistence.auth.TenantMembershipEntity;
-import com.datagent.agentv2.persistence.auth.TenantMembershipService;
-import com.datagent.agentv2.persistence.auth.UserAccountEntity;
-import com.datagent.agentv2.persistence.auth.UserAccountService;
+import com.datagent.agentv2.persistence.entity.LoginSessionEntity;
+import com.datagent.agentv2.persistence.service.LoginSessionService;
+import com.datagent.agentv2.persistence.entity.TenantMembershipEntity;
+import com.datagent.agentv2.persistence.service.TenantMembershipService;
+import com.datagent.agentv2.persistence.entity.UserAccountEntity;
+import com.datagent.agentv2.persistence.service.UserAccountService;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.nio.charset.StandardCharsets;

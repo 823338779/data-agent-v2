@@ -1,15 +1,15 @@
 package com.datagent.agentv2.conversation.application;
 
-import com.datagent.agentv2.persistence.conversation.AgentMessageEntity;
-import com.datagent.agentv2.persistence.conversation.AgentMessageService;
-import com.datagent.agentv2.persistence.conversation.AgentRunEntity;
-import com.datagent.agentv2.persistence.conversation.AgentRunEventEntity;
-import com.datagent.agentv2.persistence.conversation.AgentRunEventService;
-import com.datagent.agentv2.persistence.conversation.AgentRunService;
-import com.datagent.agentv2.persistence.conversation.AgentRunStreamEntity;
-import com.datagent.agentv2.persistence.conversation.AgentRunStreamService;
-import com.datagent.agentv2.persistence.conversation.AgentSessionEntity;
-import com.datagent.agentv2.persistence.conversation.AgentSessionService;
+import com.datagent.agentv2.persistence.entity.AgentMessageEntity;
+import com.datagent.agentv2.persistence.service.AgentMessageService;
+import com.datagent.agentv2.persistence.entity.AgentRunEntity;
+import com.datagent.agentv2.persistence.entity.AgentRunEventEntity;
+import com.datagent.agentv2.persistence.service.AgentRunEventService;
+import com.datagent.agentv2.persistence.service.AgentRunService;
+import com.datagent.agentv2.persistence.entity.AgentRunStreamEntity;
+import com.datagent.agentv2.persistence.service.AgentRunStreamService;
+import com.datagent.agentv2.persistence.entity.AgentSessionEntity;
+import com.datagent.agentv2.persistence.service.AgentSessionService;
 import com.datagent.agentv2.platform.context.OperatorContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Clock;

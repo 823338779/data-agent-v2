@@ -1,12 +1,12 @@
 package com.datagent.agentv2.auth.application;
 
 import com.datagent.agentv2.auth.config.AuthProperties;
-import com.datagent.agentv2.persistence.auth.TenantEntity;
-import com.datagent.agentv2.persistence.auth.TenantMembershipEntity;
-import com.datagent.agentv2.persistence.auth.TenantMembershipService;
-import com.datagent.agentv2.persistence.auth.TenantService;
-import com.datagent.agentv2.persistence.auth.UserAccountEntity;
-import com.datagent.agentv2.persistence.auth.UserAccountService;
+import com.datagent.agentv2.persistence.entity.TenantEntity;
+import com.datagent.agentv2.persistence.entity.TenantMembershipEntity;
+import com.datagent.agentv2.persistence.service.TenantMembershipService;
+import com.datagent.agentv2.persistence.service.TenantService;
+import com.datagent.agentv2.persistence.entity.UserAccountEntity;
+import com.datagent.agentv2.persistence.service.UserAccountService;
 import com.datagent.agentv2.platform.context.TenantContext;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;

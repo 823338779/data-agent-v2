@@ -3,6 +3,7 @@ package com.datagent.agentv2.persistence;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
+import com.datagent.agentv2.persistence.entity.TenantAuditedEntity;
 import lombok.Getter;
 import lombok.Setter;
 
