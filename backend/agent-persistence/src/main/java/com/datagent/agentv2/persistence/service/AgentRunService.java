@@ -19,6 +19,10 @@ public class AgentRunService extends ServiceImpl<AgentRunMapper, AgentRunEntity>
         return baseMapper.selectByIdForUpdate(runId);
     }
 
+    public AgentRunEntity findByRunId(String runId) {
+        return lambdaQuery().eq(AgentRunEntity::getRunId, runId).one();
+    }
+
     public List<String> queuedOwnerUserIds(int limit) {
         return baseMapper.selectQueuedOwnerUserIds(limit);
     }

@@ -5,6 +5,8 @@ import com.datagent.agentv2.conversation.react.ReactLimitsProperties;
 import com.datagent.agentv2.conversation.runtime.RunExecutionPort;
 import com.datagent.agentv2.conversation.runtime.RunOwnershipLostException;
 import com.datagent.agentv2.persistence.entity.AgentRunStreamEntity;
+import com.datagent.agentv2.persistence.entity.AgentRunEntity;
+import com.datagent.agentv2.persistence.service.AgentRunService;
 import com.datagent.agentv2.persistence.service.AgentRunStreamService;
 import java.time.Instant;
 import java.util.Objects;
@@ -17,12 +19,16 @@ import org.springframework.stereotype.Service;
 public final class RunStreamCheckpointService {
 
     private final AgentRunStreamService streams;
+    private final AgentRunService runs;
     private final ReactLimitsProperties limits;
     private final ConcurrentMap<StreamKey, StreamAccumulator> accumulators =
             new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, String> sessionIds = new ConcurrentHashMap<>();
 
-    public RunStreamCheckpointService(AgentRunStreamService streams, ReactLimitsProperties limits) {
+    public RunStreamCheckpointService(
+            AgentRunStreamService streams, AgentRunService runs, ReactLimitsProperties limits) {
         this.streams = streams;
+        this.runs = runs;
         this.limits = limits;
     }
 
@@ -39,6 +45,7 @@ public final class RunStreamCheckpointService {
             throw new RunOwnershipLostException(run.runId());
         }
         accumulators.keySet().removeIf(key -> key.runId().equals(run.runId()));
+        sessionIds.put(run.runId(), requireRun(run.runId()).getSessionId());
         AgentRunStreamEntity reset = requireStream(run.runId());
         accumulators.put(key(run, modelTurnSequence), from(reset, now));
     }
@@ -57,6 +64,8 @@ public final class RunStreamCheckpointService {
                 persist(run, accumulator, now);
             }
             return new PublishedDelta(
+                    run.tenantId(),
+                    sessionId(run.runId()),
                     run.runId(),
                     run.executionAttempt(),
                     modelTurnSequence,
@@ -82,6 +91,7 @@ public final class RunStreamCheckpointService {
             }
             if (boundary == Boundary.LEASE_RELEASE || boundary == Boundary.TERMINAL) {
                 accumulators.remove(key(run, modelTurnSequence), accumulator);
+                sessionIds.remove(run.runId());
             }
         }
     }
@@ -142,6 +152,18 @@ public final class RunStreamCheckpointService {
         return stream;
     }
 
+    private String sessionId(String runId) {
+        return sessionIds.computeIfAbsent(runId, ignored -> requireRun(runId).getSessionId());
+    }
+
+    private AgentRunEntity requireRun(String runId) {
+        AgentRunEntity run = runs.findByRunId(runId);
+        if (run == null) {
+            throw new RunOwnershipLostException(runId);
+        }
+        return run;
+    }
+
     private static StreamAccumulator from(AgentRunStreamEntity stream, Instant fallback) {
         Instant checkpointedAt =
                 stream.getCheckpointedAt() == null ? fallback : stream.getCheckpointedAt();
@@ -167,6 +189,8 @@ public final class RunStreamCheckpointService {
     }
 
     public record PublishedDelta(
+            String tenantId,
+            String sessionId,
             String runId,
             long executionAttempt,
             long modelTurnSequence,

@@ -11,6 +11,8 @@ import com.datagent.agentv2.conversation.model.ModelDelta;
 import com.datagent.agentv2.conversation.runtime.RunExecutionPort;
 import com.datagent.agentv2.conversation.runtime.RunOwnershipLostException;
 import com.datagent.agentv2.conversation.stream.RunStreamCheckpointService;
+import com.datagent.agentv2.conversation.cluster.RedisStreamDeltaBridge;
+import com.datagent.agentv2.conversation.cluster.StreamDeltaEnvelope;
 import com.datagent.agentv2.persistence.entity.AgentMessageEntity;
 import com.datagent.agentv2.persistence.entity.AgentModelTurnEntity;
 import com.datagent.agentv2.persistence.entity.AgentRunEntity;
@@ -52,6 +54,7 @@ public final class ModelTurnCoordinator {
     private final AgentRunService runs;
     private final AgentRunStreamService streams;
     private final RunStreamCheckpointService streamCheckpoints;
+    private final RedisStreamDeltaBridge streamDeltaBridge;
     private final AgentRunEventService events;
     private final AgentRunAttemptService attempts;
     private final IdGenerator ids;
@@ -67,6 +70,7 @@ public final class ModelTurnCoordinator {
             AgentRunService runs,
             AgentRunStreamService streams,
             RunStreamCheckpointService streamCheckpoints,
+            RedisStreamDeltaBridge streamDeltaBridge,
             AgentRunEventService events,
             AgentRunAttemptService attempts,
             IdGenerator ids,
@@ -80,6 +84,7 @@ public final class ModelTurnCoordinator {
         this.runs = runs;
         this.streams = streams;
         this.streamCheckpoints = streamCheckpoints;
+        this.streamDeltaBridge = streamDeltaBridge;
         this.events = events;
         this.attempts = attempts;
         this.ids = ids;
@@ -130,7 +135,9 @@ public final class ModelTurnCoordinator {
             RunExecutionPort.OwnedRun run, TurnBoundary boundary, ModelDelta delta, Instant now) {
         String reasoning = delta.kind() == ModelDelta.Kind.REASONING ? delta.content() : "";
         Instant expiresAt = now.plus(limits.getReasoningRetention());
-        streamCheckpoints.append(run, boundary.modelTurnSequence(), delta, now);
+        RunStreamCheckpointService.PublishedDelta published =
+                streamCheckpoints.append(run, boundary.modelTurnSequence(), delta, now);
+        streamDeltaBridge.publish(StreamDeltaEnvelope.from(published));
         if (!reasoning.isEmpty()) {
             AgentModelTurnEntity turn =
                     modelTurns.findTurn(run.runId(), boundary.modelTurnSequence());
