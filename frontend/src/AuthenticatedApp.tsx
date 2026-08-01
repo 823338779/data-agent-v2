@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
+import { ArrowRight, LockKeyhole, ShieldCheck, UserRound } from 'lucide-react';
 import App from './App';
 import { authClient, AuthSession } from './api/authClient';
 
@@ -53,36 +54,57 @@ export function AuthenticatedApp() {
     return (
       <main className="auth-page">
         <form className="auth-card" onSubmit={submit}>
-          <p className="auth-eyebrow">DATA AGENT</p>
-          <h1>登录数据工作区</h1>
-          <p>登录后进入 Agent 会话，提交并跟踪你的分析任务。</p>
-          <label>
-            用户名
-            <input
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              autoComplete="username"
-              required
-            />
-          </label>
-          <label>
-            密码
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete="current-password"
-              required
-            />
-          </label>
+          <div className="auth-brand" aria-label="Data Agent">
+            <span className="auth-brand-mark">D</span>
+            <span>DATA AGENT</span>
+          </div>
+          <div className="auth-heading">
+            <p className="auth-eyebrow">欢迎回来</p>
+            <h1>登录数据工作区</h1>
+            <p>进入 Agent 会话，提交分析任务并持续跟踪执行进展。</p>
+          </div>
+          <div className="auth-fields">
+            <label>
+              <span>用户名</span>
+              <span className="auth-input-shell">
+                <UserRound aria-hidden="true" size={18} strokeWidth={1.8} />
+                <input
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  autoComplete="username"
+                  placeholder="请输入用户名"
+                  required
+                />
+              </span>
+            </label>
+            <label>
+              <span>密码</span>
+              <span className="auth-input-shell">
+                <LockKeyhole aria-hidden="true" size={18} strokeWidth={1.8} />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  autoComplete="current-password"
+                  placeholder="请输入密码"
+                  required
+                />
+              </span>
+            </label>
+          </div>
           {error && (
             <p className="auth-error" role="alert">
               {error}
             </p>
           )}
           <button className="primary" disabled={submitting}>
-            {submitting ? '正在登录…' : '登录'}
+            <span>{submitting ? '正在登录…' : '登录工作区'}</span>
+            {!submitting && <ArrowRight aria-hidden="true" size={18} />}
           </button>
+          <p className="auth-security-note">
+            <ShieldCheck aria-hidden="true" size={15} />
+            登录会话由安全 Cookie 保护
+          </p>
         </form>
       </main>
     );
