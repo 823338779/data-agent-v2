@@ -933,6 +933,11 @@ components:
         citations:
           type: array
           items: { $ref: '#/components/schemas/CitationSummary' }
+        run:
+          description: Assistant 回答所属的 Run；非回答消息或尚未形成回答时为 null。
+          oneOf:
+            - { $ref: '#/components/schemas/AgentRun' }
+            - { type: 'null' }
     CitationSummary:
       type: object
       required: [token, label, artifactId, queryId]

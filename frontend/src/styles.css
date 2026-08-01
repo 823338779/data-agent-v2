@@ -412,6 +412,9 @@ textarea:focus-visible {
   gap: 14px;
   margin: 0 0 34px;
 }
+.message-content {
+  min-width: 0;
+}
 .message-avatar {
   display: grid;
   place-items: center;
@@ -470,6 +473,9 @@ textarea:focus-visible {
 .run-detail summary {
   cursor: pointer;
   font-weight: 650;
+}
+.message-run-detail {
+  margin: 18px 0 0;
 }
 
 .composer {

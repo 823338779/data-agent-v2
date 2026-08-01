@@ -79,6 +79,15 @@ export default function App({
   const visibleSessions = sessions.filter((session) =>
     `${session.title} ${session.tag}`.toLowerCase().includes(search.trim().toLowerCase()),
   );
+  const assistantMessages =
+    active?.messages.filter((message) => message.role === 'assistant') ?? [];
+  const hasMessageRunMetadata = assistantMessages.some((message) => message.run);
+  const activeRunAnswerPersisted = Boolean(
+    active?.run?.stream?.answer &&
+    (assistantMessages.some((message) => message.run?.id === active.run?.id) ||
+      (!hasMessageRunMetadata &&
+        assistantMessages.some((message) => message.content === active.run?.stream?.answer))),
+  );
 
   function handleFailure(failure: unknown, message: string) {
     if (failure instanceof BackendApiError && failure.status === 401) {
@@ -307,29 +316,37 @@ export default function App({
                 <div className="message-avatar">
                   {message.role === 'user' ? <UserRound size={16} /> : <Bot size={16} />}
                 </div>
-                <div>
+                <div className="message-content">
                   <header>
                     <strong>{message.role === 'user' ? subject : message.author}</strong>
                     <time>{formatTimestamp(message.timestamp)}</time>
                   </header>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                  {message.role === 'assistant' && message.run && (
+                    <details className="run-detail message-run-detail">
+                      <summary>查看运行过程</summary>
+                      {message.run.stream?.thinking && <p>{message.run.stream.thinking}</p>}
+                    </details>
+                  )}
                 </div>
               </article>
             ))}
-            {active.run?.stream?.thinking && (
+            {!activeRunAnswerPersisted && active.run?.stream?.thinking && (
               <details className="run-detail">
                 <summary>查看运行过程</summary>
                 <p>{active.run.stream.thinking}</p>
               </details>
             )}
-            {active.run?.stream?.answer && (
+            {!activeRunAnswerPersisted && active.run?.stream?.answer && (
               <article className="message assistant stream-answer">
                 <div className="message-avatar">
                   <Bot size={16} />
                 </div>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {active.run.stream.answer}
-                </ReactMarkdown>
+                <div className="message-content">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {active.run.stream.answer}
+                  </ReactMarkdown>
+                </div>
               </article>
             )}
           </div>

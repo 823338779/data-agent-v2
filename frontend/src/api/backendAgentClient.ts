@@ -1,4 +1,4 @@
-import { AgentSession, MessageRole } from '../domain/agentPrototype';
+import { AgentRun, AgentSession, MessageRole } from '../domain/agentPrototype';
 
 const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
 const SESSION_EVENT_TYPES = ['run_queued', 'run_started', 'run_done'] as const;
@@ -9,6 +9,8 @@ interface BackendMessage {
   author: string;
   content: string;
   createdAt: string;
+  /** 后端附加到 assistant 消息的历史 Run 投影。 */
+  run: BackendRun | null;
 }
 
 interface BackendRunEvent {
@@ -78,17 +80,20 @@ function toSession(session: BackendSession): AgentSession {
       author: message.author,
       content: message.content,
       timestamp: message.createdAt,
+      run: message.run ? toRun(message.run) : null,
     })),
-    run: session.run
-      ? {
-          id: session.run.id,
-          status: session.run.status,
-          progress: session.run.progress,
-          objective: session.run.objective,
-          events: session.run.events.map((event) => ({ ...event })),
-          stream: session.run.stream ? { ...session.run.stream } : null,
-        }
-      : null,
+    run: session.run ? toRun(session.run) : null,
+  };
+}
+
+function toRun(run: BackendRun): AgentRun {
+  return {
+    id: run.id,
+    status: run.status,
+    progress: run.progress,
+    objective: run.objective,
+    events: run.events.map((event) => ({ ...event })),
+    stream: run.stream ? { ...run.stream } : null,
   };
 }
 

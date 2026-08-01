@@ -49,6 +49,14 @@ describe('backend agent client', () => {
   });
 
   it('maps the current backend snapshot without synthesizing unsupported state', async () => {
+    const run = {
+      id: 'run_1',
+      status: 'running',
+      progress: 5,
+      objective: '分析订单延迟',
+      events: [],
+      stream: { phase: 'RECEIVED', thinking: '检查订单时间', answer: '发现延迟订单' },
+    };
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [
@@ -61,16 +69,18 @@ describe('backend agent client', () => {
               author: 'admin',
               content: '分析订单延迟',
               createdAt: '2026-08-01T08:01:00Z',
+              run: null,
+            },
+            {
+              id: 'message_2',
+              role: 'assistant',
+              author: 'assistant',
+              content: '发现延迟订单',
+              createdAt: '2026-08-01T08:02:00Z',
+              run,
             },
           ],
-          run: {
-            id: 'run_1',
-            status: 'running',
-            progress: 5,
-            objective: '分析订单延迟',
-            events: [],
-            stream: { phase: 'RECEIVED', thinking: '', answer: '' },
-          },
+          run,
         },
       ],
     });
@@ -78,6 +88,7 @@ describe('backend agent client', () => {
     const [mapped] = await createFetchAgentBackendClient({ fetchImpl }).listSessions();
 
     expect(mapped.messages[0]).toMatchObject({ role: 'user', content: '分析订单延迟' });
+    expect(mapped.messages[1].run?.stream?.thinking).toBe('检查订单时间');
     expect(mapped.run).toMatchObject({ status: 'running', progress: 5 });
     expect(mapped).not.toHaveProperty('metricIdentity');
   });

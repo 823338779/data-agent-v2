@@ -6,6 +6,8 @@ export interface ConversationMessage {
   author: string;
   content: string;
   timestamp: string;
+  /** 回答对应的持久化 Run，用于恢复该条消息自己的运行过程。 */
+  run: AgentRun | null;
 }
 
 export interface AgentRunEvent {

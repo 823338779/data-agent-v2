@@ -14,6 +14,25 @@ const session: AgentSession = {
   run: null,
 };
 
+function completedRun(
+  id: string,
+  thinking: string,
+  answer: string,
+): NonNullable<AgentSession['run']> {
+  return {
+    id,
+    status: 'done',
+    progress: 100,
+    objective: answer,
+    events: [],
+    stream: {
+      phase: 'COMPLETED',
+      thinking,
+      answer,
+    },
+  };
+}
+
 function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient {
   return {
     listSessions: vi.fn().mockResolvedValue([session]),
@@ -110,5 +129,58 @@ describe('server-backed conversation workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '展开会话列表' }));
     expect(await screen.findByRole('complementary', { name: '会话列表' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '关闭会话列表' })).toBeInTheDocument();
+  });
+
+  it('shows the matching run process below every persisted assistant answer', async () => {
+    const firstRun = completedRun('run_1', '第一次思考', '第一条回答');
+    const secondRun = completedRun('run_2', '第二次思考', '第二条回答');
+    const history: AgentSession = {
+      ...session,
+      messages: [
+        {
+          id: 'answer_1',
+          role: 'assistant',
+          author: 'assistant',
+          content: '第一条回答',
+          timestamp: '2026-08-01T08:01:00Z',
+          run: firstRun,
+        },
+        {
+          id: 'answer_2',
+          role: 'assistant',
+          author: 'assistant',
+          content: '第二条回答',
+          timestamp: '2026-08-01T08:02:00Z',
+          run: secondRun,
+        },
+      ],
+      run: secondRun,
+    };
+
+    render(<App client={client({ listSessions: vi.fn().mockResolvedValue([history]) })} />);
+    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+
+    expect(screen.getAllByText('查看运行过程')).toHaveLength(2);
+    expect(screen.getByText('第一次思考')).toBeInTheDocument();
+    expect(screen.getByText('第二次思考')).toBeInTheDocument();
+    expect(screen.getAllByText('第二条回答')).toHaveLength(1);
+  });
+
+  it('places a streaming answer in the full-width message content column', async () => {
+    const streaming: AgentSession = {
+      ...session,
+      run: completedRun('run_streaming', '正在思考', '这是一条实时返回的完整回答'),
+    };
+
+    const view = render(
+      <App client={client({ listSessions: vi.fn().mockResolvedValue([streaming]) })} />,
+    );
+    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+
+    const answer = await screen.findByText('这是一条实时返回的完整回答');
+    expect(answer.closest('.message-content')).toBeInTheDocument();
+    expect(view.container.querySelector('.stream-answer > .message-content')).toContainElement(
+      answer,
+    );
   });
 });
