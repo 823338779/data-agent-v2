@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://data-agent.local/contracts/session-sse-event.schema.json",
+  "title": "会话 SSE 事件",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "sessionId"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "run_started",
+        "user_message",
+        "assistant_message",
+        "reasoning_delta",
+        "assistant_delta",
+        "run_phase_changed",
+        "skill_activated",
+        "context_compaction_started",
+        "context_compaction_completed",
+        "context_compaction_failed",
+        "tool_call_started",
+        "tool_call_completed",
+        "tool_call_result",
+        "tool_call_failed",
+        "interaction_requested",
+        "interaction_resolved",
+        "user_confirmation_requested",
+        "user_confirmation_resolved",
+        "run_completed",
+        "run_failed",
+        "run_cancelled",
+        "error"
+      ]
+    },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "executionAttempt": { "type": "integer", "minimum": 1 },
+    "streamSequence": { "type": "integer", "minimum": 1 },
+    "delta": { "type": "string" },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "RECEIVED",
+        "PREPARING_CONTEXT",
+        "CONNECTING_MODEL",
+        "THINKING",
+        "ANSWERING",
+        "PERSISTING",
+        "COMPLETED",
+        "FAILED"
+      ]
+    },
+    "payload": { "type": "object" }
+  },
+  "oneOf": [
+    {
+      "title": "持久化生命周期事件",
+      "properties": {
+        "type": {
+          "enum": [
+            "run_started",
+            "user_message",
+            "assistant_message",
+            "skill_activated",
+            "context_compaction_started",
+            "context_compaction_completed",
+            "context_compaction_failed",
+            "tool_call_started",
+            "tool_call_completed",
+            "tool_call_result",
+            "tool_call_failed",
+            "interaction_requested",
+            "interaction_resolved",
+            "user_confirmation_requested",
+            "user_confirmation_resolved",
+            "run_completed",
+            "run_failed",
+            "run_cancelled",
+            "error"
+          ]
+        }
+      },
+      "required": ["sequence", "occurredAt"]
+    },
+    {
+      "title": "思考增量",
+      "properties": { "type": { "const": "reasoning_delta" } },
+      "required": ["runId", "executionAttempt", "streamSequence", "delta", "occurredAt"]
+    },
+    {
+      "title": "回答增量",
+      "x-v2-extension": true,
+      "properties": { "type": { "const": "assistant_delta" } },
+      "required": ["runId", "executionAttempt", "streamSequence", "delta", "occurredAt"]
+    },
+    {
+      "title": "运行阶段变化",
+      "x-v2-extension": true,
+      "properties": { "type": { "const": "run_phase_changed" } },
+      "required": ["runId", "sequence", "phase", "occurredAt"]
+    }
+  ],
+  "x-frontend-projection": {
+    "reasoning_delta": "reasoning.delta",
+    "assistant_delta": "assistant.draft",
+    "run_phase_changed": "run.timeline"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "type": "assistant_delta",
+  "sessionId": "session_demo",
+  "runId": "run_demo",
+  "executionAttempt": 1,
+  "streamSequence": 2,
+  "delta": "你好",
+  "occurredAt": "2026-08-01T06:00:02Z"
+}

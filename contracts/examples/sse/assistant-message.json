@@ -1,0 +1,12 @@
+{
+  "type": "assistant_message",
+  "sessionId": "session_demo",
+  "runId": "run_demo",
+  "sequence": 3,
+  "occurredAt": "2026-08-01T06:00:03Z",
+  "payload": {
+    "messageId": "message_assistant_demo",
+    "role": "assistant",
+    "content": "你好"
+  }
+}
