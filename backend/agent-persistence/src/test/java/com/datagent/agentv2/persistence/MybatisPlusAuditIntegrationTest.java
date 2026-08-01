@@ -2,7 +2,6 @@ package com.datagent.agentv2.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.datagent.agentv2.persistence.AgentPersistenceTestApplication;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.Clock;
 import java.time.Instant;
