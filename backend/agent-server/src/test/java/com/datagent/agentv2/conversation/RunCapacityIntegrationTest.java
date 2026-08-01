@@ -2,6 +2,7 @@ package com.datagent.agentv2.conversation;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 import com.datagent.agentv2.conversation.runtime.InstanceRunCapacity;
 import com.datagent.agentv2.conversation.runtime.RunClaimService;
@@ -9,6 +10,7 @@ import com.datagent.agentv2.conversation.runtime.RunExecutionPort;
 import com.datagent.agentv2.conversation.runtime.RunInstanceIdentity;
 import com.datagent.agentv2.conversation.runtime.RunOwnerRegistry;
 import com.datagent.agentv2.conversation.runtime.RunRuntimeProperties;
+import com.datagent.agentv2.conversation.stream.RunStreamCheckpointService;
 import com.datagent.agentv2.persistence.service.AgentRunAttemptService;
 import com.datagent.agentv2.persistence.service.AgentRunEventService;
 import com.datagent.agentv2.persistence.service.AgentRunService;
@@ -160,8 +162,14 @@ class RunCapacityIntegrationTest {
         context.registerBean(
                 InstanceRunCapacity.class, () -> new InstanceRunCapacity(properties, meters));
         context.registerBean(
+                RunStreamCheckpointService.class, () -> mock(RunStreamCheckpointService.class));
+        context.registerBean(
                 RunOwnerRegistry.class,
-                () -> new RunOwnerRegistry(context.getBean(InstanceRunCapacity.class), meters));
+                () ->
+                        new RunOwnerRegistry(
+                                context.getBean(InstanceRunCapacity.class),
+                                meters,
+                                context.getBean(RunStreamCheckpointService.class)));
         context.registerBean(HoldingExecutionPort.class);
         context.registerBean(
                 RunInstanceIdentity.class,

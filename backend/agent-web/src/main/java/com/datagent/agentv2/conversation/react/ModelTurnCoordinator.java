@@ -10,6 +10,7 @@ import static com.datagent.agentv2.conversation.RunConstants.MESSAGE_VISIBILITY_
 import com.datagent.agentv2.conversation.model.ModelDelta;
 import com.datagent.agentv2.conversation.runtime.RunExecutionPort;
 import com.datagent.agentv2.conversation.runtime.RunOwnershipLostException;
+import com.datagent.agentv2.conversation.stream.RunStreamCheckpointService;
 import com.datagent.agentv2.persistence.entity.AgentMessageEntity;
 import com.datagent.agentv2.persistence.entity.AgentModelTurnEntity;
 import com.datagent.agentv2.persistence.entity.AgentRunEntity;
@@ -42,8 +43,6 @@ public final class ModelTurnCoordinator {
     private static final String STATUS_COMPLETED = "completed";
     private static final String STATUS_PREPARED = "prepared";
     private static final String ID_PREFIX_MODEL_TURN = "model_turn";
-    private static final String PHASE_THINKING = "THINKING";
-    private static final String PHASE_ANSWERING = "ANSWERING";
     private static final int TOOL_CALL_DOCUMENT_VERSION = 1;
 
     private final AgentModelTurnService modelTurns;
@@ -52,6 +51,7 @@ public final class ModelTurnCoordinator {
     private final AgentSessionService sessions;
     private final AgentRunService runs;
     private final AgentRunStreamService streams;
+    private final RunStreamCheckpointService streamCheckpoints;
     private final AgentRunEventService events;
     private final AgentRunAttemptService attempts;
     private final IdGenerator ids;
@@ -66,6 +66,7 @@ public final class ModelTurnCoordinator {
             AgentSessionService sessions,
             AgentRunService runs,
             AgentRunStreamService streams,
+            RunStreamCheckpointService streamCheckpoints,
             AgentRunEventService events,
             AgentRunAttemptService attempts,
             IdGenerator ids,
@@ -78,6 +79,7 @@ public final class ModelTurnCoordinator {
         this.sessions = sessions;
         this.runs = runs;
         this.streams = streams;
+        this.streamCheckpoints = streamCheckpoints;
         this.events = events;
         this.attempts = attempts;
         this.ids = ids;
@@ -115,17 +117,7 @@ public final class ModelTurnCoordinator {
         turn.setVersion(0L);
         modelTurns.save(turn);
 
-        AgentRunStreamEntity stream = streams.findByRunId(run.runId());
-        if (stream == null
-                || !streams.beginTurn(
-                        run.runId(),
-                        stream.getVersion(),
-                        run.executionAttempt(),
-                        sequence,
-                        run.ownerInstanceId(),
-                        now)) {
-            throw new RunOwnershipLostException(run.runId());
-        }
+        streamCheckpoints.beginTurn(run, sequence, now);
         return new TurnBoundary(sequence, boundary);
     }
 
@@ -136,24 +128,9 @@ public final class ModelTurnCoordinator {
 
     private void checkpointLocked(
             RunExecutionPort.OwnedRun run, TurnBoundary boundary, ModelDelta delta, Instant now) {
-        AgentRunStreamEntity stream = streams.findByRunId(run.runId());
         String reasoning = delta.kind() == ModelDelta.Kind.REASONING ? delta.content() : "";
-        String answer = delta.kind() == ModelDelta.Kind.ANSWER ? delta.content() : "";
-        String phase = delta.kind() == ModelDelta.Kind.REASONING ? PHASE_THINKING : PHASE_ANSWERING;
         Instant expiresAt = now.plus(limits.getReasoningRetention());
-        if (!streams.appendDelta(
-                run.runId(),
-                stream.getVersion(),
-                run.executionAttempt(),
-                boundary.modelTurnSequence(),
-                run.ownerInstanceId(),
-                reasoning,
-                answer,
-                phase,
-                expiresAt,
-                now)) {
-            throw new RunOwnershipLostException(run.runId());
-        }
+        streamCheckpoints.append(run, boundary.modelTurnSequence(), delta, now);
         if (!reasoning.isEmpty()) {
             AgentModelTurnEntity turn =
                     modelTurns.findTurn(run.runId(), boundary.modelTurnSequence());
@@ -183,6 +160,8 @@ public final class ModelTurnCoordinator {
             List<ToolCallDocument> calls,
             Instant now) {
         AgentRunEntity owned = lockOwned(run);
+        streamCheckpoints.flush(
+                run, boundary.modelTurnSequence(), RunStreamCheckpointService.Boundary.TURN, now);
         finishTurn(run, boundary, now);
         AgentMessageEntity assistant = assistantMessage(owned, MESSAGE_VISIBILITY_INTERNAL, "");
         assistant.setToolCalls(toolCallsJson(calls));
@@ -208,6 +187,11 @@ public final class ModelTurnCoordinator {
     private void completeFinalAnswerLocked(
             RunExecutionPort.OwnedRun run, TurnBoundary boundary, String answer, Instant now) {
         AgentRunEntity owned = lockOwned(run);
+        streamCheckpoints.flush(
+                run,
+                boundary.modelTurnSequence(),
+                RunStreamCheckpointService.Boundary.TERMINAL,
+                now);
         finishTurn(run, boundary, now);
         AgentRunStreamEntity stream = streams.findByRunId(run.runId());
         if (!streams.complete(

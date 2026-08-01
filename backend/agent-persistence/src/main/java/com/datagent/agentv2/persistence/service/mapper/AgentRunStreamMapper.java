@@ -15,9 +15,12 @@ public interface AgentRunStreamMapper extends BaseMapper<AgentRunStreamEntity> {
             update agent_run_stream s
                set execution_attempt = #{executionAttempt},
                    model_turn_sequence = #{modelTurnSequence}, phase = 'CONNECTING_MODEL',
-                   reasoning = '', answer = '', reasoning_expires_at = null,
+                   stream_sequence = 0, reasoning = '', answer = '', reasoning_expires_at = null,
                    checkpointed_at = #{now}, updated_at = #{now}, version = version + 1
              where s.run_id = #{runId} and s.version = #{expectedVersion}
+               and (s.execution_attempt < #{executionAttempt}
+                    or (s.execution_attempt = #{executionAttempt}
+                        and s.model_turn_sequence < #{modelTurnSequence}))
                and exists (
                    select 1 from agent_run r
                     where r.tenant_id = s.tenant_id and r.run_id = s.run_id
@@ -35,29 +38,28 @@ public interface AgentRunStreamMapper extends BaseMapper<AgentRunStreamEntity> {
     @Update(
             """
             update agent_run_stream s
-               set reasoning = reasoning || #{reasoningDelta},
-                   answer = answer || #{answerDelta}, phase = #{phase},
-                   stream_sequence = stream_sequence + 1,
-                   reasoning_expires_at = #{reasoningExpiresAt},
+               set reasoning = #{reasoning}, answer = #{answer}, phase = #{phase},
+                   stream_sequence = #{streamSequence}, reasoning_expires_at = #{reasoningExpiresAt},
                    checkpointed_at = #{now}, updated_at = #{now}, version = version + 1
-             where s.run_id = #{runId}
+             where s.run_id = #{runId} and s.version = #{expectedVersion}
                and s.execution_attempt = #{executionAttempt}
                and s.model_turn_sequence = #{modelTurnSequence}
-               and s.version = #{expectedVersion}
+               and s.stream_sequence < #{streamSequence}
                and exists (
                    select 1 from agent_run r
                     where r.tenant_id = s.tenant_id and r.run_id = s.run_id
                       and r.status = 'running' and r.owner_instance_id = #{ownerInstanceId}
                       and r.execution_attempt = #{executionAttempt})
             """)
-    int appendDelta(
+    int checkpoint(
             @Param("runId") String runId,
             @Param("expectedVersion") long expectedVersion,
             @Param("executionAttempt") long executionAttempt,
             @Param("modelTurnSequence") long modelTurnSequence,
             @Param("ownerInstanceId") String ownerInstanceId,
-            @Param("reasoningDelta") String reasoningDelta,
-            @Param("answerDelta") String answerDelta,
+            @Param("streamSequence") long streamSequence,
+            @Param("reasoning") String reasoning,
+            @Param("answer") String answer,
             @Param("phase") String phase,
             @Param("reasoningExpiresAt") Instant reasoningExpiresAt,
             @Param("now") Instant now);

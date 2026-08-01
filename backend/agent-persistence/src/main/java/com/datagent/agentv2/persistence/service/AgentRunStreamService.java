@@ -30,25 +30,27 @@ public class AgentRunStreamService extends ServiceImpl<AgentRunStreamMapper, Age
                 == 1;
     }
 
-    public boolean appendDelta(
+    public boolean checkpoint(
             String runId,
             long expectedVersion,
             long executionAttempt,
             long modelTurnSequence,
             String ownerInstanceId,
-            String reasoningDelta,
-            String answerDelta,
+            long streamSequence,
+            String reasoning,
+            String answer,
             String phase,
             Instant reasoningExpiresAt,
             Instant now) {
-        return baseMapper.appendDelta(
+        return baseMapper.checkpoint(
                         runId,
                         expectedVersion,
                         executionAttempt,
                         modelTurnSequence,
                         ownerInstanceId,
-                        reasoningDelta,
-                        answerDelta,
+                        streamSequence,
+                        reasoning,
+                        answer,
                         phase,
                         reasoningExpiresAt,
                         now)

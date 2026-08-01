@@ -61,7 +61,7 @@ class MultiSessionRunFoundationMigrationTest {
                         .load()
                         .migrate()
                         .migrationsExecuted;
-        assertThat(migrated).isEqualTo(5);
+        assertThat(migrated).isEqualTo(6);
     }
 
     @AfterAll

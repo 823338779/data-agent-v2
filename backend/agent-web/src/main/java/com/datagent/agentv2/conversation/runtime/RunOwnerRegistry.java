@@ -1,7 +1,10 @@
 package com.datagent.agentv2.conversation.runtime;
 
+import com.datagent.agentv2.conversation.stream.RunStreamCheckpointService;
+import com.datagent.agentv2.platform.context.TenantContext;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -14,8 +17,13 @@ public final class RunOwnerRegistry {
             "data_agent.runtime.owner_registry.size";
 
     private final ConcurrentMap<String, Ownership> owners = new ConcurrentHashMap<>();
+    private final RunStreamCheckpointService checkpoints;
 
-    public RunOwnerRegistry(InstanceRunCapacity capacity, MeterRegistry meters) {
+    public RunOwnerRegistry(
+            InstanceRunCapacity capacity,
+            MeterRegistry meters,
+            RunStreamCheckpointService checkpoints) {
+        this.checkpoints = checkpoints;
         meters.gauge(METRIC_OWNER_REGISTRY_SIZE, this, RunOwnerRegistry::size);
     }
 
@@ -31,7 +39,19 @@ public final class RunOwnerRegistry {
     public void release(String runId) {
         Ownership ownership = owners.remove(runId);
         if (ownership != null) {
-            ownership.permit().close();
+            try {
+                TenantContext.run(
+                        ownership.run().tenantId(),
+                        () ->
+                                checkpoints.flushRun(
+                                        ownership.run(),
+                                        RunStreamCheckpointService.Boundary.LEASE_RELEASE,
+                                        Instant.now()));
+            } catch (RunOwnershipLostException ignored) {
+                // Lease 已被接管或 Run 已终态化时，新的 owner/终态投影是权威结果。
+            } finally {
+                ownership.permit().close();
+            }
         }
     }
 
