@@ -16,8 +16,31 @@ class InventoryConsistencyTest {
     private static final YAMLMapper YAML = new YAMLMapper();
 
     @Test
-    void baselineOpenApiHasNoOperationsBeforeTheRestContractIsAdded() throws IOException {
-        assertThat(openApiOperationIds()).isEmpty();
+    void everySourceSymbolAndOperationIdAppearsExactlyOnce() throws IOException {
+        JsonNode inventory = YAML.readTree(ContractFiles.inventory("source-surface.yaml").toFile());
+        List<String> symbols = values(inventory, "entries", "sourceSymbol");
+        List<String> operations = values(inventory, "entries", "operationId");
+
+        assertThat(symbols).allMatch(value -> !value.isBlank()).doesNotHaveDuplicates();
+        assertThat(operations).allMatch(value -> !value.isBlank()).doesNotHaveDuplicates();
+        assertThat(operations).containsExactlyInAnyOrderElementsOf(openApiOperationIds());
+    }
+
+    @Test
+    void everyFeatureDeclaresOutcomesSecurityAndMigrationPhase() throws IOException {
+        JsonNode inventory = YAML.readTree(ContractFiles.inventory("features.yaml").toFile());
+
+        assertThat(inventory.path("features")).isNotEmpty();
+        inventory
+                .path("features")
+                .forEach(
+                        feature -> {
+                            assertThat(feature.path("entry").asText()).isNotBlank();
+                            assertThat(feature.path("success").asText()).isNotBlank();
+                            assertThat(feature.path("failure").asText()).isNotBlank();
+                            assertThat(feature.path("security").asText()).isNotBlank();
+                            assertThat(feature.path("phase").isIntegralNumber()).isTrue();
+                        });
     }
 
     private static List<String> values(JsonNode root, String array, String field) {
