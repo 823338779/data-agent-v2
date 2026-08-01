@@ -33,6 +33,8 @@ import com.datagent.agentv2.platform.context.OperatorContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -42,6 +44,8 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 @RequiredArgsConstructor
 public class ConversationApplicationService {
+
+    private static final String ROLE_ASSISTANT = "assistant";
 
     private final AgentSessionService sessions;
     private final AgentMessageService messages;
@@ -94,9 +98,7 @@ public class ConversationApplicationService {
     public ConversationView.RunEventView eventView(AgentRunEventEntity event) {
         // Re-read the committed Run so live and replayed events expose the same public shape.
         AgentRunEntity run =
-                runs.lambdaQuery()
-                        .eq(AgentRunEntity::getRunId, event.getRunId())
-                        .one();
+                runs.lambdaQuery().eq(AgentRunEntity::getRunId, event.getRunId()).one();
         if (run == null || !event.getSessionId().equals(run.getSessionId())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, ERROR_AGENT_RUN_NOT_FOUND);
         }
@@ -115,7 +117,7 @@ public class ConversationApplicationService {
         }
         List<ConversationView.MessageView> messageViews =
                 messages.findUserVisibleBySessionId(sessionId).stream()
-                        .map(this::messageView)
+                        .map(message -> messageView(message, null))
                         .toList();
         return runView(run, messageViews);
     }
@@ -129,20 +131,38 @@ public class ConversationApplicationService {
     }
 
     private ConversationView snapshot(AgentSessionEntity session) {
-        List<ConversationView.MessageView> messageViews =
-                messages.findUserVisibleBySessionId(session.getSessionId()).stream()
-                        .map(this::messageView)
-                        .toList();
-        ConversationView.RunView runView =
-                runs
-                        .lambdaQuery()
+        // 先构建不含 Run 的消息视图，供每个 Run 解析触发消息形成 objective。
+        List<AgentMessageEntity> messageEntities =
+                messages.findUserVisibleBySessionId(session.getSessionId());
+        List<ConversationView.MessageView> baseMessageViews =
+                messageEntities.stream().map(message -> messageView(message, null)).toList();
+        List<AgentRunEntity> runEntities =
+                runs.lambdaQuery()
                         .eq(AgentRunEntity::getSessionId, session.getSessionId())
                         .orderByDesc(AgentRunEntity::getCreatedAt)
-                        .list()
-                        .stream()
-                        .findFirst()
-                        .map(run -> runView(run, messageViews))
-                        .orElse(null);
+                        .list();
+
+        // 将全部历史 Run 按 runId 关联回 assistant 消息，同时保留最新 Run 作为会话级实时状态。
+        Map<String, ConversationView.RunView> runViewsById =
+                runEntities.stream()
+                        .map(run -> runView(run, baseMessageViews))
+                        .collect(
+                                Collectors.toMap(
+                                        ConversationView.RunView::id,
+                                        Function.identity(),
+                                        (first, ignored) -> first));
+        List<ConversationView.MessageView> messageViews =
+                messageEntities.stream()
+                        .map(
+                                message ->
+                                        messageView(
+                                                message,
+                                                ROLE_ASSISTANT.equals(message.getRole())
+                                                        ? runViewsById.get(message.getRunId())
+                                                        : null))
+                        .toList();
+        ConversationView.RunView latestRunView =
+                runEntities.isEmpty() ? null : runViewsById.get(runEntities.getFirst().getRunId());
         return new ConversationView(
                 session.getSessionId(),
                 session.getTitle(),
@@ -154,10 +174,11 @@ public class ConversationApplicationService {
                 0,
                 null,
                 messageViews,
-                runView);
+                latestRunView);
     }
 
-    private ConversationView.MessageView messageView(AgentMessageEntity message) {
+    private ConversationView.MessageView messageView(
+            AgentMessageEntity message, ConversationView.RunView run) {
         String author =
                 message.getAuthorUserId() == null ? message.getRole() : message.getAuthorUserId();
         return new ConversationView.MessageView(
@@ -166,7 +187,8 @@ public class ConversationApplicationService {
                 author,
                 message.getContent(),
                 message.getCreatedAt(),
-                List.of());
+                List.of(),
+                run);
     }
 
     private ConversationView.RunView runView(

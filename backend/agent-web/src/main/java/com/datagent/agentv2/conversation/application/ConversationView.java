@@ -24,7 +24,9 @@ public record ConversationView(
             String author,
             String content,
             LocalDateTime createdAt,
-            List<Object> citations) {}
+            List<Object> citations,
+            /** assistant 回答所属的 Run，用于在历史消息下恢复对应运行过程。 */
+            RunView run) {}
 
     public record RunView(
             String id,
