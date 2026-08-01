@@ -126,7 +126,7 @@ public final class RunControlService {
             runs.updateById(run);
             if (run.getExecutionAttempt() > 0) {
                 attempts.finish(
-                        run.getUuid(), run.getExecutionAttempt(), STATUS_CANCELLED, now, null);
+                        run.getRunId(), run.getExecutionAttempt(), STATUS_CANCELLED, now, null);
             }
             return run;
         }
@@ -165,7 +165,7 @@ public final class RunControlService {
 
         Instant now = Instant.now();
         AgentRunEntity retry = new AgentRunEntity();
-        retry.setUuid(ids.next(ID_PREFIX_RUN));
+        retry.setRunId(ids.next(ID_PREFIX_RUN));
         retry.setSessionId(sessionId);
         retry.setTriggeringMessageId(original.getTriggeringMessageId());
         retry.setStatus(STATUS_QUEUED);
@@ -174,7 +174,7 @@ public final class RunControlService {
         retry.setOwnerUserId(original.getOwnerUserId());
         retry.setRequestId(REQUEST_ID_UNKNOWN);
         retry.setQueuedAt(now);
-        retry.setRetryOfRunId(original.getUuid());
+        retry.setRetryOfRunId(original.getRunId());
         retry.setRecoveryAttemptCount(0);
         retry.setRequestType(REQUEST_RUN_RETRY);
         retry.setRequestIdempotencyKey(idempotencyKey);
@@ -185,9 +185,9 @@ public final class RunControlService {
         runs.save(retry);
 
         AgentRunEventEntity event = new AgentRunEventEntity();
-        event.setUuid(ids.next(ID_PREFIX_EVENT));
+        event.setEventId(ids.next(ID_PREFIX_EVENT));
         event.setSessionId(sessionId);
-        event.setRunId(retry.getUuid());
+        event.setRunId(retry.getRunId());
         event.setSequence(sessions.nextEventSequence(sessionId));
         event.setType(EVENT_RUN_QUEUED);
         event.setOccurredAt(now);
@@ -195,8 +195,8 @@ public final class RunControlService {
         events.save(event);
 
         AgentRunStreamEntity stream = new AgentRunStreamEntity();
-        stream.setUuid(ids.next(ID_PREFIX_STREAM));
-        stream.setRunId(retry.getUuid());
+        stream.setStreamId(ids.next(ID_PREFIX_STREAM));
+        stream.setRunId(retry.getRunId());
         stream.setExecutionAttempt(0L);
         stream.setModelTurnSequence(0L);
         stream.setPhase(PHASE_QUEUED);
@@ -222,7 +222,7 @@ public final class RunControlService {
                 Map.of(
                         PAYLOAD_NOTIFICATION_ID, notificationId,
                         PAYLOAD_TENANT_ID, TenantContext.requiredTenantId(),
-                        PAYLOAD_RUN_ID, run.getUuid(),
+                        PAYLOAD_RUN_ID, run.getRunId(),
                         PAYLOAD_OWNER_INSTANCE_ID, run.getOwnerInstanceId(),
                         PAYLOAD_EXECUTION_ATTEMPT, run.getExecutionAttempt(),
                         PAYLOAD_CONTROL_VERSION, run.getVersion(),
@@ -231,8 +231,8 @@ public final class RunControlService {
         NotificationOutboxEntity notification = new NotificationOutboxEntity();
         notification.setNotificationType(NOTIFICATION_RUN_CONTROL_REQUESTED);
         notification.setAggregateType(AGGREGATE_RUN);
-        notification.setUuid(notificationId);
-        notification.setAggregateId(run.getUuid());
+        notification.setNotificationId(notificationId);
+        notification.setAggregateId(run.getRunId());
         notification.setAggregateVersion(run.getVersion());
         notification.setPayload(json.writeValueAsString(payload));
         notification.setNextAttemptAt(requestedAt);

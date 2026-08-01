@@ -11,6 +11,9 @@ import lombok.Setter;
 @TableName("agent_run_stream")
 public final class AgentRunStreamEntity extends TenantAuditedEntity {
 
+    /** Run 流投影的业务唯一标识，对应数据库 stream_id 列。 */
+    private String streamId;
+
     private String runId;
 
     private Long executionAttempt;

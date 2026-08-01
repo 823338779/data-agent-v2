@@ -11,6 +11,9 @@ import lombok.Setter;
 @TableName("agent_run_attempt")
 public final class AgentRunAttemptEntity extends TenantAuditedEntity {
 
+    /** Run 执行尝试的业务唯一标识，对应数据库 attempt_id 列。 */
+    private String attemptId;
+
     private String runId;
     private Long executionAttempt;
     private String ownerInstanceId;

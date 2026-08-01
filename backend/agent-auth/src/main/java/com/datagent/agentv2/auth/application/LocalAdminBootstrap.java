@@ -47,7 +47,7 @@ public class LocalAdminBootstrap implements ApplicationRunner {
             return;
         }
         TenantEntity tenant = new TenantEntity();
-        tenant.setUuid(bootstrap.getTenantId());
+        tenant.setTenantId(bootstrap.getTenantId());
         tenant.setName(bootstrap.getTenantName());
         tenant.setStatus("active");
         tenant.setVersion(0L);
@@ -59,7 +59,7 @@ public class LocalAdminBootstrap implements ApplicationRunner {
             return;
         }
         UserAccountEntity account = new UserAccountEntity();
-        account.setUuid(bootstrap.getUserId());
+        account.setUserId(bootstrap.getUserId());
         account.setUsername(bootstrap.getUsername());
         account.setPasswordHash(passwordEncoder.encode(bootstrap.getPassword()));
         account.setStatus("active");
@@ -72,7 +72,7 @@ public class LocalAdminBootstrap implements ApplicationRunner {
             return;
         }
         TenantMembershipEntity membership = new TenantMembershipEntity();
-        membership.setUuid(bootstrap.getMembershipId());
+        membership.setMembershipId(bootstrap.getMembershipId());
         membership.setUserId(bootstrap.getUserId());
         membership.setRole("ADMIN");
         membership.setVersion(0L);

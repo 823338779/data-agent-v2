@@ -75,7 +75,7 @@ class RunCapacityIntegrationTest {
         jdbc.update("delete from agent_run");
         jdbc.update("delete from agent_message");
         jdbc.update("delete from agent_session");
-        jdbc.update("delete from user_account where uuid <> 'user_admin'");
+        jdbc.update("delete from user_account where user_id <> 'user_admin'");
     }
 
     @Test
@@ -192,7 +192,7 @@ class RunCapacityIntegrationTest {
 
     private void createUser(String id, String username) {
         jdbc.update(
-                "insert into user_account(uuid, tenant_id, username, password_hash) values (?, 'tenant_local', ?, 'hash')",
+                "insert into user_account(user_id, tenant_id, username, password_hash) values (?, 'tenant_local', ?, 'hash')",
                 id,
                 username);
     }
@@ -202,12 +202,12 @@ class RunCapacityIntegrationTest {
         String messageId = "message_" + suffix;
         String runId = "run_" + suffix;
         jdbc.update(
-                "insert into agent_session(uuid, tenant_id, title, session_type, created_by) values (?, 'tenant_local', ?, 'INTERACTIVE', ?)",
+                "insert into agent_session(session_id, tenant_id, title, session_type, created_by) values (?, 'tenant_local', ?, 'INTERACTIVE', ?)",
                 sessionId,
                 suffix,
                 userId);
         jdbc.update(
-                "insert into agent_message(uuid, tenant_id, session_id, role, content, sequence, author_user_id) values (?, 'tenant_local', ?, 'user', ?, 1, ?)",
+                "insert into agent_message(message_id, tenant_id, session_id, role, content, sequence, author_user_id) values (?, 'tenant_local', ?, 'user', ?, 1, ?)",
                 messageId,
                 sessionId,
                 suffix,
@@ -215,7 +215,7 @@ class RunCapacityIntegrationTest {
         jdbc.update(
                 """
                 insert into agent_run(
-                    uuid, tenant_id, session_id, triggering_message_id, status, phase,
+                    run_id, tenant_id, session_id, triggering_message_id, status, phase,
                     execution_attempt, owner_user_id, request_id, queued_at,
                     request_type, request_idempotency_key, request_payload_hash)
                 values (?, 'tenant_local', ?, ?, 'queued', 'QUEUED', 0, ?, ?, ?,
@@ -228,7 +228,7 @@ class RunCapacityIntegrationTest {
                 "request_" + suffix,
                 Timestamp.from(queuedAt),
                 "key_" + suffix);
-        jdbc.update("update agent_message set run_id = ? where uuid = ?", runId, messageId);
+        jdbc.update("update agent_message set run_id = ? where message_id = ?", runId, messageId);
     }
 
     private int runningFor(String userId) {

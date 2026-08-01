@@ -133,7 +133,7 @@ public final class RunSubmissionService {
         }
 
         AgentMessageEntity message = new AgentMessageEntity();
-        message.setUuid(ids.next(ID_PREFIX_MESSAGE));
+        message.setMessageId(ids.next(ID_PREFIX_MESSAGE));
         message.setSessionId(sessionId);
         message.setRole(MESSAGE_ROLE_USER);
         message.setContent(content);
@@ -144,9 +144,9 @@ public final class RunSubmissionService {
 
         Instant now = Instant.now();
         AgentRunEntity run = new AgentRunEntity();
-        run.setUuid(ids.next(ID_PREFIX_RUN));
+        run.setRunId(ids.next(ID_PREFIX_RUN));
         run.setSessionId(sessionId);
-        run.setTriggeringMessageId(message.getUuid());
+        run.setTriggeringMessageId(message.getMessageId());
         run.setStatus(STATUS_QUEUED);
         run.setPhase(PHASE_QUEUED);
         run.setExecutionAttempt(0L);
@@ -162,13 +162,13 @@ public final class RunSubmissionService {
         run.setVersion(0L);
         runs.save(run);
 
-        message.setRunId(run.getUuid());
+        message.setRunId(run.getRunId());
         messages.updateById(message);
 
         AgentRunEventEntity event = new AgentRunEventEntity();
-        event.setUuid(ids.next(ID_PREFIX_EVENT));
+        event.setEventId(ids.next(ID_PREFIX_EVENT));
         event.setSessionId(sessionId);
-        event.setRunId(run.getUuid());
+        event.setRunId(run.getRunId());
         event.setSequence(eventSequence);
         event.setType(EVENT_RUN_QUEUED);
         event.setOccurredAt(now);
@@ -176,8 +176,8 @@ public final class RunSubmissionService {
         events.save(event);
 
         AgentRunStreamEntity stream = new AgentRunStreamEntity();
-        stream.setUuid(ids.next(ID_PREFIX_STREAM));
-        stream.setRunId(run.getUuid());
+        stream.setStreamId(ids.next(ID_PREFIX_STREAM));
+        stream.setRunId(run.getRunId());
         stream.setExecutionAttempt(0L);
         stream.setModelTurnSequence(0L);
         stream.setPhase(PHASE_QUEUED);

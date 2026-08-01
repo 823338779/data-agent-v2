@@ -10,6 +10,9 @@ import lombok.Setter;
 @TableName("agent_message")
 public final class AgentMessageEntity extends TenantAuditedEntity {
 
+    /** 消息的业务唯一标识，对应数据库 message_id 列。 */
+    private String messageId;
+
     private String sessionId;
     private String runId;
     private String role;

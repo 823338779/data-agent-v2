@@ -12,14 +12,14 @@ public class TenantService extends ServiceImpl<TenantMapper, TenantEntity> {
     public List<String> activeTenantIds() {
         return lambdaQuery()
                 .eq(TenantEntity::getStatus, "active")
-                .orderByAsc(TenantEntity::getUuid)
+                .orderByAsc(TenantEntity::getTenantId)
                 .list()
                 .stream()
-                .map(TenantEntity::getUuid)
+                .map(TenantEntity::getTenantId)
                 .toList();
     }
 
     public TenantEntity findByUuid(String tenantId) {
-        return lambdaQuery().eq(TenantEntity::getUuid, tenantId).one();
+        return lambdaQuery().eq(TenantEntity::getTenantId, tenantId).one();
     }
 }

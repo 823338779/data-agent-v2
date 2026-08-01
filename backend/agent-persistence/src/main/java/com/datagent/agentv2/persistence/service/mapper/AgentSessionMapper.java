@@ -10,7 +10,7 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface AgentSessionMapper extends BaseMapper<AgentSessionEntity> {
 
-    @Select("select * from agent_session where uuid = #{sessionId} for update")
+    @Select("select * from agent_session where session_id = #{sessionId} for update")
     AgentSessionEntity selectByIdForUpdate(@Param("sessionId") String sessionId);
 
     @Update(
@@ -19,7 +19,7 @@ public interface AgentSessionMapper extends BaseMapper<AgentSessionEntity> {
                set event_sequence = event_sequence + 1,
                    version = version + 1,
                    updated_at = current_timestamp
-             where uuid = #{sessionId}
+             where session_id = #{sessionId}
                and is_deleted = false
             """)
     int incrementEventSequence(@Param("sessionId") String sessionId);

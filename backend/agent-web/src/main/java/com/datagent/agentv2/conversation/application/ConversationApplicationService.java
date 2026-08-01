@@ -54,7 +54,7 @@ public class ConversationApplicationService {
     @Transactional
     public ConversationView create(String title, String tag) {
         AgentSessionEntity session = new AgentSessionEntity();
-        session.setUuid(ids.next(ID_PREFIX_SESSION));
+        session.setSessionId(ids.next(ID_PREFIX_SESSION));
         session.setTitle(normalizedTitle(title));
         session.setTag(tag);
         session.setSessionType(SESSION_TYPE_INTERACTIVE);
@@ -118,7 +118,7 @@ public class ConversationApplicationService {
         List<ConversationView.MessageView> messageViews =
                 messages
                         .lambdaQuery()
-                        .eq(AgentMessageEntity::getSessionId, session.getUuid())
+                        .eq(AgentMessageEntity::getSessionId, session.getSessionId())
                         .orderByAsc(AgentMessageEntity::getSequence)
                         .list()
                         .stream()
@@ -127,7 +127,7 @@ public class ConversationApplicationService {
         ConversationView.RunView runView =
                 runs
                         .lambdaQuery()
-                        .eq(AgentRunEntity::getSessionId, session.getUuid())
+                        .eq(AgentRunEntity::getSessionId, session.getSessionId())
                         .orderByDesc(AgentRunEntity::getCreatedAt)
                         .list()
                         .stream()
@@ -135,7 +135,7 @@ public class ConversationApplicationService {
                         .map(run -> runView(run, messageViews))
                         .orElse(null);
         return new ConversationView(
-                session.getUuid(),
+                session.getSessionId(),
                 session.getTitle(),
                 session.getTag() == null ? EMPTY_TEXT : session.getTag(),
                 session.getSessionType(),
@@ -152,7 +152,7 @@ public class ConversationApplicationService {
         String author =
                 message.getAuthorUserId() == null ? message.getRole() : message.getAuthorUserId();
         return new ConversationView.MessageView(
-                message.getUuid(),
+                message.getMessageId(),
                 message.getRole(),
                 author,
                 message.getContent(),
@@ -165,13 +165,13 @@ public class ConversationApplicationService {
         List<ConversationView.RunEventView> eventViews =
                 events
                         .lambdaQuery()
-                        .eq(AgentRunEventEntity::getRunId, run.getUuid())
+                        .eq(AgentRunEventEntity::getRunId, run.getRunId())
                         .orderByAsc(AgentRunEventEntity::getSequence)
                         .list()
                         .stream()
                         .map(event -> eventView(event, run))
                         .toList();
-        AgentRunStreamEntity stream = streams.findByRunId(run.getUuid());
+        AgentRunStreamEntity stream = streams.findByRunId(run.getRunId());
         String objective =
                 messageViews.stream()
                         .filter(message -> message.id().equals(run.getTriggeringMessageId()))
@@ -179,7 +179,7 @@ public class ConversationApplicationService {
                         .findFirst()
                         .orElse(EMPTY_TEXT);
         return new ConversationView.RunView(
-                run.getUuid(),
+                run.getRunId(),
                 run.getStatus(),
                 progress(run.getPhase()),
                 objective,
@@ -200,7 +200,7 @@ public class ConversationApplicationService {
 
     private ConversationView.RunEventView eventView(AgentRunEventEntity event, AgentRunEntity run) {
         return new ConversationView.RunEventView(
-                event.getUuid(),
+                event.getEventId(),
                 event.getSequence(),
                 event.getType(),
                 event.getOccurredAt(),

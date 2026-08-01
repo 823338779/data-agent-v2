@@ -13,6 +13,6 @@ public class UserAccountService extends ServiceImpl<UserAccountMapper, UserAccou
     }
 
     public UserAccountEntity findByUuid(String userId) {
-        return lambdaQuery().eq(UserAccountEntity::getUuid, userId).one();
+        return lambdaQuery().eq(UserAccountEntity::getUserId, userId).one();
     }
 }

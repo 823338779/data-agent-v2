@@ -11,6 +11,9 @@ import lombok.Setter;
 @TableName("agent_session")
 final class AuditFixtureEntity extends TenantAuditedEntity {
 
+    /** 测试会话的业务唯一标识。 */
+    private String sessionId;
+
     private String title;
     private String sessionType;
     private String createdBy;
@@ -19,7 +22,7 @@ final class AuditFixtureEntity extends TenantAuditedEntity {
 
     static AuditFixtureEntity session(String id, String title) {
         AuditFixtureEntity value = new AuditFixtureEntity();
-        value.setUuid(id);
+        value.setSessionId(id);
         value.title = title;
         value.sessionType = "CHAT";
         value.createdBy = "user_admin";

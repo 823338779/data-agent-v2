@@ -67,13 +67,13 @@ class RunLeaseRecoveryIntegrationTest {
         assertThat(inTenant(() -> leases.heartbeat(oldOwner))).isTrue();
         Instant renewed =
                 jdbc.queryForObject(
-                                "select lease_expires_at from agent_run where uuid='run_lease'",
+                                "select lease_expires_at from agent_run where run_id='run_lease'",
                                 Timestamp.class)
                         .toInstant();
         assertThat(renewed).isAfter(Instant.now().plusSeconds(50));
 
         jdbc.update(
-                "update agent_run set lease_expires_at=?, active_segment_started_at=? where uuid='run_lease'",
+                "update agent_run set lease_expires_at=?, active_segment_started_at=? where run_id='run_lease'",
                 Timestamp.from(Instant.now().minusSeconds(1)),
                 Timestamp.from(Instant.now().minusMillis(100)));
         assertThat(inTenant(recovery::recoverNext)).isTrue();
@@ -87,7 +87,7 @@ class RunLeaseRecoveryIntegrationTest {
                 .isInstanceOf(RunOwnershipLostException.class);
         assertThat(
                         jdbc.queryForObject(
-                                "select execution_attempt from agent_run where uuid='run_lease'",
+                                "select execution_attempt from agent_run where run_id='run_lease'",
                                 Long.class))
                 .isEqualTo(2L);
         assertThat(
@@ -102,18 +102,18 @@ class RunLeaseRecoveryIntegrationTest {
         Instant now = Instant.now();
         running("budget", "instance_old", now.minusSeconds(1), 599_900L, 1L);
         jdbc.update(
-                "update agent_run set active_segment_started_at=? where uuid='run_budget'",
+                "update agent_run set active_segment_started_at=? where run_id='run_budget'",
                 Timestamp.from(Instant.now().minusSeconds(1)));
 
         assertThat(inTenant(recovery::recoverNext)).isFalse();
         assertThat(
                         jdbc.queryForObject(
-                                "select status from agent_run where uuid='run_budget'",
+                                "select status from agent_run where run_id='run_budget'",
                                 String.class))
                 .isEqualTo("failed");
         assertThat(
                         jdbc.queryForObject(
-                                "select failure_code from agent_run where uuid='run_budget'",
+                                "select failure_code from agent_run where run_id='run_budget'",
                                 String.class))
                 .isEqualTo("RUN_DEADLINE_EXCEEDED");
     }
@@ -123,7 +123,7 @@ class RunLeaseRecoveryIntegrationTest {
         OwnedRun owned =
                 running("boundary", "instance_boundary", Instant.now().plusSeconds(60), 10L, 1L);
         jdbc.update(
-                "update agent_run set hard_deadline_at=? where uuid='run_boundary'",
+                "update agent_run set hard_deadline_at=? where run_id='run_boundary'",
                 Timestamp.from(Instant.now().minusMillis(1)));
 
         assertThatThrownBy(
@@ -134,7 +134,7 @@ class RunLeaseRecoveryIntegrationTest {
                 .isInstanceOf(RunDeadlineExceededException.class);
         assertThat(
                         jdbc.queryForObject(
-                                "select status from agent_run where uuid='run_boundary'",
+                                "select status from agent_run where run_id='run_boundary'",
                                 String.class))
                 .isEqualTo("failed");
     }
@@ -149,11 +149,11 @@ class RunLeaseRecoveryIntegrationTest {
         String messageId = "message_" + suffix;
         String runId = "run_" + suffix;
         jdbc.update(
-                "insert into agent_session(uuid, tenant_id, title, session_type, created_by) values (?, 'tenant_local', ?, 'INTERACTIVE', 'user_admin')",
+                "insert into agent_session(session_id, tenant_id, title, session_type, created_by) values (?, 'tenant_local', ?, 'INTERACTIVE', 'user_admin')",
                 sessionId,
                 suffix);
         jdbc.update(
-                "insert into agent_message(uuid, tenant_id, session_id, role, content, sequence, author_user_id) values (?, 'tenant_local', ?, 'user', ?, 1, 'user_admin')",
+                "insert into agent_message(message_id, tenant_id, session_id, role, content, sequence, author_user_id) values (?, 'tenant_local', ?, 'user', ?, 1, 'user_admin')",
                 messageId,
                 sessionId,
                 suffix);
@@ -161,7 +161,7 @@ class RunLeaseRecoveryIntegrationTest {
         jdbc.update(
                 """
                 insert into agent_run(
-                    uuid, tenant_id, session_id, triggering_message_id, status, phase,
+                    run_id, tenant_id, session_id, triggering_message_id, status, phase,
                     execution_attempt, owner_user_id, owner_instance_id, request_id, queued_at,
                     lease_expires_at, heartbeat_at, active_segment_started_at, started_at,
                     hard_deadline_at, active_execution_ms)
@@ -181,9 +181,9 @@ class RunLeaseRecoveryIntegrationTest {
                 Timestamp.from(now.minusSeconds(1)),
                 Timestamp.from(now.plusSeconds(600)),
                 activeExecutionMs);
-        jdbc.update("update agent_message set run_id=? where uuid=?", runId, messageId);
+        jdbc.update("update agent_message set run_id=? where message_id=?", runId, messageId);
         jdbc.update(
-                "insert into agent_run_attempt(uuid, tenant_id, run_id, execution_attempt, owner_instance_id, status, started_at) values (?, 'tenant_local', ?, ?, ?, 'running', ?)",
+                "insert into agent_run_attempt(attempt_id, tenant_id, run_id, execution_attempt, owner_instance_id, status, started_at) values (?, 'tenant_local', ?, ?, ?, 'running', ?)",
                 "attempt_" + suffix,
                 runId,
                 attempt,

@@ -10,6 +10,9 @@ import lombok.Setter;
 @TableName("user_account")
 public final class UserAccountEntity extends TenantAuditedEntity {
 
+    /** 用户账号的业务唯一标识，对应数据库 user_id 列。 */
+    private String userId;
+
     private String username;
     private String passwordHash;
     private String status;

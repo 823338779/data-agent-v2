@@ -10,6 +10,6 @@ public class TenantMembershipService
         extends ServiceImpl<TenantMembershipMapper, TenantMembershipEntity> {
 
     public TenantMembershipEntity findByUuid(String membershipId) {
-        return lambdaQuery().eq(TenantMembershipEntity::getUuid, membershipId).one();
+        return lambdaQuery().eq(TenantMembershipEntity::getMembershipId, membershipId).one();
     }
 }

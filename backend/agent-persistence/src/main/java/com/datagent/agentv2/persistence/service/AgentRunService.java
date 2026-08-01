@@ -39,7 +39,7 @@ public class AgentRunService extends ServiceImpl<AgentRunMapper, AgentRunEntity>
             Instant leaseExpiresAt,
             Instant hardDeadlineAt) {
         return baseMapper.claimQueued(
-                        run.getUuid(),
+                        run.getRunId(),
                         run.getVersion(),
                         executionAttempt,
                         ownerInstanceId,
@@ -93,7 +93,7 @@ public class AgentRunService extends ServiceImpl<AgentRunMapper, AgentRunEntity>
             Instant leaseExpiresAt,
             Instant hardDeadlineAt) {
         return baseMapper.takeoverExpired(
-                        run.getUuid(),
+                        run.getRunId(),
                         run.getVersion(),
                         run.getOwnerInstanceId(),
                         run.getExecutionAttempt(),
@@ -108,7 +108,7 @@ public class AgentRunService extends ServiceImpl<AgentRunMapper, AgentRunEntity>
 
     public boolean failExpiredBudget(AgentRunEntity run, long activeExecutionMs, Instant now) {
         return baseMapper.failExpiredBudget(
-                        run.getUuid(),
+                        run.getRunId(),
                         run.getVersion(),
                         run.getOwnerInstanceId(),
                         run.getExecutionAttempt(),

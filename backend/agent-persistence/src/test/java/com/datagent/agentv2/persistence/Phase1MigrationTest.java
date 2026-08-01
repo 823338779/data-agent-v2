@@ -8,6 +8,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -30,6 +31,18 @@ class Phase1MigrationTest {
                     "tenant_membership",
                     "user_account");
     private static final List<String> AUDITED_TABLES = TABLES;
+    private static final Map<String, String> BUSINESS_ID_COLUMNS =
+            Map.of(
+                    "agent_message", "message_id",
+                    "agent_run", "run_id",
+                    "agent_run_attempt", "attempt_id",
+                    "agent_run_event", "event_id",
+                    "agent_run_stream", "stream_id",
+                    "agent_session", "session_id",
+                    "notification_outbox", "notification_id",
+                    "tenant", "tenant_id",
+                    "tenant_membership", "membership_id",
+                    "user_account", "user_id");
 
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
@@ -47,7 +60,7 @@ class Phase1MigrationTest {
                                 POSTGRES.getPassword())
                         .locations("classpath:db/migration")
                         .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(4);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(5);
     }
 
     @AfterAll
@@ -77,18 +90,19 @@ class Phase1MigrationTest {
     }
 
     @Test
-    void everyBusinessTableUsesIdentityPrimaryKeyAndUniqueBusinessUuid() throws SQLException {
+    void everyBusinessTableUsesIdentityPrimaryKeyAndDedicatedBusinessId() throws SQLException {
         for (String table : TABLES) {
+            String businessIdColumn = BUSINESS_ID_COLUMNS.get(table);
             assertThat(primaryKey(table))
                     .as("primary key for %s", table)
                     .isEqualTo("primary key (id)");
             assertThat(identityFlag(table, "id")).as("identity id for %s", table).isEqualTo("YES");
-            assertThat(nullableFlag(table, "uuid"))
-                    .as("non-null uuid for %s", table)
+            assertThat(nullableFlag(table, businessIdColumn))
+                    .as("non-null business id for %s", table)
                     .isEqualTo("NO");
             assertThat(uniqueConstraints(table))
-                    .as("unique uuid for %s", table)
-                    .contains("unique (uuid)");
+                    .as("unique business id for %s", table)
+                    .contains("unique (" + businessIdColumn + ")");
         }
     }
 
@@ -96,19 +110,19 @@ class Phase1MigrationTest {
     void tenantReferencesUseCompositeKeys() throws SQLException {
         assertForeignKey(
                 "tenant_membership",
-                "foreign key (tenant_id, user_id) references user_account(tenant_id, uuid)");
+                "foreign key (tenant_id, user_id) references user_account(tenant_id, user_id)");
         assertForeignKey(
                 "agent_message",
-                "foreign key (tenant_id, session_id) references agent_session(tenant_id, uuid)");
+                "foreign key (tenant_id, session_id) references agent_session(tenant_id, session_id)");
         assertForeignKey(
                 "agent_run",
-                "foreign key (tenant_id, session_id) references agent_session(tenant_id, uuid)");
+                "foreign key (tenant_id, session_id) references agent_session(tenant_id, session_id)");
         assertForeignKey(
                 "agent_run_event",
-                "foreign key (tenant_id, run_id) references agent_run(tenant_id, uuid)");
+                "foreign key (tenant_id, run_id) references agent_run(tenant_id, run_id)");
         assertForeignKey(
                 "agent_run_stream",
-                "foreign key (tenant_id, run_id) references agent_run(tenant_id, uuid)");
+                "foreign key (tenant_id, run_id) references agent_run(tenant_id, run_id)");
     }
 
     @Test

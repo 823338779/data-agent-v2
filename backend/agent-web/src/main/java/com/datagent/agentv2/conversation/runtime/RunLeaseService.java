@@ -97,7 +97,7 @@ public final class RunLeaseService {
         if (accumulated >= budget) {
             if (runs.failExpiredBudget(run, accumulated, now)) {
                 attempts.finish(
-                        run.getUuid(),
+                        run.getRunId(),
                         run.getExecutionAttempt(),
                         STATUS_FAILED,
                         now,
@@ -120,10 +120,10 @@ public final class RunLeaseService {
             return RecoveryResult.none();
         }
         attempts.finish(
-                run.getUuid(), run.getExecutionAttempt(), STATUS_LOST, now, FAILURE_LEASE_EXPIRED);
+                run.getRunId(), run.getExecutionAttempt(), STATUS_LOST, now, FAILURE_LEASE_EXPIRED);
 
         AgentRunAttemptEntity attempt = new AgentRunAttemptEntity();
-        attempt.setRunId(run.getUuid());
+        attempt.setRunId(run.getRunId());
         attempt.setExecutionAttempt(nextAttempt);
         attempt.setOwnerInstanceId(newOwnerInstanceId);
         attempt.setStatus(STATUS_RUNNING);
@@ -133,7 +133,7 @@ public final class RunLeaseService {
         attempts.insert(attempt);
         return RecoveryResult.claimed(
                 new RunExecutionPort.OwnedRun(
-                        run.getTenantId(), run.getUuid(), newOwnerInstanceId, nextAttempt));
+                        run.getTenantId(), run.getRunId(), newOwnerInstanceId, nextAttempt));
     }
 
     private static long accumulatedAt(AgentRunEntity run, Instant now) {

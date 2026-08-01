@@ -24,8 +24,8 @@ public class AgentRunAttemptService
         if (attempt.getTenantId() == null) {
             attempt.setTenantId(TenantContext.requiredTenantId());
         }
-        if (attempt.getUuid() == null) {
-            attempt.setUuid(ids.next(ID_PREFIX_RUN_ATTEMPT));
+        if (attempt.getAttemptId() == null) {
+            attempt.setAttemptId(ids.next(ID_PREFIX_RUN_ATTEMPT));
         }
         return baseMapper.insert(attempt) == 1;
     }

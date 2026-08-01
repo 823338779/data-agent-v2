@@ -17,9 +17,6 @@ public abstract class AuditedEntity {
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    /** 对外和跨表引用使用的业务唯一标识。 */
-    private String uuid;
-
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private Instant createdAt;
 

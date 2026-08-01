@@ -16,11 +16,12 @@ public class AgentSessionService extends ServiceImpl<AgentSessionMapper, AgentSe
         if (baseMapper.incrementEventSequence(sessionId) != 1) {
             throw new IllegalStateException("agent session not found: " + sessionId);
         }
-        AgentSessionEntity session = lambdaQuery().eq(AgentSessionEntity::getUuid, sessionId).one();
+        AgentSessionEntity session =
+                lambdaQuery().eq(AgentSessionEntity::getSessionId, sessionId).one();
         return session.getEventSequence();
     }
 
     public AgentSessionEntity findByUuid(String sessionId) {
-        return lambdaQuery().eq(AgentSessionEntity::getUuid, sessionId).one();
+        return lambdaQuery().eq(AgentSessionEntity::getSessionId, sessionId).one();
     }
 }

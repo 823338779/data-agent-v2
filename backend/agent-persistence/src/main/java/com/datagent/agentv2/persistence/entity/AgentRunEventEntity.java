@@ -11,6 +11,9 @@ import lombok.Setter;
 @TableName("agent_run_event")
 public final class AgentRunEventEntity extends TenantAuditedEntity {
 
+    /** Run 事件的业务唯一标识，对应数据库 event_id 列。 */
+    private String eventId;
+
     private String sessionId;
     private String runId;
     private Long sequence;

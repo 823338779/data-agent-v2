@@ -9,6 +9,6 @@ import org.apache.ibatis.annotations.Select;
 @Mapper
 public interface UserAccountMapper extends BaseMapper<UserAccountEntity> {
 
-    @Select("select * from user_account where uuid = #{userId} for update")
+    @Select("select * from user_account where user_id = #{userId} for update")
     UserAccountEntity selectByIdForUpdate(@Param("userId") String userId);
 }

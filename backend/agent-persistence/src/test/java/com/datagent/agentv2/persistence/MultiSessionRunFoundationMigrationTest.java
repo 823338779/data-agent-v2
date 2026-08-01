@@ -61,7 +61,7 @@ class MultiSessionRunFoundationMigrationTest {
                         .load()
                         .migrate()
                         .migrationsExecuted;
-        assertThat(migrated).isEqualTo(2);
+        assertThat(migrated).isEqualTo(3);
     }
 
     @AfterAll
@@ -77,7 +77,7 @@ class MultiSessionRunFoundationMigrationTest {
                                 select owner_user_id, queued_at is not null, lease_expires_at is not null,
                                        heartbeat_at is not null, active_segment_started_at is not null,
                                        execution_budget_ms, active_execution_ms, request_type is null
-                                  from agent_run where uuid = 'run_legacy'
+                                  from agent_run where run_id = 'run_legacy'
                                 """))
                 .containsExactly("user_legacy", "t", "t", "t", "t", "600000", "0", "t");
     }
@@ -86,12 +86,12 @@ class MultiSessionRunFoundationMigrationTest {
     void queuedRunAllowsAttemptZeroAndNullableOwnershipFields() throws SQLException {
         execute(
                 """
-                insert into agent_session(uuid, tenant_id, title, session_type, created_by)
+                insert into agent_session(session_id, tenant_id, title, session_type, created_by)
                     values ('session_queued', 'tenant_legacy', 'Queued', 'INTERACTIVE', 'user_legacy');
-                insert into agent_message(uuid, tenant_id, session_id, role, content, sequence, author_user_id)
+                insert into agent_message(message_id, tenant_id, session_id, role, content, sequence, author_user_id)
                     values ('message_queued', 'tenant_legacy', 'session_queued', 'user', 'queued', 1, 'user_legacy');
                 insert into agent_run(
-                    uuid, tenant_id, session_id, triggering_message_id, status, phase,
+                    run_id, tenant_id, session_id, triggering_message_id, status, phase,
                     execution_attempt, owner_user_id, owner_instance_id, request_id, queued_at,
                     started_at, hard_deadline_at, lease_expires_at, heartbeat_at,
                     active_segment_started_at, request_type, request_idempotency_key,
@@ -108,7 +108,7 @@ class MultiSessionRunFoundationMigrationTest {
                                 """
                                 select execution_attempt, owner_instance_id is null,
                                        hard_deadline_at is null, lease_expires_at is null
-                                  from agent_run where uuid = 'run_queued'
+                                  from agent_run where run_id = 'run_queued'
                                 """))
                 .containsExactly("0", "t", "t", "t");
     }
@@ -119,7 +119,7 @@ class MultiSessionRunFoundationMigrationTest {
                         () ->
                                 execute(
                                         """
-                                        update agent_run set status = 'unknown' where uuid = 'run_legacy'
+                                        update agent_run set status = 'unknown' where run_id = 'run_legacy'
                                         """))
                 .isInstanceOf(SQLException.class);
         assertThatThrownBy(
@@ -127,7 +127,7 @@ class MultiSessionRunFoundationMigrationTest {
                                 execute(
                                         """
                                         update agent_run set request_type = 'message_submission'
-                                         where uuid = 'run_legacy'
+                                         where run_id = 'run_legacy'
                                         """))
                 .isInstanceOf(SQLException.class);
     }

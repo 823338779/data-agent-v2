@@ -11,9 +11,9 @@ public interface NotificationOutboxMapper extends BaseMapper<NotificationOutboxE
     @Insert(
             """
             insert into notification_outbox(
-                uuid, tenant_id, notification_type, aggregate_type, aggregate_id,
+                notification_id, tenant_id, notification_type, aggregate_type, aggregate_id,
                 aggregate_version, payload, next_attempt_at)
-            values(#{uuid}, #{tenantId}, #{notificationType}, #{aggregateType}, #{aggregateId},
+            values(#{notificationId}, #{tenantId}, #{notificationType}, #{aggregateType}, #{aggregateId},
                 #{aggregateVersion}, cast(#{payload} as jsonb), #{nextAttemptAt})
             """)
     int insertControl(NotificationOutboxEntity outbox);

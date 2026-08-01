@@ -127,7 +127,7 @@ class RunControlIntegrationTest {
 
         assertThat(
                         jdbc.queryForObject(
-                                "select status from agent_run where uuid=?",
+                                "select status from agent_run where run_id=?",
                                 String.class,
                                 fixture.runId()))
                 .isEqualTo("cancelled");
@@ -206,7 +206,7 @@ class RunControlIntegrationTest {
                 update agent_run set status='running', phase='RECEIVED', execution_attempt=1,
                   owner_instance_id='instance_control', started_at=?, heartbeat_at=?,
                   lease_expires_at=?, active_segment_started_at=?, hard_deadline_at=?
-                where uuid=?
+                where run_id=?
                 """,
                 Timestamp.from(now),
                 Timestamp.from(now),
@@ -215,7 +215,7 @@ class RunControlIntegrationTest {
                 Timestamp.from(now.plusSeconds(600)),
                 runId);
         jdbc.update(
-                "insert into agent_run_attempt(uuid, tenant_id, run_id, execution_attempt, owner_instance_id, status, started_at) values (?, 'tenant_local', ?, 1, 'instance_control', 'running', ?)",
+                "insert into agent_run_attempt(attempt_id, tenant_id, run_id, execution_attempt, owner_instance_id, status, started_at) values (?, 'tenant_local', ?, 1, 'instance_control', 'running', ?)",
                 "attempt_control_" + runId,
                 runId,
                 Timestamp.from(now));

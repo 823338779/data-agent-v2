@@ -128,7 +128,7 @@ public final class RunClaimService {
         }
 
         AgentRunAttemptEntity attempt = new AgentRunAttemptEntity();
-        attempt.setRunId(run.getUuid());
+        attempt.setRunId(run.getRunId());
         attempt.setExecutionAttempt(executionAttempt);
         attempt.setOwnerInstanceId(identity.id());
         attempt.setStatus(STATUS_RUNNING);
@@ -137,9 +137,9 @@ public final class RunClaimService {
         attempts.insert(attempt);
 
         AgentRunEventEntity event = new AgentRunEventEntity();
-        event.setUuid(ids.next(ID_PREFIX_EVENT));
+        event.setEventId(ids.next(ID_PREFIX_EVENT));
         event.setSessionId(run.getSessionId());
-        event.setRunId(run.getUuid());
+        event.setRunId(run.getRunId());
         event.setSequence(sessions.nextEventSequence(run.getSessionId()));
         event.setType(EVENT_RUN_STARTED);
         event.setOccurredAt(now);
@@ -147,6 +147,6 @@ public final class RunClaimService {
         events.save(event);
 
         return new RunExecutionPort.OwnedRun(
-                TenantContext.requiredTenantId(), run.getUuid(), identity.id(), executionAttempt);
+                TenantContext.requiredTenantId(), run.getRunId(), identity.id(), executionAttempt);
     }
 }

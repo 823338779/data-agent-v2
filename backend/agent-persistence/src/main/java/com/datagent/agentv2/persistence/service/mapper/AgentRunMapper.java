@@ -12,7 +12,7 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface AgentRunMapper extends BaseMapper<AgentRunEntity> {
 
-    @Select("select * from agent_run where uuid = #{runId} for update")
+    @Select("select * from agent_run where run_id = #{runId} for update")
     AgentRunEntity selectByIdForUpdate(@Param("runId") String runId);
 
     @Select(
@@ -63,7 +63,7 @@ public interface AgentRunMapper extends BaseMapper<AgentRunEntity> {
                    hard_deadline_at = #{hardDeadlineAt},
                    updated_at = #{now},
                    version = version + 1
-             where uuid = #{runId}
+             where run_id = #{runId}
                and status = 'queued'
                and version = #{version}
                and is_deleted = false
@@ -82,7 +82,7 @@ public interface AgentRunMapper extends BaseMapper<AgentRunEntity> {
             update agent_run
                set heartbeat_at = #{now}, lease_expires_at = #{leaseExpiresAt},
                    updated_at = #{now}, version = version + 1
-             where uuid = #{runId} and status = 'running'
+             where run_id = #{runId} and status = 'running'
                and owner_instance_id = #{ownerInstanceId}
                and execution_attempt = #{executionAttempt}
                and hard_deadline_at > #{now} and is_deleted = false
@@ -97,7 +97,7 @@ public interface AgentRunMapper extends BaseMapper<AgentRunEntity> {
     @Update(
             """
             update agent_run set updated_at = updated_at
-             where uuid = #{runId} and status = 'running'
+             where run_id = #{runId} and status = 'running'
                and owner_instance_id = #{ownerInstanceId}
                and execution_attempt = #{executionAttempt}
                and hard_deadline_at > #{now} and is_deleted = false
@@ -111,7 +111,7 @@ public interface AgentRunMapper extends BaseMapper<AgentRunEntity> {
     @Select(
             """
             select count(*) from agent_run
-             where uuid = #{runId} and status = 'running'
+             where run_id = #{runId} and status = 'running'
                and owner_instance_id = #{ownerInstanceId}
                and execution_attempt = #{executionAttempt}
                and cancellation_requested_at is not null and is_deleted = false
@@ -130,7 +130,7 @@ public interface AgentRunMapper extends BaseMapper<AgentRunEntity> {
                    owner_instance_id = null, active_segment_started_at = null,
                    heartbeat_at = null, lease_expires_at = null, hard_deadline_at = null,
                    updated_at = #{now}, version = version + 1
-             where uuid = #{runId} and status = 'running'
+             where run_id = #{runId} and status = 'running'
                and owner_instance_id = #{ownerInstanceId}
                and execution_attempt = #{executionAttempt}
                and cancellation_requested_at is not null and is_deleted = false
@@ -151,7 +151,7 @@ public interface AgentRunMapper extends BaseMapper<AgentRunEntity> {
                    owner_instance_id = null, active_segment_started_at = null,
                    heartbeat_at = null, lease_expires_at = null, hard_deadline_at = null,
                    updated_at = #{now}, version = version + 1
-             where uuid = #{runId} and status = 'running'
+             where run_id = #{runId} and status = 'running'
                and owner_instance_id = #{ownerInstanceId}
                and execution_attempt = #{executionAttempt}
                and hard_deadline_at <= #{now} and is_deleted = false
@@ -181,7 +181,7 @@ public interface AgentRunMapper extends BaseMapper<AgentRunEntity> {
                    heartbeat_at = #{now}, lease_expires_at = #{leaseExpiresAt},
                    hard_deadline_at = #{hardDeadlineAt}, updated_at = #{now},
                    version = version + 1
-             where uuid = #{runId} and status = 'running'
+             where run_id = #{runId} and status = 'running'
                and owner_instance_id = #{oldOwnerInstanceId}
                and execution_attempt = #{oldExecutionAttempt}
                and version = #{version} and lease_expires_at <= #{now}
@@ -207,7 +207,7 @@ public interface AgentRunMapper extends BaseMapper<AgentRunEntity> {
                    owner_instance_id = null, active_segment_started_at = null,
                    heartbeat_at = null, lease_expires_at = null, hard_deadline_at = null,
                    updated_at = #{now}, version = version + 1
-             where uuid = #{runId} and status = 'running'
+             where run_id = #{runId} and status = 'running'
                and owner_instance_id = #{ownerInstanceId}
                and execution_attempt = #{executionAttempt}
                and version = #{version} and is_deleted = false

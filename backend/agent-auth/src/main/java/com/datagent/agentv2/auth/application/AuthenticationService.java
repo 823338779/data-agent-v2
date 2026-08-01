@@ -74,7 +74,7 @@ public class AuthenticationService {
         byte[] random = new byte[32];
         secureRandom.nextBytes(random);
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(random);
-        loginSessions.save(token, account.getTenantId(), account.getUuid(), lifetime());
+        loginSessions.save(token, account.getTenantId(), account.getUserId(), lifetime());
         return new LoginToken(token, lifetime());
     }
 
@@ -101,7 +101,7 @@ public class AuthenticationService {
                         .collect(Collectors.toUnmodifiableSet());
         return Optional.of(
                 new AuthenticatedUser(
-                        account.getTenantId(), account.getUuid(), account.getUsername(), roles));
+                        account.getTenantId(), account.getUserId(), account.getUsername(), roles));
     }
 
     private static String externalRole(String role) {
