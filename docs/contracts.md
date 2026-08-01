@@ -15,7 +15,7 @@
 在 V2 仓库根目录执行聚焦契约测试：
 
 ```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-contracts test
 ```
 
 执行整个后端 reactor 验证：
