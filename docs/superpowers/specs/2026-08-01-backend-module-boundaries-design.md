@@ -59,15 +59,16 @@ Maven reactor 顺序固定为：`agent-contracts`、`agent-platform`、`agent-pe
 
 - `persistence.config`：MyBatis-Plus 配置和租户、乐观锁等拦截器。
 - `persistence`：审计实体、审计填充器和 `AuditedServiceImpl`。
-- `db/migration`：单一、有序的 Flyway 迁移序列。认证和对话模块拥有实体与服务，但 Schema 变更集中在这里，避免多个 JAR 产生 Flyway 版本冲突。
+- `persistence.auth`、`persistence.conversation` 等能力子包：统一保存各业务能力的 Entity、Mapper 和 `ServiceImpl`，但不保存应用编排或领域规则。
+- `db/migration`：单一、有序的 Flyway 迁移序列，避免多个 JAR 产生 Flyway 版本冲突。
 - PostgreSQL 迁移与 MyBatis-Plus 集成测试。
-- 业务专属 Entity、Mapper 和 `ServiceImpl` 留在对应业务模块的 `persistence` 包；本模块不反向依赖业务模块，也不集中堆放业务逻辑。
+- 本模块不反向依赖业务模块；通过按能力分包避免不同业务的表模型混放。
 
 ### agent-auth
 
-- `auth.api`、`auth.application`、`auth.persistence`、`auth.security`。
+- `auth.api`、`auth.application`、`auth.security`。
 - 负责把有效登录会话转换成平台定义的已认证操作者和租户上下文。
-- 只通过继承 `ServiceImpl`/`AuditedServiceImpl` 的持久化服务访问 Mapper。
+- 只调用 `agent-persistence` 暴露的 `ServiceImpl` 服务，不直接引用 Mapper 或 MyBatis API。
 
 ### agent-conversation
 

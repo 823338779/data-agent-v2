@@ -17,7 +17,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
-@MapperScan(basePackages = "com.datagent.agentv2", annotationClass = Mapper.class)
+@MapperScan(basePackages = "com.datagent.agentv2.persistence", annotationClass = Mapper.class)
 public class MybatisPlusConfiguration {
 
     @Bean

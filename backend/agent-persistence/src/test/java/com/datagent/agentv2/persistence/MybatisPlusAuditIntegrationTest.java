@@ -147,6 +147,8 @@ class MybatisPlusAuditIntegrationTest {
     }
 
     @TestConfiguration(proxyBeanMethods = false)
-    @MapperScan(basePackageClasses = AuditFixtureMapper.class)
+    @MapperScan(
+            basePackageClasses = AuditFixtureMapper.class,
+            markerInterface = AuditFixtureMapperMarker.class)
     static class FixtureMapperConfiguration {}
 }

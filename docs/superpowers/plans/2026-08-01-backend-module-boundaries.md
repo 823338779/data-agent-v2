@@ -150,7 +150,7 @@ git commit -m "refactor: isolate contract verification module"
 
 **接口：**
 - 输入：现有迁移、审计、租户、逻辑删除和乐观锁实现。
-- 输出：可单独测试的持久化基础模块；业务专属 Entity、Mapper 和 `ServiceImpl` 仍归对应业务模块。
+- 输出：可单独测试的持久化模块；所有能力的 Entity、Mapper 和 `ServiceImpl` 按能力子包集中在该模块，应用编排仍归业务模块。
 
 - [ ] **步骤 1：移动生产代码、迁移和测试**
 

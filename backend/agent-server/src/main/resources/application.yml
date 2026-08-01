@@ -8,6 +8,15 @@ spring:
   flyway:
     enabled: true
 
+data-agent:
+  auth:
+    session:
+      secure-cookie: ${DATA_AGENT_SESSION_SECURE_COOKIE:false}
+      lifetime: ${DATA_AGENT_SESSION_LIFETIME:PT8H}
+    bootstrap:
+      enabled: ${DATA_AGENT_BOOTSTRAP_ENABLED:true}
+      password: ${DATA_AGENT_BOOTSTRAP_PASSWORD:admin}
+
 management:
   endpoint:
     health:
