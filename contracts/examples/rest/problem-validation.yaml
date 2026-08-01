@@ -1,0 +1,12 @@
+schema: ProblemDetail
+value:
+  type: urn:data-agent:problem:validation-failed
+  title: Bad Request
+  status: 400
+  detail: Request validation failed
+  instance: /api/v1/agent-sessions/session_demo/messages
+  code: VALIDATION_FAILED
+  requestId: request_demo
+  errors:
+    - field: content
+      message: must not be blank

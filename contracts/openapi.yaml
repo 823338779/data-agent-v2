@@ -2,6 +2,1250 @@ openapi: 3.1.0
 info:
   title: Data Agent V2 API
   version: 0.1.0
-paths: {}
+  description: Frozen REST contract derived from the V1 controllers at fb9621ae.
+
+paths:
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '204':
+          description: Authenticated session created
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SessionSetCookie' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+  /api/v1/auth/session:
+    get:
+      operationId: getAuthenticatedSession
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Current authenticated session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthSession' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      security: [{ sessionCookie: [] }]
+      responses:
+        '204':
+          description: Authenticated session ended
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SessionSetCookie' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+
+  /api/v1/agent-sessions:
+    get:
+      operationId: listAgentSessions
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Visible agent sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AgentSession' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+    post:
+      operationId: createAgentSession
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSessionRequest' }
+      responses:
+        '201':
+          description: Agent session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentSession' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+  /api/v1/agent-sessions/{sessionId}:
+    get:
+      operationId: getAgentSession
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SessionId' }
+      responses:
+        '200':
+          description: Agent session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentSession' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/agent-sessions/{sessionId}/metric-identity:
+    put:
+      operationId: bindAgentSessionMetricIdentity
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SessionId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BindMetricIdentityRequest' }
+      responses:
+        '200':
+          description: Updated agent session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentSession' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/agent-sessions/{sessionId}/messages:
+    post:
+      operationId: submitAgentMessage
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SessionId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmitMessageRequest' }
+      responses:
+        '202':
+          description: Message persisted and Run started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentSession' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ActiveRunConflict' }
+  /api/v1/agent-sessions/{sessionId}/events:
+    get:
+      operationId: streamAgentSessionEvents
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SessionId' }
+      responses:
+        '200':
+          description: Replay followed by live session events
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/RunEvent' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/agent-sessions/{sessionId}/confirmations/{confirmationId}:
+    post:
+      operationId: confirmAgentAction
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SessionId' }
+        - { $ref: '#/components/parameters/ConfirmationId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfirmActionRequest' }
+      responses:
+        '200':
+          description: Updated agent session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentSession' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/agent-sessions/{sessionId}/interactions/{interactionId}:resolve:
+    post:
+      operationId: resolvePendingInteraction
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SessionId' }
+        - { $ref: '#/components/parameters/InteractionId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResolveInteractionRequest' }
+      responses:
+        '200':
+          description: Interaction resolved and Run resumed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentSession' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+  /api/v1/agent-sessions/{sessionId}/interactions/{interactionId}:submit-secret:
+    post:
+      operationId: submitPendingInteractionSecret
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SessionId' }
+        - { $ref: '#/components/parameters/InteractionId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmitSecretRequest' }
+      responses:
+        '200':
+          description: Secret accepted without entering conversation state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecretAccepted' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/agent-sessions/{sessionId}/audit-log:
+    get:
+      operationId: getAgentSessionAuditLog
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/SessionId' }
+      responses:
+        '200':
+          description: Audit records for the session
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AuditRecord' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/metric-identities:
+    get:
+      operationId: listMetricIdentities
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Visible metric identities
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MetricIdentity' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+    post:
+      operationId: createMetricIdentity
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateMetricIdentityRequest' }
+      responses:
+        '201':
+          description: Metric identity created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MetricIdentity' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/metric-identities/{id}:
+    get:
+      operationId: getMetricIdentity
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/MetricIdentityId' }
+      responses:
+        '200':
+          description: Metric identity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MetricIdentity' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/metric-identities/{id}:verify:
+    post:
+      operationId: verifyMetricIdentity
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/MetricIdentityId' }
+      responses:
+        '200':
+          description: Verified metric identity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MetricIdentity' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/metric-identities/{id}:replace-password:
+    post:
+      operationId: replaceMetricIdentityPassword
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/MetricIdentityId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplaceMetricIdentityPasswordRequest' }
+      responses:
+        '200':
+          description: Metric identity with replaced password
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MetricIdentity' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/metric-identities/{id}:deactivate:
+    post:
+      operationId: deactivateMetricIdentity
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/MetricIdentityId' }
+      responses:
+        '200':
+          description: Deactivated metric identity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MetricIdentity' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/metric-identities:rotate-secrets:
+    post:
+      operationId: rotateMetricIdentitySecrets
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Tenant secret rotation result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecretRotationResult' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/tenants:
+    post:
+      operationId: createTenant
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTenantRequest' }
+      responses:
+        '201':
+          description: Tenant created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tenant' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/tenants/{tenantId}/members:
+    get:
+      operationId: listTenantMembers
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/TenantId' }
+      responses:
+        '200':
+          description: Tenant memberships
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TenantMembership' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: addTenantMember
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/TenantId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddTenantMemberRequest' }
+      responses:
+        '201':
+          description: Tenant membership created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TenantMembership' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/artifacts/{artifactId}:
+    get:
+      operationId: getArtifactMetadata
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ArtifactId' }
+      responses:
+        '200':
+          description: Artifact metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactMetadata' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+  /api/v1/artifacts/{artifactId}/preview:
+    get:
+      operationId: previewArtifact
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ArtifactId' }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 200 }
+      responses:
+        '200':
+          description: Artifact preview
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactPreview' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+  /api/v1/artifacts/{artifactId}:create-download:
+    post:
+      operationId: createArtifactDownload
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ArtifactId' }
+        - name: format
+          in: query
+          schema: { type: string, enum: [csv, json], default: csv }
+      responses:
+        '200':
+          description: Signed artifact download link
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactDownloadLink' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+  /api/v1/artifact-downloads/{artifactId}:
+    get:
+      operationId: downloadArtifact
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ArtifactId' }
+        - { name: format, in: query, required: true, schema: { type: string } }
+        - { name: expires, in: query, required: true, schema: { type: integer, format: int64 } }
+        - { name: subject, in: query, required: true, schema: { type: string } }
+        - { name: signature, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Artifact file
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+
+  /api/v1/scheduled-tasks:
+    get:
+      operationId: listScheduledTasks
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - name: includeDeleted
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Scheduled tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ScheduledTask' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+    post:
+      operationId: createScheduledTask
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduledTaskRequest' }
+      responses:
+        '201':
+          description: Scheduled task created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduledTask' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/scheduled-tasks/{taskId}:
+    get:
+      operationId: getScheduledTask
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/TaskId' }
+      responses:
+        '200':
+          description: Scheduled task
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduledTask' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: updateScheduledTask
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/TaskId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduledTaskUpdateRequest' }
+      responses:
+        '200':
+          description: Updated scheduled task
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduledTask' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      operationId: deleteScheduledTask
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/TaskId' }
+      responses:
+        '204': { description: Scheduled task deleted }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/scheduled-tasks/{taskId}/executions:
+    get:
+      operationId: listScheduledTaskExecutions
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/TaskId' }
+      responses:
+        '200':
+          description: Scheduled task execution history
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TaskExecutionSummary' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: executeScheduledTask
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/TaskId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '202':
+          description: Scheduled task execution accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskExecutionAccepted' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/task-executions/{executionId}:
+    get:
+      operationId: getTaskExecution
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ExecutionId' }
+      responses:
+        '200':
+          description: Task execution detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskExecutionDetail' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/task-executions/{executionId}/cancel:
+    post:
+      operationId: cancelTaskExecution
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ExecutionId' }
+      responses:
+        '202': { description: Cancellation accepted }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/task-executions/{executionId}/events:
+    get:
+      operationId: streamTaskExecutionEvents
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ExecutionId' }
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Replay followed by live task execution events
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/TaskTimelineEvent' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/evaluation/mutation-guard:
+    get:
+      operationId: getEvaluationMutationGuard
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: Evaluation mutation guard status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvaluationMutationGuard' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
-  schemas: {}
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: DATA_AGENT_SESSION
+      description: HttpOnly, SameSite=Lax session cookie scoped to /.
+  headers:
+    SessionSetCookie:
+      description: DATA_AGENT_SESSION cookie using Path=/, HttpOnly and SameSite=Lax.
+      schema:
+        type: string
+        example: DATA_AGENT_SESSION=session_demo; Path=/; HttpOnly; SameSite=Lax
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string }
+    ConfirmationId:
+      name: confirmationId
+      in: path
+      required: true
+      schema: { type: string }
+    InteractionId:
+      name: interactionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MetricIdentityId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TenantId:
+      name: tenantId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ArtifactId:
+      name: artifactId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ExecutionId:
+      name: executionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 1 }
+  responses:
+    ValidationFailed:
+      description: Request validation failed
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+    AuthenticationRequired:
+      description: Authentication is required
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+    Forbidden:
+      description: Authenticated principal cannot access the resource
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+    Conflict:
+      description: Request conflicts with current resource state
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+    ActiveRunConflict:
+      description: Session already has an active Run
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+    Gone:
+      description: Resource is no longer available
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+    UnprocessableEntity:
+      description: Request is syntactically valid but cannot be processed
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/ProblemDetail' }
+  schemas:
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string, writeOnly: true }
+    AuthSession:
+      type: object
+      required: [tenantId, subject, roles]
+      properties:
+        tenantId: { type: string }
+        subject: { type: string }
+        roles:
+          type: array
+          items: { type: string }
+
+    CreateSessionRequest:
+      type: object
+      properties:
+        title: { type: [string, 'null'], maxLength: 120 }
+        tag: { type: [string, 'null'], maxLength: 120 }
+        metricIdentityId: { type: [string, 'null'], format: uuid }
+    BindMetricIdentityRequest:
+      type: object
+      required: [metricIdentityId, expectedSessionVersion]
+      properties:
+        metricIdentityId: { type: string, format: uuid }
+        expectedSessionVersion: { type: integer, format: int64, minimum: 0 }
+    SubmitMessageRequest:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, minLength: 1, maxLength: 8000 }
+    ConfirmActionRequest:
+      type: object
+      required: [approved]
+      properties:
+        approved: { type: boolean }
+        comment: { type: [string, 'null'], maxLength: 1000 }
+    ResolveInteractionRequest:
+      type: object
+      required: [optionId]
+      properties:
+        optionId: { type: string, minLength: 1 }
+    SubmitSecretRequest:
+      type: object
+      required: [value]
+      properties:
+        value: { type: string, minLength: 1, writeOnly: true }
+    SecretAccepted:
+      type: object
+      required: [accepted]
+      properties:
+        accepted: { type: boolean }
+
+    AgentSession:
+      type: object
+      required:
+        - id
+        - title
+        - tag
+        - sessionType
+        - createdAt
+        - updatedAt
+        - version
+        - metricIdentityBindingVersion
+        - messages
+      properties:
+        id: { type: string }
+        title: { type: string }
+        tag: { type: string }
+        sessionType: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer, format: int64 }
+        metricIdentityBindingVersion: { type: integer, format: int64 }
+        metricIdentity:
+          oneOf:
+            - { $ref: '#/components/schemas/MetricIdentityBinding' }
+            - { type: 'null' }
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/AgentMessage' }
+        run:
+          oneOf:
+            - { $ref: '#/components/schemas/AgentRun' }
+            - { type: 'null' }
+    MetricIdentityBinding:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string, format: uuid }
+        displayName: { type: [string, 'null'] }
+        platformUsername: { type: [string, 'null'] }
+        visibility: { type: [string, 'null'] }
+        status: { type: [string, 'null'] }
+    AgentMessage:
+      type: object
+      required: [id, role, author, content, createdAt, citations]
+      properties:
+        id: { type: string }
+        role: { type: string, enum: [user, assistant, system] }
+        author: { type: string }
+        content: { type: string }
+        createdAt: { type: string, format: date-time }
+        citations:
+          type: array
+          items: { $ref: '#/components/schemas/CitationSummary' }
+    CitationSummary:
+      type: object
+      required: [token, label, artifactId, queryId]
+      properties:
+        token: { type: string }
+        label: { type: string }
+        artifactId: { type: string, format: uuid }
+        queryId: { type: string, format: uuid }
+    AgentRun:
+      type: object
+      required: [id, status, progress, objective, events]
+      properties:
+        id: { type: string }
+        status:
+          type: string
+          enum: [idle, running, waiting_for_user, waiting_confirmation, done, cancelled, failed]
+        progress: { type: integer }
+        objective: { type: string }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/RunEvent' }
+        pendingConfirmation:
+          oneOf:
+            - { $ref: '#/components/schemas/ConfirmationRequest' }
+            - { type: 'null' }
+        pendingInteraction:
+          oneOf:
+            - { $ref: '#/components/schemas/PendingInteraction' }
+            - { type: 'null' }
+        stream:
+          description: Optional V2 incremental Run projection; absent in frozen V1 responses.
+          oneOf:
+            - { $ref: '#/components/schemas/RunStream' }
+            - { type: 'null' }
+    RunStream:
+      type: object
+      required: [executionAttempt, phase, sequence, thinking, answer]
+      properties:
+        executionAttempt: { type: integer, minimum: 1 }
+        phase: { type: string }
+        sequence: { type: integer, format: int64, minimum: 0 }
+        thinking: { type: string }
+        answer: { type: string }
+    RunEvent:
+      type: object
+      required: [id, sequence, type, occurredAt, runId, input, output]
+      properties:
+        id: { type: string }
+        sequence: { type: integer, format: int64 }
+        type:
+          type: string
+          enum:
+            - user_message
+            - assistant_message
+            - reasoning_delta
+            - skill_activated
+            - context_compaction_started
+            - context_compaction_completed
+            - context_compaction_failed
+            - tool_call_started
+            - tool_call_completed
+            - tool_call_result
+            - tool_call_failed
+            - interaction_requested
+            - interaction_resolved
+            - user_confirmation_requested
+            - user_confirmation_resolved
+            - run_started
+            - assistant_delta
+            - run_completed
+            - run_failed
+            - run_cancelled
+            - error
+        occurredAt: { type: string, format: date-time }
+        runId: { type: string }
+        messageId: { type: [string, 'null'] }
+        title: { type: [string, 'null'] }
+        summary: { type: [string, 'null'] }
+        toolName: { type: [string, 'null'] }
+        input: { type: object, additionalProperties: true }
+        output: { type: object, additionalProperties: true }
+        confirmationId: { type: [string, 'null'] }
+        approved: { type: [boolean, 'null'] }
+        status: { type: [string, 'null'] }
+    ConfirmationRequest:
+      type: object
+      required: [id, title, summary, detail, requestedAt]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        detail: { type: string }
+        requestedAt: { type: string, format: date-time }
+    PendingInteraction:
+      type: object
+      required: [id, type, prompt, options]
+      properties:
+        id: { type: string }
+        type: { type: string }
+        prompt: { type: string }
+        options:
+          type: array
+          items: { $ref: '#/components/schemas/PendingInteractionOption' }
+        expiresAt: { type: [string, 'null'], format: date-time }
+    PendingInteractionOption:
+      type: object
+      required: [id, label, description]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        description: { type: string }
+    AuditRecord:
+      type: object
+      required: [id, sessionId, action, occurredAt, detail]
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        action: { type: string }
+        occurredAt: { type: string, format: date-time }
+        detail: { type: object, additionalProperties: true }
+
+    CreateMetricIdentityRequest:
+      type: object
+      required: [displayName, visibility, username, password]
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 160 }
+        visibility: { type: string, enum: [USER, TENANT] }
+        username: { type: string, minLength: 1, maxLength: 160 }
+        password: { type: string, minLength: 1, maxLength: 1024, writeOnly: true }
+    ReplaceMetricIdentityPasswordRequest:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string, minLength: 1, maxLength: 1024, writeOnly: true }
+    MetricIdentity:
+      type: object
+      required:
+        - id
+        - displayName
+        - visibility
+        - ownerSubject
+        - platformTenantKey
+        - platformUsername
+        - platformDisplayName
+        - grantedScopes
+        - status
+        - credentialVersion
+        - version
+      properties:
+        id: { type: string, format: uuid }
+        displayName: { type: string }
+        visibility: { type: string, enum: [USER, TENANT] }
+        ownerSubject: { type: string }
+        platformTenantKey: { type: string }
+        platformUsername: { type: string }
+        platformDisplayName: { type: string }
+        grantedScopes:
+          type: array
+          uniqueItems: true
+          items: { type: string }
+        status:
+          type: string
+          enum: [PENDING_VERIFICATION, ACTIVE, INVALID_CREDENTIALS, LOCKED, EXPIRED, DISABLED]
+        credentialVersion: { type: integer, format: int64 }
+        lastVerifiedAt: { type: [string, 'null'], format: date-time }
+        lastLoginAt: { type: [string, 'null'], format: date-time }
+        lastLoginErrorCode: { type: [string, 'null'] }
+        version: { type: integer, format: int64 }
+    SecretRotationResult:
+      type: object
+      required: [rotated, failed]
+      properties:
+        rotated: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+
+    CreateTenantRequest:
+      type: object
+      required: [slug, displayName]
+      properties:
+        slug: { type: string, pattern: '^[a-z0-9-]{3,80}$' }
+        displayName: { type: string, minLength: 1, maxLength: 160 }
+    Tenant:
+      type: object
+      required: [id, slug, displayName]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        displayName: { type: string }
+    AddTenantMemberRequest:
+      type: object
+      required: [externalSubject, displayName, role]
+      properties:
+        externalSubject: { type: string, minLength: 1, maxLength: 200 }
+        displayName: { type: string, minLength: 1, maxLength: 160 }
+        role: { type: string, enum: [TENANT_ADMIN, DATA_SOURCE_EDITOR, TENANT_VIEWER] }
+    TenantMembership:
+      type: object
+      required: [id, userId, externalSubject, displayName, status, role]
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        externalSubject: { type: string }
+        displayName: { type: string }
+        status: { type: string }
+        role: { type: string }
+
+    ArtifactMetadata:
+      type: object
+      required: [id, fileName, mediaType, queryId, rowCount, columnCount, sourceTruncated, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        fileName: { type: string }
+        mediaType: { type: string }
+        queryId: { type: string, format: uuid }
+        rowCount: { type: integer }
+        columnCount: { type: integer }
+        sourceTruncated: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    ArtifactColumn:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        displayName: { type: [string, 'null'] }
+        logicalType: { type: [string, 'null'] }
+        unit: { type: [string, 'null'] }
+    ExecutionEvidence:
+      type: object
+      required: [queryId, definitionVersions, relationshipIds, appliedScope, freshnessWarnings]
+      properties:
+        queryId: { type: string, format: uuid }
+        catalogVersion: { type: [string, 'null'] }
+        definitionVersions: { type: object, additionalProperties: { type: integer, format: int64 } }
+        relationshipIds:
+          type: array
+          items: { type: string, format: uuid }
+        appliedScope: { type: object, additionalProperties: true }
+        freshnessWarnings:
+          type: array
+          items: { type: string }
+    ArtifactPreview:
+      type: object
+      required: [artifact, columns, rows, previewTruncated, evidence]
+      properties:
+        artifact: { $ref: '#/components/schemas/ArtifactMetadata' }
+        columns:
+          type: array
+          items: { $ref: '#/components/schemas/ArtifactColumn' }
+        rows:
+          type: array
+          items:
+            type: array
+            items: {}
+        previewTruncated: { type: boolean }
+        evidence: { $ref: '#/components/schemas/ExecutionEvidence' }
+    ArtifactDownloadLink:
+      type: object
+      required: [url, expiresAt]
+      properties:
+        url: { type: string, format: uri-reference }
+        expiresAt: { type: string, format: date-time }
+
+    ScheduledTaskRequest:
+      type: object
+      required: [name, instruction, metricIdentityId, scheduleType, enabled]
+      properties:
+        name: { type: string }
+        instruction: { type: string }
+        metricIdentityId: { type: string, format: uuid }
+        scheduleType: { type: string, enum: [CRON, MANUAL] }
+        cronExpression: { type: [string, 'null'] }
+        zoneId: { type: [string, 'null'] }
+        enabled: { type: boolean }
+    ScheduledTaskUpdateRequest:
+      allOf:
+        - { $ref: '#/components/schemas/ScheduledTaskRequest' }
+        - type: object
+          required: [expectedVersion]
+          properties:
+            expectedVersion: { type: integer, format: int64, minimum: 0 }
+    LastTaskExecution:
+      type: object
+      required: [status, occurredAt]
+      properties:
+        status: { type: string }
+        occurredAt: { type: string, format: date-time }
+    ScheduledTask:
+      allOf:
+        - { $ref: '#/components/schemas/ScheduledTaskRequest' }
+        - type: object
+          required: [id, version, createdAt, updatedAt, deleted, assignmentState]
+          properties:
+            id: { type: string, format: uuid }
+            version: { type: integer, format: int64 }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+            deleted: { type: boolean }
+            deletedAt: { type: [string, 'null'], format: date-time }
+            assignmentState: { type: string, enum: [MANUAL, DISABLED, PENDING_ASSIGNMENT, ASSIGNED] }
+            ownerNodeId: { type: [string, 'null'] }
+            nextFireAt: { type: [string, 'null'], format: date-time }
+            lastExecution:
+              oneOf:
+                - { $ref: '#/components/schemas/LastTaskExecution' }
+                - { type: 'null' }
+    TaskExecutionAccepted:
+      type: object
+      required: [executionId]
+      properties:
+        executionId: { type: string, format: uuid }
+    TaskExecutionSummary:
+      type: object
+      required: [id, taskId, triggerType, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        taskId: { type: string, format: uuid }
+        triggerType: { type: string, enum: [CRON, MANUAL] }
+        status:
+          type: string
+          enum: [PENDING, RUNNING, CANCEL_REQUESTED, COMPLETED, FAILED, CANCELLED]
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: [string, 'null'], format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        errorCode: { type: [string, 'null'] }
+        errorMessage: { type: [string, 'null'] }
+    TaskSnapshot:
+      type: object
+      required: [taskId, taskVersion, name, instruction, scheduleType, metricIdentityId]
+      properties:
+        taskId: { type: string, format: uuid }
+        taskVersion: { type: integer, format: int64 }
+        name: { type: string }
+        instruction: { type: string }
+        scheduleType: { type: string, enum: [CRON, MANUAL] }
+        cronExpression: { type: [string, 'null'] }
+        zoneId: { type: [string, 'null'] }
+        metricIdentityId: { type: string, format: uuid }
+        scheduledFireAt: { type: [string, 'null'], format: date-time }
+    TaskExecutionLinks:
+      type: object
+      required: [events]
+      properties:
+        session: { type: [string, 'null'], format: uri-reference }
+        events: { type: string, format: uri-reference }
+    TaskExecutionDetail:
+      allOf:
+        - { $ref: '#/components/schemas/TaskExecutionSummary' }
+        - type: object
+          required: [executionEpoch, fencingToken, taskSnapshot, targetNodeId, links]
+          properties:
+            executionEpoch: { type: integer, format: int64 }
+            fencingToken: { type: integer, format: int64 }
+            taskSnapshot: { $ref: '#/components/schemas/TaskSnapshot' }
+            targetNodeId: { type: string }
+            ownerNodeId: { type: [string, 'null'] }
+            sessionId: { type: [string, 'null'] }
+            agentRunId: { type: [string, 'null'] }
+            claimedAt: { type: [string, 'null'], format: date-time }
+            cancelRequestedAt: { type: [string, 'null'], format: date-time }
+            links: { $ref: '#/components/schemas/TaskExecutionLinks' }
+    TaskTimelineEvent:
+      type: object
+      required: [source, sourceSequence, occurredAt, type, payload]
+      properties:
+        source: { type: string, enum: [SCHEDULER, AGENT] }
+        sourceSequence: { type: integer, format: int64 }
+        occurredAt: { type: string, format: date-time }
+        type: { type: string }
+        payload: { type: object, additionalProperties: true }
+    EvaluationMutationGuard:
+      type: object
+      required: [enabled, requiredSessionTagPrefix]
+      properties:
+        enabled: { type: boolean, const: true }
+        requiredSessionTagPrefix: { type: string }
+
+    ProblemDetail:
+      type: object
+      required: [type, title, status, detail, instance, code, requestId, errors]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        detail: { type: string }
+        message:
+          type: string
+          description: Legacy V1 alias of detail when emitted by the shared exception handler.
+        instance: { type: string, format: uri-reference }
+        code: { type: string }
+        requestId: { type: string }
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/ProblemError' }
+    ProblemError:
+      type: object
+      properties:
+        field: { type: string }
+        message: { type: string }
+        pointer: { type: string }
+        code: { type: string }
+        detail: { type: string }

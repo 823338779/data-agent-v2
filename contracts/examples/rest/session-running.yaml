@@ -1,0 +1,46 @@
+schema: AgentSession
+value:
+  id: session_demo
+  title: Local metric analysis
+  tag: local-demo
+  sessionType: INTERACTIVE
+  createdAt: 2026-08-01T08:00:00Z
+  updatedAt: 2026-08-01T08:01:00Z
+  version: 2
+  metricIdentityBindingVersion: 0
+  metricIdentity: null
+  messages:
+    - id: message_demo
+      role: user
+      author: user_admin
+      content: Summarize local revenue by month
+      createdAt: 2026-08-01T08:01:00Z
+      citations: []
+  run:
+    id: run_demo
+    status: running
+    progress: 35
+    objective: Summarize local revenue by month
+    events:
+      - id: event_demo
+        sequence: 1
+        type: run_started
+        occurredAt: 2026-08-01T08:01:00Z
+        runId: run_demo
+        messageId: message_demo
+        title: Run started
+        summary: Preparing the metric query
+        toolName: null
+        input: {}
+        output: {}
+        confirmationId: null
+        approved: null
+        status: running
+    pendingConfirmation: null
+    pendingInteraction: null
+    stream:
+      executionAttempt: 1
+      phase: planning
+      sequence: 1
+      thinking: Preparing the metric query
+      answer: ''

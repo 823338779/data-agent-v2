@@ -1,0 +1,10 @@
+schema: ProblemDetail
+value:
+  type: urn:data-agent:problem:authentication-required
+  title: Unauthorized
+  status: 401
+  detail: Authentication is required
+  instance: /api/v1/auth/login
+  code: AUTHENTICATION_REQUIRED
+  requestId: request_demo
+  errors: []
