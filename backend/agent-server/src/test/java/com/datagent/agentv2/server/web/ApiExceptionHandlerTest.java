@@ -1,4 +1,4 @@
-package com.datagent.agentv2.platform.web;
+package com.datagent.agentv2.server.web;
 
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -6,8 +6,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.datagent.agentv2.platform.context.RequestContextFilter;
 import com.datagent.agentv2.platform.id.PrefixedUuidIdGenerator;
+import com.datagent.agentv2.server.context.RequestContextFilter;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.security.autoconfigure.SecurityAutoConfiguration;
