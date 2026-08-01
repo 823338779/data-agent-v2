@@ -1,6 +1,6 @@
 package com.datagent.agentv2.conversation.stream;
 
-import com.datagent.agentv2.conversation.cluster.StreamDeltaEnvelope;
+import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotification;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -23,8 +23,9 @@ public final class LocalSseRegistry {
     }
 
     /** 首连接触发 Redis 订阅，末连接关闭时取消对应 channel。 */
-    public Registration register(String tenantId, String sessionId, Subscriber subscriber) {
-        SessionKey key = new SessionKey(tenantId, sessionId);
+    public Registration register(
+            String tenantId, String conversationSessionId, Subscriber subscriber) {
+        SessionKey key = new SessionKey(tenantId, conversationSessionId);
         Connection connection = new Connection(subscriber);
         connections.compute(
                 key,
@@ -33,7 +34,7 @@ public final class LocalSseRegistry {
                             existing == null ? new CopyOnWriteArrayList<>() : existing;
                     values.add(connection);
                     if (existing == null) {
-                        lifecycle.subscribe(tenantId, sessionId);
+                        lifecycle.subscribe(tenantId, conversationSessionId);
                     }
                     return values;
                 });
@@ -41,17 +42,18 @@ public final class LocalSseRegistry {
     }
 
     /** owner 本地投递和 Redis 入站消息共用同一连接级排序规则。 */
-    public void publish(StreamDeltaEnvelope envelope) {
+    public void publish(AgentExecutionDeltaNotification envelope) {
         CopyOnWriteArrayList<Connection> sessionConnections =
-                connections.get(new SessionKey(envelope.tenantId(), envelope.sessionId()));
+                connections.get(
+                        new SessionKey(envelope.tenantId(), envelope.conversationSessionId()));
         if (sessionConnections != null) {
             sessionConnections.forEach(connection -> connection.deliver(envelope));
         }
     }
 
-    public boolean hasConnections(String tenantId, String sessionId) {
+    public boolean hasConnections(String tenantId, String conversationSessionId) {
         CopyOnWriteArrayList<Connection> values =
-                connections.get(new SessionKey(tenantId, sessionId));
+                connections.get(new SessionKey(tenantId, conversationSessionId));
         return values != null && !values.isEmpty();
     }
 
@@ -61,7 +63,7 @@ public final class LocalSseRegistry {
                 (ignored, values) -> {
                     values.remove(connection);
                     if (values.isEmpty()) {
-                        lifecycle.unsubscribe(key.tenantId(), key.sessionId());
+                        lifecycle.unsubscribe(key.tenantId(), key.conversationSessionId());
                         return null;
                     }
                     return values;
@@ -69,15 +71,15 @@ public final class LocalSseRegistry {
     }
 
     public interface Subscriber {
-        void onDelta(StreamDeltaEnvelope envelope);
+        void onDelta(AgentExecutionDeltaNotification envelope);
 
-        void onGap(StreamDeltaEnvelope envelope);
+        void onGap(AgentExecutionDeltaNotification envelope);
     }
 
     public interface ChannelLifecycle {
-        default void subscribe(String tenantId, String sessionId) {}
+        default void subscribe(String tenantId, String conversationSessionId) {}
 
-        default void unsubscribe(String tenantId, String sessionId) {}
+        default void unsubscribe(String tenantId, String conversationSessionId) {}
     }
 
     public static final class Registration implements AutoCloseable {
@@ -91,8 +93,16 @@ public final class LocalSseRegistry {
             this.closeAction = closeAction;
         }
 
-        public void resume(String runId, long attempt, long turn, long sequence) {
-            connection.resume(runId, attempt, turn, sequence);
+        public void resume(
+                String executionId,
+                long executionAttemptNumber,
+                long modelInvocationSequence,
+                long outputDeltaSequence) {
+            connection.resume(
+                    executionId,
+                    executionAttemptNumber,
+                    modelInvocationSequence,
+                    outputDeltaSequence);
         }
 
         @Override
@@ -112,20 +122,27 @@ public final class LocalSseRegistry {
             this.subscriber = Objects.requireNonNull(subscriber, "subscriber");
         }
 
-        private synchronized void resume(String runId, long attempt, long turn, long sequence) {
-            cursors.put(runId, new Cursor(attempt, turn, sequence));
+        private synchronized void resume(
+                String executionId,
+                long executionAttemptNumber,
+                long modelInvocationSequence,
+                long outputDeltaSequence) {
+            cursors.put(
+                    executionId,
+                    new Cursor(
+                            executionAttemptNumber, modelInvocationSequence, outputDeltaSequence));
         }
 
-        private synchronized void deliver(StreamDeltaEnvelope envelope) {
-            Cursor current = cursors.get(envelope.runId());
+        private synchronized void deliver(AgentExecutionDeltaNotification envelope) {
+            Cursor current = cursors.get(envelope.executionId());
             Cursor incoming =
                     new Cursor(
-                            envelope.executionAttempt(),
-                            envelope.modelTurnSequence(),
-                            envelope.streamSequence());
+                            envelope.executionAttemptNumber(),
+                            envelope.modelInvocationSequence(),
+                            envelope.outputDeltaSequence());
             if (current == null || incoming.isNewProjectionAfter(current)) {
-                if (incoming.streamSequence() == 1) {
-                    cursors.put(envelope.runId(), incoming);
+                if (incoming.outputDeltaSequence() == 1) {
+                    cursors.put(envelope.executionId(), incoming);
                     subscriber.onDelta(envelope);
                 } else {
                     subscriber.onGap(envelope);
@@ -133,11 +150,11 @@ public final class LocalSseRegistry {
                 return;
             }
             if (incoming.isOlderProjectionThan(current)
-                    || incoming.streamSequence() <= current.streamSequence()) {
+                    || incoming.outputDeltaSequence() <= current.outputDeltaSequence()) {
                 return;
             }
-            if (incoming.streamSequence() == current.streamSequence() + 1) {
-                cursors.put(envelope.runId(), incoming);
+            if (incoming.outputDeltaSequence() == current.outputDeltaSequence() + 1) {
+                cursors.put(envelope.executionId(), incoming);
                 subscriber.onDelta(envelope);
             } else {
                 subscriber.onGap(envelope);
@@ -145,20 +162,21 @@ public final class LocalSseRegistry {
         }
     }
 
-    private record SessionKey(String tenantId, String sessionId) {}
+    private record SessionKey(String tenantId, String conversationSessionId) {}
 
-    private record Cursor(long executionAttempt, long modelTurnSequence, long streamSequence) {
+    private record Cursor(
+            long executionAttemptNumber, long modelInvocationSequence, long outputDeltaSequence) {
 
         private boolean isNewProjectionAfter(Cursor other) {
-            return executionAttempt > other.executionAttempt
-                    || (executionAttempt == other.executionAttempt
-                            && modelTurnSequence > other.modelTurnSequence);
+            return executionAttemptNumber > other.executionAttemptNumber
+                    || (executionAttemptNumber == other.executionAttemptNumber
+                            && modelInvocationSequence > other.modelInvocationSequence);
         }
 
         private boolean isOlderProjectionThan(Cursor other) {
-            return executionAttempt < other.executionAttempt
-                    || (executionAttempt == other.executionAttempt
-                            && modelTurnSequence < other.modelTurnSequence);
+            return executionAttemptNumber < other.executionAttemptNumber
+                    || (executionAttemptNumber == other.executionAttemptNumber
+                            && modelInvocationSequence < other.modelInvocationSequence);
         }
     }
 }

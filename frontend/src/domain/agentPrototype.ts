@@ -1,45 +1,50 @@
 export type MessageRole = 'user' | 'assistant' | 'system';
 
 export interface ConversationMessage {
-  id: string;
+  conversationMessageId: string;
   role: MessageRole;
   author: string;
   content: string;
   timestamp: string;
-  /** 回答对应的持久化 Run，用于恢复该条消息自己的运行过程。 */
-  run: AgentRun | null;
+  /** 回答对应的持久化 Agent 执行，用于恢复该条消息自己的执行过程。 */
+  execution: AgentExecution | null;
 }
 
-export interface AgentRunEvent {
-  id: string;
-  sequence: number;
+/** Agent 执行时间线中供界面展示的持久事件。 */
+export interface AgentExecutionEvent {
+  executionEventId: string;
+  /** 事件在会话级执行时间线中的严格递增业务序号。 */
+  executionEventSequence: number;
   type: string;
   occurredAt: string;
   title: string | null;
   summary: string | null;
 }
 
-export interface AgentRun {
-  id: string;
+/** 一条用户消息触发的完整 Agent 执行及其最新输出检查点。 */
+export interface AgentExecution {
+  executionId: string;
   status: string;
   progress: number;
   objective: string;
-  events: AgentRunEvent[];
-  stream: {
+  events: AgentExecutionEvent[];
+  /** 用于刷新恢复的最新流式输出检查点。 */
+  streamCheckpoint: {
     phase: string;
     thinking: string;
     answer: string;
   } | null;
 }
 
-export interface AgentSession {
-  id: string;
+/** 用户与 Agent 之间的一段连续对话。 */
+export interface ConversationSession {
+  conversationSessionId: string;
   title: string;
   tag: string;
   createdAt: string;
   updatedAt: string;
   messages: ConversationMessage[];
-  run: AgentRun | null;
+  execution: AgentExecution | null;
 }
 
 export function formatTimestamp(value: string): string {

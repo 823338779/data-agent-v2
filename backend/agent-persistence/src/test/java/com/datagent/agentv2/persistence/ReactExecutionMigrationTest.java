@@ -23,12 +23,12 @@ class ReactExecutionMigrationTest {
     private static final String USER_ID = "user_react";
     private static final String SESSION_ID = "session_react";
     private static final String USER_MESSAGE_ID = "message_user";
-    private static final String RUN_ID = "run_react";
+    private static final String EXECUTION_ID = "execution_react";
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
 
     @BeforeAll
-    static void migrateAndCreateRun() throws SQLException {
+    static void migrateAndCreateExecution() throws SQLException {
         POSTGRES.start();
         Flyway.configure()
                 .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
@@ -36,22 +36,22 @@ class ReactExecutionMigrationTest {
                 .load()
                 .migrate();
 
-        // 构造完整租户、用户、会话和 Run 边界，供复合外键及终态约束测试复用。
+        // 构造完整租户、用户、会话和 Agent 执行边界，供复合外键及终态约束测试复用。
         execute(
                 """
                 insert into tenant(tenant_id, name) values ('tenant_react', 'React');
                 insert into user_account(user_id, tenant_id, username, password_hash)
                     values ('user_react', 'tenant_react', 'react', 'hash');
-                insert into agent_session(session_id, tenant_id, title, session_type, created_by)
+                insert into conversation_session(conversation_session_id, tenant_id, title, session_type, created_by_user_id)
                     values ('session_react', 'tenant_react', 'React', 'INTERACTIVE', 'user_react');
-                insert into agent_message(
-                    message_id, tenant_id, session_id, role, content, sequence, author_user_id)
+                insert into conversation_message(
+                    conversation_message_id, tenant_id, conversation_session_id, role, content, conversation_message_sequence, author_user_id)
                     values ('message_user', 'tenant_react', 'session_react', 'user', 'hello', 1,
                             'user_react');
-                insert into agent_run(
-                    run_id, tenant_id, session_id, triggering_message_id, status, phase,
-                    execution_attempt, owner_user_id, request_id, queued_at)
-                    values ('run_react', 'tenant_react', 'session_react', 'message_user', 'queued',
+                insert into agent_execution(
+                    execution_id, tenant_id, conversation_session_id, triggering_conversation_message_id, status, phase,
+                    execution_attempt_number, owner_user_id, request_id, queued_at)
+                    values ('execution_react', 'tenant_react', 'session_react', 'message_user', 'queued',
                             'QUEUED', 0, 'user_react', 'request_react', current_timestamp);
                 """);
     }
@@ -65,11 +65,11 @@ class ReactExecutionMigrationTest {
     void messageSupportsVersionedToolCallsAndVisibilityChecks() throws SQLException {
         execute(
                 """
-                insert into agent_message(
-                    message_id, tenant_id, session_id, run_id, role, content, sequence,
+                insert into conversation_message(
+                    conversation_message_id, tenant_id, conversation_session_id, execution_id, role, content, conversation_message_sequence,
                     tool_calls, visibility)
                 values (
-                    'message_assistant', 'tenant_react', 'session_react', 'run_react',
+                    'message_assistant', 'tenant_react', 'session_react', 'execution_react',
                     'assistant', '', 10,
                     '{"version":1,"calls":[{"id":"provider-1","name":"test_tool","arguments":{"x":1}}]}',
                     'internal');
@@ -80,32 +80,32 @@ class ReactExecutionMigrationTest {
                                 """
                                 select role, visibility, jsonb_typeof(tool_calls),
                                        tool_calls #>> '{calls,0,id}'
-                                  from agent_message where message_id = 'message_assistant'
+                                  from conversation_message where conversation_message_id = 'message_assistant'
                                 """))
                 .containsExactly("assistant", "internal", "object", "provider-1");
         assertThatThrownBy(
                         () ->
                                 execute(
                                         """
-                                        update agent_message set visibility = 'private'
-                                         where message_id = 'message_assistant'
+                                        update conversation_message set visibility = 'private'
+                                         where conversation_message_id = 'message_assistant'
                                         """))
                 .isInstanceOf(SQLException.class);
     }
 
     @Test
-    void modelTurnChecksStateAndKeepsOnlyReasoningAsLargeText() throws SQLException {
-        assertThat(columnNames("agent_model_turn"))
+    void modelInvocationChecksStateAndKeepsOnlyReasoningAsLargeText() throws SQLException {
+        assertThat(columnNames("model_invocation"))
                 .contains("reasoning")
                 .doesNotContain("prompt", "answer", "tool_calls", "tool_result");
         assertThatThrownBy(
                         () ->
                                 execute(
                                         """
-                insert into agent_model_turn(
-                    model_turn_id, tenant_id, run_id, model_turn_sequence, execution_attempt,
-                    input_up_to_message_sequence, status)
-                values ('turn_invalid', 'tenant_react', 'run_react', 1, 1, 1, 'unknown')
+                insert into model_invocation(
+                    model_invocation_id, tenant_id, execution_id, model_invocation_sequence, execution_attempt_number,
+                    input_up_to_conversation_message_sequence, status)
+                values ('turn_invalid', 'tenant_react', 'execution_react', 1, 1, 1, 'unknown')
                                         """))
                 .isInstanceOf(SQLException.class);
     }
@@ -113,8 +113,8 @@ class ReactExecutionMigrationTest {
     @Test
     void toolExecutionUsesTurnScopedProviderIdAndRequiresOneTerminalObservation()
             throws SQLException {
-        execute(turnInsert(1));
-        execute(turnInsert(2));
+        execute(modelInvocationInsert(1));
+        execute(modelInvocationInsert(2));
         execute(assistantAndPreparedExecution("assistant_turn_1", "execution_1", 1, 2));
         execute(assistantAndPreparedExecution("assistant_turn_2", "execution_2", 2, 3));
 
@@ -123,11 +123,11 @@ class ReactExecutionMigrationTest {
                         () ->
                                 execute(
                                         """
-                                        insert into agent_tool_execution(
-                                            tenant_id, tool_execution_id, run_id,
-                                            model_turn_sequence, assistant_message_id, tool_call_id,
+                                        insert into tool_execution(
+                                            tenant_id, tool_execution_id, execution_id,
+                                            model_invocation_sequence, assistant_conversation_message_id, tool_call_id,
                                             tool_name, status)
-                                        values ('tenant_react', 'execution_duplicate', 'run_react', 1,
+                                        values ('tenant_react', 'execution_duplicate', 'execution_react', 1,
                                                 'assistant_turn_1', 'provider-shared', 'test_tool',
                                                 'prepared')
                                         """))
@@ -135,27 +135,27 @@ class ReactExecutionMigrationTest {
 
         execute(
                 """
-                insert into agent_message(
-                    message_id, tenant_id, session_id, run_id, role, content, sequence,
+                insert into conversation_message(
+                    conversation_message_id, tenant_id, conversation_session_id, execution_id, role, content, conversation_message_sequence,
                     tool_execution_id, tool_call_id, tool_name, visibility)
-                values ('observation_1', 'tenant_react', 'session_react', 'run_react', 'tool',
+                values ('observation_1', 'tenant_react', 'session_react', 'execution_react', 'tool',
                         '{"status":"succeeded","content":{"value":1}}', 4, 'execution_1',
                         'provider-shared', 'test_tool', 'internal');
-                update agent_tool_execution
-                   set status = 'succeeded', observation_message_id = 'observation_1',
+                update tool_execution
+                   set status = 'succeeded', observation_conversation_message_id = 'observation_1',
                        completed_at = current_timestamp
                  where tenant_id = 'tenant_react' and tool_execution_id = 'execution_1';
                 """);
         assertThat(
                         row(
-                                "select status, observation_message_id from agent_tool_execution where tool_execution_id = 'execution_1'"))
+                                "select status, observation_conversation_message_id from tool_execution where tool_execution_id = 'execution_1'"))
                 .containsExactly("succeeded", "observation_1");
         assertThatThrownBy(
                         () ->
                                 execute(
                                         """
-                                        update agent_tool_execution
-                                           set status = 'failed', observation_message_id = null
+                                        update tool_execution
+                                           set status = 'failed', observation_conversation_message_id = null
                                          where tool_execution_id = 'execution_2'
                                         """))
                 .isInstanceOf(SQLException.class);
@@ -163,42 +163,55 @@ class ReactExecutionMigrationTest {
 
     @Test
     void compositeForeignKeysAndRecoveryIndexesExist() throws SQLException {
-        assertThat(constraintDefinition("fk_agent_tool_execution_turn"))
-                .contains("tenant_id", "run_id", "model_turn_sequence");
-        assertThat(indexDefinition("ix_agent_model_turn_recovery"))
-                .contains("tenant_id", "run_id", "status");
-        assertThat(indexDefinition("ix_agent_tool_execution_recovery"))
-                .contains("tenant_id", "run_id", "status");
-        assertThat(indexDefinition("uq_agent_tool_execution_turn_call"))
-                .contains("unique", "tenant_id", "run_id", "model_turn_sequence", "tool_call_id");
+        assertThat(constraintDefinition("fk_tool_execution_turn"))
+                .contains("tenant_id", "execution_id", "model_invocation_sequence");
+        assertThat(indexDefinition("ix_model_invocation_recovery"))
+                .contains("tenant_id", "execution_id", "status");
+        assertThat(indexDefinition("ix_tool_execution_recovery"))
+                .contains("tenant_id", "execution_id", "status");
+        assertThat(indexDefinition("uq_tool_execution_turn_call"))
+                .contains(
+                        "unique",
+                        "tenant_id",
+                        "execution_id",
+                        "model_invocation_sequence",
+                        "tool_call_id");
     }
 
-    private static String turnInsert(long sequence) {
+    private static String modelInvocationInsert(long sequence) {
         return """
-                insert into agent_model_turn(
-                    model_turn_id, tenant_id, run_id, model_turn_sequence, execution_attempt,
-                    input_up_to_message_sequence, status, completed_at)
-                values ('turn_%d', 'tenant_react', 'run_react', %d, 1, 1, 'completed', current_timestamp)
+                insert into model_invocation(
+                    model_invocation_id, tenant_id, execution_id, model_invocation_sequence, execution_attempt_number,
+                    input_up_to_conversation_message_sequence, status, completed_at)
+                values ('turn_%d', 'tenant_react', 'execution_react', %d, 1, 1, 'completed', current_timestamp)
                 """
                 .formatted(sequence, sequence);
     }
 
     private static String assistantAndPreparedExecution(
-            String messageId, String executionId, long turnSequence, long messageSequence) {
+            String conversationMessageId,
+            String executionId,
+            long turnSequence,
+            long conversationMessageSequence) {
         return """
-                insert into agent_message(
-                    message_id, tenant_id, session_id, run_id, role, content, sequence,
+                insert into conversation_message(
+                    conversation_message_id, tenant_id, conversation_session_id, execution_id, role, content, conversation_message_sequence,
                     tool_calls, visibility)
-                values ('%s', 'tenant_react', 'session_react', 'run_react', 'assistant', '', %d,
+                values ('%s', 'tenant_react', 'session_react', 'execution_react', 'assistant', '', %d,
                         '{"version":1,"calls":[{"id":"provider-shared","name":"test_tool","arguments":{}}]}',
                         'internal');
-                insert into agent_tool_execution(
-                    tenant_id, tool_execution_id, run_id, model_turn_sequence,
-                    assistant_message_id, tool_call_id, tool_name, status)
-                values ('tenant_react', '%s', 'run_react', %d, '%s', 'provider-shared',
+                insert into tool_execution(
+                    tenant_id, tool_execution_id, execution_id, model_invocation_sequence,
+                    assistant_conversation_message_id, tool_call_id, tool_name, status)
+                values ('tenant_react', '%s', 'execution_react', %d, '%s', 'provider-shared',
                         'test_tool', 'prepared');
                 """
-                .formatted(messageId, messageSequence, executionId, turnSequence, messageId);
+                .formatted(
+                        conversationMessageId,
+                        conversationMessageSequence,
+                        executionId,
+                        turnSequence,
+                        conversationMessageId);
     }
 
     private static void execute(String sql) throws SQLException {

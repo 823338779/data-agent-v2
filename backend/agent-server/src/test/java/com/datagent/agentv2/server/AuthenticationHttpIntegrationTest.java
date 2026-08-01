@@ -170,7 +170,7 @@ class AuthenticationHttpIntegrationTest {
     }
 
     @Test
-    void secondMessageWhileRunIsActiveReturnsConflict() throws Exception {
+    void secondMessageWhileExecutionIsActiveReturnsConflict() throws Exception {
         String token = cookieValue(login());
         String sessionJson =
                 mvc.perform(
@@ -182,10 +182,13 @@ class AuthenticationHttpIntegrationTest {
                         .andReturn()
                         .getResponse()
                         .getContentAsString();
-        String sessionId = objectMapper.readTree(sessionJson).path("id").asString();
+        String conversationSessionId =
+                objectMapper.readTree(sessionJson).path("conversationSessionId").asString();
 
         mvc.perform(
-                        post("/api/v1/agent-sessions/{sessionId}/messages", sessionId)
+                        post(
+                                        "/api/v1/agent-sessions/{conversationSessionId}/messages",
+                                        conversationSessionId)
                                 .cookie(sessionCookie(token))
                                 .header("Idempotency-Key", "first-message")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -193,14 +196,18 @@ class AuthenticationHttpIntegrationTest {
                 .andExpect(status().isAccepted());
 
         mvc.perform(
-                        post("/api/v1/agent-sessions/{sessionId}/messages", sessionId)
+                        post(
+                                        "/api/v1/agent-sessions/{conversationSessionId}/messages",
+                                        conversationSessionId)
                                 .cookie(sessionCookie(token))
                                 .header("Idempotency-Key", "second-message")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"content\":\"Second message\"}"))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.type").value("urn:data-agent:problem:active-run-conflict"))
-                .andExpect(jsonPath("$.code").value("ACTIVE_RUN_CONFLICT"))
+                .andExpect(
+                        jsonPath("$.type")
+                                .value("urn:data-agent:problem:active-execution-conflict"))
+                .andExpect(jsonPath("$.code").value("ACTIVE_EXECUTION_CONFLICT"))
                 .andExpect(jsonPath("$.requestId").exists())
                 .andExpect(jsonPath("$.errors").isArray());
     }

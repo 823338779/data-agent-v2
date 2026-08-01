@@ -20,7 +20,7 @@ class RedisStreamDeltaIntegrationTest {
 
     private static final String TENANT_ID = "tenant_stream";
     private static final String SESSION_ID = "session_stream";
-    private static final String RUN_ID = "run_stream";
+    private static final String EXECUTION_ID = "execution_stream";
     private static final String REDIS_PASSWORD = "redis_test";
     private static final GenericContainer<?> REDIS =
             new GenericContainer<>(DockerImageName.parse("redis:7.4-alpine"))
@@ -40,8 +40,10 @@ class RedisStreamDeltaIntegrationTest {
     void forwardsAcrossInstancesAndTurnsDuplicateOrGapIntoSafeDeliveryState() {
         try (TestInstance browserInstance = instance();
                 TestInstance ownerInstance = instance()) {
-            CopyOnWriteArrayList<StreamDeltaEnvelope> delivered = new CopyOnWriteArrayList<>();
-            CopyOnWriteArrayList<StreamDeltaEnvelope> gaps = new CopyOnWriteArrayList<>();
+            CopyOnWriteArrayList<AgentExecutionDeltaNotification> delivered =
+                    new CopyOnWriteArrayList<>();
+            CopyOnWriteArrayList<AgentExecutionDeltaNotification> gaps =
+                    new CopyOnWriteArrayList<>();
             LocalSseRegistry.Registration registration =
                     browserInstance
                             .registry()
@@ -50,12 +52,14 @@ class RedisStreamDeltaIntegrationTest {
                                     SESSION_ID,
                                     new LocalSseRegistry.Subscriber() {
                                         @Override
-                                        public void onDelta(StreamDeltaEnvelope envelope) {
+                                        public void onDelta(
+                                                AgentExecutionDeltaNotification envelope) {
                                             delivered.add(envelope);
                                         }
 
                                         @Override
-                                        public void onGap(StreamDeltaEnvelope envelope) {
+                                        public void onGap(
+                                                AgentExecutionDeltaNotification envelope) {
                                             gaps.add(envelope);
                                         }
                                     });
@@ -63,7 +67,7 @@ class RedisStreamDeltaIntegrationTest {
             // 只有持有详细连接的实例订阅会话 channel，owner 经 Redis 把首个 delta 转发给它。
             assertThat(browserInstance.bridge().subscribedChannelCount()).isEqualTo(1);
             assertThat(ownerInstance.bridge().subscribedChannelCount()).isZero();
-            StreamDeltaEnvelope first = delta(1, "a");
+            AgentExecutionDeltaNotification first = delta(1, "a");
             assertThat(ownerInstance.bridge().publish(first)).isTrue();
             org.awaitility.Awaitility.await()
                     .atMost(Duration.ofSeconds(3))
@@ -71,7 +75,7 @@ class RedisStreamDeltaIntegrationTest {
 
             // 重复序号被连接级 tracker 忽略；跳号只触发 resync，不拼接错误正文。
             browserInstance.registry().publish(first);
-            StreamDeltaEnvelope gap = delta(3, "c");
+            AgentExecutionDeltaNotification gap = delta(3, "c");
             browserInstance.registry().publish(gap);
             assertThat(delivered).containsExactly(first);
             assertThat(gaps).containsExactly(gap);
@@ -80,7 +84,8 @@ class RedisStreamDeltaIntegrationTest {
             assertThat(browserInstance.bridge().subscribedChannelCount()).isZero();
 
             // Redis 中断后仍先完成 owner 本地投递，并把远端 publish 明确降级为 false。
-            CopyOnWriteArrayList<StreamDeltaEnvelope> ownerLocal = new CopyOnWriteArrayList<>();
+            CopyOnWriteArrayList<AgentExecutionDeltaNotification> ownerLocal =
+                    new CopyOnWriteArrayList<>();
             ownerInstance
                     .registry()
                     .register(
@@ -88,12 +93,12 @@ class RedisStreamDeltaIntegrationTest {
                             SESSION_ID,
                             new LocalSseRegistry.Subscriber() {
                                 @Override
-                                public void onDelta(StreamDeltaEnvelope envelope) {
+                                public void onDelta(AgentExecutionDeltaNotification envelope) {
                                     ownerLocal.add(envelope);
                                 }
 
                                 @Override
-                                public void onGap(StreamDeltaEnvelope envelope) {}
+                                public void onGap(AgentExecutionDeltaNotification envelope) {}
                             });
             REDIS.stop();
             assertThat(ownerInstance.bridge().publish(first)).isFalse();
@@ -101,16 +106,16 @@ class RedisStreamDeltaIntegrationTest {
         }
     }
 
-    private static StreamDeltaEnvelope delta(long sequence, String content) {
-        return new StreamDeltaEnvelope(
-                StreamDeltaEnvelope.TYPE_STREAM_DELTA,
+    private static AgentExecutionDeltaNotification delta(long sequence, String content) {
+        return new AgentExecutionDeltaNotification(
+                AgentExecutionDeltaNotification.TYPE_STREAM_DELTA,
                 TENANT_ID,
                 SESSION_ID,
-                RUN_ID,
+                EXECUTION_ID,
                 1,
                 1,
                 sequence,
-                StreamDeltaEnvelope.DELTA_REASONING,
+                AgentExecutionDeltaNotification.DELTA_REASONING,
                 content,
                 Instant.parse("2026-08-01T06:00:00Z"));
     }
@@ -126,8 +131,8 @@ class RedisStreamDeltaIntegrationTest {
         StringRedisTemplate redis = new StringRedisTemplate(connections);
         redis.afterPropertiesSet();
         LocalSseRegistry registry = new LocalSseRegistry();
-        RedisStreamDeltaBridge bridge =
-                new RedisStreamDeltaBridge(
+        RedisExecutionDeltaBridge bridge =
+                new RedisExecutionDeltaBridge(
                         redis, connections, JsonMapper.builder().build(), registry);
         bridge.start();
         return new TestInstance(connections, registry, bridge);
@@ -136,7 +141,7 @@ class RedisStreamDeltaIntegrationTest {
     private record TestInstance(
             LettuceConnectionFactory connections,
             LocalSseRegistry registry,
-            RedisStreamDeltaBridge bridge)
+            RedisExecutionDeltaBridge bridge)
             implements AutoCloseable {
 
         @Override

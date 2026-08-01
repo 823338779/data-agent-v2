@@ -82,14 +82,14 @@ class ContractPathsTest {
         assertThat(schemas.fieldNames())
                 .toIterable()
                 .contains(
-                        "AgentSession",
-                        "AgentMessage",
-                        "AgentRun",
-                        "RunEvent",
+                        "ConversationSession",
+                        "ConversationMessage",
+                        "AgentExecution",
+                        "AgentExecutionEvent",
                         "PendingInteraction",
                         "ProblemDetail",
-                        "RunStream");
-        assertThat(schemas.path("AgentRun").path("properties").path("status").path("enum"))
+                        "AgentExecutionStreamCheckpoint");
+        assertThat(schemas.path("AgentExecution").path("properties").path("status").path("enum"))
                 .extracting(JsonNode::asText)
                 .containsExactly(
                         "idle",
@@ -100,35 +100,37 @@ class ContractPathsTest {
                         "done",
                         "cancelled",
                         "failed");
-        assertThat(schemas.path("AgentRun").path("properties").fieldNames())
+        assertThat(schemas.path("AgentExecution").path("properties").fieldNames())
                 .toIterable()
                 .contains("cancellationRequestedAt");
-        assertThat(schemas.path("RunStream").path("properties").fieldNames())
+        assertThat(schemas.path("AgentExecutionStreamCheckpoint").path("properties").fieldNames())
                 .toIterable()
                 .contains(
-                        "executionAttempt",
-                        "modelTurnSequence",
+                        "executionAttemptNumber",
+                        "modelInvocationSequence",
                         "phase",
-                        "streamSequence",
+                        "outputDeltaSequence",
                         "reasoning",
                         "answer",
                         "checkpointedAt");
     }
 
     @Test
-    void openApiFreezesIdempotentSubmissionAndRunControls() throws IOException {
+    void openApiFreezesIdempotentSubmissionAndExecutionControls() throws IOException {
         JsonNode api = YAML.readTree(ContractFiles.openApi().toFile());
         JsonNode paths = api.path("paths");
 
         assertThat(
-                        paths.path("/api/v1/agent-sessions/{sessionId}/messages")
+                        paths.path("/api/v1/agent-sessions/{conversationSessionId}/messages")
                                 .path("post")
                                 .path("parameters"))
                 .extracting(node -> node.path("$ref").asText())
                 .contains("#/components/parameters/IdempotencyKey");
 
         JsonNode cancel =
-                paths.path("/api/v1/agent-sessions/{sessionId}/runs/{runId}:cancel").path("post");
+                paths.path(
+                                "/api/v1/agent-sessions/{conversationSessionId}/executions/{executionId}:cancel")
+                        .path("post");
         assertThat(cancel.path("responses").path("202").isObject()).isTrue();
         assertThat(
                         cancel.path("responses")
@@ -138,10 +140,12 @@ class ContractPathsTest {
                                 .path("schema")
                                 .path("$ref")
                                 .asText())
-                .isEqualTo("#/components/schemas/AgentRun");
+                .isEqualTo("#/components/schemas/AgentExecution");
 
         JsonNode retry =
-                paths.path("/api/v1/agent-sessions/{sessionId}/runs/{runId}:retry").path("post");
+                paths.path(
+                                "/api/v1/agent-sessions/{conversationSessionId}/executions/{executionId}:retry")
+                        .path("post");
         assertThat(retry.path("responses").path("202").isObject()).isTrue();
         assertThat(retry.path("parameters"))
                 .extracting(node -> node.path("$ref").asText())
@@ -165,40 +169,57 @@ class ContractPathsTest {
         required.put("/api/v1/auth/session", Set.of("get"));
         required.put("/api/v1/auth/logout", Set.of("post"));
         required.put("/api/v1/agent-sessions", Set.of("get", "post"));
-        required.put("/api/v1/agent-sessions/{sessionId}", Set.of("get"));
-        required.put("/api/v1/agent-sessions/{sessionId}/metric-identity", Set.of("put"));
-        required.put("/api/v1/agent-sessions/{sessionId}/messages", Set.of("post"));
-        required.put("/api/v1/agent-sessions/{sessionId}/runs/{runId}:cancel", Set.of("post"));
-        required.put("/api/v1/agent-sessions/{sessionId}/runs/{runId}:retry", Set.of("post"));
-        required.put("/api/v1/agent-sessions/{sessionId}/events", Set.of("get"));
+        required.put("/api/v1/agent-sessions/{conversationSessionId}", Set.of("get"));
         required.put(
-                "/api/v1/agent-sessions/{sessionId}/confirmations/{confirmationId}",
+                "/api/v1/agent-sessions/{conversationSessionId}/metric-platform-credential",
+                Set.of("put"));
+        required.put("/api/v1/agent-sessions/{conversationSessionId}/messages", Set.of("post"));
+        required.put(
+                "/api/v1/agent-sessions/{conversationSessionId}/executions/{executionId}:cancel",
                 Set.of("post"));
         required.put(
-                "/api/v1/agent-sessions/{sessionId}/interactions/{interactionId}:resolve",
+                "/api/v1/agent-sessions/{conversationSessionId}/executions/{executionId}:retry",
+                Set.of("post"));
+        required.put("/api/v1/agent-sessions/{conversationSessionId}/events", Set.of("get"));
+        required.put(
+                "/api/v1/agent-sessions/{conversationSessionId}/confirmations/{confirmationId}",
                 Set.of("post"));
         required.put(
-                "/api/v1/agent-sessions/{sessionId}/interactions/{interactionId}:submit-secret",
+                "/api/v1/agent-sessions/{conversationSessionId}/interactions/{interactionId}:resolve",
                 Set.of("post"));
-        required.put("/api/v1/agent-sessions/{sessionId}/audit-log", Set.of("get"));
-        required.put("/api/v1/metric-identities", Set.of("get", "post"));
-        required.put("/api/v1/metric-identities/{id}", Set.of("get"));
-        required.put("/api/v1/metric-identities/{id}:verify", Set.of("post"));
-        required.put("/api/v1/metric-identities/{id}:replace-password", Set.of("post"));
-        required.put("/api/v1/metric-identities/{id}:deactivate", Set.of("post"));
-        required.put("/api/v1/metric-identities:rotate-secrets", Set.of("post"));
+        required.put(
+                "/api/v1/agent-sessions/{conversationSessionId}/interactions/{interactionId}:submit-secret",
+                Set.of("post"));
+        required.put("/api/v1/agent-sessions/{conversationSessionId}/audit-log", Set.of("get"));
+        required.put("/api/v1/metric-platform-credentials", Set.of("get", "post"));
+        required.put("/api/v1/metric-platform-credentials/{id}", Set.of("get"));
+        required.put("/api/v1/metric-platform-credentials/{id}:verify", Set.of("post"));
+        required.put("/api/v1/metric-platform-credentials/{id}:replace-password", Set.of("post"));
+        required.put("/api/v1/metric-platform-credentials/{id}:deactivate", Set.of("post"));
+        required.put("/api/v1/metric-platform-credentials:rotate-secrets", Set.of("post"));
         required.put("/api/v1/tenants", Set.of("post"));
         required.put("/api/v1/tenants/{tenantId}/members", Set.of("get", "post"));
-        required.put("/api/v1/artifacts/{artifactId}", Set.of("get"));
-        required.put("/api/v1/artifacts/{artifactId}/preview", Set.of("get"));
-        required.put("/api/v1/artifacts/{artifactId}:create-download", Set.of("post"));
-        required.put("/api/v1/artifact-downloads/{artifactId}", Set.of("get"));
-        required.put("/api/v1/scheduled-tasks", Set.of("get", "post"));
-        required.put("/api/v1/scheduled-tasks/{taskId}", Set.of("get", "put", "delete"));
-        required.put("/api/v1/scheduled-tasks/{taskId}/executions", Set.of("get", "post"));
-        required.put("/api/v1/task-executions/{executionId}", Set.of("get"));
-        required.put("/api/v1/task-executions/{executionId}/cancel", Set.of("post"));
-        required.put("/api/v1/task-executions/{executionId}/events", Set.of("get"));
+        required.put("/api/v1/query-result-artifacts/{queryResultArtifactId}", Set.of("get"));
+        required.put(
+                "/api/v1/query-result-artifacts/{queryResultArtifactId}/preview", Set.of("get"));
+        required.put(
+                "/api/v1/query-result-artifacts/{queryResultArtifactId}:create-download",
+                Set.of("post"));
+        required.put("/api/v1/query-result-downloads/{queryResultArtifactId}", Set.of("get"));
+        required.put("/api/v1/scheduled-agent-tasks", Set.of("get", "post"));
+        required.put(
+                "/api/v1/scheduled-agent-tasks/{scheduledAgentTaskId}",
+                Set.of("get", "put", "delete"));
+        required.put(
+                "/api/v1/scheduled-agent-tasks/{scheduledAgentTaskId}/executions",
+                Set.of("get", "post"));
+        required.put("/api/v1/scheduled-task-executions/{scheduledTaskExecutionId}", Set.of("get"));
+        required.put(
+                "/api/v1/scheduled-task-executions/{scheduledTaskExecutionId}/cancel",
+                Set.of("post"));
+        required.put(
+                "/api/v1/scheduled-task-executions/{scheduledTaskExecutionId}/events",
+                Set.of("get"));
         required.put("/api/v1/evaluation/mutation-guard", Set.of("get"));
         return Collections.unmodifiableMap(required);
     }

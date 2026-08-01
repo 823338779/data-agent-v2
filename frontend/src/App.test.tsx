@@ -2,30 +2,30 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentBackendClient } from './api/backendAgentClient';
 import App from './App';
-import { AgentSession } from './domain/agentPrototype';
+import { ConversationSession } from './domain/agentPrototype';
 
-const session: AgentSession = {
-  id: 'session_1',
+const session: ConversationSession = {
+  conversationSessionId: 'session_1',
   title: '订单延迟分析',
   tag: 'debug',
   createdAt: '2026-08-01T08:00:00Z',
   updatedAt: '2026-08-01T08:00:00Z',
   messages: [],
-  run: null,
+  execution: null,
 };
 
-function completedRun(
-  id: string,
+function completedExecution(
+  executionId: string,
   thinking: string,
   answer: string,
-): NonNullable<AgentSession['run']> {
+): NonNullable<ConversationSession['execution']> {
   return {
-    id,
+    executionId,
     status: 'done',
     progress: 100,
     objective: answer,
     events: [],
-    stream: {
+    streamCheckpoint: {
       phase: 'COMPLETED',
       thinking,
       answer,
@@ -36,26 +36,28 @@ function completedRun(
 function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient {
   return {
     listSessions: vi.fn().mockResolvedValue([session]),
-    createSession: vi.fn().mockResolvedValue({ ...session, id: 'session_2', title: '新会话' }),
+    createSession: vi
+      .fn()
+      .mockResolvedValue({ ...session, conversationSessionId: 'session_2', title: '新会话' }),
     getSession: vi.fn().mockResolvedValue(session),
     submitMessage: vi.fn().mockResolvedValue({
       ...session,
       messages: [
         {
-          id: 'message_1',
+          conversationMessageId: 'message_1',
           role: 'user',
           author: 'admin',
           content: '分析订单延迟',
           timestamp: '2026-08-01T08:01:00Z',
         },
       ],
-      run: {
-        id: 'run_1',
+      execution: {
+        executionId: 'execution_1',
         status: 'running',
         progress: 5,
         objective: '分析订单延迟',
         events: [],
-        stream: null,
+        streamCheckpoint: null,
       },
     }),
     subscribeEvents: vi.fn().mockReturnValue(() => undefined),
@@ -131,30 +133,30 @@ describe('server-backed conversation workspace', () => {
     expect(screen.getByRole('button', { name: '关闭会话列表' })).toBeInTheDocument();
   });
 
-  it('shows the matching run process below every persisted assistant answer', async () => {
-    const firstRun = completedRun('run_1', '第一次思考', '第一条回答');
-    const secondRun = completedRun('run_2', '第二次思考', '第二条回答');
-    const history: AgentSession = {
+  it('shows the matching Agent execution process below every persisted assistant answer', async () => {
+    const firstExecution = completedExecution('execution_1', '第一次思考', '第一条回答');
+    const secondExecution = completedExecution('execution_2', '第二次思考', '第二条回答');
+    const history: ConversationSession = {
       ...session,
       messages: [
         {
-          id: 'answer_1',
+          conversationMessageId: 'answer_1',
           role: 'assistant',
           author: 'assistant',
           content: '第一条回答',
           timestamp: '2026-08-01T08:01:00Z',
-          run: firstRun,
+          execution: firstExecution,
         },
         {
-          id: 'answer_2',
+          conversationMessageId: 'answer_2',
           role: 'assistant',
           author: 'assistant',
           content: '第二条回答',
           timestamp: '2026-08-01T08:02:00Z',
-          run: secondRun,
+          execution: secondExecution,
         },
       ],
-      run: secondRun,
+      execution: secondExecution,
     };
 
     render(<App client={client({ listSessions: vi.fn().mockResolvedValue([history]) })} />);
@@ -167,9 +169,13 @@ describe('server-backed conversation workspace', () => {
   });
 
   it('places a streaming answer in the full-width message content column', async () => {
-    const streaming: AgentSession = {
+    const streaming: ConversationSession = {
       ...session,
-      run: completedRun('run_streaming', '正在思考', '这是一条实时返回的完整回答'),
+      execution: completedExecution(
+        'execution_streaming',
+        '正在思考',
+        '这是一条实时返回的完整回答',
+      ),
     };
 
     const view = render(

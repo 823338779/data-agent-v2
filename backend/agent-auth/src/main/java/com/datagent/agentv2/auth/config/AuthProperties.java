@@ -27,7 +27,10 @@ public class AuthProperties {
         private String tenantId = "tenant_local";
         private String tenantName = "Local";
         private String userId = "user_admin";
-        private String membershipId = "membership_admin";
+
+        /** 本地管理员对应的租户成员关系业务标识。 */
+        private String tenantMembershipId = "tenant_membership_admin";
+
         private String username = "admin";
         private String password = "admin";
     }

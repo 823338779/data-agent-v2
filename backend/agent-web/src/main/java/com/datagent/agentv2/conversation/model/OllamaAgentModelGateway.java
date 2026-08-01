@@ -1,7 +1,7 @@
 package com.datagent.agentv2.conversation.model;
 
 import com.datagent.agentv2.conversation.react.ModelInputMessage;
-import com.datagent.agentv2.conversation.react.ToolCallDocument;
+import com.datagent.agentv2.conversation.react.ModelToolCall;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -34,10 +34,10 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
     }
 
     @Override
-    public ModelTurnResult complete(
+    public ModelInvocationResult complete(
             List<ModelInputMessage> messages,
             List<ModelToolDefinition> tools,
-            Consumer<ModelDelta> deltaConsumer) {
+            Consumer<ModelOutputDelta> deltaConsumer) {
         String tenantId = TenantContext.requiredTenantId();
         OllamaApi.ChatRequest request =
                 OllamaApi.ChatRequest.builder(properties.getModel())
@@ -47,9 +47,10 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
                         .enableThinking()
                         .stream(true)
                         .build();
-        StreamAccumulator accumulator = new StreamAccumulator(deltaConsumer, tenantId);
+        ExecutionStreamAccumulator accumulator =
+                new ExecutionStreamAccumulator(deltaConsumer, tenantId);
 
-        // 只有 provider 明确返回 done 后才允许把累积内容提升为完整 ModelTurnResult。
+        // 只有 provider 明确返回 done 后才允许把累积内容提升为完整 ModelInvocationResult。
         try {
             api.streamingChat(request)
                     .doOnNext(accumulator::accept)
@@ -71,7 +72,7 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
                             .map(
                                     call ->
                                             new OllamaApi.Message.ToolCall(
-                                                    call.id(),
+                                                    call.toolCallId(),
                                                     new OllamaApi.Message.ToolCallFunction(
                                                             call.name(), toMap(call.arguments()))))
                             .toList());
@@ -100,9 +101,9 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
         return json.convertValue(node, Map.class);
     }
 
-    private final class StreamAccumulator {
+    private final class ExecutionStreamAccumulator {
 
-        private final Consumer<ModelDelta> deltaConsumer;
+        private final Consumer<ModelOutputDelta> deltaConsumer;
 
         /**
          * Tenant restored around callbacks that Reactor dispatches on provider event-loop threads.
@@ -110,10 +111,11 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
         private final String tenantId;
 
         private final StringBuilder answer = new StringBuilder();
-        private final Map<String, ToolCallDocument> toolCalls = new LinkedHashMap<>();
+        private final Map<String, ModelToolCall> toolCalls = new LinkedHashMap<>();
         private boolean done;
 
-        private StreamAccumulator(Consumer<ModelDelta> deltaConsumer, String tenantId) {
+        private ExecutionStreamAccumulator(
+                Consumer<ModelOutputDelta> deltaConsumer, String tenantId) {
             this.deltaConsumer = deltaConsumer;
             this.tenantId = tenantId;
         }
@@ -130,18 +132,18 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
 
         private void appendReasoning(String content) {
             if (content != null && !content.isEmpty()) {
-                emit(ModelDelta.reasoning(content));
+                emit(ModelOutputDelta.reasoning(content));
             }
         }
 
         private void appendAnswer(String content) {
             if (content != null && !content.isEmpty()) {
                 answer.append(content);
-                emit(ModelDelta.answer(content));
+                emit(ModelOutputDelta.answer(content));
             }
         }
 
-        private void emit(ModelDelta delta) {
+        private void emit(ModelOutputDelta delta) {
             // Persistence checkpoints require the request tenant even on Reactor callback threads.
             TenantContext.run(tenantId, () -> deltaConsumer.accept(delta));
         }
@@ -154,19 +156,19 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
                 if (call.id() == null || call.id().isBlank() || call.function() == null) {
                     throw new ModelStreamInterruptedException(ERROR_INTERRUPTED);
                 }
-                ToolCallDocument document =
-                        new ToolCallDocument(
+                ModelToolCall document =
+                        new ModelToolCall(
                                 call.id(),
                                 call.function().name(),
                                 json.valueToTree(call.function().arguments()));
-                ToolCallDocument previous = toolCalls.putIfAbsent(call.id(), document);
+                ModelToolCall previous = toolCalls.putIfAbsent(call.id(), document);
                 if (previous != null && !previous.equals(document)) {
                     throw new ModelStreamInterruptedException(ERROR_INTERRUPTED);
                 }
             }
         }
 
-        private ModelTurnResult result() {
+        private ModelInvocationResult result() {
             if (!done) {
                 throw new ModelStreamInterruptedException(ERROR_INTERRUPTED);
             }
@@ -174,10 +176,10 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
                 throw new ModelStreamInterruptedException(ERROR_AMBIGUOUS);
             }
             if (!toolCalls.isEmpty()) {
-                return new ModelTurnResult.ToolCalls(new ArrayList<>(toolCalls.values()));
+                return new ModelInvocationResult.ToolCalls(new ArrayList<>(toolCalls.values()));
             }
             if (!answer.isEmpty()) {
-                return new ModelTurnResult.FinalAnswer(answer.toString());
+                return new ModelInvocationResult.FinalAnswer(answer.toString());
             }
             throw new ModelStreamInterruptedException(ERROR_INTERRUPTED);
         }

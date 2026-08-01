@@ -365,7 +365,7 @@ textarea:focus-visible {
   color: #8a8378;
   font-size: 11px;
 }
-.run-status {
+.execution-status {
   padding: 5px 9px;
   border-radius: 999px;
   background: #ece9e2;
@@ -373,7 +373,7 @@ textarea:focus-visible {
   font-size: 11px;
   font-weight: 650;
 }
-.run-status.running {
+.execution-status.running {
   background: #f7e8d8;
   color: #9a4e2d;
 }
@@ -463,18 +463,18 @@ textarea:focus-visible {
   background: #eeeae3;
   font-size: 0.9em;
 }
-.run-detail {
+.execution-detail {
   margin: -12px 0 30px 44px;
   padding: 11px 14px;
   border-left: 2px solid #d6cfc4;
   color: #746d63;
   font-size: 12px;
 }
-.run-detail summary {
+.execution-detail summary {
   cursor: pointer;
   font-weight: 650;
 }
-.message-run-detail {
+.message-execution-detail {
   margin: 18px 0 0;
 }
 

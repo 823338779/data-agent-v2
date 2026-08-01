@@ -82,7 +82,7 @@ class MybatisPlusAuditIntegrationTest {
 
                     // 重新读取以验证 PostgreSQL 本地时间字段可以映射为 LocalDateTime。
                     AuditFixtureEntity reloaded =
-                            auditFixtureService.findBySessionId("session_audit");
+                            auditFixtureService.findByConversationSessionId("session_audit");
                     assertThat(reloaded).isNotNull();
                     assertThat(reloaded.getCreatedAt()).isBetween(beforeSave, afterSave);
                     assertThat(reloaded.getUpdatedAt()).isBetween(beforeSave, afterSave);
@@ -97,7 +97,9 @@ class MybatisPlusAuditIntegrationTest {
 
         TenantContext.run(
                 "tenant_two",
-                () -> assertThat(auditFixtureService.findBySessionId("session_one")).isNull());
+                () ->
+                        assertThat(auditFixtureService.findByConversationSessionId("session_one"))
+                                .isNull());
     }
 
     @Test
@@ -113,7 +115,7 @@ class MybatisPlusAuditIntegrationTest {
 
         var deleted =
                 jdbc.queryForMap(
-                        "select is_deleted, deleted_at from agent_session where session_id = ?",
+                        "select is_deleted, deleted_at from conversation_session where conversation_session_id = ?",
                         "session_deleted");
         assertThat(deleted.get("is_deleted")).isEqualTo(true);
         assertThat(deleted.get("deleted_at")).isNotNull();

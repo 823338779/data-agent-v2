@@ -20,32 +20,33 @@ class Phase1MigrationTest {
 
     private static final List<String> TABLES =
             List.of(
-                    "agent_message",
-                    "agent_model_turn",
-                    "agent_run",
-                    "agent_run_attempt",
-                    "agent_run_event",
-                    "agent_run_stream",
-                    "agent_session",
-                    "agent_tool_execution",
-                    "notification_outbox",
+                    "agent_execution",
+                    "agent_execution_attempt",
+                    "agent_execution_event",
+                    "agent_execution_stream_checkpoint",
+                    "conversation_message",
+                    "conversation_session",
+                    "model_invocation",
+                    "notification_outbox_message",
                     "tenant",
                     "tenant_membership",
+                    "tool_execution",
                     "user_account");
     private static final List<String> AUDITED_TABLES = TABLES;
     private static final Map<String, String> BUSINESS_ID_COLUMNS =
             Map.ofEntries(
-                    Map.entry("agent_message", "message_id"),
-                    Map.entry("agent_model_turn", "model_turn_id"),
-                    Map.entry("agent_run", "run_id"),
-                    Map.entry("agent_run_attempt", "attempt_id"),
-                    Map.entry("agent_run_event", "event_id"),
-                    Map.entry("agent_run_stream", "stream_id"),
-                    Map.entry("agent_session", "session_id"),
-                    Map.entry("agent_tool_execution", "tool_execution_id"),
-                    Map.entry("notification_outbox", "notification_id"),
+                    Map.entry("conversation_message", "conversation_message_id"),
+                    Map.entry("model_invocation", "model_invocation_id"),
+                    Map.entry("agent_execution", "execution_id"),
+                    Map.entry("agent_execution_attempt", "execution_attempt_id"),
+                    Map.entry("agent_execution_event", "execution_event_id"),
+                    Map.entry(
+                            "agent_execution_stream_checkpoint", "execution_stream_checkpoint_id"),
+                    Map.entry("conversation_session", "conversation_session_id"),
+                    Map.entry("tool_execution", "tool_execution_id"),
+                    Map.entry("notification_outbox_message", "notification_message_id"),
                     Map.entry("tenant", "tenant_id"),
-                    Map.entry("tenant_membership", "membership_id"),
+                    Map.entry("tenant_membership", "tenant_membership_id"),
                     Map.entry("user_account", "user_id"));
 
     private static final PostgreSQLContainer POSTGRES =
@@ -64,7 +65,7 @@ class Phase1MigrationTest {
                                 POSTGRES.getPassword())
                         .locations("classpath:db/migration")
                         .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(8);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(9);
     }
 
     @AfterAll
@@ -125,44 +126,52 @@ class Phase1MigrationTest {
                 "tenant_membership",
                 "foreign key (tenant_id, user_id) references user_account(tenant_id, user_id)");
         assertForeignKey(
-                "agent_message",
-                "foreign key (tenant_id, session_id) references agent_session(tenant_id, session_id)");
+                "conversation_message",
+                "foreign key (tenant_id, conversation_session_id) references conversation_session(tenant_id, conversation_session_id)");
         assertForeignKey(
-                "agent_run",
-                "foreign key (tenant_id, session_id) references agent_session(tenant_id, session_id)");
+                "agent_execution",
+                "foreign key (tenant_id, conversation_session_id) references conversation_session(tenant_id, conversation_session_id)");
         assertForeignKey(
-                "agent_run_event",
-                "foreign key (tenant_id, run_id) references agent_run(tenant_id, run_id)");
+                "agent_execution_event",
+                "foreign key (tenant_id, execution_id) references agent_execution(tenant_id, execution_id)");
         assertForeignKey(
-                "agent_run_stream",
-                "foreign key (tenant_id, run_id) references agent_run(tenant_id, run_id)");
+                "agent_execution_stream_checkpoint",
+                "foreign key (tenant_id, execution_id) references agent_execution(tenant_id, execution_id)");
     }
 
     @Test
-    void runAndSequenceIndexesProtectConversationInvariants() throws SQLException {
-        assertThat(indexDefinition("uq_agent_run_one_active"))
-                .contains("(tenant_id, session_id)")
+    void executionAndSequenceIndexesProtectConversationInvariants() throws SQLException {
+        assertThat(indexDefinition("uq_agent_execution_one_active"))
+                .contains("(tenant_id, conversation_session_id)")
                 .contains("where ((is_deleted = false)")
                 .contains("status")
                 .contains("running")
                 .contains("waiting_for_user")
                 .contains("waiting_confirmation");
-        assertThat(uniqueConstraints("agent_message"))
+        assertThat(uniqueConstraints("conversation_message"))
                 .anySatisfy(
                         definition ->
                                 assertThat(definition)
-                                        .contains("tenant_id", "session_id", "sequence"));
-        assertThat(uniqueConstraints("agent_run_event"))
+                                        .contains(
+                                                "tenant_id",
+                                                "conversation_session_id",
+                                                "conversation_message_sequence"));
+        assertThat(uniqueConstraints("agent_execution_event"))
                 .anySatisfy(
                         definition ->
-                                assertThat(definition).contains("tenant_id", "run_id", "sequence"));
-        assertThat(primaryKey("agent_run_stream")).isEqualTo("primary key (id)");
-        assertThat(uniqueConstraints("agent_run_stream"))
-                .anySatisfy(definition -> assertThat(definition).contains("tenant_id", "run_id"));
+                                assertThat(definition)
+                                        .contains(
+                                                "tenant_id",
+                                                "execution_id",
+                                                "execution_event_sequence"));
+        assertThat(primaryKey("agent_execution_stream_checkpoint")).isEqualTo("primary key (id)");
+        assertThat(uniqueConstraints("agent_execution_stream_checkpoint"))
+                .anySatisfy(
+                        definition -> assertThat(definition).contains("tenant_id", "execution_id"));
     }
 
     @Test
-    void aSecondMigrationRunIsIdempotent() {
+    void aSecondMigrationExecutionIsIdempotent() {
         assertThat(flyway.migrate().migrationsExecuted).isZero();
     }
 

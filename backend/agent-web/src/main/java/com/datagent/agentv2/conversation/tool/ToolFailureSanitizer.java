@@ -18,19 +18,19 @@ public final class ToolFailureSanitizer {
 
     public ToolFailureSanitizer(ObjectMapper ignored) {}
 
-    public ToolObservation sanitize(Throwable failure) {
+    public ToolExecutionResult sanitize(Throwable failure) {
         if (failure instanceof AgentTool.BusinessFailure business) {
-            return ToolObservation.failed(business.code(), business.safeMessage());
+            return ToolExecutionResult.failed(business.code(), business.safeMessage());
         }
         if (failure instanceof IllegalArgumentException) {
-            return ToolObservation.failed(CODE_INVALID_ARGUMENTS, MESSAGE_INVALID_ARGUMENTS);
+            return ToolExecutionResult.failed(CODE_INVALID_ARGUMENTS, MESSAGE_INVALID_ARGUMENTS);
         }
         if (failure instanceof SecurityException) {
-            return ToolObservation.failed(CODE_ACCESS_DENIED, MESSAGE_ACCESS_DENIED);
+            return ToolExecutionResult.failed(CODE_ACCESS_DENIED, MESSAGE_ACCESS_DENIED);
         }
         if (failure instanceof TimeoutException) {
-            return ToolObservation.failed(CODE_TIMEOUT, MESSAGE_TIMEOUT);
+            return ToolExecutionResult.failed(CODE_TIMEOUT, MESSAGE_TIMEOUT);
         }
-        return ToolObservation.failed(CODE_TOOL_ERROR, MESSAGE_TOOL_ERROR);
+        return ToolExecutionResult.failed(CODE_TOOL_ERROR, MESSAGE_TOOL_ERROR);
     }
 }

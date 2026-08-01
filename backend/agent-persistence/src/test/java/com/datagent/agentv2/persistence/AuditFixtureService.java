@@ -6,7 +6,9 @@ import org.springframework.boot.test.context.TestComponent;
 @TestComponent
 public class AuditFixtureService extends ServiceImpl<AuditFixtureMapper, AuditFixtureEntity> {
 
-    AuditFixtureEntity findBySessionId(String sessionId) {
-        return lambdaQuery().eq(AuditFixtureEntity::getSessionId, sessionId).one();
+    AuditFixtureEntity findByConversationSessionId(String conversationSessionId) {
+        return lambdaQuery()
+                .eq(AuditFixtureEntity::getConversationSessionId, conversationSessionId)
+                .one();
     }
 }

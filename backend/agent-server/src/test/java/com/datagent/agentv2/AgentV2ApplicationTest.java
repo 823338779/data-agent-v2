@@ -73,7 +73,7 @@ class AgentV2ApplicationTest {
     void authenticatedUserCanCreateListAndReadConversation() throws Exception {
         Cookie session = login();
 
-        String id =
+        String conversationSessionId =
                 mvc.perform(
                                 post("/api/v1/agent-sessions")
                                         .cookie(session)
@@ -84,22 +84,24 @@ class AgentV2ApplicationTest {
                         .andExpect(jsonPath("$.tag").value("local"))
                         .andExpect(jsonPath("$.sessionType").value("INTERACTIVE"))
                         .andExpect(jsonPath("$.messages").isEmpty())
-                        .andExpect(jsonPath("$.run").doesNotExist())
+                        .andExpect(jsonPath("$.execution").doesNotExist())
                         .andReturn()
                         .getResponse()
                         .getContentAsString()
-                        .replaceAll(".*\\\"id\\\":\\\"([^\\\"]+)\\\".*", "$1");
+                        .replaceAll(".*\\\"conversationSessionId\\\":\\\"([^\\\"]+)\\\".*", "$1");
 
         mvc.perform(get("/api/v1/agent-sessions").cookie(session))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].id").value(id));
-        mvc.perform(get("/api/v1/agent-sessions/{id}", id).cookie(session))
+                .andExpect(jsonPath("$[0].conversationSessionId").value(conversationSessionId));
+        mvc.perform(
+                        get("/api/v1/agent-sessions/{conversationSessionId}", conversationSessionId)
+                                .cookie(session))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(id));
+                .andExpect(jsonPath("$.conversationSessionId").value(conversationSessionId));
     }
 
     @Test
-    void submittingMessagePersistsUserMessageAndStartsRunInSameRequest() throws Exception {
+    void submittingMessagePersistsUserMessageAndStartsExecutionInSameRequest() throws Exception {
         Cookie session = login();
         String body =
                 mvc.perform(
@@ -111,10 +113,13 @@ class AgentV2ApplicationTest {
                         .andReturn()
                         .getResponse()
                         .getContentAsString();
-        String id = body.replaceAll(".*\\\"id\\\":\\\"([^\\\"]+)\\\".*", "$1");
+        String conversationSessionId =
+                body.replaceAll(".*\\\"conversationSessionId\\\":\\\"([^\\\"]+)\\\".*", "$1");
 
         mvc.perform(
-                        post("/api/v1/agent-sessions/{id}/messages", id)
+                        post(
+                                        "/api/v1/agent-sessions/{conversationSessionId}/messages",
+                                        conversationSessionId)
                                 .cookie(session)
                                 .header("Idempotency-Key", "message-test")
                                 .header("X-Request-Id", "request_message_test")
@@ -123,13 +128,13 @@ class AgentV2ApplicationTest {
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.messages[0].role").value("user"))
                 .andExpect(jsonPath("$.messages[0].content").value("hello ollama"))
-                .andExpect(jsonPath("$.run.status").value("queued"))
-                .andExpect(jsonPath("$.run.events[0].type").value("run_queued"))
-                .andExpect(jsonPath("$.run.stream.phase").value("QUEUED"));
+                .andExpect(jsonPath("$.execution.status").value("queued"))
+                .andExpect(jsonPath("$.execution.events[0].type").value("execution_queued"))
+                .andExpect(jsonPath("$.execution.streamCheckpoint.phase").value("QUEUED"));
     }
 
     @Test
-    void eventStreamReplaysPersistedRunEventsAndStaysOpen() throws Exception {
+    void eventStreamReplaysPersistedExecutionEventsAndStaysOpen() throws Exception {
         Cookie session = login();
         String created =
                 mvc.perform(
@@ -141,9 +146,12 @@ class AgentV2ApplicationTest {
                         .andReturn()
                         .getResponse()
                         .getContentAsString();
-        String id = created.replaceAll(".*\\\"id\\\":\\\"([^\\\"]+)\\\".*", "$1");
+        String conversationSessionId =
+                created.replaceAll(".*\\\"conversationSessionId\\\":\\\"([^\\\"]+)\\\".*", "$1");
         mvc.perform(
-                        post("/api/v1/agent-sessions/{id}/messages", id)
+                        post(
+                                        "/api/v1/agent-sessions/{conversationSessionId}/messages",
+                                        conversationSessionId)
                                 .cookie(session)
                                 .header("Idempotency-Key", "stream-test")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -151,13 +159,18 @@ class AgentV2ApplicationTest {
                 .andExpect(status().isAccepted());
 
         mvc.perform(
-                        get("/api/v1/agent-sessions/{id}/events", id)
+                        get(
+                                        "/api/v1/agent-sessions/{conversationSessionId}/events",
+                                        conversationSessionId)
                                 .cookie(session)
                                 .accept(MediaType.TEXT_EVENT_STREAM))
                 .andExpect(status().isOk())
                 .andExpect(header().string(HttpHeaders.CONTENT_TYPE, "text/event-stream"))
                 .andExpect(
-                        content().string(org.hamcrest.Matchers.containsString("event:run_queued")))
+                        content()
+                                .string(
+                                        org.hamcrest.Matchers.containsString(
+                                                "event:execution_queued")))
                 .andExpect(request().asyncStarted());
     }
 
@@ -174,26 +187,31 @@ class AgentV2ApplicationTest {
                         .andReturn()
                         .getResponse()
                         .getContentAsString();
-        String id = created.replaceAll(".*\\\"id\\\":\\\"([^\\\"]+)\\\".*", "$1");
+        String conversationSessionId =
+                created.replaceAll(".*\\\"conversationSessionId\\\":\\\"([^\\\"]+)\\\".*", "$1");
 
         // Open the stream before the event exists to verify live delivery rather than replay.
         MvcResult stream =
                 mvc.perform(
-                                get("/api/v1/agent-sessions/{id}/events", id)
+                                get(
+                                                "/api/v1/agent-sessions/{conversationSessionId}/events",
+                                                conversationSessionId)
                                         .cookie(session)
                                         .accept(MediaType.TEXT_EVENT_STREAM))
                         .andExpect(status().isOk())
                         .andExpect(request().asyncStarted())
                         .andReturn();
         mvc.perform(
-                        post("/api/v1/agent-sessions/{id}/messages", id)
+                        post(
+                                        "/api/v1/agent-sessions/{conversationSessionId}/messages",
+                                        conversationSessionId)
                                 .cookie(session)
                                 .header("Idempotency-Key", "stream-live-test")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"content\":\"stream live\"}"))
                 .andExpect(status().isAccepted());
 
-        assertThat(stream.getResponse().getContentAsString()).contains("event:run_queued");
+        assertThat(stream.getResponse().getContentAsString()).contains("event:execution_queued");
     }
 
     private Cookie login() throws Exception {

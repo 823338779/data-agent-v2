@@ -65,10 +65,10 @@ class OllamaAgentModelGatewayTest {
 
     @Test
     void streamsReasoningAndAnswerSeparatelyThenReturnsFinalAnswer() {
-        List<ModelDelta> deltas = new ArrayList<>();
+        List<ModelOutputDelta> deltas = new ArrayList<>();
         List<String> callbackTenants = new ArrayList<>();
 
-        ModelTurnResult result =
+        ModelInvocationResult result =
                 complete(
                         List.of(ModelInputMessage.plain("user", "question")),
                         List.of(),
@@ -78,9 +78,10 @@ class OllamaAgentModelGatewayTest {
                         });
 
         assertThat(deltas)
-                .containsExactly(ModelDelta.reasoning("inspect"), ModelDelta.answer("answer"));
+                .containsExactly(
+                        ModelOutputDelta.reasoning("inspect"), ModelOutputDelta.answer("answer"));
         assertThat(callbackTenants).containsOnly(TENANT_ID);
-        assertThat(result).isEqualTo(new ModelTurnResult.FinalAnswer("answer"));
+        assertThat(result).isEqualTo(new ModelInvocationResult.FinalAnswer("answer"));
         assertThat(request.get()).contains("\"model\":\"test-model\"", "\"num_predict\":512");
     }
 
@@ -88,7 +89,7 @@ class OllamaAgentModelGatewayTest {
     void returnsOnlyCompleteToolCalls() {
         response.set(TOOL_STREAM);
 
-        ModelTurnResult result =
+        ModelInvocationResult result =
                 complete(
                         List.of(ModelInputMessage.plain("user", "question")),
                         List.of(
@@ -100,10 +101,9 @@ class OllamaAgentModelGatewayTest {
 
         assertThat(result)
                 .isEqualTo(
-                        new ModelTurnResult.ToolCalls(
+                        new ModelInvocationResult.ToolCalls(
                                 List.of(
-                                        new com.datagent.agentv2.conversation.react
-                                                .ToolCallDocument(
+                                        new com.datagent.agentv2.conversation.react.ModelToolCall(
                                                 "call-1",
                                                 "lookup",
                                                 JsonMapper.builder()
@@ -124,10 +124,10 @@ class OllamaAgentModelGatewayTest {
                 .isInstanceOf(ModelStreamInterruptedException.class);
     }
 
-    private ModelTurnResult complete(
+    private ModelInvocationResult complete(
             List<ModelInputMessage> messages,
             List<ModelToolDefinition> tools,
-            Consumer<ModelDelta> deltaConsumer) {
+            Consumer<ModelOutputDelta> deltaConsumer) {
         return TenantContext.call(
                 TENANT_ID, () -> gateway.complete(messages, tools, deltaConsumer));
     }

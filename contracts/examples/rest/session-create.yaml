@@ -1,13 +1,13 @@
-schema: AgentSession
+schema: ConversationSession
 value:
-  id: session_demo
+  conversationSessionId: session_demo
   title: Local metric analysis
   tag: local-demo
   sessionType: INTERACTIVE
   createdAt: 2026-08-01T08:00:00Z
   updatedAt: 2026-08-01T08:00:00Z
   version: 0
-  metricIdentityBindingVersion: 0
-  metricIdentity: null
+  metricPlatformCredentialBindingVersion: 0
+  metricPlatformCredential: null
   messages: []
-  run: null
+  execution: null

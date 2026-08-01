@@ -1,8 +1,0 @@
-{
-  "type": "run_phase_changed",
-  "sessionId": "session_demo",
-  "runId": "run_demo",
-  "sequence": 2,
-  "phase": "THINKING",
-  "occurredAt": "2026-08-01T06:00:01Z"
-}

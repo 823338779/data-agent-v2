@@ -1,6 +1,6 @@
 package com.datagent.agentv2.server.web;
 
-import com.datagent.agentv2.conversation.application.ActiveRunConflictException;
+import com.datagent.agentv2.conversation.application.ActiveExecutionConflictException;
 import com.datagent.agentv2.conversation.application.IdempotencyKeyReusedException;
 import com.datagent.agentv2.server.context.RequestContext;
 import jakarta.servlet.http.HttpServletRequest;
@@ -19,16 +19,16 @@ import org.springframework.web.server.ResponseStatusException;
 @Slf4j
 public final class ApiExceptionHandler {
 
-    @ExceptionHandler(ActiveRunConflictException.class)
-    ResponseEntity<ProblemDetail> handleActiveRunConflict(
-            ActiveRunConflictException exception, HttpServletRequest request) {
+    @ExceptionHandler(ActiveExecutionConflictException.class)
+    ResponseEntity<ProblemDetail> handleActiveExecutionConflict(
+            ActiveExecutionConflictException exception, HttpServletRequest request) {
         String requestId = RequestContext.requestId(request);
         ProblemDetail problem =
                 ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, exception.getMessage());
-        problem.setType(URI.create("urn:data-agent:problem:active-run-conflict"));
-        problem.setTitle("Active Run Conflict");
+        problem.setType(URI.create("urn:data-agent:problem:active-execution-conflict"));
+        problem.setTitle("Active Execution Conflict");
         problem.setInstance(URI.create(request.getRequestURI()));
-        problem.setProperty("code", "ACTIVE_RUN_CONFLICT");
+        problem.setProperty("code", "ACTIVE_EXECUTION_CONFLICT");
         problem.setProperty("requestId", requestId);
         problem.setProperty("errors", List.of());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);

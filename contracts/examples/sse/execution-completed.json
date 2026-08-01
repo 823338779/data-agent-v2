@@ -1,0 +1,10 @@
+{
+  "type": "execution_completed",
+  "conversationSessionId": "session_demo",
+  "executionId": "execution_demo",
+  "executionEventSequence": 4,
+  "occurredAt": "2026-08-01T06:00:04Z",
+  "payload": {
+    "status": "done"
+  }
+}

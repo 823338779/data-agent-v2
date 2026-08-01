@@ -68,11 +68,11 @@ public class LocalAdminBootstrap implements ApplicationRunner {
     }
 
     private void ensureMembership(AuthProperties.Bootstrap bootstrap) {
-        if (memberships.findByUuid(bootstrap.getMembershipId()) != null) {
+        if (memberships.findByUuid(bootstrap.getTenantMembershipId()) != null) {
             return;
         }
         TenantMembershipEntity membership = new TenantMembershipEntity();
-        membership.setMembershipId(bootstrap.getMembershipId());
+        membership.setTenantMembershipId(bootstrap.getTenantMembershipId());
         membership.setUserId(bootstrap.getUserId());
         membership.setRole("ADMIN");
         membership.setVersion(0L);

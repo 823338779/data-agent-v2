@@ -4,18 +4,18 @@
   "title": "会话 SSE 事件",
   "type": "object",
   "additionalProperties": false,
-  "required": ["type", "sessionId"],
+  "required": ["type", "conversationSessionId"],
   "properties": {
     "type": {
       "type": "string",
       "enum": [
-        "run_started",
+        "execution_started",
         "user_message",
         "assistant_message",
         "reasoning_delta",
         "assistant_delta",
         "stream_snapshot",
-        "run_phase_changed",
+        "execution_phase_changed",
         "skill_activated",
         "context_compaction_started",
         "context_compaction_completed",
@@ -28,18 +28,18 @@
         "interaction_resolved",
         "user_confirmation_requested",
         "user_confirmation_resolved",
-        "run_completed",
-        "run_failed",
-        "run_cancelled",
+        "execution_completed",
+        "execution_failed",
+        "execution_cancelled",
         "error"
       ]
     },
-    "sessionId": { "type": "string", "minLength": 1 },
-    "runId": { "type": "string", "minLength": 1 },
-    "sequence": { "type": "integer", "minimum": 1 },
-    "executionAttempt": { "type": "integer", "minimum": 0 },
-    "modelTurnSequence": { "type": "integer", "minimum": 0 },
-    "streamSequence": { "type": "integer", "minimum": 0 },
+    "conversationSessionId": { "type": "string", "minLength": 1 },
+    "executionId": { "type": "string", "minLength": 1 },
+    "executionEventSequence": { "type": "integer", "minimum": 1 },
+    "executionAttemptNumber": { "type": "integer", "minimum": 0 },
+    "modelInvocationSequence": { "type": "integer", "minimum": 0 },
+    "outputDeltaSequence": { "type": "integer", "minimum": 0 },
     "delta": { "type": "string" },
     "reasoning": { "type": "string" },
     "answer": { "type": "string" },
@@ -73,7 +73,7 @@
       "properties": {
         "type": {
           "enum": [
-            "run_started",
+            "execution_started",
             "user_message",
             "assistant_message",
             "skill_activated",
@@ -88,35 +88,35 @@
             "interaction_resolved",
             "user_confirmation_requested",
             "user_confirmation_resolved",
-            "run_completed",
-            "run_failed",
-            "run_cancelled",
+            "execution_completed",
+            "execution_failed",
+            "execution_cancelled",
             "error"
           ]
         }
       },
-      "required": ["sequence", "occurredAt"]
+      "required": ["executionEventSequence", "occurredAt"]
     },
     {
       "title": "思考增量",
       "properties": { "type": { "const": "reasoning_delta" } },
-      "required": ["runId", "executionAttempt", "modelTurnSequence", "streamSequence", "delta", "occurredAt"]
+      "required": ["executionId", "executionAttemptNumber", "modelInvocationSequence", "outputDeltaSequence", "delta", "occurredAt"]
     },
     {
       "title": "回答增量",
       "x-v2-extension": true,
       "properties": { "type": { "const": "assistant_delta" } },
-      "required": ["runId", "executionAttempt", "modelTurnSequence", "streamSequence", "delta", "occurredAt"]
+      "required": ["executionId", "executionAttemptNumber", "modelInvocationSequence", "outputDeltaSequence", "delta", "occurredAt"]
     },
     {
       "title": "流检查点快照",
       "x-v2-extension": true,
       "properties": { "type": { "const": "stream_snapshot" } },
       "required": [
-        "runId",
-        "executionAttempt",
-        "modelTurnSequence",
-        "streamSequence",
+        "executionId",
+        "executionAttemptNumber",
+        "modelInvocationSequence",
+        "outputDeltaSequence",
         "reasoning",
         "answer",
         "checkpointedAt",
@@ -126,18 +126,18 @@
     {
       "title": "运行阶段变化",
       "x-v2-extension": true,
-      "properties": { "type": { "const": "run_phase_changed" } },
-      "required": ["runId", "sequence", "phase", "occurredAt"]
+      "properties": { "type": { "const": "execution_phase_changed" } },
+      "required": ["executionId", "executionEventSequence", "phase", "occurredAt"]
     }
   ],
   "x-frontend-projection": {
     "reasoning_delta": "reasoning.delta",
     "assistant_delta": "assistant.draft",
-    "stream_snapshot": "run.stream",
-    "run_phase_changed": "run.timeline"
+    "stream_snapshot": "execution.streamCheckpoint",
+    "execution_phase_changed": "execution.timeline"
   },
   "x-sse-event-id": {
-    "encoding": "e={sessionEventSequence};a={executionAttempt};t={modelTurnSequence};s={streamSequence}",
+    "encoding": "e={sessionExecutionEventSequence};a={executionAttemptNumber};t={modelInvocationSequence};s={outputDeltaSequence}",
     "pattern": "^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$"
   },
   "x-sensitive-payload-fields-forbidden": [

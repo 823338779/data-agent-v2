@@ -7,13 +7,13 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.datagent.agentv2.conversation.runtime.RunExecutionPort;
-import com.datagent.agentv2.conversation.runtime.RunLeaseService;
-import com.datagent.agentv2.persistence.entity.AgentMessageEntity;
-import com.datagent.agentv2.persistence.entity.AgentToolExecutionEntity;
-import com.datagent.agentv2.persistence.service.AgentMessageService;
-import com.datagent.agentv2.persistence.service.AgentSessionService;
-import com.datagent.agentv2.persistence.service.AgentToolExecutionService;
+import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
+import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
+import com.datagent.agentv2.persistence.entity.ConversationMessageEntity;
+import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
+import com.datagent.agentv2.persistence.service.ConversationMessageService;
+import com.datagent.agentv2.persistence.service.ConversationSessionService;
+import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -28,7 +28,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 class ToolExecutionCoordinatorTest {
 
-    private static final String RUN_ID = "run-tools";
+    private static final String EXECUTION_ID = "execution-tools";
     private static final String ASSISTANT_ID = "assistant-tools";
     private static final String TOOL_CALLS =
             """
@@ -45,31 +45,31 @@ class ToolExecutionCoordinatorTest {
     @Test
     void persistsSanitizedObservationForEveryOutcomeAndContinuesAfterFailures() {
         JsonMapper json = JsonMapper.builder().build();
-        AgentToolExecutionService executions = mock(AgentToolExecutionService.class);
-        AgentMessageService messages = mock(AgentMessageService.class);
-        AgentSessionService sessions = mock(AgentSessionService.class);
-        RunLeaseService leases = mock(RunLeaseService.class);
+        ToolExecutionService toolExecutions = mock(ToolExecutionService.class);
+        ConversationMessageService messages = mock(ConversationMessageService.class);
+        ConversationSessionService sessions = mock(ConversationSessionService.class);
+        AgentExecutionLeaseService leases = mock(AgentExecutionLeaseService.class);
         IdGenerator ids = mock(IdGenerator.class);
         PlatformTransactionManager transactionManager = transactionManager();
-        List<AgentToolExecutionEntity> rows = executions();
-        List<AgentMessageEntity> observations = new ArrayList<>();
-        AtomicInteger messageSequence = new AtomicInteger(10);
-        AtomicInteger messageId = new AtomicInteger();
-        AgentMessageEntity assistant = new AgentMessageEntity();
-        assistant.setMessageId(ASSISTANT_ID);
-        assistant.setSessionId("session-tools");
+        List<ToolExecutionEntity> rows = toolExecutions();
+        List<ConversationMessageEntity> observations = new ArrayList<>();
+        AtomicInteger conversationMessageSequence = new AtomicInteger(10);
+        AtomicInteger conversationMessageId = new AtomicInteger();
+        ConversationMessageEntity assistant = new ConversationMessageEntity();
+        assistant.setConversationMessageId(ASSISTANT_ID);
+        assistant.setConversationSessionId("session-tools");
         assistant.setToolCalls(TOOL_CALLS);
 
-        when(executions.findByTurn(RUN_ID, 1)).thenReturn(rows);
-        for (AgentToolExecutionEntity row : rows) {
-            when(executions.findByToolExecutionId(row.getToolExecutionId())).thenReturn(row);
+        when(toolExecutions.findByTurn(EXECUTION_ID, 1)).thenReturn(rows);
+        for (ToolExecutionEntity row : rows) {
+            when(toolExecutions.findByToolExecutionId(row.getToolExecutionId())).thenReturn(row);
         }
-        when(executions.startExecution(
+        when(toolExecutions.startExecution(
                         anyString(), anyLong(), any(), any(), anyString(), anyLong()))
                 .thenAnswer(
                         invocation -> {
                             String id = invocation.getArgument(0);
-                            AgentToolExecutionEntity row =
+                            ToolExecutionEntity row =
                                     rows.stream()
                                             .filter(value -> value.getToolExecutionId().equals(id))
                                             .findFirst()
@@ -79,7 +79,7 @@ class ToolExecutionCoordinatorTest {
                             row.setVersion(row.getVersion() + 1);
                             return true;
                         });
-        when(executions.completeExecution(
+        when(toolExecutions.completeExecution(
                         anyString(),
                         anyLong(),
                         anyString(),
@@ -89,22 +89,22 @@ class ToolExecutionCoordinatorTest {
                         anyString(),
                         anyLong()))
                 .thenReturn(true);
-        when(messages.findByMessageId(ASSISTANT_ID)).thenReturn(assistant);
+        when(messages.findByConversationMessageId(ASSISTANT_ID)).thenReturn(assistant);
         when(messages.save(any()))
                 .thenAnswer(
                         invocation -> {
                             observations.add(invocation.getArgument(0));
                             return true;
                         });
-        when(sessions.nextMessageSequence("session-tools"))
-                .thenAnswer(ignored -> (long) messageSequence.incrementAndGet());
+        when(sessions.nextConversationMessageSequence("session-tools"))
+                .thenAnswer(ignored -> (long) conversationMessageSequence.incrementAndGet());
         when(ids.next(anyString()))
-                .thenAnswer(ignored -> "observation-" + messageId.incrementAndGet());
+                .thenAnswer(ignored -> "observation-" + conversationMessageId.incrementAndGet());
 
         ToolExecutionCoordinator coordinator =
                 new ToolExecutionCoordinator(
                         new AgentToolRegistry(tools(json)),
-                        executions,
+                        toolExecutions,
                         messages,
                         sessions,
                         leases,
@@ -113,22 +113,24 @@ class ToolExecutionCoordinatorTest {
                         json,
                         transactionManager);
         try {
-            List<ToolObservation> result =
-                    coordinator.executeTurn(
-                            new RunExecutionPort.OwnedRun("tenant-tools", RUN_ID, "owner", 1), 1);
+            List<ToolExecutionResult> result =
+                    coordinator.executeModelInvocationTools(
+                            new AgentExecutionPort.ClaimedAgentExecution(
+                                    "tenant-tools", EXECUTION_ID, "owner", 1),
+                            1);
 
             assertThat(result).hasSize(6);
             assertThat(result)
-                    .extracting(ToolObservation::status)
+                    .extracting(ToolExecutionResult::status)
                     .containsExactly(
-                            ToolObservation.Status.SUCCEEDED,
-                            ToolObservation.Status.FAILED,
-                            ToolObservation.Status.FAILED,
-                            ToolObservation.Status.FAILED,
-                            ToolObservation.Status.FAILED,
-                            ToolObservation.Status.FAILED);
+                            ToolExecutionResult.Status.SUCCEEDED,
+                            ToolExecutionResult.Status.FAILED,
+                            ToolExecutionResult.Status.FAILED,
+                            ToolExecutionResult.Status.FAILED,
+                            ToolExecutionResult.Status.FAILED,
+                            ToolExecutionResult.Status.FAILED);
             assertThat(result)
-                    .extracting(ToolObservation::failureCode)
+                    .extracting(ToolExecutionResult::failureCode)
                     .containsExactly(
                             null,
                             "invalid_arguments",
@@ -213,17 +215,17 @@ class ToolExecutionCoordinatorTest {
         };
     }
 
-    private static List<AgentToolExecutionEntity> executions() {
+    private static List<ToolExecutionEntity> toolExecutions() {
         List<String> names =
                 List.of("success", "arguments", "denied", "timeout", "exception", "business");
-        List<AgentToolExecutionEntity> rows = new ArrayList<>();
+        List<ToolExecutionEntity> rows = new ArrayList<>();
         for (String name : names) {
-            AgentToolExecutionEntity row = new AgentToolExecutionEntity();
+            ToolExecutionEntity row = new ToolExecutionEntity();
             row.setToolExecutionId("execution-" + name);
-            row.setRunId(RUN_ID);
-            row.setModelTurnSequence(1L);
-            row.setExecutionAttempt(1L);
-            row.setAssistantMessageId(ASSISTANT_ID);
+            row.setExecutionId(EXECUTION_ID);
+            row.setModelInvocationSequence(1L);
+            row.setExecutionAttemptNumber(1L);
+            row.setAssistantConversationMessageId(ASSISTANT_ID);
             row.setToolCallId("call-" + name);
             row.setToolName(name);
             row.setStatus("prepared");

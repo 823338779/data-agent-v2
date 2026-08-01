@@ -14,7 +14,7 @@
 2. `agent-platform`：保存与存储技术无关的 ID、上下文和时钟。
 3. `agent-persistence`：保存 MyBatis-Plus 配置、审计基类、Flyway 迁移和持久化集成测试。
 4. `agent-auth`：保存用户、成员关系、登录会话、认证应用服务、安全过滤器和认证 HTTP 接口。
-5. `agent-conversation`：保存会话、消息、Run、事件、流检查点、Redis、SSE、Ollama 和对话 HTTP 接口。
+5. `agent-conversation`：保存会话、消息、Agent 执行、事件、流检查点、Redis、SSE、Ollama 和对话 HTTP 接口。
 6. `agent-server`：保存 Spring Boot 启动类、全局 Web 异常边界和部署配置，并装配认证与对话模块。
 7. `agent-evals`：保持独立评测模块，不依赖 `agent-server` 实现类。
 
@@ -94,7 +94,7 @@ Maven reactor 顺序固定为：`agent-contracts`、`agent-platform`、`agent-pe
 1. 浏览器只访问 Nginx。
 2. `agent-server` 加载认证与对话模块。
 3. 认证模块验证共享数据库中的 Cookie 会话并建立租户/操作者上下文。
-4. 对话模块在收到消息的节点事务化保存 Message、Run、事件和 Outbox。
+4. 对话模块在收到消息的节点事务化保存 Message、Agent 执行、事件和 Outbox。
 5. 同一节点在事务提交后调用 Ollama。
 6. Token 通过 Redis Pub/Sub 转发到持有 SSE 连接的任意实例，生命周期和检查点保存在 PostgreSQL。
 

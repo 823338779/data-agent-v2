@@ -1,6 +1,6 @@
 package com.datagent.agentv2.conversation.stream;
 
-import com.datagent.agentv2.conversation.runtime.RunRuntimeProperties;
+import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeProperties;
 import com.datagent.agentv2.web.conversation.ConversationEventStreamFacade;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -11,13 +11,13 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public final class SessionEventReconciler {
 
-    private final ConversationEventStreamFacade streams;
-    private final RunRuntimeProperties runtime;
+    private final ConversationEventStreamFacade eventStreamFacade;
+    private final AgentExecutionRuntimeProperties runtime;
 
     @Scheduled(fixedDelayString = "${data-agent.runtime.session-event-reconcile-interval:1s}")
     public void reconcile() {
         if (runtime.schedulingEnabled()) {
-            streams.reconcileActiveSessions();
+            eventStreamFacade.reconcileActiveSessions();
         }
     }
 }

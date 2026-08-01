@@ -1,35 +1,35 @@
-schema: AgentSession
+schema: ConversationSession
 value:
-  id: session_demo
+  conversationSessionId: session_demo
   title: Local metric analysis
   tag: local-demo
   sessionType: INTERACTIVE
   createdAt: 2026-08-01T08:00:00Z
   updatedAt: 2026-08-01T08:01:00Z
   version: 2
-  metricIdentityBindingVersion: 0
-  metricIdentity: null
+  metricPlatformCredentialBindingVersion: 0
+  metricPlatformCredential: null
   messages:
-    - id: message_demo
+    - conversationMessageId: message_demo
       role: user
       author: user_admin
       content: Summarize local revenue by month
       createdAt: 2026-08-01T08:01:00Z
       citations: []
-  run:
-    id: run_demo
+  execution:
+    executionId: execution_demo
     status: running
     progress: 35
     objective: Summarize local revenue by month
     cancellationRequestedAt: null
     events:
-      - id: event_demo
-        sequence: 1
-        type: run_started
+      - executionEventId: event_demo
+        executionEventSequence: 1
+        type: execution_started
         occurredAt: 2026-08-01T08:01:00Z
-        runId: run_demo
-        messageId: message_demo
-        title: Run started
+        executionId: execution_demo
+        conversationMessageId: message_demo
+        title: Agent execution started
         summary: Preparing the metric query
         toolName: null
         input: {}
@@ -39,10 +39,10 @@ value:
         status: running
     pendingConfirmation: null
     pendingInteraction: null
-    stream:
-      executionAttempt: 1
-      modelTurnSequence: 1
+    streamCheckpoint:
+      executionAttemptNumber: 1
+      modelInvocationSequence: 1
       phase: planning
-      sequence: 1
+      outputDeltaSequence: 1
       thinking: Preparing the metric query
       answer: ''

@@ -2,13 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { createFetchAgentBackendClient } from './backendAgentClient';
 
 const session = {
-  id: 'session_1',
+  conversationSessionId: 'session_1',
   title: '后端会话',
   tag: '',
   createdAt: '2026-08-01T08:00:00Z',
   updatedAt: '2026-08-01T08:00:00Z',
   messages: [],
-  run: null,
+  execution: null,
 };
 
 describe('backend agent client', () => {
@@ -49,13 +49,13 @@ describe('backend agent client', () => {
   });
 
   it('maps the current backend snapshot without synthesizing unsupported state', async () => {
-    const run = {
-      id: 'run_1',
+    const execution = {
+      executionId: 'execution_1',
       status: 'running',
       progress: 5,
       objective: '分析订单延迟',
       events: [],
-      stream: { phase: 'RECEIVED', thinking: '检查订单时间', answer: '发现延迟订单' },
+      streamCheckpoint: { phase: 'RECEIVED', thinking: '检查订单时间', answer: '发现延迟订单' },
     };
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
@@ -64,23 +64,23 @@ describe('backend agent client', () => {
           ...session,
           messages: [
             {
-              id: 'message_1',
+              conversationMessageId: 'message_1',
               role: 'user',
               author: 'admin',
               content: '分析订单延迟',
               createdAt: '2026-08-01T08:01:00Z',
-              run: null,
+              execution: null,
             },
             {
-              id: 'message_2',
+              conversationMessageId: 'message_2',
               role: 'assistant',
               author: 'assistant',
               content: '发现延迟订单',
               createdAt: '2026-08-01T08:02:00Z',
-              run,
+              execution,
             },
           ],
-          run,
+          execution,
         },
       ],
     });
@@ -88,12 +88,12 @@ describe('backend agent client', () => {
     const [mapped] = await createFetchAgentBackendClient({ fetchImpl }).listSessions();
 
     expect(mapped.messages[0]).toMatchObject({ role: 'user', content: '分析订单延迟' });
-    expect(mapped.messages[1].run?.stream?.thinking).toBe('检查订单时间');
-    expect(mapped.run).toMatchObject({ status: 'running', progress: 5 });
-    expect(mapped).not.toHaveProperty('metricIdentity');
+    expect(mapped.messages[1].execution?.streamCheckpoint?.thinking).toBe('检查订单时间');
+    expect(mapped.execution).toMatchObject({ status: 'running', progress: 5 });
+    expect(mapped).not.toHaveProperty('metricPlatformCredential');
   });
 
-  it('refreshes for every persisted run lifecycle event', () => {
+  it('refreshes for every persisted Agent execution lifecycle event', () => {
     const addEventListener = vi.fn();
     const close = vi.fn();
     const source = { addEventListener, close, onerror: null } as unknown as EventSource;
@@ -102,9 +102,9 @@ describe('backend agent client', () => {
     const unsubscribe = client.subscribeEvents('session_1', vi.fn(), vi.fn());
 
     expect(addEventListener.mock.calls.map(([eventName]) => eventName)).toEqual([
-      'run_queued',
-      'run_started',
-      'run_done',
+      'execution_queued',
+      'execution_started',
+      'execution_done',
     ]);
     unsubscribe();
     expect(close).toHaveBeenCalledOnce();

@@ -1,15 +1,15 @@
 package com.datagent.agentv2.conversation.react;
 
-import com.datagent.agentv2.conversation.runtime.RunExecutionPort;
-import com.datagent.agentv2.conversation.runtime.RunOwnershipLostException;
-import com.datagent.agentv2.persistence.entity.AgentMessageEntity;
-import com.datagent.agentv2.persistence.entity.AgentModelTurnEntity;
-import com.datagent.agentv2.persistence.entity.AgentRunEntity;
-import com.datagent.agentv2.persistence.entity.AgentToolExecutionEntity;
-import com.datagent.agentv2.persistence.service.AgentMessageService;
-import com.datagent.agentv2.persistence.service.AgentModelTurnService;
-import com.datagent.agentv2.persistence.service.AgentRunService;
-import com.datagent.agentv2.persistence.service.AgentToolExecutionService;
+import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
+import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
+import com.datagent.agentv2.persistence.entity.AgentExecutionEntity;
+import com.datagent.agentv2.persistence.entity.ConversationMessageEntity;
+import com.datagent.agentv2.persistence.entity.ModelInvocationEntity;
+import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
+import com.datagent.agentv2.persistence.service.AgentExecutionService;
+import com.datagent.agentv2.persistence.service.ConversationMessageService;
+import com.datagent.agentv2.persistence.service.ModelInvocationService;
+import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -30,92 +30,94 @@ public final class ReactRecoveryPlanner {
     private static final String ERROR_TERMINAL_OBSERVATION =
             "Terminal tool execution is missing its observation";
 
-    private final AgentRunService runs;
-    private final AgentModelTurnService turns;
-    private final AgentToolExecutionService executions;
-    private final AgentMessageService messages;
+    private final AgentExecutionService agentExecutions;
+    private final ModelInvocationService modelInvocations;
+    private final ToolExecutionService toolExecutions;
+    private final ConversationMessageService messages;
     private final TransactionTemplate transactions;
 
     public ReactRecoveryPlanner(
-            AgentRunService runs,
-            AgentModelTurnService turns,
-            AgentToolExecutionService executions,
-            AgentMessageService messages,
+            AgentExecutionService agentExecutions,
+            ModelInvocationService modelInvocations,
+            ToolExecutionService toolExecutions,
+            ConversationMessageService messages,
             PlatformTransactionManager transactionManager) {
-        this.runs = runs;
-        this.turns = turns;
-        this.executions = executions;
+        this.agentExecutions = agentExecutions;
+        this.modelInvocations = modelInvocations;
+        this.toolExecutions = toolExecutions;
         this.messages = messages;
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
-    public RecoveryPlan recover(RunExecutionPort.OwnedRun run) {
+    public RecoveryPlan recover(AgentExecutionPort.ClaimedAgentExecution run) {
         return Objects.requireNonNull(transactions.execute(ignored -> recoverLocked(run)));
     }
 
-    private RecoveryPlan recoverLocked(RunExecutionPort.OwnedRun run) {
+    private RecoveryPlan recoverLocked(AgentExecutionPort.ClaimedAgentExecution run) {
         assertOwned(run);
-        List<AgentModelTurnEntity> persistedTurns = turns.findByRunId(run.runId());
-        if (persistedTurns.isEmpty()) {
+        List<ModelInvocationEntity> persistedModelInvocations =
+                modelInvocations.findByExecutionId(run.executionId());
+        if (persistedModelInvocations.isEmpty()) {
             return RecoveryPlan.continueModel();
         }
-        AgentModelTurnEntity last = persistedTurns.getLast();
+        ModelInvocationEntity last = persistedModelInvocations.getLast();
         if (STATUS_STREAMING.equals(last.getStatus())) {
-            if (!turns.abandonRecovered(
-                    run.runId(),
-                    last.getModelTurnSequence(),
-                    last.getExecutionAttempt(),
+            if (!modelInvocations.abandonRecovered(
+                    run.executionId(),
+                    last.getModelInvocationSequence(),
+                    last.getExecutionAttemptNumber(),
                     last.getVersion(),
                     run.ownerInstanceId(),
-                    run.executionAttempt(),
+                    run.executionAttemptNumber(),
                     Instant.now())) {
-                throw new RunOwnershipLostException(run.runId());
+                throw new ExecutionOwnershipLostException(run.executionId());
             }
             return new RecoveryPlan(
                     Action.RETRY_MODEL,
-                    last.getModelTurnSequence(),
-                    last.getInputUpToMessageSequence());
+                    last.getModelInvocationSequence(),
+                    last.getInputUpToConversationMessageSequence());
         }
 
-        List<AgentToolExecutionEntity> toolExecutions =
-                executions.findByTurn(run.runId(), last.getModelTurnSequence());
-        if (toolExecutions.isEmpty()) {
+        List<ToolExecutionEntity> toolExecutionRows =
+                toolExecutions.findByTurn(run.executionId(), last.getModelInvocationSequence());
+        if (toolExecutionRows.isEmpty()) {
             return RecoveryPlan.continueModel();
         }
-        if (toolExecutions.stream().anyMatch(this::needsExecution)) {
+        if (toolExecutionRows.stream().anyMatch(this::needsExecution)) {
             return new RecoveryPlan(
                     Action.EXECUTE_TOOLS,
-                    last.getModelTurnSequence(),
-                    last.getInputUpToMessageSequence());
+                    last.getModelInvocationSequence(),
+                    last.getInputUpToConversationMessageSequence());
         }
-        for (AgentToolExecutionEntity execution : toolExecutions) {
+        for (ToolExecutionEntity execution : toolExecutionRows) {
             validateTerminalObservation(execution);
         }
         return RecoveryPlan.continueModel();
     }
 
-    private void assertOwned(RunExecutionPort.OwnedRun run) {
-        AgentRunEntity owned = runs.lockById(run.runId());
+    private void assertOwned(AgentExecutionPort.ClaimedAgentExecution run) {
+        AgentExecutionEntity owned = agentExecutions.lockById(run.executionId());
         if (owned == null
                 || !STATUS_RUNNING.equals(owned.getStatus())
                 || !run.ownerInstanceId().equals(owned.getOwnerInstanceId())
-                || run.executionAttempt() != owned.getExecutionAttempt()) {
-            throw new RunOwnershipLostException(run.runId());
+                || run.executionAttemptNumber() != owned.getExecutionAttemptNumber()) {
+            throw new ExecutionOwnershipLostException(run.executionId());
         }
     }
 
-    private boolean needsExecution(AgentToolExecutionEntity execution) {
+    private boolean needsExecution(ToolExecutionEntity execution) {
         return STATUS_PREPARED.equals(execution.getStatus())
                 || STATUS_EXECUTING.equals(execution.getStatus());
     }
 
-    private void validateTerminalObservation(AgentToolExecutionEntity execution) {
+    private void validateTerminalObservation(ToolExecutionEntity execution) {
         if (!STATUS_SUCCEEDED.equals(execution.getStatus())
                 && !STATUS_FAILED.equals(execution.getStatus())) {
             throw new IllegalStateException(ERROR_TERMINAL_OBSERVATION);
         }
-        AgentMessageEntity observation =
-                messages.findByMessageId(execution.getObservationMessageId());
+        ConversationMessageEntity observation =
+                messages.findByConversationMessageId(
+                        execution.getObservationConversationMessageId());
         if (observation == null
                 || !ROLE_TOOL.equals(observation.getRole())
                 || !execution.getToolExecutionId().equals(observation.getToolExecutionId())) {
@@ -129,7 +131,7 @@ public final class ReactRecoveryPlanner {
         EXECUTE_TOOLS
     }
 
-    public record RecoveryPlan(Action action, long modelTurnSequence, long inputBoundary) {
+    public record RecoveryPlan(Action action, long modelInvocationSequence, long inputBoundary) {
         public static RecoveryPlan continueModel() {
             return new RecoveryPlan(Action.CONTINUE_MODEL, 0, 0);
         }

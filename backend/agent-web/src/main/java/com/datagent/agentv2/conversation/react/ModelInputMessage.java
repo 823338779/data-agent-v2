@@ -7,7 +7,7 @@ import java.util.Objects;
 public record ModelInputMessage(
         String role,
         String content,
-        List<ToolCallDocument> toolCalls,
+        List<ModelToolCall> toolCalls,
         String toolCallId,
         String toolName) {
 
@@ -21,7 +21,7 @@ public record ModelInputMessage(
         return new ModelInputMessage(role, content, List.of(), null, null);
     }
 
-    public static ModelInputMessage assistantToolCalls(List<ToolCallDocument> toolCalls) {
+    public static ModelInputMessage assistantToolCalls(List<ModelToolCall> toolCalls) {
         return new ModelInputMessage("assistant", "", toolCalls, null, null);
     }
 

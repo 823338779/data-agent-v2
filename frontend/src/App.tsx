@@ -23,7 +23,7 @@ import {
   WorkspaceRoute,
 } from './app/workspaceRoute';
 import { AppShell } from './components/shell/AppShell';
-import { AgentSession, formatTimestamp } from './domain/agentPrototype';
+import { ConversationSession, formatTimestamp } from './domain/agentPrototype';
 
 interface AppProps {
   subject?: string;
@@ -38,7 +38,7 @@ function isNarrowScreen(): boolean {
   return window.matchMedia?.(narrowScreenQuery).matches ?? false;
 }
 
-function runLabel(status?: string): string {
+function executionStatusLabel(status?: string): string {
   switch (status) {
     case 'running':
       return '处理中';
@@ -62,7 +62,7 @@ export default function App({
 }: AppProps) {
   const backend = useMemo(() => client ?? createFetchAgentBackendClient(), [client]);
   const [route, setRoute] = useState<WorkspaceRoute>(parseWorkspaceRoute);
-  const [sessions, setSessions] = useState<AgentSession[]>([]);
+  const [sessions, setSessions] = useState<ConversationSession[]>([]);
   const [historyOpen, setHistoryOpen] = useState(() => !isNarrowScreen());
   const [search, setSearch] = useState('');
   const [prompt, setPrompt] = useState('');
@@ -74,19 +74,23 @@ export default function App({
 
   const active =
     route.kind === 'session'
-      ? sessions.find((session) => session.id === route.sessionId)
+      ? sessions.find((session) => session.conversationSessionId === route.conversationSessionId)
       : undefined;
   const visibleSessions = sessions.filter((session) =>
     `${session.title} ${session.tag}`.toLowerCase().includes(search.trim().toLowerCase()),
   );
   const assistantMessages =
     active?.messages.filter((message) => message.role === 'assistant') ?? [];
-  const hasMessageRunMetadata = assistantMessages.some((message) => message.run);
-  const activeRunAnswerPersisted = Boolean(
-    active?.run?.stream?.answer &&
-    (assistantMessages.some((message) => message.run?.id === active.run?.id) ||
-      (!hasMessageRunMetadata &&
-        assistantMessages.some((message) => message.content === active.run?.stream?.answer))),
+  const hasMessageExecutionMetadata = assistantMessages.some((message) => message.execution);
+  const activeExecutionAnswerPersisted = Boolean(
+    active?.execution?.streamCheckpoint?.answer &&
+    (assistantMessages.some(
+      (message) => message.execution?.executionId === active.execution?.executionId,
+    ) ||
+      (!hasMessageExecutionMetadata &&
+        assistantMessages.some(
+          (message) => message.content === active.execution?.streamCheckpoint?.answer,
+        ))),
   );
 
   function handleFailure(failure: unknown, message: string) {
@@ -97,11 +101,15 @@ export default function App({
     setError(message);
   }
 
-  function replaceSession(session: AgentSession) {
+  function replaceSession(session: ConversationSession) {
     setSessions((current) => {
-      const exists = current.some((item) => item.id === session.id);
+      const exists = current.some(
+        (item) => item.conversationSessionId === session.conversationSessionId,
+      );
       return exists
-        ? current.map((item) => (item.id === session.id ? session : item))
+        ? current.map((item) =>
+            item.conversationSessionId === session.conversationSessionId ? session : item,
+          )
         : [session, ...current];
     });
   }
@@ -112,7 +120,10 @@ export default function App({
     try {
       const loaded = await backend.listSessions();
       setSessions(loaded);
-      if (route.kind === 'session' && !loaded.some((item) => item.id === route.sessionId)) {
+      if (
+        route.kind === 'session' &&
+        !loaded.some((item) => item.conversationSessionId === route.conversationSessionId)
+      ) {
         navigateWorkspace({ kind: 'home' }, true);
       }
     } catch (failure) {
@@ -141,21 +152,21 @@ export default function App({
   useEffect(() => {
     if (!active) return;
     const close = backend.subscribeEvents(
-      active.id,
+      active.conversationSessionId,
       () =>
         void backend
-          .getSession(active.id)
+          .getSession(active.conversationSessionId)
           .then(replaceSession)
           .catch((failure) => handleFailure(failure, '无法刷新最新运行状态。')),
       () => setError('实时状态连接已中断；会话内容仍可继续查看。'),
     );
     return close;
-  }, [active?.id, backend]);
+  }, [active?.conversationSessionId, backend]);
 
   useEffect(() => {
     const element = messagesRef.current;
     if (element) element.scrollTop = element.scrollHeight;
-  }, [active?.messages.length, active?.run?.stream?.answer]);
+  }, [active?.messages.length, active?.execution?.streamCheckpoint?.answer]);
 
   async function createSession() {
     if (creating) return;
@@ -164,7 +175,10 @@ export default function App({
     try {
       const session = await backend.createSession('新会话', '');
       replaceSession(session);
-      navigateWorkspace({ kind: 'session', sessionId: session.id });
+      navigateWorkspace({
+        kind: 'session',
+        conversationSessionId: session.conversationSessionId,
+      });
       if (isNarrowScreen()) setHistoryOpen(false);
     } catch (failure) {
       handleFailure(failure, '新会话创建失败，请稍后重试。');
@@ -180,7 +194,7 @@ export default function App({
     setSending(true);
     setError(null);
     try {
-      const session = await backend.submitMessage(active.id, content);
+      const session = await backend.submitMessage(active.conversationSessionId, content);
       replaceSession(session);
       setPrompt('');
     } catch (failure) {
@@ -196,8 +210,8 @@ export default function App({
     void sendPrompt();
   }
 
-  function openSession(sessionId: string) {
-    navigateWorkspace({ kind: 'session', sessionId });
+  function openSession(conversationSessionId: string) {
+    navigateWorkspace({ kind: 'session', conversationSessionId });
     if (isNarrowScreen()) setHistoryOpen(false);
   }
 
@@ -245,10 +259,14 @@ export default function App({
           <nav>
             {visibleSessions.map((session) => (
               <button
-                className={active?.id === session.id ? 'session-link active' : 'session-link'}
-                key={session.id}
+                className={
+                  active?.conversationSessionId === session.conversationSessionId
+                    ? 'session-link active'
+                    : 'session-link'
+                }
+                key={session.conversationSessionId}
                 type="button"
-                onClick={() => openSession(session.id)}
+                onClick={() => openSession(session.conversationSessionId)}
               >
                 <span>{session.title}</span>
                 <small>{formatTimestamp(session.updatedAt)}</small>
@@ -281,7 +299,11 @@ export default function App({
             <div className="recent-sessions">
               <span>最近会话</span>
               {sessions.slice(0, 3).map((session) => (
-                <button key={session.id} type="button" onClick={() => openSession(session.id)}>
+                <button
+                  key={session.conversationSessionId}
+                  type="button"
+                  onClick={() => openSession(session.conversationSessionId)}
+                >
                   <strong>{session.title}</strong>
                   <small>{formatTimestamp(session.updatedAt)}</small>
                 </button>
@@ -298,8 +320,8 @@ export default function App({
               <h1>{active.title}</h1>
               {active.tag && <span>{active.tag}</span>}
             </div>
-            <span className={`run-status ${active.run?.status ?? 'idle'}`}>
-              {runLabel(active.run?.status)}
+            <span className={`execution-status ${active.execution?.status ?? 'idle'}`}>
+              {executionStatusLabel(active.execution?.status)}
             </span>
           </header>
 
@@ -312,7 +334,7 @@ export default function App({
               </div>
             )}
             {active.messages.map((message) => (
-              <article className={`message ${message.role}`} key={message.id}>
+              <article className={`message ${message.role}`} key={message.conversationMessageId}>
                 <div className="message-avatar">
                   {message.role === 'user' ? <UserRound size={16} /> : <Bot size={16} />}
                 </div>
@@ -322,29 +344,31 @@ export default function App({
                     <time>{formatTimestamp(message.timestamp)}</time>
                   </header>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-                  {message.role === 'assistant' && message.run && (
-                    <details className="run-detail message-run-detail">
+                  {message.role === 'assistant' && message.execution && (
+                    <details className="execution-detail message-execution-detail">
                       <summary>查看运行过程</summary>
-                      {message.run.stream?.thinking && <p>{message.run.stream.thinking}</p>}
+                      {message.execution.streamCheckpoint?.thinking && (
+                        <p>{message.execution.streamCheckpoint.thinking}</p>
+                      )}
                     </details>
                   )}
                 </div>
               </article>
             ))}
-            {!activeRunAnswerPersisted && active.run?.stream?.thinking && (
-              <details className="run-detail">
+            {!activeExecutionAnswerPersisted && active.execution?.streamCheckpoint?.thinking && (
+              <details className="execution-detail">
                 <summary>查看运行过程</summary>
-                <p>{active.run.stream.thinking}</p>
+                <p>{active.execution.streamCheckpoint.thinking}</p>
               </details>
             )}
-            {!activeRunAnswerPersisted && active.run?.stream?.answer && (
+            {!activeExecutionAnswerPersisted && active.execution?.streamCheckpoint?.answer && (
               <article className="message assistant stream-answer">
                 <div className="message-avatar">
                   <Bot size={16} />
                 </div>
                 <div className="message-content">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {active.run.stream.answer}
+                    {active.execution.streamCheckpoint.answer}
                   </ReactMarkdown>
                 </div>
               </article>

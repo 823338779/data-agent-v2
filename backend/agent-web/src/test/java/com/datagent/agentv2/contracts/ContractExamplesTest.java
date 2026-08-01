@@ -35,13 +35,13 @@ class ContractExamplesTest {
                     .build();
     private static final Set<String> SESSION_EVENTS =
             Set.of(
-                    "run_started",
+                    "execution_started",
                     "user_message",
                     "assistant_message",
                     "reasoning_delta",
                     "assistant_delta",
                     STREAM_SNAPSHOT,
-                    "run_phase_changed",
+                    "execution_phase_changed",
                     "skill_activated",
                     "context_compaction_started",
                     "context_compaction_completed",
@@ -54,9 +54,9 @@ class ContractExamplesTest {
                     "interaction_resolved",
                     "user_confirmation_requested",
                     "user_confirmation_resolved",
-                    "run_completed",
-                    "run_failed",
-                    "run_cancelled",
+                    "execution_completed",
+                    "execution_failed",
+                    "execution_cancelled",
                     "error");
 
     @ParameterizedTest
@@ -88,11 +88,17 @@ class ContractExamplesTest {
                                 .resolve("examples/rest/session-running.yaml")
                                 .toFile());
 
-        assertThat(queued.path("value").path("run").path("status").asText()).isEqualTo("queued");
-        assertThat(queued.path("value").path("run").path("stream").path("executionAttempt").asInt())
+        assertThat(queued.path("value").path("execution").path("status").asText())
+                .isEqualTo("queued");
+        assertThat(
+                        queued.path("value")
+                                .path("execution")
+                                .path("streamCheckpoint")
+                                .path("executionAttemptNumber")
+                                .asInt())
                 .isZero();
-        assertThat(queued.path("value").path("run").has("cancellationRequestedAt")).isTrue();
-        assertThat(running.path("value").path("run").has("cancellationRequestedAt")).isTrue();
+        assertThat(queued.path("value").path("execution").has("cancellationRequestedAt")).isTrue();
+        assertThat(running.path("value").path("execution").has("cancellationRequestedAt")).isTrue();
     }
 
     @Test
@@ -114,38 +120,55 @@ class ContractExamplesTest {
                 .isEqualTo("reasoning.delta");
         assertThat(schemaNode.path("x-frontend-projection").path("assistant_delta").asString())
                 .isEqualTo("assistant.draft");
-        assertThat(schemaNode.path("x-frontend-projection").path("run_phase_changed").asString())
-                .isEqualTo("run.timeline");
+        assertThat(
+                        schemaNode
+                                .path("x-frontend-projection")
+                                .path("execution_phase_changed")
+                                .asString())
+                .isEqualTo("execution.timeline");
         assertThat(schemaNode.toString()).contains("\"x-v2-extension\":true");
     }
 
     @Test
     void sessionStreamingContractFreezesCheckpointAndCompositeCursorFields() throws IOException {
         JsonNode openapi = YAML.readTree(ContractFiles.root().resolve("openapi.yaml").toFile());
-        JsonNode runStream = openapi.path("components").path("schemas").path("RunStream");
+        JsonNode runStream =
+                openapi.path("components").path("schemas").path("AgentExecutionStreamCheckpoint");
         JsonNode eventPath =
-                openapi.path("paths").path("/api/v1/agent-sessions/{sessionId}/events").path("get");
+                openapi.path("paths")
+                        .path("/api/v1/agent-sessions/{conversationSessionId}/events")
+                        .path("get");
         tools.jackson.databind.JsonNode schema =
                 JSON.readTree(ContractFiles.schema("session-sse-event.schema.json"));
 
-        // RunStream 始终暴露当前 attempt/turn 的完整 checkpoint；queued 投影允许零值。
+        // AgentExecutionStreamCheckpoint 始终暴露当前 attempt/turn 的完整 checkpoint；queued 投影允许零值。
         assertThat(runStream.path("required").toString())
                 .contains(
-                        "executionAttempt",
-                        "modelTurnSequence",
-                        "streamSequence",
+                        "executionAttemptNumber",
+                        "modelInvocationSequence",
+                        "outputDeltaSequence",
                         "reasoning",
                         "answer",
                         "checkpointedAt");
-        assertThat(runStream.path("properties").path("executionAttempt").path("minimum").asInt())
+        assertThat(
+                        runStream
+                                .path("properties")
+                                .path("executionAttemptNumber")
+                                .path("minimum")
+                                .asInt())
                 .isZero();
-        assertThat(runStream.path("properties").path("modelTurnSequence").path("minimum").asInt())
+        assertThat(
+                        runStream
+                                .path("properties")
+                                .path("modelInvocationSequence")
+                                .path("minimum")
+                                .asInt())
                 .isZero();
 
         // Last-Event-ID 使用稳定 e/a/t/s 编码，同时恢复持久事件与瞬时流位置。
-        JsonNode lastEventId = eventPath.path("parameters").path(1);
-        assertThat(lastEventId.path("name").asText()).isEqualTo("Last-Event-ID");
-        assertThat(lastEventId.path("schema").path("pattern").asText())
+        JsonNode lastExecutionEventId = eventPath.path("parameters").path(1);
+        assertThat(lastExecutionEventId.path("name").asText()).isEqualTo("Last-Event-ID");
+        assertThat(lastExecutionEventId.path("schema").path("pattern").asText())
                 .isEqualTo(COMPOSITE_CURSOR_PATTERN);
         assertThat(schema.path("x-sse-event-id").path("pattern").asString())
                 .isEqualTo(COMPOSITE_CURSOR_PATTERN);
@@ -153,7 +176,7 @@ class ContractExamplesTest {
         // Delta 带完整流坐标，snapshot 额外携带可收敛的累计正文与 checkpoint 时间。
         assertThat(schema.path("properties").path("type").path("enum").toString())
                 .contains(STREAM_SNAPSHOT);
-        assertThat(schema.path("properties").has("modelTurnSequence")).isTrue();
+        assertThat(schema.path("properties").has("modelInvocationSequence")).isTrue();
         assertThat(schema.path("properties").has("reasoning")).isTrue();
         assertThat(schema.path("properties").has("answer")).isTrue();
         assertThat(schema.path("properties").has("checkpointedAt")).isTrue();

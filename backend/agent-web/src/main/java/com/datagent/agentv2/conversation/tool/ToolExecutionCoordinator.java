@@ -1,13 +1,13 @@
 package com.datagent.agentv2.conversation.tool;
 
-import com.datagent.agentv2.conversation.runtime.RunExecutionPort;
-import com.datagent.agentv2.conversation.runtime.RunLeaseService;
-import com.datagent.agentv2.conversation.runtime.RunOwnershipLostException;
-import com.datagent.agentv2.persistence.entity.AgentMessageEntity;
-import com.datagent.agentv2.persistence.entity.AgentToolExecutionEntity;
-import com.datagent.agentv2.persistence.service.AgentMessageService;
-import com.datagent.agentv2.persistence.service.AgentSessionService;
-import com.datagent.agentv2.persistence.service.AgentToolExecutionService;
+import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
+import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
+import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
+import com.datagent.agentv2.persistence.entity.ConversationMessageEntity;
+import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
+import com.datagent.agentv2.persistence.service.ConversationMessageService;
+import com.datagent.agentv2.persistence.service.ConversationSessionService;
+import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import jakarta.annotation.PreDestroy;
 import java.time.Instant;
@@ -36,7 +36,7 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
     private static final String STATUS_FAILED = "failed";
     private static final String ROLE_TOOL = "tool";
     private static final String VISIBILITY_INTERNAL = "internal";
-    private static final String ID_PREFIX_MESSAGE = "message";
+    private static final String ID_PREFIX_CONVERSATION_MESSAGE = "conversation_message";
     private static final String IDEMPOTENCY_PREFIX = "tool";
     private static final String IDEMPOTENCY_SEPARATOR = ":";
     private static final int TOOL_CALL_DOCUMENT_VERSION = 1;
@@ -44,10 +44,10 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
             "Prepared tool execution has no matching assistant tool call";
 
     private final AgentToolRegistry registry;
-    private final AgentToolExecutionService executions;
-    private final AgentMessageService messages;
-    private final AgentSessionService sessions;
-    private final RunLeaseService leases;
+    private final ToolExecutionService toolExecutions;
+    private final ConversationMessageService messages;
+    private final ConversationSessionService sessions;
+    private final AgentExecutionLeaseService leases;
     private final IdGenerator ids;
     private final ToolFailureSanitizer failures;
     private final ObjectMapper json;
@@ -56,16 +56,16 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
 
     public ToolExecutionCoordinator(
             AgentToolRegistry registry,
-            AgentToolExecutionService executions,
-            AgentMessageService messages,
-            AgentSessionService sessions,
-            RunLeaseService leases,
+            ToolExecutionService toolExecutions,
+            ConversationMessageService messages,
+            ConversationSessionService sessions,
+            AgentExecutionLeaseService leases,
             IdGenerator ids,
             ToolFailureSanitizer failures,
             ObjectMapper json,
             PlatformTransactionManager transactionManager) {
         this.registry = registry;
-        this.executions = executions;
+        this.toolExecutions = toolExecutions;
         this.messages = messages;
         this.sessions = sessions;
         this.leases = leases;
@@ -75,12 +75,13 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
-    public List<ToolObservation> executeTurn(
-            RunExecutionPort.OwnedRun run, long modelTurnSequence) {
-        List<ToolObservation> observations = new ArrayList<>();
+    public List<ToolExecutionResult> executeModelInvocationTools(
+            AgentExecutionPort.ClaimedAgentExecution run, long modelInvocationSequence) {
+        List<ToolExecutionResult> observations = new ArrayList<>();
 
         // Model Turn 内严格按 prepared 顺序执行；单个失败仅形成 Observation，不中断后续工具。
-        for (AgentToolExecutionEntity row : executions.findByTurn(run.runId(), modelTurnSequence)) {
+        for (ToolExecutionEntity row :
+                toolExecutions.findByTurn(run.executionId(), modelInvocationSequence)) {
             if (isTerminal(row.getStatus())) {
                 continue;
             }
@@ -88,7 +89,7 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
             PreparedInvocation invocation =
                     Objects.requireNonNull(
                             transactions.execute(ignored -> beginInvocation(run, row)));
-            ToolObservation observation = invoke(invocation, run, modelTurnSequence);
+            ToolExecutionResult observation = invoke(invocation, run, modelInvocationSequence);
             leases.assertOwnedAndWithinBudget(run);
             transactions.executeWithoutResult(
                     ignored -> persistObservation(run, invocation, observation));
@@ -98,44 +99,48 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
     }
 
     private PreparedInvocation beginInvocation(
-            RunExecutionPort.OwnedRun run, AgentToolExecutionEntity candidate) {
-        AgentToolExecutionEntity execution =
-                executions.findByToolExecutionId(candidate.getToolExecutionId());
+            AgentExecutionPort.ClaimedAgentExecution run, ToolExecutionEntity candidate) {
+        ToolExecutionEntity execution =
+                toolExecutions.findByToolExecutionId(candidate.getToolExecutionId());
         if (execution == null || isTerminal(execution.getStatus())) {
             throw new IllegalStateException(ERROR_INVALID_ASSISTANT_CALL);
         }
-        AgentMessageEntity assistant = messages.findByMessageId(execution.getAssistantMessageId());
+        ConversationMessageEntity assistant =
+                messages.findByConversationMessageId(execution.getAssistantConversationMessageId());
         JsonNode arguments = argumentsFor(assistant, execution);
         AgentTool tool = registry.find(execution.getToolName()).orElse(null);
         String idempotencyKey = idempotencyKey(run, execution, tool);
         Instant startedAt = Instant.now();
-        if (!executions.startExecution(
+        if (!toolExecutions.startExecution(
                 execution.getToolExecutionId(),
                 execution.getVersion(),
                 startedAt,
                 idempotencyKey,
                 run.ownerInstanceId(),
-                run.executionAttempt())) {
-            throw new RunOwnershipLostException(run.runId());
+                run.executionAttemptNumber())) {
+            throw new ExecutionOwnershipLostException(run.executionId());
         }
         execution.setStatus(STATUS_EXECUTING);
-        execution.setExecutionAttempt(run.executionAttempt());
+        execution.setExecutionAttemptNumber(run.executionAttemptNumber());
         execution.setExecutionCount(execution.getExecutionCount() + 1);
         execution.setIdempotencyKey(idempotencyKey);
         execution.setVersion(execution.getVersion() + 1);
-        return new PreparedInvocation(execution, assistant.getSessionId(), arguments, tool);
+        return new PreparedInvocation(
+                execution, assistant.getConversationSessionId(), arguments, tool);
     }
 
-    private ToolObservation invoke(
-            PreparedInvocation invocation, RunExecutionPort.OwnedRun run, long modelTurnSequence) {
+    private ToolExecutionResult invoke(
+            PreparedInvocation invocation,
+            AgentExecutionPort.ClaimedAgentExecution run,
+            long modelInvocationSequence) {
         if (invocation.tool() == null) {
             return failures.sanitize(new IllegalStateException(ERROR_INVALID_ASSISTANT_CALL));
         }
         AgentTool.InvocationContext context =
                 new AgentTool.InvocationContext(
                         run.tenantId(),
-                        run.runId(),
-                        modelTurnSequence,
+                        run.executionId(),
+                        modelInvocationSequence,
                         invocation.execution().getToolCallId(),
                         invocation.execution().getIdempotencyKey());
         Future<JsonNode> future =
@@ -147,7 +152,7 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
             if (content == null) {
                 throw new IllegalStateException(ERROR_INVALID_ASSISTANT_CALL);
             }
-            return ToolObservation.succeeded(content);
+            return ToolExecutionResult.succeeded(content);
         } catch (TimeoutException failure) {
             future.cancel(true);
             return failures.sanitize(failure);
@@ -160,19 +165,20 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
     }
 
     private void persistObservation(
-            RunExecutionPort.OwnedRun run,
+            AgentExecutionPort.ClaimedAgentExecution run,
             PreparedInvocation invocation,
-            ToolObservation observation) {
-        AgentToolExecutionEntity execution = invocation.execution();
-        String messageId = ids.next(ID_PREFIX_MESSAGE);
+            ToolExecutionResult observation) {
+        ToolExecutionEntity execution = invocation.execution();
+        String conversationMessageId = ids.next(ID_PREFIX_CONVERSATION_MESSAGE);
         Instant completedAt = Instant.now();
-        AgentMessageEntity message = new AgentMessageEntity();
-        message.setMessageId(messageId);
-        message.setSessionId(invocation.sessionId());
-        message.setRunId(run.runId());
+        ConversationMessageEntity message = new ConversationMessageEntity();
+        message.setConversationMessageId(conversationMessageId);
+        message.setConversationSessionId(invocation.conversationSessionId());
+        message.setExecutionId(run.executionId());
         message.setRole(ROLE_TOOL);
         message.setContent(observationJson(observation));
-        message.setSequence(sessions.nextMessageSequence(invocation.sessionId()));
+        message.setConversationMessageSequence(
+                sessions.nextConversationMessageSequence(invocation.conversationSessionId()));
         message.setToolExecutionId(execution.getToolExecutionId());
         message.setToolCallId(execution.getToolCallId());
         message.setToolName(execution.getToolName());
@@ -181,24 +187,24 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
         messages.save(message);
 
         String status =
-                observation.status() == ToolObservation.Status.SUCCEEDED
+                observation.status() == ToolExecutionResult.Status.SUCCEEDED
                         ? STATUS_SUCCEEDED
                         : STATUS_FAILED;
-        if (!executions.completeExecution(
+        if (!toolExecutions.completeExecution(
                 execution.getToolExecutionId(),
                 execution.getVersion(),
                 status,
-                messageId,
+                conversationMessageId,
                 completedAt,
                 observation.failureCode(),
                 run.ownerInstanceId(),
-                run.executionAttempt())) {
-            throw new RunOwnershipLostException(run.runId());
+                run.executionAttemptNumber())) {
+            throw new ExecutionOwnershipLostException(run.executionId());
         }
     }
 
     private JsonNode argumentsFor(
-            AgentMessageEntity assistant, AgentToolExecutionEntity execution) {
+            ConversationMessageEntity assistant, ToolExecutionEntity execution) {
         if (assistant == null || assistant.getToolCalls() == null) {
             throw new IllegalStateException(ERROR_INVALID_ASSISTANT_CALL);
         }
@@ -223,7 +229,9 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
     }
 
     private static String idempotencyKey(
-            RunExecutionPort.OwnedRun run, AgentToolExecutionEntity execution, AgentTool tool) {
+            AgentExecutionPort.ClaimedAgentExecution run,
+            ToolExecutionEntity execution,
+            AgentTool tool) {
         if (execution.getIdempotencyKey() != null) {
             return execution.getIdempotencyKey();
         }
@@ -233,12 +241,12 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
         return String.join(
                 IDEMPOTENCY_SEPARATOR,
                 IDEMPOTENCY_PREFIX,
-                run.runId(),
-                Long.toString(execution.getModelTurnSequence()),
+                run.executionId(),
+                Long.toString(execution.getModelInvocationSequence()),
                 execution.getToolCallId());
     }
 
-    private String observationJson(ToolObservation observation) {
+    private String observationJson(ToolExecutionResult observation) {
         ObjectNode root = json.createObjectNode();
         root.put("status", observation.status().name().toLowerCase(java.util.Locale.ROOT));
         if (observation.content() != null) {
@@ -262,8 +270,8 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
     }
 
     private record PreparedInvocation(
-            AgentToolExecutionEntity execution,
-            String sessionId,
+            ToolExecutionEntity execution,
+            String conversationSessionId,
             JsonNode arguments,
             AgentTool tool) {}
 }

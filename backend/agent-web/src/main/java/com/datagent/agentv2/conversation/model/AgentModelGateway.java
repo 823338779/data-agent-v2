@@ -6,8 +6,8 @@ import java.util.function.Consumer;
 
 public interface AgentModelGateway {
 
-    ModelTurnResult complete(
+    ModelInvocationResult complete(
             List<ModelInputMessage> messages,
             List<ModelToolDefinition> tools,
-            Consumer<ModelDelta> deltaConsumer);
+            Consumer<ModelOutputDelta> deltaConsumer);
 }

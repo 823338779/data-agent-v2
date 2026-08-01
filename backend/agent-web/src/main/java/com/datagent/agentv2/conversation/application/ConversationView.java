@@ -5,47 +5,50 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
+/** 对话查询接口返回的完整会话投影。 */
 public record ConversationView(
-        String id,
+        String conversationSessionId,
         String title,
         String tag,
         String sessionType,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
         long version,
-        long metricIdentityBindingVersion,
-        Object metricIdentity,
+        long metricPlatformCredentialBindingVersion,
+        Object metricPlatformCredential,
         List<MessageView> messages,
-        RunView run) {
+        AgentExecutionView execution) {
 
     public record MessageView(
-            String id,
+            String conversationMessageId,
             String role,
             String author,
             String content,
             LocalDateTime createdAt,
             List<Object> citations,
-            /** assistant 回答所属的 Run，用于在历史消息下恢复对应运行过程。 */
-            RunView run) {}
+            /** assistant 回答所属的 Agent 执行，用于在历史消息下恢复对应过程。 */
+            AgentExecutionView execution) {}
 
-    public record RunView(
-            String id,
+    /** 一次 Agent 执行的公开状态、事件时间线和最新输出检查点。 */
+    public record AgentExecutionView(
+            String executionId,
             String status,
             int progress,
             String objective,
             Instant cancellationRequestedAt,
-            List<RunEventView> events,
+            List<AgentExecutionEventView> events,
             Object pendingConfirmation,
             Object pendingInteraction,
-            RunStreamView stream) {}
+            AgentExecutionStreamCheckpointView streamCheckpoint) {}
 
-    public record RunEventView(
-            String id,
-            long sequence,
+    /** Agent 执行时间线中的一个持久化公开事件。 */
+    public record AgentExecutionEventView(
+            String executionEventId,
+            long executionEventSequence,
             String type,
             Instant occurredAt,
-            String runId,
-            String messageId,
+            String executionId,
+            String conversationMessageId,
             String title,
             String summary,
             String toolName,
@@ -55,11 +58,12 @@ public record ConversationView(
             Boolean approved,
             String status) {}
 
-    public record RunStreamView(
-            long executionAttempt,
-            long modelTurnSequence,
+    /** 用于断线恢复的最新流式输出检查点。 */
+    public record AgentExecutionStreamCheckpointView(
+            long executionAttemptNumber,
+            long modelInvocationSequence,
             String phase,
-            long sequence,
+            long outputDeltaSequence,
             String thinking,
             String answer) {}
 }

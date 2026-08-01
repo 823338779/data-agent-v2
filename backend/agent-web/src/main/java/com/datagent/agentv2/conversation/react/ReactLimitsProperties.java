@@ -8,10 +8,10 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "data-agent.react.limits")
 public class ReactLimitsProperties {
 
-    /** 单个 Run 允许创建的最大 Model Turn 数。 */
-    private int maxModelTurns = 12;
+    /** 单次 Agent 执行允许创建的最大模型调用数。 */
+    private int maxModelInvocations = 12;
 
-    /** 单个 Run 允许归档的最大工具调用数。 */
+    /** 单次 Agent 执行允许归档的最大工具调用数。 */
     private int maxToolCalls = 32;
 
     /** reasoning 检查点在 stream 和 Model Turn 中的保留时长。 */
@@ -19,17 +19,17 @@ public class ReactLimitsProperties {
 
     public ReactLimitsProperties() {}
 
-    public ReactLimitsProperties(int maxModelTurns, int maxToolCalls) {
-        this.maxModelTurns = maxModelTurns;
+    public ReactLimitsProperties(int maxModelInvocations, int maxToolCalls) {
+        this.maxModelInvocations = maxModelInvocations;
         this.maxToolCalls = maxToolCalls;
     }
 
-    public int getMaxModelTurns() {
-        return maxModelTurns;
+    public int getMaxModelInvocations() {
+        return maxModelInvocations;
     }
 
-    public void setMaxModelTurns(int maxModelTurns) {
-        this.maxModelTurns = maxModelTurns;
+    public void setMaxModelInvocations(int maxModelInvocations) {
+        this.maxModelInvocations = maxModelInvocations;
     }
 
     public int getMaxToolCalls() {

@@ -24,8 +24,8 @@ public interface AgentTool {
 
     record InvocationContext(
             String tenantId,
-            String runId,
-            long modelTurnSequence,
+            String executionId,
+            long modelInvocationSequence,
             String toolCallId,
             String idempotencyKey) {}
 

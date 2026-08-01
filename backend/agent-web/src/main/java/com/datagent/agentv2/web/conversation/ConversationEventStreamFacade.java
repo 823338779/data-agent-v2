@@ -2,12 +2,12 @@ package com.datagent.agentv2.web.conversation;
 
 import com.datagent.agentv2.conversation.application.ConversationApplicationService;
 import com.datagent.agentv2.conversation.application.ConversationView;
-import com.datagent.agentv2.conversation.cluster.StreamDeltaEnvelope;
-import com.datagent.agentv2.conversation.runtime.RunRuntimeProperties;
+import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotification;
+import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeProperties;
 import com.datagent.agentv2.conversation.stream.CompositeSseCursor;
+import com.datagent.agentv2.conversation.stream.ExecutionStreamResynchronizer;
 import com.datagent.agentv2.conversation.stream.LocalSseRegistry;
-import com.datagent.agentv2.conversation.stream.StreamResynchronizer;
-import com.datagent.agentv2.persistence.service.AgentRunEventSaved;
+import com.datagent.agentv2.persistence.service.AgentExecutionEventPersisted;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.io.IOException;
 import java.time.Instant;
@@ -42,44 +42,45 @@ public final class ConversationEventStreamFacade {
 
     private final ConversationApplicationService conversations;
     private final LocalSseRegistry localStreams;
-    private final RunRuntimeProperties runtime;
+    private final AgentExecutionRuntimeProperties runtime;
     private final ConcurrentMap<SessionKey, Set<Subscription>> subscriptions =
             new ConcurrentHashMap<>();
 
     public ConversationEventStreamFacade(
             ConversationApplicationService conversations,
             LocalSseRegistry localStreams,
-            RunRuntimeProperties runtime) {
+            AgentExecutionRuntimeProperties runtime) {
         this.conversations = conversations;
         this.localStreams = localStreams;
         this.runtime = runtime;
     }
 
-    public SseEmitter open(String sessionId, String lastEventId) {
+    public SseEmitter open(String conversationSessionId, String lastExecutionEventId) {
         String tenantId = TenantContext.requiredTenantId();
-        conversations.requireAccessibleSession(sessionId);
-        CompositeSseCursor cursor = CompositeSseCursor.parse(lastEventId);
+        conversations.requireAccessibleSession(conversationSessionId);
+        CompositeSseCursor cursor = CompositeSseCursor.parse(lastExecutionEventId);
         SseEmitter emitter = new SseEmitter(0L);
-        Subscription subscription = new Subscription(tenantId, sessionId, emitter, cursor);
+        Subscription subscription =
+                new Subscription(tenantId, conversationSessionId, emitter, cursor);
 
         // 先建立本地缓冲与 Redis 动态订阅，再读取持久化 replay，消除 subscribe gap。
         LocalSseRegistry.Registration localRegistration =
                 localStreams.register(
                         tenantId,
-                        sessionId,
+                        conversationSessionId,
                         new LocalSseRegistry.Subscriber() {
                             @Override
-                            public void onDelta(StreamDeltaEnvelope envelope) {
+                            public void onDelta(AgentExecutionDeltaNotification envelope) {
                                 acceptDelta(subscription, envelope);
                             }
 
                             @Override
-                            public void onGap(StreamDeltaEnvelope envelope) {
+                            public void onGap(AgentExecutionDeltaNotification envelope) {
                                 acceptDelta(subscription, envelope);
                             }
                         });
         subscription.localRegistration = localRegistration;
-        SessionKey key = new SessionKey(tenantId, sessionId);
+        SessionKey key = new SessionKey(tenantId, conversationSessionId);
         subscriptions
                 .computeIfAbsent(key, ignored -> new CopyOnWriteArraySet<>())
                 .add(subscription);
@@ -89,10 +90,10 @@ public final class ConversationEventStreamFacade {
 
         // replay 后发送数据库 snapshot，最后按坐标刷新握手期间到达的缓冲。
         conversations
-                .replayEvents(sessionId, cursor.eventSequence())
+                .replayEvents(conversationSessionId, cursor.executionEventSequence())
                 .forEach(subscription::acceptEvent);
-        ConversationApplicationService.StreamSnapshotView snapshot =
-                conversations.currentStream(sessionId);
+        ConversationApplicationService.ExecutionStreamCheckpointView snapshot =
+                conversations.currentStream(conversationSessionId);
         if (snapshot != null) {
             sendSnapshot(subscription, snapshot);
         }
@@ -101,16 +102,18 @@ public final class ConversationEventStreamFacade {
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
-    public void publish(AgentRunEventSaved saved) {
-        AgentRunEventSaved notification = saved;
+    public void publish(AgentExecutionEventPersisted saved) {
+        AgentExecutionEventPersisted notification = saved;
         SessionKey key =
                 new SessionKey(
-                        notification.event().getTenantId(), notification.event().getSessionId());
+                        notification.event().getTenantId(),
+                        notification.event().getConversationSessionId());
         Set<Subscription> sessionSubscriptions = subscriptions.get(key);
         if (sessionSubscriptions == null || sessionSubscriptions.isEmpty()) {
             return;
         }
-        ConversationView.RunEventView event = conversations.eventView(notification.event());
+        ConversationView.AgentExecutionEventView event =
+                conversations.eventView(notification.event());
         sessionSubscriptions.forEach(subscription -> subscription.acceptEvent(event));
     }
 
@@ -135,14 +138,16 @@ public final class ConversationEventStreamFacade {
         tenantSubscriptions.forEach(
                 (key, values) ->
                         afterSequenceBySession.put(
-                                key.sessionId(),
+                                key.conversationSessionId(),
                                 values.stream()
                                         .mapToLong(
                                                 subscription ->
-                                                        subscription.cursor().eventSequence())
+                                                        subscription
+                                                                .cursor()
+                                                                .executionEventSequence())
                                         .min()
                                         .orElse(0L)));
-        ConversationApplicationService.StreamReconciliationView reconciliation =
+        ConversationApplicationService.SessionStreamRecoveryView reconciliation =
                 conversations.reconcileStreams(afterSequenceBySession);
         tenantSubscriptions.forEach(
                 (key, values) ->
@@ -150,15 +155,17 @@ public final class ConversationEventStreamFacade {
                                 values,
                                 reconciliation
                                         .eventsBySession()
-                                        .getOrDefault(key.sessionId(), List.of()),
-                                reconciliation.snapshotsBySession().get(key.sessionId()),
+                                        .getOrDefault(key.conversationSessionId(), List.of()),
+                                reconciliation
+                                        .snapshotsBySession()
+                                        .get(key.conversationSessionId()),
                                 now));
     }
 
     private void reconcileSession(
             Set<Subscription> values,
-            List<ConversationView.RunEventView> events,
-            ConversationApplicationService.StreamSnapshotView snapshot,
+            List<ConversationView.AgentExecutionEventView> events,
+            ConversationApplicationService.ExecutionStreamCheckpointView snapshot,
             Instant now) {
         for (Subscription subscription : values) {
             events.forEach(subscription::acceptEvent);
@@ -172,50 +179,52 @@ public final class ConversationEventStreamFacade {
         }
     }
 
-    private void acceptDelta(Subscription subscription, StreamDeltaEnvelope envelope) {
+    private void acceptDelta(Subscription subscription, AgentExecutionDeltaNotification envelope) {
         subscription.acceptDelta(envelope);
     }
 
     private void sendSnapshot(
-            Subscription subscription, ConversationApplicationService.StreamSnapshotView snapshot) {
+            Subscription subscription,
+            ConversationApplicationService.ExecutionStreamCheckpointView snapshot) {
         // snapshot 与并发 delta 共用连接锁，确保发送顺序与复合 cursor 一致。
         synchronized (subscription) {
-            StreamResynchronizer.Snapshot position =
-                    new StreamResynchronizer.Snapshot(
-                            snapshot.runId(),
-                            snapshot.executionAttempt(),
-                            snapshot.modelTurnSequence(),
-                            snapshot.streamSequence());
-            boolean snapshotIdentityChanged = !snapshot.runId().equals(subscription.snapshotRunId);
+            ExecutionStreamResynchronizer.Snapshot position =
+                    new ExecutionStreamResynchronizer.Snapshot(
+                            snapshot.executionId(),
+                            snapshot.executionAttemptNumber(),
+                            snapshot.modelInvocationSequence(),
+                            snapshot.outputDeltaSequence());
+            boolean snapshotIdentityChanged =
+                    !snapshot.executionId().equals(subscription.snapshotExecutionId);
             if (!snapshotIdentityChanged && !subscription.resynchronizer.canAdvance(position)) {
                 return;
             }
-            List<StreamDeltaEnvelope> ready =
+            List<AgentExecutionDeltaNotification> ready =
                     subscription.resynchronizer.apply(position, Instant.now());
             CompositeSseCursor cursor =
                     subscription
                             .cursor()
                             .withStream(
-                                    snapshot.executionAttempt(),
-                                    snapshot.modelTurnSequence(),
-                                    snapshot.streamSequence());
+                                    snapshot.executionAttemptNumber(),
+                                    snapshot.modelInvocationSequence(),
+                                    snapshot.outputDeltaSequence());
             subscription.cursor = cursor;
-            subscription.snapshotRunId = snapshot.runId();
+            subscription.snapshotExecutionId = snapshot.executionId();
             subscription.localRegistration.resume(
-                    snapshot.runId(),
-                    snapshot.executionAttempt(),
-                    snapshot.modelTurnSequence(),
-                    snapshot.streamSequence());
+                    snapshot.executionId(),
+                    snapshot.executionAttemptNumber(),
+                    snapshot.modelInvocationSequence(),
+                    snapshot.outputDeltaSequence());
             subscription.send(
                     EVENT_STREAM_SNAPSHOT,
                     cursor,
                     new StreamSnapshotEvent(
                             EVENT_STREAM_SNAPSHOT,
-                            subscription.sessionId,
-                            snapshot.runId(),
-                            snapshot.executionAttempt(),
-                            snapshot.modelTurnSequence(),
-                            snapshot.streamSequence(),
+                            subscription.conversationSessionId,
+                            snapshot.executionId(),
+                            snapshot.executionAttemptNumber(),
+                            snapshot.modelInvocationSequence(),
+                            snapshot.outputDeltaSequence(),
                             snapshot.phase(),
                             snapshot.reasoning(),
                             snapshot.answer(),
@@ -230,7 +239,7 @@ public final class ConversationEventStreamFacade {
             return;
         }
         subscriptions.computeIfPresent(
-                new SessionKey(subscription.tenantId, subscription.sessionId),
+                new SessionKey(subscription.tenantId, subscription.conversationSessionId),
                 (ignored, values) -> {
                     values.remove(subscription);
                     return values.isEmpty() ? null : values;
@@ -253,30 +262,34 @@ public final class ConversationEventStreamFacade {
     private final class Subscription {
 
         private final String tenantId;
-        private final String sessionId;
+        private final String conversationSessionId;
         private final SseEmitter emitter;
-        private final StreamResynchronizer resynchronizer;
+        private final ExecutionStreamResynchronizer resynchronizer;
         private final ThreadPoolExecutor sender;
         private final AtomicBoolean closed = new AtomicBoolean();
-        private final List<ConversationView.RunEventView> pendingEvents = new ArrayList<>();
-        private final List<StreamDeltaEnvelope> pendingDeltas = new ArrayList<>();
+        private final List<ConversationView.AgentExecutionEventView> pendingEvents =
+                new ArrayList<>();
+        private final List<AgentExecutionDeltaNotification> pendingDeltas = new ArrayList<>();
         private volatile CompositeSseCursor cursor;
-        private volatile String snapshotRunId;
+        private volatile String snapshotExecutionId;
         private volatile boolean initializing = true;
         private LocalSseRegistry.Registration localRegistration;
 
         private Subscription(
-                String tenantId, String sessionId, SseEmitter emitter, CompositeSseCursor cursor) {
+                String tenantId,
+                String conversationSessionId,
+                SseEmitter emitter,
+                CompositeSseCursor cursor) {
             this.tenantId = tenantId;
-            this.sessionId = sessionId;
+            this.conversationSessionId = conversationSessionId;
             this.emitter = emitter;
             this.cursor = cursor;
-            this.resynchronizer = new StreamResynchronizer(cursor);
+            this.resynchronizer = new ExecutionStreamResynchronizer(cursor);
             this.sender = sender();
         }
 
-        private synchronized void acceptEvent(ConversationView.RunEventView event) {
-            if (event.sequence() <= cursor.eventSequence()) {
+        private synchronized void acceptEvent(ConversationView.AgentExecutionEventView event) {
+            if (event.executionEventSequence() <= cursor.executionEventSequence()) {
                 return;
             }
             if (initializing) {
@@ -286,10 +299,10 @@ public final class ConversationEventStreamFacade {
             sendEvent(event);
         }
 
-        private synchronized void acceptDelta(StreamDeltaEnvelope envelope) {
+        private synchronized void acceptDelta(AgentExecutionDeltaNotification envelope) {
             if (initializing) {
                 pendingDeltas.add(envelope);
-                if (pendingDeltas.size() > StreamResynchronizer.MAX_BUFFERED_DELTAS) {
+                if (pendingDeltas.size() > ExecutionStreamResynchronizer.MAX_BUFFERED_DELTAS) {
                     closeWithError(this, new IllegalStateException("SSE initialization overflow"));
                 }
                 return;
@@ -299,13 +312,20 @@ public final class ConversationEventStreamFacade {
 
         private synchronized void finishInitialization() {
             pendingEvents.stream()
-                    .sorted(Comparator.comparingLong(ConversationView.RunEventView::sequence))
+                    .sorted(
+                            Comparator.comparingLong(
+                                    ConversationView.AgentExecutionEventView
+                                            ::executionEventSequence))
                     .forEach(this::sendEvent);
             pendingDeltas.stream()
                     .sorted(
-                            Comparator.comparingLong(StreamDeltaEnvelope::executionAttempt)
-                                    .thenComparingLong(StreamDeltaEnvelope::modelTurnSequence)
-                                    .thenComparingLong(StreamDeltaEnvelope::streamSequence))
+                            Comparator.comparingLong(
+                                            AgentExecutionDeltaNotification::executionAttemptNumber)
+                                    .thenComparingLong(
+                                            AgentExecutionDeltaNotification
+                                                    ::modelInvocationSequence)
+                                    .thenComparingLong(
+                                            AgentExecutionDeltaNotification::outputDeltaSequence))
                     .flatMap(envelope -> resynchronizer.accept(envelope, Instant.now()).stream())
                     .forEach(this::sendDelta);
             pendingEvents.clear();
@@ -313,36 +333,36 @@ public final class ConversationEventStreamFacade {
             initializing = false;
         }
 
-        private void sendEvent(ConversationView.RunEventView event) {
-            cursor = cursor.withEvent(event.sequence());
+        private void sendEvent(ConversationView.AgentExecutionEventView event) {
+            cursor = cursor.withEvent(event.executionEventSequence());
             send(
                     event.type(),
                     cursor,
                     new LifecycleEvent(
                             event.type(),
-                            sessionId,
-                            event.runId(),
-                            event.sequence(),
+                            conversationSessionId,
+                            event.executionId(),
+                            event.executionEventSequence(),
                             event.occurredAt(),
                             Map.of("status", event.status())));
         }
 
-        private void sendDelta(StreamDeltaEnvelope envelope) {
+        private void sendDelta(AgentExecutionDeltaNotification envelope) {
             cursor =
                     cursor.withStream(
-                            envelope.executionAttempt(),
-                            envelope.modelTurnSequence(),
-                            envelope.streamSequence());
+                            envelope.executionAttemptNumber(),
+                            envelope.modelInvocationSequence(),
+                            envelope.outputDeltaSequence());
             send(
                     envelope.deltaType(),
                     cursor,
                     new DeltaEvent(
                             envelope.deltaType(),
-                            sessionId,
-                            envelope.runId(),
-                            envelope.executionAttempt(),
-                            envelope.modelTurnSequence(),
-                            envelope.streamSequence(),
+                            conversationSessionId,
+                            envelope.executionId(),
+                            envelope.executionAttemptNumber(),
+                            envelope.modelInvocationSequence(),
+                            envelope.outputDeltaSequence(),
                             envelope.delta(),
                             envelope.occurredAt()));
         }
@@ -373,16 +393,19 @@ public final class ConversationEventStreamFacade {
             return cursor;
         }
 
-        private boolean needs(ConversationApplicationService.StreamSnapshotView snapshot) {
+        private boolean needs(
+                ConversationApplicationService.ExecutionStreamCheckpointView snapshot) {
             CompositeSseCursor current = cursor;
-            return !snapshot.runId().equals(snapshotRunId)
+            return !snapshot.executionId().equals(snapshotExecutionId)
                     || resynchronizer.needsSnapshot()
-                    || snapshot.executionAttempt() > current.executionAttempt()
-                    || (snapshot.executionAttempt() == current.executionAttempt()
-                            && snapshot.modelTurnSequence() > current.modelTurnSequence())
-                    || (snapshot.executionAttempt() == current.executionAttempt()
-                            && snapshot.modelTurnSequence() == current.modelTurnSequence()
-                            && snapshot.streamSequence() > current.streamSequence());
+                    || snapshot.executionAttemptNumber() > current.executionAttemptNumber()
+                    || (snapshot.executionAttemptNumber() == current.executionAttemptNumber()
+                            && snapshot.modelInvocationSequence()
+                                    > current.modelInvocationSequence())
+                    || (snapshot.executionAttemptNumber() == current.executionAttemptNumber()
+                            && snapshot.modelInvocationSequence()
+                                    == current.modelInvocationSequence()
+                            && snapshot.outputDeltaSequence() > current.outputDeltaSequence());
         }
 
         private ThreadPoolExecutor sender() {
@@ -402,33 +425,33 @@ public final class ConversationEventStreamFacade {
         }
     }
 
-    private record SessionKey(String tenantId, String sessionId) {}
+    private record SessionKey(String tenantId, String conversationSessionId) {}
 
     private record LifecycleEvent(
             String type,
-            String sessionId,
-            String runId,
-            long sequence,
+            String conversationSessionId,
+            String executionId,
+            long executionEventSequence,
             Instant occurredAt,
             Map<String, Object> payload) {}
 
     private record DeltaEvent(
             String type,
-            String sessionId,
-            String runId,
-            long executionAttempt,
-            long modelTurnSequence,
-            long streamSequence,
+            String conversationSessionId,
+            String executionId,
+            long executionAttemptNumber,
+            long modelInvocationSequence,
+            long outputDeltaSequence,
             String delta,
             Instant occurredAt) {}
 
     private record StreamSnapshotEvent(
             String type,
-            String sessionId,
-            String runId,
-            long executionAttempt,
-            long modelTurnSequence,
-            long streamSequence,
+            String conversationSessionId,
+            String executionId,
+            long executionAttemptNumber,
+            long modelInvocationSequence,
+            long outputDeltaSequence,
             String phase,
             String reasoning,
             String answer,

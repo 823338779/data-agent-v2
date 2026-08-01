@@ -1,4 +1,4 @@
-export type WorkspaceRoute = { kind: 'home' } | { kind: 'session'; sessionId: string };
+export type WorkspaceRoute = { kind: 'home' } | { kind: 'session'; conversationSessionId: string };
 
 const routeChangeEvent = 'workspace-route-change';
 
@@ -6,15 +6,16 @@ export function parseWorkspaceRoute(pathname = window.location.pathname): Worksp
   const match = pathname.match(/^\/sessions\/([^/]+)$/);
   if (!match) return { kind: 'home' };
   try {
-    const sessionId = decodeURIComponent(match[1]);
-    return sessionId ? { kind: 'session', sessionId } : { kind: 'home' };
+    const conversationSessionId = decodeURIComponent(match[1]);
+    return conversationSessionId ? { kind: 'session', conversationSessionId } : { kind: 'home' };
   } catch {
     return { kind: 'home' };
   }
 }
 
 export function navigateWorkspace(route: WorkspaceRoute, replace = false): void {
-  const path = route.kind === 'session' ? `/sessions/${encodeURIComponent(route.sessionId)}` : '/';
+  const path =
+    route.kind === 'session' ? `/sessions/${encodeURIComponent(route.conversationSessionId)}` : '/';
   if (window.location.pathname === path) return;
   window.history[replace ? 'replaceState' : 'pushState'](null, '', path);
   window.dispatchEvent(new Event(routeChangeEvent));

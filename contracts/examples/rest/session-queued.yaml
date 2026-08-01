@@ -1,23 +1,23 @@
-schema: AgentSession
+schema: ConversationSession
 value:
-  id: session_demo
+  conversationSessionId: session_demo
   title: Local metric analysis
   tag: local-demo
   sessionType: INTERACTIVE
   createdAt: 2026-08-01T08:00:00Z
   updatedAt: 2026-08-01T08:01:00Z
   version: 2
-  metricIdentityBindingVersion: 0
-  metricIdentity: null
+  metricPlatformCredentialBindingVersion: 0
+  metricPlatformCredential: null
   messages:
-    - id: message_demo
+    - conversationMessageId: message_demo
       role: user
       author: user_admin
       content: Summarize local revenue by month
       createdAt: 2026-08-01T08:01:00Z
       citations: []
-  run:
-    id: run_demo
+  execution:
+    executionId: execution_demo
     status: queued
     progress: 0
     objective: Summarize local revenue by month
@@ -25,10 +25,10 @@ value:
     events: []
     pendingConfirmation: null
     pendingInteraction: null
-    stream:
-      executionAttempt: 0
-      modelTurnSequence: 0
+    streamCheckpoint:
+      executionAttemptNumber: 0
+      modelInvocationSequence: 0
       phase: queued
-      sequence: 0
+      outputDeltaSequence: 0
       thinking: ''
       answer: ''
