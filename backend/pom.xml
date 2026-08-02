@@ -17,6 +17,7 @@
     <packaging>pom</packaging>
 
     <modules>
+        <module>agent-domain</module>
         <module>agent-persistence</module>
         <module>agent-auth</module>
         <module>agent-web</module>

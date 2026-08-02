@@ -5,7 +5,6 @@ import com.datagent.agentv2.persistence.service.ModelInvocationService;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import java.time.Clock;
 import java.time.Instant;
 import java.util.concurrent.TimeUnit;
 import java.util.function.IntSupplier;
@@ -29,7 +28,6 @@ public final class ReasoningRetentionJob {
     private final AgentExecutionStreamCheckpointService streams;
     private final ModelInvocationService invocations;
     private final ReasoningRetentionProperties properties;
-    private final Clock clock;
     private final Counter scanned;
     private final Counter cleaned;
     private final Counter failed;
@@ -39,12 +37,10 @@ public final class ReasoningRetentionJob {
             AgentExecutionStreamCheckpointService streams,
             ModelInvocationService invocations,
             ReasoningRetentionProperties properties,
-            Clock clock,
             MeterRegistry meters) {
         this.streams = streams;
         this.invocations = invocations;
         this.properties = properties;
-        this.clock = clock;
         this.scanned = meters.counter(METRIC_SCANNED);
         this.cleaned = meters.counter(METRIC_CLEANED);
         this.failed = meters.counter(METRIC_FAILED);
@@ -54,7 +50,7 @@ public final class ReasoningRetentionJob {
     @Scheduled(fixedDelayString = "${data-agent.reasoning-retention.scan-interval:1h}")
     public void scheduledRun() {
         if (properties.enabled()) {
-            runOnce(clock.instant());
+            runOnce(Instant.now());
         }
     }
 

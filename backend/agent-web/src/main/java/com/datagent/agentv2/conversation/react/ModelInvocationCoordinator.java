@@ -9,14 +9,14 @@ import static com.datagent.agentv2.conversation.AgentExecutionConstants.MESSAGE_
 
 import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotification;
 import com.datagent.agentv2.conversation.cluster.RedisExecutionDeltaBridge;
+import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
+import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
+import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.model.ModelOutputDelta;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
 import com.datagent.agentv2.conversation.stream.ExecutionStreamCheckpointCoordinator;
-import com.datagent.agentv2.persistence.entity.AgentExecutionEntity;
-import com.datagent.agentv2.persistence.entity.AgentExecutionEventEntity;
-import com.datagent.agentv2.persistence.entity.AgentExecutionStreamCheckpointEntity;
-import com.datagent.agentv2.persistence.entity.ConversationMessageEntity;
 import com.datagent.agentv2.persistence.entity.ModelInvocationEntity;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionAttemptService;
@@ -107,7 +107,7 @@ public final class ModelInvocationCoordinator {
 
     private ModelInvocationBoundary beginModelInvocationLocked(
             AgentExecutionPort.ClaimedAgentExecution run, Long recoveredInputBoundary) {
-        AgentExecutionEntity owned = lockOwned(run);
+        AgentExecution owned = lockOwned(run);
         long modelInvocationSequence = modelInvocations.nextSequence(run.executionId());
         long inputUpToConversationMessageSequence =
                 recoveredInputBoundary == null
@@ -182,16 +182,15 @@ public final class ModelInvocationCoordinator {
             ModelInvocationBoundary boundary,
             List<ModelToolCall> calls,
             Instant now) {
-        AgentExecutionEntity owned = lockOwned(run);
+        AgentExecution owned = lockOwned(run);
         streamCheckpointCoordinator.flush(
                 run,
                 boundary.modelInvocationSequence(),
                 ExecutionStreamCheckpointCoordinator.Boundary.MODEL_INVOCATION,
                 now);
         finishModelInvocation(run, boundary, now);
-        ConversationMessageEntity assistant =
-                assistantMessage(owned, MESSAGE_VISIBILITY_INTERNAL, "");
-        assistant.setToolCalls(toolCallsJson(calls));
+        ConversationMessage assistant = assistantMessage(owned, MESSAGE_VISIBILITY_INTERNAL, "");
+        assistant.attachToolCalls(toolCallsJson(calls));
         messages.save(assistant);
 
         // assistant 消息先提交到当前事务，再批量建立 prepared execution 外键边界。
@@ -221,14 +220,14 @@ public final class ModelInvocationCoordinator {
             ModelInvocationBoundary boundary,
             String answer,
             Instant now) {
-        AgentExecutionEntity owned = lockOwned(run);
+        AgentExecution owned = lockOwned(run);
         streamCheckpointCoordinator.flush(
                 run,
                 boundary.modelInvocationSequence(),
                 ExecutionStreamCheckpointCoordinator.Boundary.TERMINAL,
                 now);
         finishModelInvocation(run, boundary, now);
-        AgentExecutionStreamCheckpointEntity stream =
+        AgentExecutionStreamCheckpoint stream =
                 persistedStreamCheckpoints.findByExecutionId(run.executionId());
         if (!persistedStreamCheckpoints.complete(
                 run.executionId(),
@@ -247,16 +246,15 @@ public final class ModelInvocationCoordinator {
         }
         attempts.finish(
                 run.executionId(), run.executionAttemptNumber(), STATUS_COMPLETED, now, null);
-        AgentExecutionEventEntity event = new AgentExecutionEventEntity();
-        event.setExecutionEventId(ids.next(ID_PREFIX_EXECUTION_EVENT));
-        event.setConversationSessionId(owned.getConversationSessionId());
-        event.setExecutionId(run.executionId());
-        event.setExecutionEventSequence(
-                sessions.nextExecutionEventSequence(owned.getConversationSessionId()));
-        event.setType(EVENT_EXECUTION_DONE);
-        event.setOccurredAt(now);
-        event.setVersion(0L);
-        events.save(event);
+        events.save(
+                AgentExecutionEvent.occurred(
+                        ids.next(ID_PREFIX_EXECUTION_EVENT),
+                        owned.getConversationSessionId(),
+                        run.executionId(),
+                        sessions.nextExecutionEventSequence(owned.getConversationSessionId()),
+                        EVENT_EXECUTION_DONE,
+                        null,
+                        now));
     }
 
     private void finishModelInvocation(
@@ -279,19 +277,16 @@ public final class ModelInvocationCoordinator {
         }
     }
 
-    private ConversationMessageEntity assistantMessage(
-            AgentExecutionEntity run, String visibility, String content) {
-        ConversationMessageEntity message = new ConversationMessageEntity();
-        message.setConversationMessageId(ids.next(ID_PREFIX_CONVERSATION_MESSAGE));
-        message.setConversationSessionId(run.getConversationSessionId());
-        message.setExecutionId(run.getExecutionId());
-        message.setRole(MESSAGE_ROLE_ASSISTANT);
-        message.setContent(content);
-        message.setConversationMessageSequence(
-                sessions.nextConversationMessageSequence(run.getConversationSessionId()));
-        message.setVisibility(visibility);
-        message.setVersion(0L);
-        return message;
+    private ConversationMessage assistantMessage(
+            AgentExecution run, String visibility, String content) {
+        return ConversationMessage.assistant(
+                ids.next(ID_PREFIX_CONVERSATION_MESSAGE),
+                run.getConversationSessionId(),
+                run.getExecutionId(),
+                content,
+                sessions.nextConversationMessageSequence(run.getConversationSessionId()),
+                MESSAGE_ROLE_ASSISTANT,
+                visibility);
     }
 
     private ToolExecutionEntity preparedExecution(
@@ -326,8 +321,8 @@ public final class ModelInvocationCoordinator {
         return json.writeValueAsString(root);
     }
 
-    private AgentExecutionEntity lockOwned(AgentExecutionPort.ClaimedAgentExecution run) {
-        AgentExecutionEntity owned = agentExecutions.lockById(run.executionId());
+    private AgentExecution lockOwned(AgentExecutionPort.ClaimedAgentExecution run) {
+        AgentExecution owned = agentExecutions.lockById(run.executionId());
         if (owned == null
                 || !"running".equals(owned.getStatus())
                 || !run.ownerInstanceId().equals(owned.getOwnerInstanceId())

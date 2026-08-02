@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.datagent.agentv2.persistence.entity.ConversationMessageEntity;
+import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ToolExecutionService;
@@ -76,9 +76,8 @@ class ConversationContextLoaderIntegrationTest {
 
     @Test
     void rejectsObservationWhoseExecutionProviderIdOrNameDoesNotMatchAssistantCall() {
-        ConversationMessageEntity assistant =
-                message(1, "assistant", "", TOOL_CALLS, null, null, null);
-        ConversationMessageEntity tool =
+        ConversationMessage assistant = message(1, "assistant", "", TOOL_CALLS, null, null, null);
+        ConversationMessage tool =
                 message(2, "tool", "{}", null, "execution-1", "wrong-call", "catalog_query");
         when(messages.findContextByExecutionIdUpTo(EXECUTION_ID, 2))
                 .thenReturn(List.of(assistant, tool));
@@ -89,7 +88,7 @@ class ConversationContextLoaderIntegrationTest {
                 .hasMessage("Tool observation does not match its assistant tool call");
     }
 
-    private static ConversationMessageEntity message(
+    private static ConversationMessage message(
             long sequence,
             String role,
             String content,
@@ -97,7 +96,7 @@ class ConversationContextLoaderIntegrationTest {
             String executionId,
             String toolCallId,
             String toolName) {
-        ConversationMessageEntity message = new ConversationMessageEntity();
+        ConversationMessage message = new ConversationMessage();
         message.setConversationMessageId("message-" + sequence);
         message.setExecutionId(EXECUTION_ID);
         message.setConversationMessageSequence(sequence);

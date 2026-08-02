@@ -1,9 +1,9 @@
 package com.datagent.agentv2.conversation.tool;
 
+import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
-import com.datagent.agentv2.persistence.entity.ConversationMessageEntity;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
@@ -105,7 +105,7 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
         if (execution == null || isTerminal(execution.getStatus())) {
             throw new IllegalStateException(ERROR_INVALID_ASSISTANT_CALL);
         }
-        ConversationMessageEntity assistant =
+        ConversationMessage assistant =
                 messages.findByConversationMessageId(execution.getAssistantConversationMessageId());
         JsonNode arguments = argumentsFor(assistant, execution);
         AgentTool tool = registry.find(execution.getToolName()).orElse(null);
@@ -171,19 +171,19 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
         ToolExecutionEntity execution = invocation.execution();
         String conversationMessageId = ids.next(ID_PREFIX_CONVERSATION_MESSAGE);
         Instant completedAt = Instant.now();
-        ConversationMessageEntity message = new ConversationMessageEntity();
-        message.setConversationMessageId(conversationMessageId);
-        message.setConversationSessionId(invocation.conversationSessionId());
-        message.setExecutionId(run.executionId());
-        message.setRole(ROLE_TOOL);
-        message.setContent(observationJson(observation));
-        message.setConversationMessageSequence(
-                sessions.nextConversationMessageSequence(invocation.conversationSessionId()));
-        message.setToolExecutionId(execution.getToolExecutionId());
-        message.setToolCallId(execution.getToolCallId());
-        message.setToolName(execution.getToolName());
-        message.setVisibility(VISIBILITY_INTERNAL);
-        message.setVersion(0L);
+        ConversationMessage message =
+                ConversationMessage.observation(
+                        conversationMessageId,
+                        invocation.conversationSessionId(),
+                        run.executionId(),
+                        observationJson(observation),
+                        sessions.nextConversationMessageSequence(
+                                invocation.conversationSessionId()),
+                        ROLE_TOOL,
+                        VISIBILITY_INTERNAL,
+                        execution.getToolExecutionId(),
+                        execution.getToolCallId(),
+                        execution.getToolName());
         messages.save(message);
 
         String status =
@@ -203,8 +203,7 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
         }
     }
 
-    private JsonNode argumentsFor(
-            ConversationMessageEntity assistant, ToolExecutionEntity execution) {
+    private JsonNode argumentsFor(ConversationMessage assistant, ToolExecutionEntity execution) {
         if (assistant == null || assistant.getToolCalls() == null) {
             throw new IllegalStateException(ERROR_INVALID_ASSISTANT_CALL);
         }

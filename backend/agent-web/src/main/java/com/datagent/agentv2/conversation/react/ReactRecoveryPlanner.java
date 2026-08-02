@@ -1,9 +1,9 @@
 package com.datagent.agentv2.conversation.react;
 
+import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
-import com.datagent.agentv2.persistence.entity.AgentExecutionEntity;
-import com.datagent.agentv2.persistence.entity.ConversationMessageEntity;
 import com.datagent.agentv2.persistence.entity.ModelInvocationEntity;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
@@ -96,7 +96,7 @@ public final class ReactRecoveryPlanner {
     }
 
     private void assertOwned(AgentExecutionPort.ClaimedAgentExecution run) {
-        AgentExecutionEntity owned = agentExecutions.lockById(run.executionId());
+        AgentExecution owned = agentExecutions.lockById(run.executionId());
         if (owned == null
                 || !STATUS_RUNNING.equals(owned.getStatus())
                 || !run.ownerInstanceId().equals(owned.getOwnerInstanceId())
@@ -115,7 +115,7 @@ public final class ReactRecoveryPlanner {
                 && !STATUS_FAILED.equals(execution.getStatus())) {
             throw new IllegalStateException(ERROR_TERMINAL_OBSERVATION);
         }
-        ConversationMessageEntity observation =
+        ConversationMessage observation =
                 messages.findByConversationMessageId(
                         execution.getObservationConversationMessageId());
         if (observation == null

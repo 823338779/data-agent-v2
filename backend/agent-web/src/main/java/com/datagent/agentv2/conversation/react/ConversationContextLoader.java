@@ -1,6 +1,6 @@
 package com.datagent.agentv2.conversation.react;
 
-import com.datagent.agentv2.persistence.entity.ConversationMessageEntity;
+import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ToolExecutionService;
@@ -30,7 +30,7 @@ public class ConversationContextLoader {
 
     public List<ModelInputMessage> load(
             String executionId, long inputUpToConversationMessageSequence) {
-        List<ConversationMessageEntity> rows =
+        List<ConversationMessage> rows =
                 messages.findContextByExecutionIdUpTo(
                         executionId, inputUpToConversationMessageSequence);
         Map<String, ToolExecutionEntity> executionsById = executionIndex(executionId);
@@ -38,7 +38,7 @@ public class ConversationContextLoader {
         List<ModelInputMessage> result = new ArrayList<>(rows.size());
 
         // 逐条重放完整消息边界，确保 Observation 只能引用此前已归档的 assistant call。
-        for (ConversationMessageEntity row : rows) {
+        for (ConversationMessage row : rows) {
             if (ROLE_ASSISTANT.equals(row.getRole()) && row.getToolCalls() != null) {
                 List<ModelToolCall> calls = parseToolCalls(row.getToolCalls());
                 callsByAssistantMessage.put(row.getConversationMessageId(), callIndex(calls));
@@ -107,7 +107,7 @@ public class ConversationContextLoader {
     }
 
     private static void validateObservation(
-            ConversationMessageEntity observation,
+            ConversationMessage observation,
             Map<String, ToolExecutionEntity> executionsById,
             Map<String, Map<String, ModelToolCall>> callsByAssistantMessage) {
         ToolExecutionEntity execution = executionsById.get(observation.getToolExecutionId());

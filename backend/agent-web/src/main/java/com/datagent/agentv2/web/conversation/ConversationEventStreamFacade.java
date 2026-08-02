@@ -106,8 +106,7 @@ public final class ConversationEventStreamFacade {
         AgentExecutionEventPersisted notification = saved;
         SessionKey key =
                 new SessionKey(
-                        notification.event().getTenantId(),
-                        notification.event().getConversationSessionId());
+                        notification.tenantId(), notification.event().getConversationSessionId());
         Set<Subscription> sessionSubscriptions = subscriptions.get(key);
         if (sessionSubscriptions == null || sessionSubscriptions.isEmpty()) {
             return;
@@ -344,7 +343,7 @@ public final class ConversationEventStreamFacade {
                             event.executionId(),
                             event.executionEventSequence(),
                             event.occurredAt(),
-                            Map.of("status", event.status())));
+                            new LifecycleEventPayload(event.status())));
         }
 
         private void sendDelta(AgentExecutionDeltaNotification envelope) {
@@ -433,7 +432,14 @@ public final class ConversationEventStreamFacade {
             String executionId,
             long executionEventSequence,
             Instant occurredAt,
-            Map<String, Object> payload) {}
+            LifecycleEventPayload payload) {}
+
+    /**
+     * 生命周期事件的固定状态载荷。
+     *
+     * @param status Agent 执行状态
+     */
+    private record LifecycleEventPayload(String status) {}
 
     private record DeltaEvent(
             String type,

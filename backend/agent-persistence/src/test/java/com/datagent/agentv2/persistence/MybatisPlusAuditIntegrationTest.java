@@ -3,7 +3,10 @@ package com.datagent.agentv2.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.datagent.agentv2.platform.context.TenantContext;
+import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +27,15 @@ import org.testcontainers.utility.DockerImageName;
     MybatisPlusAuditIntegrationTest.FixtureMapperConfiguration.class
 })
 class MybatisPlusAuditIntegrationTest {
+
+    /** 业务和数据库会话统一使用的北京时间时区。 */
+    private static final String BUSINESS_TIME_ZONE_NAME = "Asia/Shanghai";
+
+    /** 查询当前 PostgreSQL 会话时区。 */
+    private static final String SHOW_TIME_ZONE_SQL = "show time zone";
+
+    /** 测试时间边界使用的北京时间时区。 */
+    private static final ZoneId BUSINESS_TIME_ZONE = ZoneId.of(BUSINESS_TIME_ZONE_NAME);
 
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
@@ -69,11 +81,11 @@ class MybatisPlusAuditIntegrationTest {
         TenantContext.run(
                 "tenant_local",
                 () -> {
-                    LocalDateTime beforeSave = LocalDateTime.now();
+                    LocalDateTime beforeSave = LocalDateTime.now(BUSINESS_TIME_ZONE);
                     AuditFixtureEntity entity =
                             AuditFixtureEntity.session("session_audit", "Audit");
                     assertThat(auditFixtureService.save(entity)).isTrue();
-                    LocalDateTime afterSave = LocalDateTime.now();
+                    LocalDateTime afterSave = LocalDateTime.now(BUSINESS_TIME_ZONE);
                     assertThat(entity.getCreatedAt()).isBetween(beforeSave, afterSave);
                     assertThat(entity.getUpdatedAt()).isBetween(beforeSave, afterSave);
                     assertThat(entity.isDeleted()).isFalse();
@@ -87,6 +99,21 @@ class MybatisPlusAuditIntegrationTest {
                     assertThat(reloaded.getCreatedAt()).isBetween(beforeSave, afterSave);
                     assertThat(reloaded.getUpdatedAt()).isBetween(beforeSave, afterSave);
                 });
+    }
+
+    @Test
+    void newDatabaseConnectionsUseBeijingTimeZone() throws SQLException {
+        // 绕过应用连接池新建直连，验证数据库级默认时区同样对直接查询生效。
+        try (var connection =
+                        DriverManager.getConnection(
+                                POSTGRES.getJdbcUrl(),
+                                POSTGRES.getUsername(),
+                                POSTGRES.getPassword());
+                var statement = connection.createStatement();
+                var result = statement.executeQuery(SHOW_TIME_ZONE_SQL)) {
+            assertThat(result.next()).isTrue();
+            assertThat(result.getString(1)).isEqualTo(BUSINESS_TIME_ZONE_NAME);
+        }
     }
 
     @Test

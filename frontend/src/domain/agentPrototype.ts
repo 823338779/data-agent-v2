@@ -87,10 +87,19 @@ export interface ConversationActivitySnapshot {
   snapshotAt: string;
 }
 
+const BEIJING_TIME_ZONE = 'Asia/Shanghai';
+const BEIJING_UTC_OFFSET = '+08:00';
+const EXPLICIT_TIME_ZONE_SUFFIX = /(?:Z|[+-]\d{2}:\d{2})$/i;
+
 export function formatTimestamp(value: string): string {
-  const date = new Date(value);
+  // 后端 LocalDateTime 不携带偏移量，按北京时间解释后再统一格式化。
+  const normalizedValue = EXPLICIT_TIME_ZONE_SUFFIX.test(value)
+    ? value
+    : `${value}${BEIJING_UTC_OFFSET}`;
+  const date = new Date(normalizedValue);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: BEIJING_TIME_ZONE,
     month: 'short',
     day: 'numeric',
     hour: '2-digit',

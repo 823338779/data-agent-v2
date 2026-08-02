@@ -18,11 +18,11 @@ import static com.datagent.agentv2.conversation.AgentExecutionConstants.REQUEST_
 import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_QUEUED;
 import static com.datagent.agentv2.conversation.AgentExecutionConstants.WINDOWS_LINE_SEPARATOR;
 
-import com.datagent.agentv2.persistence.entity.AgentExecutionEntity;
-import com.datagent.agentv2.persistence.entity.AgentExecutionEventEntity;
-import com.datagent.agentv2.persistence.entity.AgentExecutionStreamCheckpointEntity;
-import com.datagent.agentv2.persistence.entity.ConversationMessageEntity;
-import com.datagent.agentv2.persistence.entity.ConversationSessionEntity;
+import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
+import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
+import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.domain.ConversationSession;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
@@ -75,7 +75,7 @@ public final class AgentExecutionSubmissionService {
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
-    public ConversationSessionEntity submit(
+    public ConversationSession submit(
             String conversationSessionId, String content, String idempotencyKey, String requestId) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_IDEMPOTENCY_KEY_BLANK);
@@ -92,7 +92,7 @@ public final class AgentExecutionSubmissionService {
                                             payloadHash,
                                             requestId)));
         } catch (DataIntegrityViolationException conflict) {
-            ConversationSessionEntity replay =
+            ConversationSession replay =
                     transactions.execute(
                             ignored ->
                                     replayAfterConstraintConflict(
@@ -104,18 +104,18 @@ public final class AgentExecutionSubmissionService {
         }
     }
 
-    private ConversationSessionEntity createOrReplay(
+    private ConversationSession createOrReplay(
             String conversationSessionId,
             String content,
             String idempotencyKey,
             String payloadHash,
             String requestId) {
-        ConversationSessionEntity session = sessions.lockById(conversationSessionId);
+        ConversationSession session = sessions.lockById(conversationSessionId);
         if (session == null) {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, ERROR_CONVERSATION_SESSION_NOT_FOUND);
         }
-        AgentExecutionEntity replay =
+        AgentExecution replay =
                 agentExecutions.findRequest(conversationSessionId, REQUEST_TYPE, idempotencyKey);
         if (replay != null) {
             requireSamePayload(replay, payloadHash);
@@ -125,81 +125,75 @@ public final class AgentExecutionSubmissionService {
             throw new ActiveExecutionConflictException();
         }
 
-        long conversationMessageSequence = session.getConversationMessageSequence() + 1;
-        long executionEventSequence = session.getExecutionEventSequence() + 1;
-        session.setConversationMessageSequence(conversationMessageSequence);
-        session.setExecutionEventSequence(executionEventSequence);
+        // Advance the session-owned sequences before creating their dependent records.
+        ConversationSession.AllocatedSequences sequences = session.allocateSubmissionSequences();
         if (!sessions.updateById(session)) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT, ERROR_SESSION_CHANGED_CONCURRENTLY);
         }
 
-        ConversationMessageEntity message = new ConversationMessageEntity();
-        message.setConversationMessageId(ids.next(ID_PREFIX_CONVERSATION_MESSAGE));
-        message.setConversationSessionId(conversationSessionId);
-        message.setRole(MESSAGE_ROLE_USER);
-        message.setContent(content);
-        message.setConversationMessageSequence(conversationMessageSequence);
-        message.setAuthorUserId(OperatorContext.requiredOperator().userId());
-        message.setVersion(0L);
+        // Persist the user message first because the execution references it as its trigger.
+        String operatorUserId = OperatorContext.requiredOperator().userId();
+        ConversationMessage message =
+                ConversationMessage.user(
+                        ids.next(ID_PREFIX_CONVERSATION_MESSAGE),
+                        conversationSessionId,
+                        content,
+                        sequences.conversationMessage(),
+                        operatorUserId,
+                        MESSAGE_ROLE_USER);
         messages.save(message);
 
+        // Create the queued execution and complete the bidirectional message association.
         Instant now = Instant.now();
-        AgentExecutionEntity run = new AgentExecutionEntity();
-        run.setExecutionId(ids.next(ID_PREFIX_EXECUTION));
-        run.setConversationSessionId(conversationSessionId);
-        run.setTriggeringConversationMessageId(message.getConversationMessageId());
-        run.setStatus(STATUS_QUEUED);
-        run.setPhase(PHASE_QUEUED);
-        run.setExecutionAttemptNumber(0L);
-        run.setOwnerUserId(OperatorContext.requiredOperator().userId());
-        run.setRequestId(requestId);
-        run.setQueuedAt(now);
-        run.setRecoveryAttemptCount(0);
-        run.setRequestType(REQUEST_TYPE);
-        run.setRequestIdempotencyKey(idempotencyKey);
-        run.setRequestPayloadHash(payloadHash);
-        run.setExecutionBudgetMs(DEFAULT_EXECUTION_BUDGET_MS);
-        run.setActiveExecutionMs(0L);
-        run.setVersion(0L);
+        AgentExecution run =
+                AgentExecution.queued(
+                        ids.next(ID_PREFIX_EXECUTION),
+                        conversationSessionId,
+                        message.getConversationMessageId(),
+                        operatorUserId,
+                        requestId,
+                        now,
+                        REQUEST_TYPE,
+                        idempotencyKey,
+                        payloadHash,
+                        DEFAULT_EXECUTION_BUDGET_MS,
+                        STATUS_QUEUED,
+                        PHASE_QUEUED);
         agentExecutions.save(run);
 
-        message.setExecutionId(run.getExecutionId());
+        message.associateExecution(run.getExecutionId());
         messages.updateById(message);
 
-        AgentExecutionEventEntity event = new AgentExecutionEventEntity();
-        event.setExecutionEventId(ids.next(ID_PREFIX_EXECUTION_EVENT));
-        event.setConversationSessionId(conversationSessionId);
-        event.setExecutionId(run.getExecutionId());
-        event.setExecutionEventSequence(executionEventSequence);
-        event.setType(EVENT_EXECUTION_QUEUED);
-        event.setOccurredAt(now);
-        event.setVersion(0L);
-        events.save(event);
-
-        AgentExecutionStreamCheckpointEntity stream = new AgentExecutionStreamCheckpointEntity();
-        stream.setExecutionStreamCheckpointId(ids.next(ID_PREFIX_EXECUTION_STREAM_CHECKPOINT));
-        stream.setExecutionId(run.getExecutionId());
-        stream.setExecutionAttemptNumber(0L);
-        stream.setModelInvocationSequence(0L);
-        stream.setPhase(PHASE_QUEUED);
-        stream.setOutputDeltaSequence(0L);
-        stream.setReasoning(EMPTY_TEXT);
-        stream.setAnswer(EMPTY_TEXT);
-        stream.setVersion(0L);
-        streamCheckpoints.save(stream);
+        // Seed the durable event stream and model-output checkpoint for the queued execution.
+        events.save(
+                AgentExecutionEvent.occurred(
+                        ids.next(ID_PREFIX_EXECUTION_EVENT),
+                        conversationSessionId,
+                        run.getExecutionId(),
+                        sequences.executionEvent(),
+                        EVENT_EXECUTION_QUEUED,
+                        null,
+                        now));
+        streamCheckpoints.save(
+                AgentExecutionStreamCheckpoint.initial(
+                        ids.next(ID_PREFIX_EXECUTION_STREAM_CHECKPOINT),
+                        run.getExecutionId(),
+                        PHASE_QUEUED,
+                        EMPTY_TEXT,
+                        EMPTY_TEXT));
         return session;
     }
 
-    private ConversationSessionEntity replayAfterConstraintConflict(
+    private ConversationSession replayAfterConstraintConflict(
             String conversationSessionId, String idempotencyKey, String payloadHash) {
-        AgentExecutionEntity replay =
+        AgentExecution replay =
                 agentExecutions.findRequest(conversationSessionId, REQUEST_TYPE, idempotencyKey);
         if (replay == null) {
             return null;
         }
         requireSamePayload(replay, payloadHash);
-        ConversationSessionEntity session = sessions.findByUuid(conversationSessionId);
+        ConversationSession session = sessions.findByUuid(conversationSessionId);
         if (session == null) {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, ERROR_CONVERSATION_SESSION_NOT_FOUND);
@@ -207,7 +201,7 @@ public final class AgentExecutionSubmissionService {
         return session;
     }
 
-    private static void requireSamePayload(AgentExecutionEntity run, String payloadHash) {
+    private static void requireSamePayload(AgentExecution run, String payloadHash) {
         if (!payloadHash.equals(run.getRequestPayloadHash())) {
             throw new IdempotencyKeyReusedException();
         }

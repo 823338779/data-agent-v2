@@ -1,11 +1,11 @@
 package com.datagent.agentv2.conversation.stream;
 
+import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.model.ModelOutputDelta;
 import com.datagent.agentv2.conversation.react.ReactLimitsProperties;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
-import com.datagent.agentv2.persistence.entity.AgentExecutionEntity;
-import com.datagent.agentv2.persistence.entity.AgentExecutionStreamCheckpointEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
 import java.time.Instant;
@@ -25,7 +25,7 @@ public final class ExecutionStreamCheckpointCoordinator {
     private final AgentExecutionStreamCheckpointService streamCheckpoints;
     private final AgentExecutionService agentExecutions;
     private final ReactLimitsProperties limits;
-    private final ConcurrentMap<StreamKey, ExecutionStreamAccumulator> accumulators =
+    private final ConcurrentMap<ExecutionStreamKey, ExecutionStreamAccumulator> accumulators =
             new ConcurrentHashMap<>();
     private final ConcurrentMap<String, String> conversationSessionIds = new ConcurrentHashMap<>();
 
@@ -43,7 +43,7 @@ public final class ExecutionStreamCheckpointCoordinator {
             AgentExecutionPort.ClaimedAgentExecution run,
             long modelInvocationSequence,
             Instant now) {
-        AgentExecutionStreamCheckpointEntity current = requireStream(run.executionId());
+        AgentExecutionStreamCheckpoint current = requireStream(run.executionId());
         if (!streamCheckpoints.beginModelInvocation(
                 run.executionId(),
                 current.getVersion(),
@@ -56,7 +56,7 @@ public final class ExecutionStreamCheckpointCoordinator {
         accumulators.keySet().removeIf(key -> key.executionId().equals(run.executionId()));
         conversationSessionIds.put(
                 run.executionId(), requireExecution(run.executionId()).getConversationSessionId());
-        AgentExecutionStreamCheckpointEntity reset = requireStream(run.executionId());
+        AgentExecutionStreamCheckpoint reset = requireStream(run.executionId());
         accumulators.put(key(run, modelInvocationSequence), from(reset, now));
     }
 
@@ -123,11 +123,11 @@ public final class ExecutionStreamCheckpointCoordinator {
             AgentExecutionPort.ClaimedAgentExecution run,
             long modelInvocationSequence,
             Instant now) {
-        StreamKey key = key(run, modelInvocationSequence);
+        ExecutionStreamKey key = key(run, modelInvocationSequence);
         return accumulators.computeIfAbsent(
                 key,
                 ignored -> {
-                    AgentExecutionStreamCheckpointEntity stream = requireStream(run.executionId());
+                    AgentExecutionStreamCheckpoint stream = requireStream(run.executionId());
                     if (!Objects.equals(
                                     stream.getExecutionAttemptNumber(),
                                     run.executionAttemptNumber())
@@ -143,7 +143,7 @@ public final class ExecutionStreamCheckpointCoordinator {
             AgentExecutionPort.ClaimedAgentExecution run,
             ExecutionStreamAccumulator accumulator,
             Instant now) {
-        AgentExecutionStreamCheckpointEntity current = requireStream(run.executionId());
+        AgentExecutionStreamCheckpoint current = requireStream(run.executionId());
         Instant reasoningExpiresAt = now.plus(limits.getReasoningRetention());
         if (!streamCheckpoints.checkpoint(
                 run.executionId(),
@@ -162,9 +162,8 @@ public final class ExecutionStreamCheckpointCoordinator {
         accumulator.checkpointed(now);
     }
 
-    private AgentExecutionStreamCheckpointEntity requireStream(String executionId) {
-        AgentExecutionStreamCheckpointEntity stream =
-                streamCheckpoints.findByExecutionId(executionId);
+    private AgentExecutionStreamCheckpoint requireStream(String executionId) {
+        AgentExecutionStreamCheckpoint stream = streamCheckpoints.findByExecutionId(executionId);
         if (stream == null) {
             throw new ExecutionOwnershipLostException(executionId);
         }
@@ -176,8 +175,8 @@ public final class ExecutionStreamCheckpointCoordinator {
                 executionId, ignored -> requireExecution(executionId).getConversationSessionId());
     }
 
-    private AgentExecutionEntity requireExecution(String executionId) {
-        AgentExecutionEntity run = agentExecutions.findByExecutionId(executionId);
+    private AgentExecution requireExecution(String executionId) {
+        AgentExecution run = agentExecutions.findByExecutionId(executionId);
         if (run == null) {
             throw new ExecutionOwnershipLostException(executionId);
         }
@@ -185,7 +184,7 @@ public final class ExecutionStreamCheckpointCoordinator {
     }
 
     private static ExecutionStreamAccumulator from(
-            AgentExecutionStreamCheckpointEntity stream, Instant fallback) {
+            AgentExecutionStreamCheckpoint stream, Instant fallback) {
         Instant checkpointedAt =
                 stream.getCheckpointedAt() == null ? fallback : stream.getCheckpointedAt();
         return new ExecutionStreamAccumulator(
@@ -198,9 +197,9 @@ public final class ExecutionStreamCheckpointCoordinator {
                 checkpointedAt);
     }
 
-    private static StreamKey key(
+    private static ExecutionStreamKey key(
             AgentExecutionPort.ClaimedAgentExecution run, long modelInvocationSequence) {
-        return new StreamKey(
+        return new ExecutionStreamKey(
                 run.executionId(), run.executionAttemptNumber(), modelInvocationSequence);
     }
 
@@ -222,7 +221,4 @@ public final class ExecutionStreamCheckpointCoordinator {
             String delta,
             boolean checkpointed,
             Instant occurredAt) {}
-
-    private record StreamKey(
-            String executionId, long executionAttemptNumber, long modelInvocationSequence) {}
 }

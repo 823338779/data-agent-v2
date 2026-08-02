@@ -1,12 +1,16 @@
 spring:
   application:
     name: data-agent-v2
+  jackson:
+    time-zone: Asia/Shanghai
   config:
     import: classpath:application-business.yml
   datasource:
     url: ${DATA_AGENT_DB_URL:jdbc:postgresql://localhost:5432/data_agent_v2}
     username: ${DATA_AGENT_DB_USERNAME:data_agent}
     password: ${DATA_AGENT_DB_PASSWORD:data_agent_local_dev}
+    hikari:
+      connection-init-sql: SET TIME ZONE 'Asia/Shanghai'
   data:
     redis:
       host: ${SPRING_DATA_REDIS_HOST:localhost}

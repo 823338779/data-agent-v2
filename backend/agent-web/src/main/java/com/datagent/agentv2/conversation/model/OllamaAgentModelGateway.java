@@ -10,13 +10,13 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
 import org.springframework.ai.ollama.api.OllamaApi;
+import org.springframework.ai.ollama.api.OllamaChatOptions;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
 public final class OllamaAgentModelGateway implements AgentModelGateway {
 
-    private static final String OPTION_MAX_OUTPUT_TOKENS = "num_predict";
     private static final String ERROR_INTERRUPTED =
             "Ollama stream ended before a complete model result";
     private static final String ERROR_AMBIGUOUS =
@@ -43,7 +43,10 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
                 OllamaApi.ChatRequest.builder(properties.getModel())
                         .messages(messages.stream().map(this::toProviderMessage).toList())
                         .tools(toProviderTools(tools))
-                        .options(Map.of(OPTION_MAX_OUTPUT_TOKENS, properties.getMaxOutputTokens()))
+                        .options(
+                                OllamaChatOptions.builder()
+                                        .numPredict(properties.getMaxOutputTokens())
+                                        .build())
                         .enableThinking()
                         .stream(true)
                         .build();

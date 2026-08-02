@@ -9,10 +9,11 @@ import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_F
 import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_LOST;
 import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_RUNNING;
 
+import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.persistence.entity.AgentExecutionAttemptEntity;
-import com.datagent.agentv2.persistence.entity.AgentExecutionEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionAttemptService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
+import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
@@ -93,7 +94,7 @@ public final class AgentExecutionLeaseService {
 
     private RecoveryResult takeoverLocked(String newOwnerInstanceId) {
         Instant now = Instant.now();
-        AgentExecutionEntity run = agentExecutions.lockNextExpired(now);
+        AgentExecution run = agentExecutions.lockNextExpired(now);
         if (run == null) {
             return RecoveryResult.none();
         }
@@ -154,10 +155,13 @@ public final class AgentExecutionLeaseService {
         attempts.insert(attempt);
         return RecoveryResult.claimed(
                 new AgentExecutionPort.ClaimedAgentExecution(
-                        run.getTenantId(), run.getExecutionId(), newOwnerInstanceId, nextAttempt));
+                        TenantContext.requiredTenantId(),
+                        run.getExecutionId(),
+                        newOwnerInstanceId,
+                        nextAttempt));
     }
 
-    private static long accumulatedAt(AgentExecutionEntity run, Instant now) {
+    private static long accumulatedAt(AgentExecution run, Instant now) {
         long previous = run.getActiveExecutionMs() == null ? 0L : run.getActiveExecutionMs();
         if (run.getActiveSegmentStartedAt() == null) {
             return previous;

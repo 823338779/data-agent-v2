@@ -2,7 +2,7 @@ package com.datagent.agentv2.conversation.activity;
 
 import static com.datagent.agentv2.conversation.AgentExecutionConstants.EVENT_EXECUTION_DONE;
 
-import com.datagent.agentv2.persistence.entity.AgentExecutionEventEntity;
+import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventPersisted;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
 import com.datagent.agentv2.persistence.service.ConversationSessionUserStateService;
@@ -36,7 +36,7 @@ public class SessionActivityService {
     @EventListener
     @Transactional
     public void recordPersistedEvent(AgentExecutionEventPersisted persisted) {
-        AgentExecutionEventEntity event = persisted.event();
+        AgentExecutionEvent event = persisted.event();
         Long sequence =
                 NOTIFIABLE_EVENT_TYPES.contains(event.getType())
                         ? event.getExecutionEventSequence()

@@ -5,9 +5,9 @@ import static com.datagent.agentv2.conversation.AgentExecutionConstants.EVENT_EX
 import static com.datagent.agentv2.conversation.AgentExecutionConstants.ID_PREFIX_EXECUTION_EVENT;
 import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_RUNNING;
 
+import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.persistence.entity.AgentExecutionAttemptEntity;
-import com.datagent.agentv2.persistence.entity.AgentExecutionEntity;
-import com.datagent.agentv2.persistence.entity.AgentExecutionEventEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionAttemptService;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
@@ -110,7 +110,7 @@ public final class AgentExecutionClaimService {
                         >= MAX_CONCURRENT_EXECUTIONS_PER_USER) {
             return null;
         }
-        AgentExecutionEntity run = agentExecutions.lockOldestQueuedForUser(userId);
+        AgentExecution run = agentExecutions.lockOldestQueuedForUser(userId);
         if (run == null) {
             return null;
         }
@@ -143,16 +143,15 @@ public final class AgentExecutionClaimService {
         attempt.setVersion(0L);
         attempts.insert(attempt);
 
-        AgentExecutionEventEntity event = new AgentExecutionEventEntity();
-        event.setExecutionEventId(ids.next(ID_PREFIX_EXECUTION_EVENT));
-        event.setConversationSessionId(run.getConversationSessionId());
-        event.setExecutionId(run.getExecutionId());
-        event.setExecutionEventSequence(
-                sessions.nextExecutionEventSequence(run.getConversationSessionId()));
-        event.setType(EVENT_EXECUTION_STARTED);
-        event.setOccurredAt(now);
-        event.setVersion(0L);
-        events.save(event);
+        events.save(
+                AgentExecutionEvent.occurred(
+                        ids.next(ID_PREFIX_EXECUTION_EVENT),
+                        run.getConversationSessionId(),
+                        run.getExecutionId(),
+                        sessions.nextExecutionEventSequence(run.getConversationSessionId()),
+                        EVENT_EXECUTION_STARTED,
+                        null,
+                        now));
 
         return new AgentExecutionPort.ClaimedAgentExecution(
                 TenantContext.requiredTenantId(),

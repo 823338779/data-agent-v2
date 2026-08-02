@@ -7,9 +7,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
-import com.datagent.agentv2.persistence.entity.ConversationMessageEntity;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
@@ -30,6 +30,7 @@ class ToolExecutionCoordinatorTest {
 
     private static final String EXECUTION_ID = "execution-tools";
     private static final String ASSISTANT_ID = "assistant-tools";
+    private static final String SESSION_ID = "session-tools";
     private static final String TOOL_CALLS =
             """
             {"version":1,"calls":[
@@ -52,13 +53,13 @@ class ToolExecutionCoordinatorTest {
         IdGenerator ids = mock(IdGenerator.class);
         PlatformTransactionManager transactionManager = transactionManager();
         List<ToolExecutionEntity> rows = toolExecutions();
-        List<ConversationMessageEntity> observations = new ArrayList<>();
+        List<ConversationMessage> observations = new ArrayList<>();
         AtomicInteger conversationMessageSequence = new AtomicInteger(10);
         AtomicInteger conversationMessageId = new AtomicInteger();
-        ConversationMessageEntity assistant = new ConversationMessageEntity();
-        assistant.setConversationMessageId(ASSISTANT_ID);
-        assistant.setConversationSessionId("session-tools");
-        assistant.setToolCalls(TOOL_CALLS);
+        ConversationMessage assistant =
+                ConversationMessage.assistant(
+                        ASSISTANT_ID, SESSION_ID, EXECUTION_ID, "", 1L, "assistant", "internal");
+        assistant.attachToolCalls(TOOL_CALLS);
 
         when(toolExecutions.findByTurn(EXECUTION_ID, 1)).thenReturn(rows);
         for (ToolExecutionEntity row : rows) {
@@ -90,13 +91,13 @@ class ToolExecutionCoordinatorTest {
                         anyLong()))
                 .thenReturn(true);
         when(messages.findByConversationMessageId(ASSISTANT_ID)).thenReturn(assistant);
-        when(messages.save(any()))
+        when(messages.save(any(ConversationMessage.class)))
                 .thenAnswer(
                         invocation -> {
                             observations.add(invocation.getArgument(0));
                             return true;
                         });
-        when(sessions.nextConversationMessageSequence("session-tools"))
+        when(sessions.nextConversationMessageSequence(SESSION_ID))
                 .thenAnswer(ignored -> (long) conversationMessageSequence.incrementAndGet());
         when(ids.next(anyString()))
                 .thenAnswer(ignored -> "observation-" + conversationMessageId.incrementAndGet());

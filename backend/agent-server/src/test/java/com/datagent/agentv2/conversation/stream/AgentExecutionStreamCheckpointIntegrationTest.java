@@ -5,10 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.model.ModelOutputDelta;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
-import com.datagent.agentv2.persistence.entity.AgentExecutionStreamCheckpointEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
 import com.datagent.agentv2.platform.context.TenantContext;
 import jakarta.servlet.http.Cookie;
@@ -263,7 +263,7 @@ class AgentExecutionStreamCheckpointIntegrationTest {
             long sequence,
             String reasoning,
             String answer) {
-        AgentExecutionStreamCheckpointEntity stream = currentStream(executionId);
+        AgentExecutionStreamCheckpoint stream = currentStream(executionId);
         assertThat(stream.getExecutionAttemptNumber()).isEqualTo(attempt);
         assertThat(stream.getModelInvocationSequence()).isEqualTo(turn);
         assertThat(stream.getOutputDeltaSequence()).isEqualTo(sequence);
@@ -271,7 +271,7 @@ class AgentExecutionStreamCheckpointIntegrationTest {
         assertThat(stream.getAnswer()).isEqualTo(answer);
     }
 
-    private AgentExecutionStreamCheckpointEntity currentStream(String executionId) {
+    private AgentExecutionStreamCheckpoint currentStream(String executionId) {
         return TenantContext.call(
                 TENANT_ID, () -> streamCheckpoints.findByExecutionId(executionId));
     }

@@ -8,8 +8,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
-import com.datagent.agentv2.persistence.entity.AgentExecutionEntity;
 import com.datagent.agentv2.persistence.entity.ModelInvocationEntity;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
@@ -96,7 +96,7 @@ class ReactCrashRecoveryIntegrationTest {
     }
 
     private void stubOwnedExecution() {
-        AgentExecutionEntity run = new AgentExecutionEntity();
+        AgentExecution run = new AgentExecution();
         run.setExecutionId("run");
         run.setStatus("running");
         run.setOwnerInstanceId("new-owner");
@@ -124,10 +124,10 @@ class ReactCrashRecoveryIntegrationTest {
         return execution;
     }
 
-    private static com.datagent.agentv2.persistence.entity.ConversationMessageEntity observation(
+    private static com.datagent.agentv2.conversation.domain.ConversationMessage observation(
             String executionId) {
-        com.datagent.agentv2.persistence.entity.ConversationMessageEntity message =
-                new com.datagent.agentv2.persistence.entity.ConversationMessageEntity();
+        com.datagent.agentv2.conversation.domain.ConversationMessage message =
+                new com.datagent.agentv2.conversation.domain.ConversationMessage();
         message.setRole("tool");
         message.setToolExecutionId(executionId);
         return message;

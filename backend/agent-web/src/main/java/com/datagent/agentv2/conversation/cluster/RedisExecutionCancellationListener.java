@@ -2,11 +2,11 @@ package com.datagent.agentv2.conversation.cluster;
 
 import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_RUNNING;
 
+import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnerRegistry;
 import com.datagent.agentv2.conversation.runtime.ExecutionWorkerIdentity;
-import com.datagent.agentv2.persistence.entity.AgentExecutionEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.platform.context.TenantContext;
 import jakarta.annotation.PostConstruct;
@@ -71,7 +71,7 @@ public final class RedisExecutionCancellationListener implements AutoCloseable {
     }
 
     private boolean handleOwned(AgentExecutionCancellationSignal envelope) {
-        AgentExecutionEntity current = agentExecutions.findByExecutionId(envelope.executionId());
+        AgentExecution current = agentExecutions.findByExecutionId(envelope.executionId());
         if (current == null
                 || !STATUS_RUNNING.equals(current.getStatus())
                 || !identity.workerInstanceId().equals(current.getOwnerInstanceId())

@@ -47,14 +47,6 @@ public final class AgentExecutionConstants {
     public static final String MESSAGE_VISIBILITY_INTERNAL = "internal";
     public static final String SESSION_TYPE_INTERACTIVE = "INTERACTIVE";
     public static final String HASH_ALGORITHM_SHA_256 = "SHA-256";
-    public static final String PAYLOAD_NOTIFICATION_MESSAGE_ID = "notificationMessageId";
-    public static final String PAYLOAD_TENANT_ID = "tenantId";
-    public static final String PAYLOAD_EXECUTION_ID = "executionId";
-    public static final String PAYLOAD_OWNER_INSTANCE_ID = "ownerInstanceId";
-    public static final String PAYLOAD_EXECUTION_ATTEMPT_NUMBER = "executionAttemptNumber";
-    public static final String PAYLOAD_CONTROL_VERSION = "controlVersion";
-    public static final String PAYLOAD_REQUESTED_AT = "requestedAt";
-    public static final String PAYLOAD_TYPE = "type";
     public static final String ERROR_IDEMPOTENCY_KEY_BLANK = "Idempotency-Key must not be blank";
     public static final String ERROR_IDEMPOTENCY_KEY_REUSED =
             "Idempotency-Key was already used for another payload";
