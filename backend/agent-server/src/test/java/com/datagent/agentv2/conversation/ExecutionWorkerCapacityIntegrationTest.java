@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 import com.datagent.agentv2.conversation.runtime.AgentExecutionClaimService;
+import com.datagent.agentv2.conversation.runtime.AgentExecutionClaimTransactionService;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeProperties;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnerRegistry;
@@ -29,11 +30,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -157,6 +160,9 @@ class ExecutionWorkerCapacityIntegrationTest {
                         Duration.ofSeconds(60),
                         Duration.ofSeconds(15),
                         false);
+        context.register(TransactionTestConfiguration.class);
+        context.registerBean(
+                "transactionManager", PlatformTransactionManager.class, () -> transactionManager);
         context.registerBean(SimpleMeterRegistry.class, () -> meters);
         context.registerBean(AgentExecutionRuntimeProperties.class, () -> properties);
         context.registerBean(
@@ -177,17 +183,23 @@ class ExecutionWorkerCapacityIntegrationTest {
                 ExecutionWorkerIdentity.class,
                 () -> new ExecutionWorkerIdentity("instance_capacity_" + capacityLimit));
         context.registerBean(
-                AgentExecutionClaimService.class,
+                AgentExecutionClaimTransactionService.class,
                 () ->
-                        new AgentExecutionClaimService(
+                        new AgentExecutionClaimTransactionService(
                                 agentExecutions,
                                 attempts,
                                 events,
                                 sessions,
                                 users,
                                 ids,
-                                transactionManager,
                                 properties,
+                                context.getBean(ExecutionWorkerIdentity.class)));
+        context.registerBean(
+                AgentExecutionClaimService.class,
+                () ->
+                        new AgentExecutionClaimService(
+                                agentExecutions,
+                                context.getBean(AgentExecutionClaimTransactionService.class),
                                 context.getBean(ExecutionWorkerCapacity.class),
                                 context.getBean(ExecutionOwnerRegistry.class),
                                 context.getBean(HoldingExecutionPort.class),
@@ -199,6 +211,10 @@ class ExecutionWorkerCapacityIntegrationTest {
                 context.getBean(ExecutionWorkerCapacity.class),
                 context.getBean(ExecutionOwnerRegistry.class));
     }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    @EnableTransactionManagement
+    static class TransactionTestConfiguration {}
 
     private void createUser(String id, String username) {
         jdbc.update(

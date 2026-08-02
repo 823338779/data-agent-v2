@@ -1,7 +1,7 @@
 package com.datagent.agentv2.conversation.activity;
 
-import com.datagent.agentv2.conversation.application.ConversationApplicationService;
-import com.datagent.agentv2.conversation.application.ConversationView;
+import com.datagent.agentv2.conversation.session.ConversationApplicationService;
+import com.datagent.agentv2.conversation.session.ConversationView;
 import com.datagent.agentv2.platform.context.OperatorContext;
 import com.datagent.agentv2.platform.context.OperatorIdentity;
 import com.datagent.agentv2.platform.context.TenantContext;
@@ -29,8 +29,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @Service
 public final class ActivityEventStreamFacade {
 
-    private static final String EVENT_ACTIVITY_SNAPSHOT = "activity_snapshot";
-    private static final String STATUS_IDLE = "idle";
     private static final String ERROR_CONNECTION_LIMIT = "Activity SSE connection limit exceeded";
     private static final String ERROR_SLOW_CLIENT = "Activity SSE client is too slow";
     private static final String SENDER_THREAD_PREFIX = "activity-sse-";
@@ -102,15 +100,16 @@ public final class ActivityEventStreamFacade {
                     new ActivityItem(
                             session.conversationSessionId(),
                             session.execution() == null
-                                    ? STATUS_IDLE
-                                    : session.execution().status(),
+                                    ? SessionActivityStatus.IDLE
+                                    : SessionActivityStatus.fromExecutionStatus(
+                                            session.execution().status()),
                             session.unread(),
                             session.lastNotifiableEventSequence(),
                             session.sortOrder(),
                             session.updatedAt()));
         }
         return new ActivitySnapshot(
-                EVENT_ACTIVITY_SNAPSHOT, orderingVersion, List.copyOf(items), Instant.now());
+                ActivityEventType.SNAPSHOT, orderingVersion, List.copyOf(items), Instant.now());
     }
 
     private void remove(UserKey key, Subscription subscription) {
@@ -154,7 +153,7 @@ public final class ActivityEventStreamFacade {
                             try {
                                 emitter.send(
                                         SseEmitter.event()
-                                                .name(EVENT_ACTIVITY_SNAPSHOT)
+                                                .name(ActivityEventType.SNAPSHOT.value())
                                                 .data(snapshot, MediaType.APPLICATION_JSON));
                             } catch (IOException | IllegalStateException failure) {
                                 remove(new UserKey(operator.tenantId(), operator.userId()), this);
@@ -188,11 +187,14 @@ public final class ActivityEventStreamFacade {
     private record Fingerprint(long orderingVersion, List<ActivityItem> sessions) {}
 
     public record ActivitySnapshot(
-            String type, long orderingVersion, List<ActivityItem> sessions, Instant snapshotAt) {}
+            ActivityEventType type,
+            long orderingVersion,
+            List<ActivityItem> sessions,
+            Instant snapshotAt) {}
 
     public record ActivityItem(
             String conversationSessionId,
-            String status,
+            SessionActivityStatus status,
             boolean unread,
             long lastNotifiableEventSequence,
             long sortOrder,

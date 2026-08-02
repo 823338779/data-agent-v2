@@ -13,6 +13,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 import tools.jackson.databind.ObjectMapper;
 
 /** 在本地详细 SSE registry 与按会话 Redis Pub/Sub channel 之间转发瞬时 delta。 */
@@ -62,6 +64,12 @@ public final class RedisExecutionDeltaBridge
         } catch (RuntimeException failure) {
             return false;
         }
+    }
+
+    /** 数据库检查点提交成功后再发布 delta，避免客户端观察到已回滚的瞬时状态。 */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void publishAfterCommit(AgentExecutionDeltaNotification envelope) {
+        publish(envelope);
     }
 
     @Override

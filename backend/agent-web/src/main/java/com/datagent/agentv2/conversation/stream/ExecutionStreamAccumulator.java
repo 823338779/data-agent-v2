@@ -1,5 +1,6 @@
 package com.datagent.agentv2.conversation.stream;
 
+import com.datagent.agentv2.conversation.execution.ExecutionPhase;
 import com.datagent.agentv2.conversation.model.ModelOutputDelta;
 import java.time.Duration;
 import java.time.Instant;
@@ -9,8 +10,6 @@ public final class ExecutionStreamAccumulator {
 
     public static final Duration MAX_CHECKPOINT_INTERVAL = Duration.ofMillis(250);
     public static final int MAX_UNCHECKPOINTED_CHARACTERS = 512;
-    private static final String PHASE_THINKING = "THINKING";
-    private static final String PHASE_ANSWERING = "ANSWERING";
 
     private final long executionAttemptNumber;
     private final long modelInvocationSequence;
@@ -20,7 +19,7 @@ public final class ExecutionStreamAccumulator {
     private int uncheckpointedCharacters;
     private boolean phaseBoundaryReached;
     private Instant checkpointedAt;
-    private String phase;
+    private ExecutionPhase phase;
 
     public ExecutionStreamAccumulator(
             long executionAttemptNumber,
@@ -35,7 +34,7 @@ public final class ExecutionStreamAccumulator {
         this.outputDeltaSequence = outputDeltaSequence;
         this.reasoning = new StringBuilder(reasoning);
         this.answer = new StringBuilder(answer);
-        this.phase = phase;
+        this.phase = ExecutionPhase.fromValue(phase);
         this.checkpointedAt = checkpointedAt;
     }
 
@@ -43,9 +42,11 @@ public final class ExecutionStreamAccumulator {
     public long append(ModelOutputDelta delta) {
         outputDeltaSequence++;
         uncheckpointedCharacters += delta.content().length();
-        String nextPhase =
-                delta.kind() == ModelOutputDelta.Kind.REASONING ? PHASE_THINKING : PHASE_ANSWERING;
-        phaseBoundaryReached = isStreamingPhase(phase) && !phase.equals(nextPhase);
+        ExecutionPhase nextPhase =
+                delta.kind() == ModelOutputDelta.Kind.REASONING
+                        ? ExecutionPhase.THINKING
+                        : ExecutionPhase.ANSWERING;
+        phaseBoundaryReached = isStreamingPhase(phase) && phase != nextPhase;
         if (delta.kind() == ModelOutputDelta.Kind.REASONING) {
             reasoning.append(delta.content());
         } else {
@@ -93,11 +94,11 @@ public final class ExecutionStreamAccumulator {
         return answer.toString();
     }
 
-    public String phase() {
+    public ExecutionPhase phase() {
         return phase;
     }
 
-    private static boolean isStreamingPhase(String value) {
-        return PHASE_THINKING.equals(value) || PHASE_ANSWERING.equals(value);
+    private static boolean isStreamingPhase(ExecutionPhase value) {
+        return value == ExecutionPhase.THINKING || value == ExecutionPhase.ANSWERING;
     }
 }

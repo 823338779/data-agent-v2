@@ -3,6 +3,8 @@ package com.datagent.agentv2.conversation.stream;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotification;
+import com.datagent.agentv2.conversation.cluster.ExecutionDeltaNotificationType;
+import com.datagent.agentv2.conversation.cluster.ExecutionDeltaType;
 import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
@@ -104,14 +106,14 @@ class ConversationSseIntegrationTest {
 
     private static AgentExecutionDeltaNotification delta(String executionId, long sequence) {
         return new AgentExecutionDeltaNotification(
-                AgentExecutionDeltaNotification.TYPE_STREAM_DELTA,
+                ExecutionDeltaNotificationType.STREAM_DELTA,
                 TENANT_ID,
                 SESSION_ID,
                 executionId,
                 1,
                 1,
                 sequence,
-                AgentExecutionDeltaNotification.DELTA_REASONING,
+                ExecutionDeltaType.REASONING,
                 "d" + sequence,
                 STARTED_AT.plusMillis(sequence));
     }

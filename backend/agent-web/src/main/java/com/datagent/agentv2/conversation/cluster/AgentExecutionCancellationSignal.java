@@ -1,7 +1,5 @@
 package com.datagent.agentv2.conversation.cluster;
 
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.CONTROL_CANCEL;
-
 import java.time.Instant;
 import java.util.Objects;
 
@@ -14,7 +12,7 @@ public record AgentExecutionCancellationSignal(
         long executionAttemptNumber,
         long controlVersion,
         Instant requestedAt,
-        String type) {
+        ExecutionControlType type) {
 
     public AgentExecutionCancellationSignal {
         Objects.requireNonNull(notificationMessageId, "notificationMessageId");
@@ -22,7 +20,8 @@ public record AgentExecutionCancellationSignal(
         Objects.requireNonNull(executionId, "executionId");
         Objects.requireNonNull(ownerInstanceId, "ownerInstanceId");
         Objects.requireNonNull(requestedAt, "requestedAt");
-        if (!CONTROL_CANCEL.equals(type) || executionAttemptNumber < 1 || controlVersion < 1) {
+        Objects.requireNonNull(type, "type");
+        if (executionAttemptNumber < 1 || controlVersion < 1) {
             throw new IllegalArgumentException("invalid Agent execution cancellation signal");
         }
     }

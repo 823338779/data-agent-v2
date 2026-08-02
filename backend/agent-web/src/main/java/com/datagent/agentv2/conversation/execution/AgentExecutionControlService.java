@@ -1,31 +1,19 @@
-package com.datagent.agentv2.conversation.application;
+package com.datagent.agentv2.conversation.execution;
 
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.AGGREGATE_EXECUTION;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.CONTROL_CANCEL;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.EMPTY_TEXT;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ERROR_AGENT_EXECUTION_NOT_FOUND;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ERROR_CONVERSATION_SESSION_NOT_FOUND;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ERROR_EXECUTION_CANNOT_BE_CANCELLED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ERROR_IDEMPOTENCY_KEY_BLANK;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ERROR_ONLY_TERMINAL_EXECUTIONS_RETRY;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.EVENT_EXECUTION_QUEUED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ID_PREFIX_EXECUTION;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ID_PREFIX_EXECUTION_EVENT;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ID_PREFIX_EXECUTION_STREAM_CHECKPOINT;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ID_PREFIX_NOTIFICATION_MESSAGE;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.NOTIFICATION_EXECUTION_CANCELLATION_REQUESTED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.PHASE_QUEUED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.REQUEST_EXECUTION_RETRY;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.REQUEST_ID_UNKNOWN;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_CANCELLED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_DONE;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_FAILED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_QUEUED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_RUNNING;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_WAITING_CONFIRMATION;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_WAITING_FOR_USER;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EMPTY_TEXT;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_AGENT_EXECUTION_NOT_FOUND;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_CONVERSATION_SESSION_NOT_FOUND;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_EXECUTION_CANNOT_BE_CANCELLED;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_IDEMPOTENCY_KEY_BLANK;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_ONLY_TERMINAL_EXECUTIONS_RETRY;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_EXECUTION;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_EXECUTION_EVENT;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_EXECUTION_STREAM_CHECKPOINT;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_NOTIFICATION_MESSAGE;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.REQUEST_ID_UNKNOWN;
 
 import com.datagent.agentv2.conversation.cluster.AgentExecutionCancellationSignal;
+import com.datagent.agentv2.conversation.cluster.ExecutionControlType;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
@@ -40,22 +28,26 @@ import com.datagent.agentv2.persistence.service.NotificationOutboxMessageService
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
-import java.util.Objects;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
-public final class AgentExecutionControlService {
+public class AgentExecutionControlService {
 
     private static final Set<String> DIRECT_CANCELLATION_STATUSES =
-            Set.of(STATUS_QUEUED, STATUS_WAITING_FOR_USER, STATUS_WAITING_CONFIRMATION);
+            Set.of(
+                    ExecutionStatus.QUEUED.value(),
+                    ExecutionStatus.WAITING_FOR_USER.value(),
+                    ExecutionStatus.WAITING_CONFIRMATION.value());
     private static final Set<String> TERMINAL_STATUSES =
-            Set.of(STATUS_DONE, STATUS_CANCELLED, STATUS_FAILED);
+            Set.of(
+                    ExecutionStatus.DONE.value(),
+                    ExecutionStatus.CANCELLED.value(),
+                    ExecutionStatus.FAILED.value());
 
     private final ConversationSessionService sessions;
     private final AgentExecutionService agentExecutions;
@@ -65,7 +57,6 @@ public final class AgentExecutionControlService {
     private final NotificationOutboxMessageService outbox;
     private final IdGenerator ids;
     private final ObjectMapper json;
-    private final TransactionTemplate transactions;
 
     public AgentExecutionControlService(
             ConversationSessionService sessions,
@@ -75,8 +66,7 @@ public final class AgentExecutionControlService {
             AgentExecutionStreamCheckpointService streamCheckpoints,
             NotificationOutboxMessageService outbox,
             IdGenerator ids,
-            ObjectMapper json,
-            PlatformTransactionManager transactionManager) {
+            ObjectMapper json) {
         this.sessions = sessions;
         this.agentExecutions = agentExecutions;
         this.events = events;
@@ -85,23 +75,20 @@ public final class AgentExecutionControlService {
         this.outbox = outbox;
         this.ids = ids;
         this.json = json;
-        this.transactions = new TransactionTemplate(transactionManager);
     }
 
+    @Transactional
     public AgentExecution cancel(String conversationSessionId, String executionId) {
-        return Objects.requireNonNull(
-                transactions.execute(ignored -> cancelLocked(conversationSessionId, executionId)));
+        return cancelLocked(conversationSessionId, executionId);
     }
 
+    @Transactional
     public AgentExecution retry(
             String conversationSessionId, String executionId, String idempotencyKey) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_IDEMPOTENCY_KEY_BLANK);
         }
-        return Objects.requireNonNull(
-                transactions.execute(
-                        ignored ->
-                                retryLocked(conversationSessionId, executionId, idempotencyKey)));
+        return retryLocked(conversationSessionId, executionId, idempotencyKey);
     }
 
     private AgentExecution cancelLocked(String conversationSessionId, String executionId) {
@@ -111,19 +98,19 @@ public final class AgentExecutionControlService {
         }
         Instant now = Instant.now();
         if (DIRECT_CANCELLATION_STATUSES.contains(run.getStatus())) {
-            run.cancelDirectly(STATUS_CANCELLED, now);
+            run.cancelDirectly(ExecutionStatus.CANCELLED.value(), now);
             agentExecutions.updateById(run);
             if (run.getExecutionAttemptNumber() > 0) {
                 attempts.finish(
                         run.getExecutionId(),
                         run.getExecutionAttemptNumber(),
-                        STATUS_CANCELLED,
+                        ExecutionStatus.CANCELLED.value(),
                         now,
                         null);
             }
             return run;
         }
-        if (!STATUS_RUNNING.equals(run.getStatus())) {
+        if (!ExecutionStatus.RUNNING.value().equals(run.getStatus())) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT, ERROR_EXECUTION_CANNOT_BE_CANCELLED);
         }
@@ -146,7 +133,9 @@ public final class AgentExecutionControlService {
         String payloadHash = AgentExecutionSubmissionService.payloadHash(executionId);
         AgentExecution replay =
                 agentExecutions.findRequest(
-                        conversationSessionId, REQUEST_EXECUTION_RETRY, idempotencyKey);
+                        conversationSessionId,
+                        ExecutionRequestType.EXECUTION_RETRY.value(),
+                        idempotencyKey);
         if (replay != null) {
             if (!payloadHash.equals(replay.getRequestPayloadHash())) {
                 throw new IdempotencyKeyReusedException();
@@ -171,11 +160,11 @@ public final class AgentExecutionControlService {
                         original,
                         REQUEST_ID_UNKNOWN,
                         now,
-                        REQUEST_EXECUTION_RETRY,
+                        ExecutionRequestType.EXECUTION_RETRY.value(),
                         idempotencyKey,
                         payloadHash,
-                        STATUS_QUEUED,
-                        PHASE_QUEUED);
+                        ExecutionStatus.QUEUED.value(),
+                        ExecutionPhase.QUEUED.value());
         agentExecutions.save(retry);
 
         events.save(
@@ -184,7 +173,7 @@ public final class AgentExecutionControlService {
                         conversationSessionId,
                         retry.getExecutionId(),
                         sessions.nextExecutionEventSequence(conversationSessionId),
-                        EVENT_EXECUTION_QUEUED,
+                        ExecutionEventType.QUEUED.value(),
                         null,
                         now));
 
@@ -192,7 +181,7 @@ public final class AgentExecutionControlService {
                 AgentExecutionStreamCheckpoint.initial(
                         ids.next(ID_PREFIX_EXECUTION_STREAM_CHECKPOINT),
                         retry.getExecutionId(),
-                        PHASE_QUEUED,
+                        ExecutionPhase.QUEUED.value(),
                         EMPTY_TEXT,
                         EMPTY_TEXT));
         return retry;
@@ -219,10 +208,10 @@ public final class AgentExecutionControlService {
                         run.getExecutionAttemptNumber(),
                         run.getVersion(),
                         requestedAt,
-                        CONTROL_CANCEL);
+                        ExecutionControlType.CANCEL);
         NotificationOutboxMessageEntity notification = new NotificationOutboxMessageEntity();
-        notification.setNotificationType(NOTIFICATION_EXECUTION_CANCELLATION_REQUESTED);
-        notification.setAggregateType(AGGREGATE_EXECUTION);
+        notification.setNotificationType(ExecutionNotificationType.CANCELLATION_REQUESTED.value());
+        notification.setAggregateType(ExecutionAggregateType.AGENT_EXECUTION.value());
         notification.setNotificationMessageId(notificationMessageId);
         notification.setAggregateId(run.getExecutionId());
         notification.setAggregateVersion(run.getVersion());

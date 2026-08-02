@@ -1,7 +1,6 @@
 package com.datagent.agentv2.conversation.cluster;
 
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.NOTIFICATION_EXECUTION_CANCELLATION_REQUESTED;
-
+import com.datagent.agentv2.conversation.execution.ExecutionNotificationType;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeProperties;
 import com.datagent.agentv2.persistence.entity.NotificationOutboxMessageEntity;
 import com.datagent.agentv2.persistence.service.NotificationOutboxMessageService;
@@ -64,7 +63,10 @@ public final class ExecutionCancellationOutboxPublisher {
         Instant now = Instant.now();
         int published = 0;
         for (NotificationOutboxMessageEntity notification :
-                outbox.due(NOTIFICATION_EXECUTION_CANCELLATION_REQUESTED, now, BATCH_SIZE)) {
+                outbox.due(
+                        ExecutionNotificationType.CANCELLATION_REQUESTED.value(),
+                        now,
+                        BATCH_SIZE)) {
             try {
                 AgentExecutionCancellationSignal envelope =
                         json.readValue(

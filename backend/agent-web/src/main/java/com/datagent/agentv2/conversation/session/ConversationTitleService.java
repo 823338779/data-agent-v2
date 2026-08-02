@@ -1,4 +1,4 @@
-package com.datagent.agentv2.conversation.application;
+package com.datagent.agentv2.conversation.session;
 
 import com.datagent.agentv2.conversation.domain.ConversationSession;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
@@ -15,7 +15,8 @@ public class ConversationTitleService {
 
     private static final int MAX_TITLE_LENGTH = 120;
     private static final String EMPTY_TEXT = "";
-    private static final String ERROR_INVALID_TITLE = "Conversation title must contain 1-120 characters";
+    private static final String ERROR_INVALID_TITLE =
+            "Conversation title must contain 1-120 characters";
     private static final String ERROR_NOT_FOUND = "Conversation session not found";
     private static final String ERROR_VERSION_CONFLICT = "Conversation session version is stale";
 

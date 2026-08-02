@@ -199,8 +199,7 @@ class ContractPathsTest {
                 .isEqualTo("#/components/schemas/RenameConversationSessionRequest");
         JsonNode renameRequest = schemas.path("RenameConversationSessionRequest");
         assertThat(renameRequest.path("additionalProperties").asBoolean()).isFalse();
-        assertThat(renameRequest.path("required").toString())
-                .contains("title", "expectedVersion");
+        assertThat(renameRequest.path("required").toString()).contains("title", "expectedVersion");
 
         // reorder 必须提交完整可见集合及乐观锁版本，冲突码与执行冲突保持独立。
         JsonNode reorderRequest = schemas.path("ReorderConversationSessionsRequest");

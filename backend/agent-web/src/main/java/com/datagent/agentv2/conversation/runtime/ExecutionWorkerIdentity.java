@@ -1,6 +1,6 @@
 package com.datagent.agentv2.conversation.runtime;
 
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.INSTANCE_ID_PREFIX;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.INSTANCE_ID_PREFIX;
 
 import java.util.UUID;
 import org.springframework.stereotype.Component;

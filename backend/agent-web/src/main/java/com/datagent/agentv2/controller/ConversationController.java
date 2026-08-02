@@ -1,10 +1,11 @@
-package com.datagent.agentv2.web.conversation;
+package com.datagent.agentv2.controller;
 
 import com.datagent.agentv2.conversation.activity.ActivityEventStreamFacade;
-import com.datagent.agentv2.conversation.application.AgentExecutionControlService;
-import com.datagent.agentv2.conversation.application.ConversationApplicationService;
-import com.datagent.agentv2.conversation.application.ConversationTitleService;
-import com.datagent.agentv2.conversation.application.ConversationView;
+import com.datagent.agentv2.conversation.execution.AgentExecutionControlService;
+import com.datagent.agentv2.conversation.session.ConversationApplicationService;
+import com.datagent.agentv2.conversation.session.ConversationTitleService;
+import com.datagent.agentv2.conversation.session.ConversationView;
+import com.datagent.agentv2.conversation.stream.ConversationEventStreamFacade;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -15,8 +16,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;

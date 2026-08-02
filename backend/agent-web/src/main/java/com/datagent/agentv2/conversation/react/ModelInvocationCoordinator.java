@@ -1,22 +1,22 @@
 package com.datagent.agentv2.conversation.react;
 
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.EVENT_EXECUTION_DONE;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ID_PREFIX_CONVERSATION_MESSAGE;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ID_PREFIX_EXECUTION_EVENT;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.MESSAGE_ROLE_ASSISTANT;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.MESSAGE_VISIBILITY_INTERNAL;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.MESSAGE_VISIBILITY_USER;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_CONVERSATION_MESSAGE;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_EXECUTION_EVENT;
 
 import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotification;
-import com.datagent.agentv2.conversation.cluster.RedisExecutionDeltaBridge;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.execution.ExecutionEventType;
+import com.datagent.agentv2.conversation.message.MessageRole;
+import com.datagent.agentv2.conversation.message.MessageVisibility;
+import com.datagent.agentv2.conversation.model.ModelInvocationStatus;
 import com.datagent.agentv2.conversation.model.ModelOutputDelta;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
 import com.datagent.agentv2.conversation.stream.ExecutionStreamCheckpointCoordinator;
+import com.datagent.agentv2.conversation.tool.ToolExecutionStatus;
 import com.datagent.agentv2.persistence.entity.ModelInvocationEntity;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionAttemptService;
@@ -30,20 +30,16 @@ import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
 import java.util.List;
-import java.util.Objects;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 @Service
-public final class ModelInvocationCoordinator {
+public class ModelInvocationCoordinator {
 
-    private static final String STATUS_STREAMING = "streaming";
-    private static final String STATUS_COMPLETED = "completed";
-    private static final String STATUS_PREPARED = "prepared";
     private static final String ID_PREFIX_MODEL_INVOCATION = "model_invocation";
     private static final int TOOL_CALL_DOCUMENT_VERSION = 1;
 
@@ -54,13 +50,12 @@ public final class ModelInvocationCoordinator {
     private final AgentExecutionService agentExecutions;
     private final AgentExecutionStreamCheckpointService persistedStreamCheckpoints;
     private final ExecutionStreamCheckpointCoordinator streamCheckpointCoordinator;
-    private final RedisExecutionDeltaBridge streamDeltaBridge;
+    private final ApplicationEventPublisher applicationEvents;
     private final AgentExecutionEventService events;
     private final AgentExecutionAttemptService attempts;
     private final IdGenerator ids;
     private final ObjectMapper json;
     private final ReactLimitsProperties limits;
-    private final TransactionTemplate transactions;
 
     public ModelInvocationCoordinator(
             ModelInvocationService modelInvocations,
@@ -70,13 +65,12 @@ public final class ModelInvocationCoordinator {
             AgentExecutionService agentExecutions,
             AgentExecutionStreamCheckpointService persistedStreamCheckpoints,
             ExecutionStreamCheckpointCoordinator streamCheckpointCoordinator,
-            RedisExecutionDeltaBridge streamDeltaBridge,
+            ApplicationEventPublisher applicationEvents,
             AgentExecutionEventService events,
             AgentExecutionAttemptService attempts,
             IdGenerator ids,
             ObjectMapper json,
-            ReactLimitsProperties limits,
-            PlatformTransactionManager transactionManager) {
+            ReactLimitsProperties limits) {
         this.modelInvocations = modelInvocations;
         this.toolExecutions = toolExecutions;
         this.messages = messages;
@@ -84,25 +78,24 @@ public final class ModelInvocationCoordinator {
         this.agentExecutions = agentExecutions;
         this.persistedStreamCheckpoints = persistedStreamCheckpoints;
         this.streamCheckpointCoordinator = streamCheckpointCoordinator;
-        this.streamDeltaBridge = streamDeltaBridge;
+        this.applicationEvents = applicationEvents;
         this.events = events;
         this.attempts = attempts;
         this.ids = ids;
         this.json = json;
         this.limits = limits;
-        this.transactions = new TransactionTemplate(transactionManager);
     }
 
+    @Transactional
     public ModelInvocationBoundary beginModelInvocation(
             AgentExecutionPort.ClaimedAgentExecution run) {
         return beginModelInvocation(run, null);
     }
 
+    @Transactional
     public ModelInvocationBoundary beginModelInvocation(
             AgentExecutionPort.ClaimedAgentExecution run, Long recoveredInputBoundary) {
-        return Objects.requireNonNull(
-                transactions.execute(
-                        ignored -> beginModelInvocationLocked(run, recoveredInputBoundary)));
+        return beginModelInvocationLocked(run, recoveredInputBoundary);
     }
 
     private ModelInvocationBoundary beginModelInvocationLocked(
@@ -122,7 +115,7 @@ public final class ModelInvocationCoordinator {
         modelInvocation.setExecutionAttemptNumber(run.executionAttemptNumber());
         modelInvocation.setInputUpToConversationMessageSequence(
                 inputUpToConversationMessageSequence);
-        modelInvocation.setStatus(STATUS_STREAMING);
+        modelInvocation.setStatus(ModelInvocationStatus.STREAMING.value());
         modelInvocation.setStartedAt(now);
         modelInvocation.setVersion(0L);
         modelInvocations.save(modelInvocation);
@@ -132,12 +125,12 @@ public final class ModelInvocationCoordinator {
                 modelInvocationSequence, inputUpToConversationMessageSequence);
     }
 
+    @Transactional
     public void checkpoint(
             AgentExecutionPort.ClaimedAgentExecution run,
             ModelInvocationBoundary boundary,
             ModelOutputDelta delta) {
-        transactions.executeWithoutResult(
-                ignored -> checkpointLocked(run, boundary, delta, Instant.now()));
+        checkpointLocked(run, boundary, delta, Instant.now());
     }
 
     private void checkpointLocked(
@@ -150,7 +143,7 @@ public final class ModelInvocationCoordinator {
         ExecutionStreamCheckpointCoordinator.PublishedDelta published =
                 streamCheckpointCoordinator.append(
                         run, boundary.modelInvocationSequence(), delta, now);
-        streamDeltaBridge.publish(AgentExecutionDeltaNotification.from(published));
+        applicationEvents.publishEvent(AgentExecutionDeltaNotification.from(published));
         if (!reasoning.isEmpty()) {
             ModelInvocationEntity modelInvocation =
                     modelInvocations.findModelInvocation(
@@ -169,12 +162,12 @@ public final class ModelInvocationCoordinator {
         }
     }
 
+    @Transactional
     public void archiveToolCalls(
             AgentExecutionPort.ClaimedAgentExecution run,
             ModelInvocationBoundary boundary,
             List<ModelToolCall> calls) {
-        transactions.executeWithoutResult(
-                ignored -> archiveToolCallsLocked(run, boundary, calls, Instant.now()));
+        archiveToolCallsLocked(run, boundary, calls, Instant.now());
     }
 
     private void archiveToolCallsLocked(
@@ -189,7 +182,8 @@ public final class ModelInvocationCoordinator {
                 ExecutionStreamCheckpointCoordinator.Boundary.MODEL_INVOCATION,
                 now);
         finishModelInvocation(run, boundary, now);
-        ConversationMessage assistant = assistantMessage(owned, MESSAGE_VISIBILITY_INTERNAL, "");
+        ConversationMessage assistant =
+                assistantMessage(owned, MessageVisibility.INTERNAL.value(), "");
         assistant.attachToolCalls(toolCallsJson(calls));
         messages.save(assistant);
 
@@ -207,12 +201,12 @@ public final class ModelInvocationCoordinator {
         toolExecutions.saveBatch(prepared);
     }
 
+    @Transactional
     public void completeFinalAnswer(
             AgentExecutionPort.ClaimedAgentExecution run,
             ModelInvocationBoundary boundary,
             String answer) {
-        transactions.executeWithoutResult(
-                ignored -> completeFinalAnswerLocked(run, boundary, answer, Instant.now()));
+        completeFinalAnswerLocked(run, boundary, answer, Instant.now());
     }
 
     private void completeFinalAnswerLocked(
@@ -239,20 +233,24 @@ public final class ModelInvocationCoordinator {
                 now)) {
             throw new ExecutionOwnershipLostException(run.executionId());
         }
-        messages.save(assistantMessage(owned, MESSAGE_VISIBILITY_USER, answer));
+        messages.save(assistantMessage(owned, MessageVisibility.USER.value(), answer));
         if (!agentExecutions.completeOwned(
                 run.executionId(), run.ownerInstanceId(), run.executionAttemptNumber(), now)) {
             throw new ExecutionOwnershipLostException(run.executionId());
         }
         attempts.finish(
-                run.executionId(), run.executionAttemptNumber(), STATUS_COMPLETED, now, null);
+                run.executionId(),
+                run.executionAttemptNumber(),
+                ModelInvocationStatus.COMPLETED.value(),
+                now,
+                null);
         events.save(
                 AgentExecutionEvent.occurred(
                         ids.next(ID_PREFIX_EXECUTION_EVENT),
                         owned.getConversationSessionId(),
                         run.executionId(),
                         sessions.nextExecutionEventSequence(owned.getConversationSessionId()),
-                        EVENT_EXECUTION_DONE,
+                        ExecutionEventType.DONE.value(),
                         null,
                         now));
     }
@@ -270,7 +268,7 @@ public final class ModelInvocationCoordinator {
                         boundary.modelInvocationSequence(),
                         run.executionAttemptNumber(),
                         modelInvocation.getVersion(),
-                        STATUS_COMPLETED,
+                        ModelInvocationStatus.COMPLETED.value(),
                         now,
                         run.ownerInstanceId())) {
             throw new ExecutionOwnershipLostException(run.executionId());
@@ -285,7 +283,7 @@ public final class ModelInvocationCoordinator {
                 run.getExecutionId(),
                 content,
                 sessions.nextConversationMessageSequence(run.getConversationSessionId()),
-                MESSAGE_ROLE_ASSISTANT,
+                MessageRole.ASSISTANT.value(),
                 visibility);
     }
 
@@ -302,7 +300,7 @@ public final class ModelInvocationCoordinator {
         execution.setAssistantConversationMessageId(assistantConversationMessageId);
         execution.setToolCallId(call.toolCallId());
         execution.setToolName(call.name());
-        execution.setStatus(STATUS_PREPARED);
+        execution.setStatus(ToolExecutionStatus.PREPARED.value());
         execution.setExecutionCount(0);
         execution.setVersion(0L);
         return execution;

@@ -1,7 +1,6 @@
 package com.datagent.agentv2.conversation.stream;
 
 import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeProperties;
-import com.datagent.agentv2.web.conversation.ConversationEventStreamFacade;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;

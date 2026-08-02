@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.message.MessageRole;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ToolExecutionService;
@@ -49,7 +50,12 @@ class ConversationContextLoaderIntegrationTest {
 
         assertThat(context)
                 .extracting(ModelInputMessage::role)
-                .containsExactly("system", "user", "assistant", "tool", "assistant");
+                .containsExactly(
+                        MessageRole.SYSTEM,
+                        MessageRole.USER,
+                        MessageRole.ASSISTANT,
+                        MessageRole.TOOL,
+                        MessageRole.ASSISTANT);
         assertThat(context.get(2).toolCalls())
                 .containsExactly(
                         new ModelToolCall(

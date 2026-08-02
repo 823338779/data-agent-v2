@@ -1,11 +1,12 @@
 package com.datagent.agentv2.conversation.react;
 
+import com.datagent.agentv2.conversation.message.MessageRole;
 import java.util.List;
 import java.util.Objects;
 
 /** 一条不可变模型输入消息；toolCalls 与 tool 元数据互斥。 */
 public record ModelInputMessage(
-        String role,
+        MessageRole role,
         String content,
         List<ModelToolCall> toolCalls,
         String toolCallId,
@@ -18,14 +19,14 @@ public record ModelInputMessage(
     }
 
     public static ModelInputMessage plain(String role, String content) {
-        return new ModelInputMessage(role, content, List.of(), null, null);
+        return new ModelInputMessage(MessageRole.fromValue(role), content, List.of(), null, null);
     }
 
     public static ModelInputMessage assistantToolCalls(List<ModelToolCall> toolCalls) {
-        return new ModelInputMessage("assistant", "", toolCalls, null, null);
+        return new ModelInputMessage(MessageRole.ASSISTANT, "", toolCalls, null, null);
     }
 
     public static ModelInputMessage tool(String content, String toolCallId, String toolName) {
-        return new ModelInputMessage("tool", content, List.of(), toolCallId, toolName);
+        return new ModelInputMessage(MessageRole.TOOL, content, List.of(), toolCallId, toolName);
     }
 }

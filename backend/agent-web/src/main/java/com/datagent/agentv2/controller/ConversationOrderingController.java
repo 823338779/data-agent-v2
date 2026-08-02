@@ -1,7 +1,7 @@
-package com.datagent.agentv2.web.conversation;
+package com.datagent.agentv2.controller;
 
-import com.datagent.agentv2.conversation.application.ConversationApplicationService;
-import com.datagent.agentv2.conversation.application.ConversationView;
+import com.datagent.agentv2.conversation.session.ConversationApplicationService;
+import com.datagent.agentv2.conversation.session.ConversationView;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;

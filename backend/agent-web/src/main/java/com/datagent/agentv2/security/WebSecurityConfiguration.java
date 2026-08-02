@@ -1,4 +1,4 @@
-package com.datagent.agentv2.web.auth;
+package com.datagent.agentv2.security;
 
 import static org.springframework.security.config.http.SessionCreationPolicy.STATELESS;
 

@@ -7,10 +7,6 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 public final class ToolFailureSanitizer {
 
-    private static final String CODE_INVALID_ARGUMENTS = "invalid_arguments";
-    private static final String CODE_ACCESS_DENIED = "access_denied";
-    private static final String CODE_TIMEOUT = "timeout";
-    private static final String CODE_TOOL_ERROR = "tool_error";
     private static final String MESSAGE_INVALID_ARGUMENTS = "Tool arguments are invalid";
     private static final String MESSAGE_ACCESS_DENIED = "Tool access was denied";
     private static final String MESSAGE_TIMEOUT = "Tool execution timed out";
@@ -23,14 +19,16 @@ public final class ToolFailureSanitizer {
             return ToolExecutionResult.failed(business.code(), business.safeMessage());
         }
         if (failure instanceof IllegalArgumentException) {
-            return ToolExecutionResult.failed(CODE_INVALID_ARGUMENTS, MESSAGE_INVALID_ARGUMENTS);
+            return ToolExecutionResult.failed(
+                    ToolFailureCode.INVALID_ARGUMENTS.value(), MESSAGE_INVALID_ARGUMENTS);
         }
         if (failure instanceof SecurityException) {
-            return ToolExecutionResult.failed(CODE_ACCESS_DENIED, MESSAGE_ACCESS_DENIED);
+            return ToolExecutionResult.failed(
+                    ToolFailureCode.ACCESS_DENIED.value(), MESSAGE_ACCESS_DENIED);
         }
         if (failure instanceof TimeoutException) {
-            return ToolExecutionResult.failed(CODE_TIMEOUT, MESSAGE_TIMEOUT);
+            return ToolExecutionResult.failed(ToolFailureCode.TIMEOUT.value(), MESSAGE_TIMEOUT);
         }
-        return ToolExecutionResult.failed(CODE_TOOL_ERROR, MESSAGE_TOOL_ERROR);
+        return ToolExecutionResult.failed(ToolFailureCode.TOOL_ERROR.value(), MESSAGE_TOOL_ERROR);
     }
 }

@@ -1,45 +1,34 @@
 package com.datagent.agentv2.conversation.runtime;
 
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.FAILURE_EXECUTION_DEADLINE_EXCEEDED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.FAILURE_LEASE_EXPIRED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.FAILURE_RECOVERY_EXHAUSTED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.RESUME_LEASE_TAKEOVER;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_CANCELLED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_FAILED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_LOST;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.STATUS_RUNNING;
-
 import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.execution.ExecutionFailureCode;
+import com.datagent.agentv2.conversation.execution.ExecutionResumeReason;
+import com.datagent.agentv2.conversation.execution.ExecutionStatus;
 import com.datagent.agentv2.persistence.entity.AgentExecutionAttemptEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionAttemptService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Objects;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
-public final class AgentExecutionLeaseService {
+public class AgentExecutionLeaseService {
 
     private static final int MAX_INFRASTRUCTURE_RECOVERY_ATTEMPTS = 3;
 
     private final AgentExecutionService agentExecutions;
     private final AgentExecutionAttemptService attempts;
     private final AgentExecutionRuntimeProperties properties;
-    private final TransactionTemplate transactions;
 
     public AgentExecutionLeaseService(
             AgentExecutionService agentExecutions,
             AgentExecutionAttemptService attempts,
-            AgentExecutionRuntimeProperties properties,
-            PlatformTransactionManager transactionManager) {
+            AgentExecutionRuntimeProperties properties) {
         this.agentExecutions = agentExecutions;
         this.attempts = attempts;
         this.properties = properties;
-        this.transactions = new TransactionTemplate(transactionManager);
     }
 
     public boolean heartbeat(AgentExecutionPort.ClaimedAgentExecution run) {
@@ -63,9 +52,9 @@ public final class AgentExecutionLeaseService {
             attempts.finish(
                     run.executionId(),
                     run.executionAttemptNumber(),
-                    STATUS_FAILED,
+                    ExecutionStatus.FAILED.value(),
                     now,
-                    FAILURE_EXECUTION_DEADLINE_EXCEEDED);
+                    ExecutionFailureCode.DEADLINE_EXCEEDED.value());
             throw new ExecutionDeadlineExceededException(run.executionId());
         }
         throw new ExecutionOwnershipLostException(run.executionId());
@@ -83,13 +72,17 @@ public final class AgentExecutionLeaseService {
             return false;
         }
         attempts.finish(
-                run.executionId(), run.executionAttemptNumber(), STATUS_CANCELLED, now, null);
+                run.executionId(),
+                run.executionAttemptNumber(),
+                ExecutionStatus.CANCELLED.value(),
+                now,
+                null);
         return true;
     }
 
+    @Transactional
     public RecoveryResult takeoverNext(String newOwnerInstanceId) {
-        return Objects.requireNonNull(
-                transactions.execute(ignored -> takeoverLocked(newOwnerInstanceId)));
+        return takeoverLocked(newOwnerInstanceId);
     }
 
     private RecoveryResult takeoverLocked(String newOwnerInstanceId) {
@@ -105,9 +98,9 @@ public final class AgentExecutionLeaseService {
                 attempts.finish(
                         run.getExecutionId(),
                         run.getExecutionAttemptNumber(),
-                        STATUS_FAILED,
+                        ExecutionStatus.FAILED.value(),
                         now,
-                        FAILURE_RECOVERY_EXHAUSTED);
+                        ExecutionFailureCode.RECOVERY_EXHAUSTED.value());
                 return RecoveryResult.terminal();
             }
             return RecoveryResult.none();
@@ -117,9 +110,9 @@ public final class AgentExecutionLeaseService {
                 attempts.finish(
                         run.getExecutionId(),
                         run.getExecutionAttemptNumber(),
-                        STATUS_FAILED,
+                        ExecutionStatus.FAILED.value(),
                         now,
-                        FAILURE_EXECUTION_DEADLINE_EXCEEDED);
+                        ExecutionFailureCode.DEADLINE_EXCEEDED.value());
                 return RecoveryResult.terminal();
             }
             return RecoveryResult.none();
@@ -140,16 +133,16 @@ public final class AgentExecutionLeaseService {
         attempts.finish(
                 run.getExecutionId(),
                 run.getExecutionAttemptNumber(),
-                STATUS_LOST,
+                ExecutionStatus.LOST.value(),
                 now,
-                FAILURE_LEASE_EXPIRED);
+                ExecutionFailureCode.LEASE_EXPIRED.value());
 
         AgentExecutionAttemptEntity attempt = new AgentExecutionAttemptEntity();
         attempt.setExecutionId(run.getExecutionId());
         attempt.setExecutionAttemptNumber(nextAttempt);
         attempt.setOwnerInstanceId(newOwnerInstanceId);
-        attempt.setStatus(STATUS_RUNNING);
-        attempt.setResumeReason(RESUME_LEASE_TAKEOVER);
+        attempt.setStatus(ExecutionStatus.RUNNING.value());
+        attempt.setResumeReason(ExecutionResumeReason.LEASE_TAKEOVER.name());
         attempt.setStartedAt(now);
         attempt.setVersion(0L);
         attempts.insert(attempt);

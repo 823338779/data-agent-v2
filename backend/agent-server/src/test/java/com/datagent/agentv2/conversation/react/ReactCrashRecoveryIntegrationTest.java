@@ -18,9 +18,6 @@ import com.datagent.agentv2.persistence.service.ModelInvocationService;
 import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.TransactionStatus;
 
 class ReactCrashRecoveryIntegrationTest {
 
@@ -32,12 +29,7 @@ class ReactCrashRecoveryIntegrationTest {
     private final ToolExecutionService toolExecutions = mock(ToolExecutionService.class);
     private final ConversationMessageService messages = mock(ConversationMessageService.class);
     private final ReactRecoveryPlanner planner =
-            new ReactRecoveryPlanner(
-                    agentExecutions,
-                    modelInvocations,
-                    toolExecutions,
-                    messages,
-                    transactionManager());
+            new ReactRecoveryPlanner(agentExecutions, modelInvocations, toolExecutions, messages);
 
     @Test
     void abandonsStreamingTurnAndRetriesFromItsImmutableInputBoundary() {
@@ -131,12 +123,5 @@ class ReactCrashRecoveryIntegrationTest {
         message.setRole("tool");
         message.setToolExecutionId(executionId);
         return message;
-    }
-
-    private static PlatformTransactionManager transactionManager() {
-        PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
-        when(manager.getTransaction(any(TransactionDefinition.class)))
-                .thenReturn(mock(TransactionStatus.class));
-        return manager;
     }
 }

@@ -154,7 +154,7 @@ public final class ExecutionStreamCheckpointCoordinator {
                 accumulator.outputDeltaSequence(),
                 accumulator.reasoning(),
                 accumulator.answer(),
-                accumulator.phase(),
+                accumulator.phase().value(),
                 reasoningExpiresAt,
                 now)) {
             throw new ExecutionOwnershipLostException(run.executionId());

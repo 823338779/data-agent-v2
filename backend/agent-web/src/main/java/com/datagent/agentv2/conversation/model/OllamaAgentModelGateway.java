@@ -6,7 +6,6 @@ import com.datagent.agentv2.platform.context.TenantContext;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
 import org.springframework.ai.ollama.api.OllamaApi;
@@ -65,8 +64,7 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
     }
 
     private OllamaApi.Message toProviderMessage(ModelInputMessage message) {
-        OllamaApi.Message.Role role =
-                OllamaApi.Message.Role.valueOf(message.role().toUpperCase(Locale.ROOT));
+        OllamaApi.Message.Role role = OllamaApi.Message.Role.valueOf(message.role().name());
         OllamaApi.Message.Builder builder =
                 OllamaApi.Message.builder(role).content(message.content());
         if (!message.toolCalls().isEmpty()) {

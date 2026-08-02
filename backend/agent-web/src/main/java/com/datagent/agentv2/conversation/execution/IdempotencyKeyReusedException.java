@@ -1,6 +1,6 @@
-package com.datagent.agentv2.conversation.application;
+package com.datagent.agentv2.conversation.execution;
 
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ERROR_IDEMPOTENCY_KEY_REUSED;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_IDEMPOTENCY_KEY_REUSED;
 
 public final class IdempotencyKeyReusedException extends RuntimeException {
 

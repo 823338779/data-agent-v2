@@ -20,9 +20,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.TransactionStatus;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -51,7 +48,6 @@ class ToolExecutionCoordinatorTest {
         ConversationSessionService sessions = mock(ConversationSessionService.class);
         AgentExecutionLeaseService leases = mock(AgentExecutionLeaseService.class);
         IdGenerator ids = mock(IdGenerator.class);
-        PlatformTransactionManager transactionManager = transactionManager();
         List<ToolExecutionEntity> rows = toolExecutions();
         List<ConversationMessage> observations = new ArrayList<>();
         AtomicInteger conversationMessageSequence = new AtomicInteger(10);
@@ -104,15 +100,16 @@ class ToolExecutionCoordinatorTest {
 
         ToolExecutionCoordinator coordinator =
                 new ToolExecutionCoordinator(
-                        new AgentToolRegistry(tools(json)),
                         toolExecutions,
-                        messages,
-                        sessions,
                         leases,
-                        ids,
-                        new ToolFailureSanitizer(json),
-                        json,
-                        transactionManager);
+                        new ToolExecutionTransactionService(
+                                new AgentToolRegistry(tools(json)),
+                                toolExecutions,
+                                messages,
+                                sessions,
+                                ids,
+                                json),
+                        new ToolFailureSanitizer(json));
         try {
             List<ToolExecutionResult> result =
                     coordinator.executeModelInvocationTools(
@@ -235,13 +232,6 @@ class ToolExecutionCoordinatorTest {
             rows.add(row);
         }
         return rows;
-    }
-
-    private static PlatformTransactionManager transactionManager() {
-        PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
-        when(manager.getTransaction(any(TransactionDefinition.class)))
-                .thenReturn(mock(TransactionStatus.class));
-        return manager;
     }
 
     @FunctionalInterface

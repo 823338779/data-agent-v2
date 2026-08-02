@@ -1,6 +1,7 @@
 package com.datagent.agentv2.conversation.react;
 
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.message.MessageRole;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ToolExecutionService;
@@ -18,8 +19,6 @@ import tools.jackson.databind.ObjectMapper;
 public class ConversationContextLoader {
 
     private static final int TOOL_CALL_DOCUMENT_VERSION = 1;
-    private static final String ROLE_ASSISTANT = "assistant";
-    private static final String ROLE_TOOL = "tool";
     private static final String ERROR_INVALID_TOOL_CALLS = "Assistant tool calls are invalid";
     private static final String ERROR_MISMATCHED_OBSERVATION =
             "Tool observation does not match its assistant tool call";
@@ -39,11 +38,11 @@ public class ConversationContextLoader {
 
         // 逐条重放完整消息边界，确保 Observation 只能引用此前已归档的 assistant call。
         for (ConversationMessage row : rows) {
-            if (ROLE_ASSISTANT.equals(row.getRole()) && row.getToolCalls() != null) {
+            if (MessageRole.ASSISTANT.value().equals(row.getRole()) && row.getToolCalls() != null) {
                 List<ModelToolCall> calls = parseToolCalls(row.getToolCalls());
                 callsByAssistantMessage.put(row.getConversationMessageId(), callIndex(calls));
                 result.add(ModelInputMessage.assistantToolCalls(calls));
-            } else if (ROLE_TOOL.equals(row.getRole())) {
+            } else if (MessageRole.TOOL.value().equals(row.getRole())) {
                 validateObservation(row, executionsById, callsByAssistantMessage);
                 result.add(
                         ModelInputMessage.tool(

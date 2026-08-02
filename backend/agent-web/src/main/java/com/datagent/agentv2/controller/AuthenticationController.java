@@ -1,8 +1,9 @@
-package com.datagent.agentv2.web.auth;
+package com.datagent.agentv2.controller;
 
 import com.datagent.agentv2.auth.application.AuthenticationService;
 import com.datagent.agentv2.auth.config.AuthProperties;
 import com.datagent.agentv2.auth.security.AuthenticatedUser;
+import com.datagent.agentv2.security.AuthenticationProblemDetails;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;

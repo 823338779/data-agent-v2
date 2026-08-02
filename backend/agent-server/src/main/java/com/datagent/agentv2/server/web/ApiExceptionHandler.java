@@ -1,8 +1,8 @@
 package com.datagent.agentv2.server.web;
 
 import com.datagent.agentv2.conversation.activity.SessionOrderConflictException;
-import com.datagent.agentv2.conversation.application.ActiveExecutionConflictException;
-import com.datagent.agentv2.conversation.application.IdempotencyKeyReusedException;
+import com.datagent.agentv2.conversation.execution.ActiveExecutionConflictException;
+import com.datagent.agentv2.conversation.execution.IdempotencyKeyReusedException;
 import com.datagent.agentv2.server.context.RequestContext;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
@@ -11,8 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;

@@ -1,12 +1,13 @@
-package com.datagent.agentv2.web.conversation;
+package com.datagent.agentv2.conversation.stream;
 
-import com.datagent.agentv2.conversation.application.ConversationApplicationService;
-import com.datagent.agentv2.conversation.application.ConversationView;
 import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotification;
+import com.datagent.agentv2.conversation.cluster.ExecutionDeltaType;
+import com.datagent.agentv2.conversation.execution.ExecutionEventType;
+import com.datagent.agentv2.conversation.execution.ExecutionPhase;
+import com.datagent.agentv2.conversation.execution.ExecutionStatus;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeProperties;
-import com.datagent.agentv2.conversation.stream.CompositeSseCursor;
-import com.datagent.agentv2.conversation.stream.ExecutionStreamResynchronizer;
-import com.datagent.agentv2.conversation.stream.LocalSseRegistry;
+import com.datagent.agentv2.conversation.session.ConversationApplicationService;
+import com.datagent.agentv2.conversation.session.ConversationView;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventPersisted;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.io.IOException;
@@ -36,7 +37,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @Service
 public final class ConversationEventStreamFacade {
 
-    private static final String EVENT_STREAM_SNAPSHOT = "stream_snapshot";
     private static final int MAX_PENDING_SENDS = 256;
     private static final AtomicLong CONNECTION_SEQUENCE = new AtomicLong();
 
@@ -215,10 +215,10 @@ public final class ConversationEventStreamFacade {
                     snapshot.modelInvocationSequence(),
                     snapshot.outputDeltaSequence());
             subscription.send(
-                    EVENT_STREAM_SNAPSHOT,
+                    ConversationStreamEventType.SNAPSHOT.value(),
                     cursor,
                     new StreamSnapshotEvent(
-                            EVENT_STREAM_SNAPSHOT,
+                            ConversationStreamEventType.SNAPSHOT,
                             subscription.conversationSessionId,
                             snapshot.executionId(),
                             snapshot.executionAttemptNumber(),
@@ -335,7 +335,7 @@ public final class ConversationEventStreamFacade {
         private void sendEvent(ConversationView.AgentExecutionEventView event) {
             cursor = cursor.withEvent(event.executionEventSequence());
             send(
-                    event.type(),
+                    event.type().value(),
                     cursor,
                     new LifecycleEvent(
                             event.type(),
@@ -353,7 +353,7 @@ public final class ConversationEventStreamFacade {
                             envelope.modelInvocationSequence(),
                             envelope.outputDeltaSequence());
             send(
-                    envelope.deltaType(),
+                    envelope.deltaType().value(),
                     cursor,
                     new DeltaEvent(
                             envelope.deltaType(),
@@ -427,7 +427,7 @@ public final class ConversationEventStreamFacade {
     private record SessionKey(String tenantId, String conversationSessionId) {}
 
     private record LifecycleEvent(
-            String type,
+            ExecutionEventType type,
             String conversationSessionId,
             String executionId,
             long executionEventSequence,
@@ -439,10 +439,10 @@ public final class ConversationEventStreamFacade {
      *
      * @param status Agent 执行状态
      */
-    private record LifecycleEventPayload(String status) {}
+    private record LifecycleEventPayload(ExecutionStatus status) {}
 
     private record DeltaEvent(
-            String type,
+            ExecutionDeltaType type,
             String conversationSessionId,
             String executionId,
             long executionAttemptNumber,
@@ -452,13 +452,13 @@ public final class ConversationEventStreamFacade {
             Instant occurredAt) {}
 
     private record StreamSnapshotEvent(
-            String type,
+            ConversationStreamEventType type,
             String conversationSessionId,
             String executionId,
             long executionAttemptNumber,
             long modelInvocationSequence,
             long outputDeltaSequence,
-            String phase,
+            ExecutionPhase phase,
             String reasoning,
             String answer,
             Instant checkpointedAt,

@@ -1,23 +1,14 @@
-package com.datagent.agentv2.conversation.application;
+package com.datagent.agentv2.conversation.session;
 
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.DEFAULT_CONVERSATION_TITLE;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.EMPTY_TEXT;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ERROR_AGENT_EXECUTION_NOT_FOUND;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ERROR_CONVERSATION_SESSION_NOT_FOUND;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.EVENT_DETAIL_EXECUTION_QUEUED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.EVENT_DETAIL_EXECUTION_STARTED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.EVENT_EXECUTION_QUEUED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.EVENT_TITLE_EXECUTION_QUEUED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.EVENT_TITLE_EXECUTION_STARTED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ID_PREFIX_CONVERSATION_SESSION;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.PHASE_ANSWERING;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.PHASE_COMPLETED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.PHASE_CONNECTING_MODEL;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.PHASE_PERSISTING;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.PHASE_PREPARING_CONTEXT;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.PHASE_RECEIVED;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.PHASE_THINKING;
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.SESSION_TYPE_INTERACTIVE;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.DEFAULT_CONVERSATION_TITLE;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EMPTY_TEXT;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_AGENT_EXECUTION_NOT_FOUND;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_CONVERSATION_SESSION_NOT_FOUND;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVENT_DETAIL_EXECUTION_QUEUED;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVENT_DETAIL_EXECUTION_STARTED;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVENT_TITLE_EXECUTION_QUEUED;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVENT_TITLE_EXECUTION_STARTED;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_CONVERSATION_SESSION;
 
 import com.datagent.agentv2.conversation.activity.SessionActivityService;
 import com.datagent.agentv2.conversation.activity.SessionOrderingService;
@@ -26,6 +17,11 @@ import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.domain.ConversationSession;
+import com.datagent.agentv2.conversation.execution.AgentExecutionSubmissionService;
+import com.datagent.agentv2.conversation.execution.ExecutionEventType;
+import com.datagent.agentv2.conversation.execution.ExecutionPhase;
+import com.datagent.agentv2.conversation.execution.ExecutionStatus;
+import com.datagent.agentv2.conversation.message.MessageRole;
 import com.datagent.agentv2.persistence.entity.ConversationSessionUserStateEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
@@ -52,8 +48,6 @@ import org.springframework.web.server.ResponseStatusException;
 @RequiredArgsConstructor
 public class ConversationApplicationService {
 
-    private static final String ROLE_ASSISTANT = "assistant";
-
     private final ConversationSessionService sessions;
     private final ConversationMessageService messages;
     private final AgentExecutionService agentExecutions;
@@ -71,7 +65,7 @@ public class ConversationApplicationService {
                         ids.next(ID_PREFIX_CONVERSATION_SESSION),
                         normalizedTitle(title),
                         tag,
-                        SESSION_TYPE_INTERACTIVE,
+                        ConversationSessionType.INTERACTIVE.value(),
                         OperatorContext.requiredOperator().userId(),
                         Instant.now());
         sessions.save(session);
@@ -321,7 +315,9 @@ public class ConversationApplicationService {
                                 message ->
                                         messageView(
                                                 message,
-                                                ROLE_ASSISTANT.equals(message.getRole())
+                                                MessageRole.ASSISTANT
+                                                                .value()
+                                                                .equals(message.getRole())
                                                         ? executionViewsById.get(
                                                                 message.getExecutionId())
                                                         : null))
@@ -334,7 +330,7 @@ public class ConversationApplicationService {
                 session.getConversationSessionId(),
                 session.getTitle(),
                 session.getTag() == null ? EMPTY_TEXT : session.getTag(),
-                session.getSessionType(),
+                ConversationSessionType.fromValue(session.getSessionType()),
                 session.getCreatedAt(),
                 session.getUpdatedAt(),
                 session.getVersion(),
@@ -366,7 +362,7 @@ public class ConversationApplicationService {
                 message.getAuthorUserId() == null ? message.getRole() : message.getAuthorUserId();
         return new ConversationView.MessageView(
                 message.getConversationMessageId(),
-                message.getRole(),
+                MessageRole.fromValue(message.getRole()),
                 author,
                 message.getContent(),
                 message.getCreatedAt(),
@@ -393,7 +389,7 @@ public class ConversationApplicationService {
                         .orElse(EMPTY_TEXT);
         return new ConversationView.AgentExecutionView(
                 run.getExecutionId(),
-                run.getStatus(),
+                ExecutionStatus.fromValue(run.getStatus()),
                 progress(run.getPhase()),
                 objective,
                 run.getCancellationRequestedAt(),
@@ -405,7 +401,7 @@ public class ConversationApplicationService {
                         : new ConversationView.AgentExecutionStreamCheckpointView(
                                 stream.getExecutionAttemptNumber(),
                                 stream.getModelInvocationSequence(),
-                                stream.getPhase(),
+                                ExecutionPhase.fromValue(stream.getPhase()),
                                 stream.getOutputDeltaSequence(),
                                 stream.getReasoning(),
                                 stream.getAnswer()));
@@ -416,14 +412,14 @@ public class ConversationApplicationService {
         return new ConversationView.AgentExecutionEventView(
                 event.getExecutionEventId(),
                 event.getExecutionEventSequence(),
-                event.getType(),
+                ExecutionEventType.fromValue(event.getType()),
                 event.getOccurredAt(),
                 event.getExecutionId(),
                 run.getTriggeringConversationMessageId(),
-                event.getType().equals(EVENT_EXECUTION_QUEUED)
+                ExecutionEventType.QUEUED.value().equals(event.getType())
                         ? EVENT_TITLE_EXECUTION_QUEUED
                         : EVENT_TITLE_EXECUTION_STARTED,
-                event.getType().equals(EVENT_EXECUTION_QUEUED)
+                ExecutionEventType.QUEUED.value().equals(event.getType())
                         ? EVENT_DETAIL_EXECUTION_QUEUED
                         : EVENT_DETAIL_EXECUTION_STARTED,
                 null,
@@ -431,19 +427,25 @@ public class ConversationApplicationService {
                 Map.of(),
                 null,
                 null,
-                run.getStatus());
+                ExecutionStatus.fromValue(run.getStatus()));
     }
 
     private static int progress(String phase) {
-        return switch (phase) {
-            case PHASE_RECEIVED -> 5;
-            case PHASE_PREPARING_CONTEXT -> 15;
-            case PHASE_CONNECTING_MODEL -> 25;
-            case PHASE_THINKING -> 45;
-            case PHASE_ANSWERING -> 70;
-            case PHASE_PERSISTING -> 90;
-            case PHASE_COMPLETED -> 100;
-            default -> 0;
+        ExecutionPhase executionPhase;
+        try {
+            executionPhase = ExecutionPhase.fromValue(phase);
+        } catch (IllegalArgumentException ignored) {
+            return 0;
+        }
+        return switch (executionPhase) {
+            case QUEUED -> 0;
+            case RECEIVED -> 5;
+            case PREPARING_CONTEXT -> 15;
+            case CONNECTING_MODEL -> 25;
+            case THINKING -> 45;
+            case ANSWERING -> 70;
+            case PERSISTING -> 90;
+            case COMPLETED -> 100;
         };
     }
 
@@ -457,7 +459,7 @@ public class ConversationApplicationService {
                 run.getExecutionId(),
                 stream.getExecutionAttemptNumber(),
                 stream.getModelInvocationSequence(),
-                stream.getPhase(),
+                ExecutionPhase.fromValue(stream.getPhase()),
                 stream.getOutputDeltaSequence(),
                 stream.getReasoning(),
                 stream.getAnswer(),
@@ -478,7 +480,7 @@ public class ConversationApplicationService {
             String executionId,
             long executionAttemptNumber,
             long modelInvocationSequence,
-            String phase,
+            ExecutionPhase phase,
             long outputDeltaSequence,
             String reasoning,
             String answer,

@@ -38,8 +38,7 @@ class AgentV2ApplicationTest {
     private static final String BLANK_TITLE = "   ";
     private static final String TITLE_CHARACTER = "x";
     private static final int TOO_LONG_TITLE_LENGTH = 121;
-    private static final Pattern SESSION_VERSION_PATTERN =
-            Pattern.compile("\"version\":([0-9]+)");
+    private static final Pattern SESSION_VERSION_PATTERN = Pattern.compile("\"version\":([0-9]+)");
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
     private static final GenericContainer<?> REDIS =
@@ -162,9 +161,7 @@ class AgentV2ApplicationTest {
                                                 + "}"))
                 .andExpect(status().isConflict());
         mvc.perform(
-                        get(
-                                        "/api/v1/agent-sessions/{conversationSessionId}",
-                                        conversationSessionId)
+                        get("/api/v1/agent-sessions/{conversationSessionId}", conversationSessionId)
                                 .cookie(session))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value(RENAMED_TITLE));
@@ -218,9 +215,7 @@ class AgentV2ApplicationTest {
                                                 + "}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(
-                        get(
-                                        "/api/v1/agent-sessions/{conversationSessionId}",
-                                        conversationSessionId)
+                        get("/api/v1/agent-sessions/{conversationSessionId}", conversationSessionId)
                                 .cookie(session))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value(ORIGINAL_TITLE));

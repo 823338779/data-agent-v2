@@ -1,6 +1,6 @@
-package com.datagent.agentv2.conversation.application;
+package com.datagent.agentv2.conversation.execution;
 
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.ERROR_ACTIVE_EXECUTION_CONFLICT;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_ACTIVE_EXECUTION_CONFLICT;
 
 public final class ActiveExecutionConflictException extends RuntimeException {
 

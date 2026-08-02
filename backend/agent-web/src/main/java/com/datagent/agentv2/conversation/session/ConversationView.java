@@ -1,5 +1,9 @@
-package com.datagent.agentv2.conversation.application;
+package com.datagent.agentv2.conversation.session;
 
+import com.datagent.agentv2.conversation.execution.ExecutionEventType;
+import com.datagent.agentv2.conversation.execution.ExecutionPhase;
+import com.datagent.agentv2.conversation.execution.ExecutionStatus;
+import com.datagent.agentv2.conversation.message.MessageRole;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -10,7 +14,7 @@ public record ConversationView(
         String conversationSessionId,
         String title,
         String tag,
-        String sessionType,
+        ConversationSessionType sessionType,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
         long version,
@@ -25,7 +29,7 @@ public record ConversationView(
 
     public record MessageView(
             String conversationMessageId,
-            String role,
+            MessageRole role,
             String author,
             String content,
             LocalDateTime createdAt,
@@ -36,7 +40,7 @@ public record ConversationView(
     /** 一次 Agent 执行的公开状态、事件时间线和最新输出检查点。 */
     public record AgentExecutionView(
             String executionId,
-            String status,
+            ExecutionStatus status,
             int progress,
             String objective,
             Instant cancellationRequestedAt,
@@ -49,7 +53,7 @@ public record ConversationView(
     public record AgentExecutionEventView(
             String executionEventId,
             long executionEventSequence,
-            String type,
+            ExecutionEventType type,
             Instant occurredAt,
             String executionId,
             String conversationMessageId,
@@ -60,13 +64,13 @@ public record ConversationView(
             Map<String, Object> output,
             String confirmationId,
             Boolean approved,
-            String status) {}
+            ExecutionStatus status) {}
 
     /** 用于断线恢复的最新流式输出检查点。 */
     public record AgentExecutionStreamCheckpointView(
             long executionAttemptNumber,
             long modelInvocationSequence,
-            String phase,
+            ExecutionPhase phase,
             long outputDeltaSequence,
             String thinking,
             String answer) {}

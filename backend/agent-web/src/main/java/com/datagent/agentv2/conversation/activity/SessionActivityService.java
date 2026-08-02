@@ -1,8 +1,7 @@
 package com.datagent.agentv2.conversation.activity;
 
-import static com.datagent.agentv2.conversation.AgentExecutionConstants.EVENT_EXECUTION_DONE;
-
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
+import com.datagent.agentv2.conversation.execution.ExecutionEventType;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventPersisted;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
 import com.datagent.agentv2.persistence.service.ConversationSessionUserStateService;
@@ -17,10 +16,11 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class SessionActivityService {
 
-    private static final String EVENT_EXECUTION_FAILED = "execution_failed";
-    private static final String EVENT_EXECUTION_WAITING = "execution_waiting";
     private static final Set<String> NOTIFIABLE_EVENT_TYPES =
-            Set.of(EVENT_EXECUTION_DONE, EVENT_EXECUTION_FAILED, EVENT_EXECUTION_WAITING);
+            Set.of(
+                    ExecutionEventType.DONE.value(),
+                    ExecutionEventType.FAILED.value(),
+                    ExecutionEventType.WAITING.value());
 
     private final ConversationSessionService sessions;
     private final ConversationSessionUserStateService states;
