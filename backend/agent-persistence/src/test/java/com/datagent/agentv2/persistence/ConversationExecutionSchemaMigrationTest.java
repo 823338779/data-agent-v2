@@ -51,7 +51,36 @@ class ConversationExecutionSchemaMigrationTest {
                     '2026-08-01T00:00:00Z', '2026-08-01T00:10:00Z');
                 """);
 
-        int migrated =
+        int migratedToVersionSeven =
+                Flyway.configure()
+                        .dataSource(
+                                POSTGRES.getJdbcUrl(),
+                                POSTGRES.getUsername(),
+                                POSTGRES.getPassword())
+                        .locations("classpath:db/migration")
+                        .target(MigrationVersion.fromVersion("7"))
+                        .load()
+                        .migrate()
+                        .migrationsExecuted;
+        assertThat(migratedToVersionSeven).isEqualTo(5);
+
+        // 模拟真实库中执行已被领取、但首个模型调用尚未开始的合法检查点。
+        execute(
+                """
+                insert into agent_run_stream(
+                    stream_id, run_id, tenant_id, execution_attempt, phase,
+                    model_turn_sequence, stream_sequence)
+                    values (
+                    'stream_legacy', 'execution_legacy', 'tenant_legacy', 1,
+                    'RECEIVED', 0, 0)
+                    on conflict (tenant_id, run_id) do update
+                       set execution_attempt = excluded.execution_attempt,
+                           model_turn_sequence = excluded.model_turn_sequence,
+                           stream_sequence = excluded.stream_sequence,
+                           phase = excluded.phase
+                """);
+
+        int migratedToLatest =
                 Flyway.configure()
                         .dataSource(
                                 POSTGRES.getJdbcUrl(),
@@ -61,7 +90,7 @@ class ConversationExecutionSchemaMigrationTest {
                         .load()
                         .migrate()
                         .migrationsExecuted;
-        assertThat(migrated).isEqualTo(8);
+        assertThat(migratedToLatest).isEqualTo(3);
     }
 
     @AfterAll
@@ -155,6 +184,19 @@ class ConversationExecutionSchemaMigrationTest {
         assertThat(primaryKey("agent_execution_attempt")).isEqualTo("primary key (id)");
         assertThat(constraintDefinition("uq_agent_execution_attempt_execution"))
                 .contains("unique", "tenant_id", "execution_id", "execution_attempt_number");
+    }
+
+    @Test
+    void claimedExecutionBeforeFirstModelInvocationKeepsItsStreamCoordinate() throws SQLException {
+        assertThat(
+                        row(
+                                """
+                                select execution_attempt_number, model_invocation_sequence,
+                                       output_delta_sequence, phase
+                                  from agent_execution_stream_checkpoint
+                                 where execution_id = 'execution_legacy'
+                                """))
+                .containsExactly("1", "0", "0", "RECEIVED");
     }
 
     private static void execute(String sql) throws SQLException {
