@@ -3,6 +3,7 @@ package com.datagent.agentv2.web.conversation;
 import com.datagent.agentv2.conversation.activity.ActivityEventStreamFacade;
 import com.datagent.agentv2.conversation.application.AgentExecutionControlService;
 import com.datagent.agentv2.conversation.application.ConversationApplicationService;
+import com.datagent.agentv2.conversation.application.ConversationTitleService;
 import com.datagent.agentv2.conversation.application.ConversationView;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
@@ -15,6 +16,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -35,6 +37,7 @@ public class ConversationController {
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 
     private final ConversationApplicationService conversations;
+    private final ConversationTitleService titles;
     private final AgentExecutionControlService controls;
     private final ConversationEventStreamFacade eventStreams;
     private final ActivityEventStreamFacade activityEvents;
@@ -55,6 +58,15 @@ public class ConversationController {
 
     @GetMapping("/{conversationSessionId}")
     ConversationView get(@PathVariable String conversationSessionId) {
+        return conversations.get(conversationSessionId);
+    }
+
+    @PatchMapping("/{conversationSessionId}")
+    ConversationView rename(
+            @PathVariable String conversationSessionId,
+            @Valid @RequestBody RenameConversationSessionRequest request) {
+        // 标题服务完成受版本保护的局部写入，再复用完整快照装配返回值。
+        titles.rename(conversationSessionId, request.title(), request.expectedVersion());
         return conversations.get(conversationSessionId);
     }
 
@@ -121,6 +133,10 @@ public class ConversationController {
     /** 创建对话会话所需的可选展示信息。 */
     record CreateConversationSessionRequest(
             @Size(max = 120) String title, @Size(max = 120) String tag) {}
+
+    /** 局部更新会话标题所需的标题内容和会话乐观锁版本。 */
+    record RenameConversationSessionRequest(
+            @NotBlank @Size(max = 120) String title, @Min(0) long expectedVersion) {}
 
     /** 向指定对话会话提交用户消息的请求。 */
     record SubmitConversationMessageRequest(@NotBlank @Size(max = 8000) String content) {}

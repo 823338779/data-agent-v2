@@ -251,6 +251,25 @@ textarea:focus-visible {
   background: #fff;
   box-shadow: 0 1px 1px rgb(59 48 37 / 6%);
 }
+.session-title-input {
+  width: 100%;
+  min-height: 39px;
+  padding: 9px 11px;
+  border: 1px solid #4c72ff;
+  border-radius: 10px;
+  background: #fff;
+  color: #292724;
+  font-size: 13px;
+  font-weight: 600;
+}
+.session-title-input:focus {
+  outline: 2px solid rgb(76 114 255 / 18%);
+  outline-offset: 0;
+}
+.session-title-input:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
 .session-link.dragging {
   opacity: 0.34;
 }

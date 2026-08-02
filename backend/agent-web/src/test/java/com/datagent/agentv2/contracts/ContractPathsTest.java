@@ -14,6 +14,8 @@ import org.junit.jupiter.api.Test;
 class ContractPathsTest {
 
     private static final String ACTIVITY_EVENTS_PATH = "/api/v1/agent-sessions/activity-events";
+    private static final String CONVERSATION_SESSION_PATH =
+            "/api/v1/agent-sessions/{conversationSessionId}";
     private static final String MARK_READ_PATH =
             "/api/v1/agent-sessions/{conversationSessionId}:mark-read";
     private static final String REORDER_PATH = "/api/v1/agent-sessions:reorder";
@@ -42,7 +44,7 @@ class ContractPathsTest {
     void openApiDeclaresEveryFrozenV1ControllerOperation() throws IOException {
         JsonNode paths = YAML.readTree(ContractFiles.openApi().toFile()).path("paths");
 
-        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(43);
+        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(44);
         assertThat(REQUIRED)
                 .allSatisfy(
                         (path, methods) -> {
@@ -185,6 +187,21 @@ class ContractPathsTest {
         assertThat(markReadRequest.path("required").toString()).contains("upToSequence");
         assertThat(markReadRequest.path("properties").size()).isOne();
 
+        // 标题更新必须是带会话版本的局部写入，避免覆盖其他会话字段或并发更新。
+        JsonNode rename = api.path("paths").path(CONVERSATION_SESSION_PATH).path("patch");
+        assertThat(
+                        rename.path("requestBody")
+                                .path("content")
+                                .path("application/json")
+                                .path("schema")
+                                .path("$ref")
+                                .asText())
+                .isEqualTo("#/components/schemas/RenameConversationSessionRequest");
+        JsonNode renameRequest = schemas.path("RenameConversationSessionRequest");
+        assertThat(renameRequest.path("additionalProperties").asBoolean()).isFalse();
+        assertThat(renameRequest.path("required").toString())
+                .contains("title", "expectedVersion");
+
         // reorder 必须提交完整可见集合及乐观锁版本，冲突码与执行冲突保持独立。
         JsonNode reorderRequest = schemas.path("ReorderConversationSessionsRequest");
         assertThat(reorderRequest.path("required").toString())
@@ -232,7 +249,7 @@ class ContractPathsTest {
         required.put("/api/v1/agent-sessions", Set.of("get", "post"));
         required.put(ACTIVITY_EVENTS_PATH, Set.of("get"));
         required.put(REORDER_PATH, Set.of("post"));
-        required.put("/api/v1/agent-sessions/{conversationSessionId}", Set.of("get"));
+        required.put(CONVERSATION_SESSION_PATH, Set.of("get", "patch"));
         required.put(MARK_READ_PATH, Set.of("post"));
         required.put(
                 "/api/v1/agent-sessions/{conversationSessionId}/metric-platform-credential",

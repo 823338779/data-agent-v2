@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AgentBackendClient } from './api/backendAgentClient';
+import { AgentBackendClient, BackendApiError } from './api/backendAgentClient';
 import App from './App';
 import { ConversationSession } from './domain/agentPrototype';
 
@@ -10,6 +10,7 @@ const session: ConversationSession = {
   tag: 'debug',
   createdAt: '2026-08-01T08:00:00Z',
   updatedAt: '2026-08-01T08:00:00Z',
+  version: 4,
   unread: false,
   lastNotifiableEventSequence: 0,
   sortOrder: 0,
@@ -49,6 +50,7 @@ function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient
       .fn()
       .mockResolvedValue({ ...session, conversationSessionId: 'session_2', title: '新会话' }),
     getSession: vi.fn().mockResolvedValue(session),
+    renameSession: vi.fn().mockResolvedValue({ ...session, version: session.version + 1 }),
     submitMessage: vi.fn().mockResolvedValue({
       ...session,
       messages: [
@@ -268,5 +270,71 @@ describe('server-backed conversation workspace', () => {
     );
 
     await waitFor(() => expect(backend.markRead).toHaveBeenCalledWith('session_1', 7));
+  });
+
+  it('renames a session from the sidebar and updates the active heading', async () => {
+    const renamed = { ...session, title: '新的会话标题', version: 5 };
+    const backend = client({ renameSession: vi.fn().mockResolvedValue(renamed) });
+    render(<App client={backend} />);
+    const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
+
+    fireEvent.click(within(sidebar).getByRole('button', { name: /订单延迟分析/ }));
+    expect(await screen.findByRole('heading', { name: '订单延迟分析' })).toBeInTheDocument();
+    fireEvent.doubleClick(within(sidebar).getByRole('button', { name: /订单延迟分析/ }));
+    const titleInput = within(sidebar).getByRole('textbox', {
+      name: '编辑“订单延迟分析”标题',
+    });
+    fireEvent.change(titleInput, {
+      target: { value: '  新的会话标题  ' },
+    });
+    fireEvent.keyDown(titleInput, { key: 'Enter' });
+
+    await waitFor(() =>
+      expect(backend.renameSession).toHaveBeenCalledWith('session_1', '新的会话标题', 4),
+    );
+    expect(await screen.findByRole('heading', { name: '新的会话标题' })).toBeInTheDocument();
+  });
+
+  it('reloads the server title when a rename conflicts', async () => {
+    const latest = { ...session, title: '其他位置的标题', version: 5 };
+    const backend = client({
+      renameSession: vi.fn().mockRejectedValue(new BackendApiError(409)),
+      getSession: vi.fn().mockResolvedValue(latest),
+    });
+    render(<App client={backend} />);
+    const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
+
+    fireEvent.doubleClick(within(sidebar).getByRole('button', { name: /订单延迟分析/ }));
+    const titleInput = within(sidebar).getByRole('textbox', {
+      name: '编辑“订单延迟分析”标题',
+    });
+    fireEvent.change(titleInput, {
+      target: { value: '本地冲突标题' },
+    });
+    fireEvent.blur(titleInput);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '标题已在其他位置更新，已加载最新标题。',
+    );
+    expect(within(sidebar).getByRole('button', { name: /其他位置的标题/ })).toBeInTheDocument();
+  });
+
+  it('keeps the title draft editable after a rename request fails', async () => {
+    const backend = client({
+      renameSession: vi.fn().mockRejectedValue(new BackendApiError(500)),
+    });
+    render(<App client={backend} />);
+    const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
+
+    fireEvent.doubleClick(within(sidebar).getByRole('button', { name: /订单延迟分析/ }));
+    const titleInput = within(sidebar).getByRole('textbox', {
+      name: '编辑“订单延迟分析”标题',
+    });
+    fireEvent.change(titleInput, { target: { value: '保留标题草稿' } });
+    fireEvent.blur(titleInput);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('标题保存失败，请稍后重试。');
+    expect(within(sidebar).getByRole('textbox', { name: /编辑/ })).toHaveValue('保留标题草稿');
+    expect(within(sidebar).getByRole('textbox', { name: /编辑/ })).not.toBeDisabled();
   });
 });

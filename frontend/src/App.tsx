@@ -37,6 +37,8 @@ interface AppProps {
 }
 
 const narrowScreenQuery = '(max-width: 820px)';
+const TITLE_CONFLICT_MESSAGE = '标题已在其他位置更新，已加载最新标题。';
+const TITLE_SAVE_ERROR_MESSAGE = '标题保存失败，请稍后重试。';
 
 function isNarrowScreen(): boolean {
   return window.matchMedia?.(narrowScreenQuery).matches ?? false;
@@ -300,6 +302,31 @@ export default function App({
     }
   }
 
+  // 标题保存使用会话版本做乐观锁；冲突时刷新服务端最新会话，普通失败则保留编辑态。
+  async function renameSession(conversationSessionId: string, title: string): Promise<boolean> {
+    const session = sessions.find((item) => item.conversationSessionId === conversationSessionId);
+    if (!session) return true;
+
+    setError(null);
+    try {
+      replaceSession(await backend.renameSession(conversationSessionId, title, session.version));
+      return true;
+    } catch (failure) {
+      if (failure instanceof BackendApiError && failure.status === 409) {
+        try {
+          replaceSession(await backend.getSession(conversationSessionId));
+          setError(TITLE_CONFLICT_MESSAGE);
+          return true;
+        } catch (refreshFailure) {
+          handleFailure(refreshFailure, TITLE_SAVE_ERROR_MESSAGE);
+          return false;
+        }
+      }
+      handleFailure(failure, TITLE_SAVE_ERROR_MESSAGE);
+      return false;
+    }
+  }
+
   async function cancelActiveExecution() {
     if (!active?.execution) return;
     try {
@@ -366,6 +393,7 @@ export default function App({
             activeSessionId={active?.conversationSessionId}
             onOpen={openSession}
             onReorder={(ids) => void reorderSessions(ids)}
+            onRename={renameSession}
           />
         </aside>
       )}

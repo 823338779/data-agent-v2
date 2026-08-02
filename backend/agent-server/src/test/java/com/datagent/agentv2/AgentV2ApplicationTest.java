@@ -2,6 +2,7 @@ package com.datagent.agentv2;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -10,6 +11,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.servlet.http.Cookie;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +32,14 @@ import org.testcontainers.utility.DockerImageName;
 @AutoConfigureMockMvc
 class AgentV2ApplicationTest {
 
+    private static final String ORIGINAL_TITLE = "Original title";
+    private static final String RENAMED_TITLE = "Renamed title";
+    private static final String STALE_TITLE = "Stale title";
+    private static final String BLANK_TITLE = "   ";
+    private static final String TITLE_CHARACTER = "x";
+    private static final int TOO_LONG_TITLE_LENGTH = 121;
+    private static final Pattern SESSION_VERSION_PATTERN =
+            Pattern.compile("\"version\":([0-9]+)");
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
     private static final GenericContainer<?> REDIS =
@@ -98,6 +109,121 @@ class AgentV2ApplicationTest {
                                 .cookie(session))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.conversationSessionId").value(conversationSessionId));
+    }
+
+    @Test
+    void authenticatedUserCanRenameConversationWithOptimisticLocking() throws Exception {
+        Cookie session = login();
+        MvcResult created =
+                mvc.perform(
+                                post("/api/v1/agent-sessions")
+                                        .cookie(session)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"title\":\"" + ORIGINAL_TITLE + "\"}"))
+                        .andExpect(status().isCreated())
+                        .andReturn();
+        String createdBody = created.getResponse().getContentAsString();
+        String conversationSessionId =
+                createdBody.replaceAll(
+                        ".*\\\"conversationSessionId\\\":\\\"([^\\\"]+)\\\".*", "$1");
+        Matcher versionMatcher = SESSION_VERSION_PATTERN.matcher(createdBody);
+        assertThat(versionMatcher.find()).isTrue();
+        long version = Long.parseLong(versionMatcher.group(1));
+
+        // 正确版本只更新标题，并返回递增后的会话版本。
+        mvc.perform(
+                        patch(
+                                        "/api/v1/agent-sessions/{conversationSessionId}",
+                                        conversationSessionId)
+                                .cookie(session)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        "{\"title\":\"  "
+                                                + RENAMED_TITLE
+                                                + "  \",\"expectedVersion\":"
+                                                + version
+                                                + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value(RENAMED_TITLE))
+                .andExpect(jsonPath("$.version").value(version + 1));
+
+        // 旧版本不能覆盖已经保存的新标题。
+        mvc.perform(
+                        patch(
+                                        "/api/v1/agent-sessions/{conversationSessionId}",
+                                        conversationSessionId)
+                                .cookie(session)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        "{\"title\":\""
+                                                + STALE_TITLE
+                                                + "\",\"expectedVersion\":"
+                                                + version
+                                                + "}"))
+                .andExpect(status().isConflict());
+        mvc.perform(
+                        get(
+                                        "/api/v1/agent-sessions/{conversationSessionId}",
+                                        conversationSessionId)
+                                .cookie(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value(RENAMED_TITLE));
+    }
+
+    @Test
+    void conversationRenameRejectsInvalidTitlesWithoutChangingStoredTitle() throws Exception {
+        Cookie session = login();
+        String createdBody =
+                mvc.perform(
+                                post("/api/v1/agent-sessions")
+                                        .cookie(session)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"title\":\"" + ORIGINAL_TITLE + "\"}"))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        String conversationSessionId =
+                createdBody.replaceAll(
+                        ".*\\\"conversationSessionId\\\":\\\"([^\\\"]+)\\\".*", "$1");
+        Matcher versionMatcher = SESSION_VERSION_PATTERN.matcher(createdBody);
+        assertThat(versionMatcher.find()).isTrue();
+        long version = Long.parseLong(versionMatcher.group(1));
+
+        // Bean Validation 在进入应用服务前拒绝空白和超长标题。
+        mvc.perform(
+                        patch(
+                                        "/api/v1/agent-sessions/{conversationSessionId}",
+                                        conversationSessionId)
+                                .cookie(session)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        "{\"title\":\""
+                                                + BLANK_TITLE
+                                                + "\",\"expectedVersion\":"
+                                                + version
+                                                + "}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(
+                        patch(
+                                        "/api/v1/agent-sessions/{conversationSessionId}",
+                                        conversationSessionId)
+                                .cookie(session)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        "{\"title\":\""
+                                                + TITLE_CHARACTER.repeat(TOO_LONG_TITLE_LENGTH)
+                                                + "\",\"expectedVersion\":"
+                                                + version
+                                                + "}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(
+                        get(
+                                        "/api/v1/agent-sessions/{conversationSessionId}",
+                                        conversationSessionId)
+                                .cookie(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value(ORIGINAL_TITLE));
     }
 
     @Test

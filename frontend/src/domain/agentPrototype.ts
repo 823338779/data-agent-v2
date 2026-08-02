@@ -60,6 +60,8 @@ export interface ConversationSession {
   tag: string;
   createdAt: string;
   updatedAt: string;
+  /** 会话共享字段更新使用的服务端乐观锁版本。 */
+  version: number;
   unread: boolean;
   lastNotifiableEventSequence: number;
   sortOrder: number;

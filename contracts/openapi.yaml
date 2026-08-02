@@ -115,6 +115,26 @@ paths:
               schema: { $ref: '#/components/schemas/ConversationSession' }
         '401': { $ref: '#/components/responses/AuthenticationRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: renameConversationSession
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ConversationSessionId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenameConversationSessionRequest' }
+      responses:
+        '200':
+          description: Agent session with the updated title and version
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationSession' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/AuthenticationRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /api/v1/agent-sessions/{conversationSessionId}:mark-read:
     post:
       operationId: markConversationSessionRead
@@ -911,6 +931,13 @@ components:
         title: { type: [string, 'null'], maxLength: 120 }
         tag: { type: [string, 'null'], maxLength: 120 }
         metricPlatformCredentialId: { type: [string, 'null'], format: uuid }
+    RenameConversationSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [title, expectedVersion]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        expectedVersion: { type: integer, format: int64, minimum: 0 }
     BindMetricPlatformCredentialRequest:
       type: object
       required: [metricPlatformCredentialId, expectedSessionVersion]

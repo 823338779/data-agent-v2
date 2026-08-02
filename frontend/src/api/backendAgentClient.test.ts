@@ -7,6 +7,7 @@ const session = {
   tag: '',
   createdAt: '2026-08-01T08:00:00Z',
   updatedAt: '2026-08-01T08:00:00Z',
+  version: 4,
   messages: [],
   execution: null,
 };
@@ -44,6 +45,26 @@ describe('backend agent client', () => {
           ),
         }),
         body: JSON.stringify({ content: '分析订单延迟' }),
+      }),
+    );
+  });
+
+  it('renames a session with its expected version and maps the updated version', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ...session, title: '新的标题', version: 5 }),
+    });
+    const client = createFetchAgentBackendClient({ fetchImpl });
+
+    const renamed = await client.renameSession('session_1', '新的标题', 4);
+
+    expect(renamed.version).toBe(5);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      '/api/v1/agent-sessions/session_1',
+      expect.objectContaining({
+        method: 'PATCH',
+        credentials: 'include',
+        body: JSON.stringify({ title: '新的标题', expectedVersion: 4 }),
       }),
     );
   });

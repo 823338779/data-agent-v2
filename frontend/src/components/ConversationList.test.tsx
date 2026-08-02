@@ -1,5 +1,14 @@
-import { createEvent, fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import {
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
+import { useState } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConversationSession } from '../domain/agentPrototype';
 import { ConversationList } from './ConversationList';
 
@@ -10,6 +19,7 @@ const sessions = [
     tag: '',
     createdAt: '',
     updatedAt: '',
+    version: 4,
     unread: true,
     lastNotifiableEventSequence: 4,
     sortOrder: 0,
@@ -23,6 +33,7 @@ const sessions = [
     tag: '',
     createdAt: '',
     updatedAt: '',
+    version: 4,
     unread: false,
     lastNotifiableEventSequence: 0,
     sortOrder: 1,
@@ -31,6 +42,8 @@ const sessions = [
     execution: { status: 'running' },
   },
 ] as ConversationSession[];
+
+afterEach(cleanup);
 
 describe('ConversationList', () => {
   it('shows compact unread and status indicators and supports keyboard reordering', () => {
@@ -41,6 +54,7 @@ describe('ConversationList', () => {
         activeSessionId="first"
         onOpen={vi.fn()}
         onReorder={onReorder}
+        onRename={vi.fn()}
       />,
     );
 
@@ -61,6 +75,7 @@ describe('ConversationList', () => {
         activeSessionId="first"
         onOpen={vi.fn()}
         onReorder={onReorder}
+        onRename={vi.fn()}
       />,
     );
 
@@ -98,5 +113,82 @@ describe('ConversationList', () => {
     expect(first).toHaveClass('drop-after');
     fireDragAt('drop', first, 55);
     expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  it('renames a title from the focused inline editor with Enter', async () => {
+    function RenameHarness() {
+      const [items, setItems] = useState(sessions);
+      return (
+        <ConversationList
+          sessions={items}
+          activeSessionId="first"
+          onOpen={vi.fn()}
+          onReorder={vi.fn()}
+          onRename={async (conversationSessionId, title) => {
+            setItems((current) =>
+              current.map((item) =>
+                item.conversationSessionId === conversationSessionId
+                  ? { ...item, title, version: item.version + 1 }
+                  : item,
+              ),
+            );
+            return true;
+          }}
+        />
+      );
+    }
+    render(<RenameHarness />);
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: /第一个会话/ }));
+    const input = screen.getByRole('textbox', { name: '编辑“第一个会话”标题' });
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: '  重命名会话  ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(await screen.findByRole('button', { name: /重命名会话/ })).toBeInTheDocument();
+  });
+
+  it('cancels or rejects invalid title edits without submitting', async () => {
+    const onRename = vi.fn().mockResolvedValue(true);
+    render(
+      <ConversationList
+        sessions={sessions}
+        activeSessionId="first"
+        onOpen={vi.fn()}
+        onReorder={vi.fn()}
+        onRename={onRename}
+      />,
+    );
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: /第一个会话/ }));
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' });
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: /第一个会话/ }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '   ' } });
+    fireEvent.blur(screen.getByRole('textbox'));
+    await waitFor(() => expect(screen.queryByRole('textbox')).not.toBeInTheDocument());
+    expect(onRename).not.toHaveBeenCalled();
+  });
+
+  it('keeps the edited draft visible when saving fails', async () => {
+    const onRename = vi.fn().mockResolvedValue(false);
+    render(
+      <ConversationList
+        sessions={sessions}
+        activeSessionId="first"
+        onOpen={vi.fn()}
+        onReorder={vi.fn()}
+        onRename={onRename}
+      />,
+    );
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: /第一个会话/ }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '保留的草稿' } });
+    fireEvent.blur(screen.getByRole('textbox'));
+
+    await waitFor(() => expect(onRename).toHaveBeenCalledWith('first', '保留的草稿'));
+    expect(screen.getByRole('textbox')).toHaveValue('保留的草稿');
+    expect(screen.getByRole('textbox')).not.toBeDisabled();
   });
 });

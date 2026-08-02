@@ -70,6 +70,7 @@ interface BackendSession {
   tag: string | null;
   createdAt: string;
   updatedAt: string;
+  version: number;
   unread?: boolean;
   lastNotifiableEventSequence?: number;
   sortOrder?: number;
@@ -109,6 +110,11 @@ export interface AgentBackendClient {
   listSessions(): Promise<ConversationSession[]>;
   createSession(title: string, tag: string): Promise<ConversationSession>;
   getSession(conversationSessionId: string): Promise<ConversationSession>;
+  renameSession(
+    conversationSessionId: string,
+    title: string,
+    expectedVersion: number,
+  ): Promise<ConversationSession>;
   submitMessage(conversationSessionId: string, content: string): Promise<ConversationSession>;
   cancelExecution(conversationSessionId: string, executionId: string): Promise<AgentExecution>;
   retryExecution(conversationSessionId: string, executionId: string): Promise<AgentExecution>;
@@ -224,6 +230,7 @@ function toSession(session: BackendSession): ConversationSession {
     tag: session.tag ?? '',
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
+    version: session.version,
     unread: session.unread ?? false,
     lastNotifiableEventSequence: session.lastNotifiableEventSequence ?? 0,
     sortOrder: session.sortOrder ?? 0,
@@ -300,6 +307,12 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
     },
     getSession(conversationSessionId) {
       return sessionRequest(`/${encodeURIComponent(conversationSessionId)}`);
+    },
+    renameSession(conversationSessionId, title, expectedVersion) {
+      return sessionRequest(`/${encodeURIComponent(conversationSessionId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title, expectedVersion }),
+      });
     },
     submitMessage(conversationSessionId, content) {
       const idempotencyKey = createIdempotencyKey();

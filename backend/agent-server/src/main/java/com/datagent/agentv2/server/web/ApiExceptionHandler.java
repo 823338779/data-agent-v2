@@ -12,6 +12,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
@@ -24,6 +25,12 @@ import org.springframework.web.server.ResponseStatusException;
 @RestControllerAdvice
 @Slf4j
 public final class ApiExceptionHandler {
+
+    private static final String VALIDATION_PROBLEM_TYPE =
+            "urn:data-agent:problem:validation-failed";
+    private static final String VALIDATION_PROBLEM_TITLE = "Validation Failed";
+    private static final String VALIDATION_PROBLEM_CODE = "VALIDATION_FAILED";
+    private static final String ERROR_REQUEST_VALIDATION_FAILED = "Request validation failed";
 
     /**
      * 处理同一会话存在活动执行任务时产生的冲突。
@@ -101,10 +108,30 @@ public final class ApiExceptionHandler {
         // 将 Spring 的请求头校验异常统一转换为参数校验失败响应。
         return problem(
                 HttpStatus.BAD_REQUEST,
-                "urn:data-agent:problem:validation-failed",
-                "Validation Failed",
-                "VALIDATION_FAILED",
+                VALIDATION_PROBLEM_TYPE,
+                VALIDATION_PROBLEM_TITLE,
+                VALIDATION_PROBLEM_CODE,
                 exception.getMessage(),
+                request);
+    }
+
+    /**
+     * 处理请求体字段违反 Bean Validation 约束的异常。
+     *
+     * @param exception 请求体字段校验异常
+     * @param request 当前 HTTP 请求
+     * @return HTTP 400 问题详情响应
+     */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    ResponseEntity<ProblemDetail> handleMethodArgumentNotValid(
+            MethodArgumentNotValidException exception, HttpServletRequest request) {
+        // 请求体校验错误统一返回稳定错误码，避免被兜底处理器误报为服务端故障。
+        return problem(
+                HttpStatus.BAD_REQUEST,
+                VALIDATION_PROBLEM_TYPE,
+                VALIDATION_PROBLEM_TITLE,
+                VALIDATION_PROBLEM_CODE,
+                ERROR_REQUEST_VALIDATION_FAILED,
                 request);
     }
 
