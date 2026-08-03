@@ -1,10 +1,10 @@
 data-agent:
   model:
-    provider: ${DATA_AGENT_MODEL_PROVIDER:ollama}
+    provider: ${DATA_AGENT_MODEL_PROVIDER:codex}
     codex:
       executable: ${DATA_AGENT_MODEL_CODEX_EXECUTABLE:codex}
-      model: ${DATA_AGENT_MODEL_CODEX_MODEL:}
-      effort: ${DATA_AGENT_MODEL_CODEX_EFFORT:}
+      model: ${DATA_AGENT_MODEL_CODEX_MODEL:gpt-5.5}
+      effort: ${DATA_AGENT_MODEL_CODEX_EFFORT:low}
       timeout: ${DATA_AGENT_MODEL_CODEX_TIMEOUT:5m}
       working-directory: ${DATA_AGENT_MODEL_CODEX_WORKING_DIRECTORY:}
   runtime:
