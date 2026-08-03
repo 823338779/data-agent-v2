@@ -594,23 +594,6 @@ textarea:focus-visible {
 .run-stream-panel {
   margin: 0 0 28px 44px;
 }
-.run-stream-panel.historical {
-  margin: 18px 0 0;
-}
-.reasoning-panel {
-  padding: 11px 14px;
-  border-left: 2px solid #d6cfc4;
-  color: #746d63;
-  font-size: 12px;
-}
-.reasoning-panel summary {
-  cursor: pointer;
-  font-weight: 650;
-}
-.reasoning-panel p {
-  margin: 9px 0 0;
-  white-space: pre-wrap;
-}
 .stream-answer-content {
   margin-top: 18px;
   padding: 18px 20px;

@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.datagent.agentv2.conversation.activity.ActivityEventType;
 import com.datagent.agentv2.conversation.cluster.ExecutionControlType;
-import com.datagent.agentv2.conversation.cluster.ExecutionDeltaType;
 import com.datagent.agentv2.conversation.execution.ExecutionEventType;
 import com.datagent.agentv2.conversation.execution.ExecutionPhase;
 import com.datagent.agentv2.conversation.execution.ExecutionStatus;
@@ -23,8 +22,6 @@ class BusinessEnumSerializationTest {
                 .isEqualTo("\"activity_snapshot\"");
         assertThat(json.writeValueAsString(ExecutionEventType.STARTED))
                 .isEqualTo("\"execution_started\"");
-        assertThat(json.writeValueAsString(ExecutionDeltaType.REASONING))
-                .isEqualTo("\"reasoning_delta\"");
         assertThat(json.writeValueAsString(ExecutionControlType.CANCEL)).isEqualTo("\"cancel\"");
         assertThat(json.writeValueAsString(ExecutionStatus.WAITING_FOR_USER))
                 .isEqualTo("\"waiting_for_user\"");

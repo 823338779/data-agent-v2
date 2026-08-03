@@ -116,9 +116,13 @@ class ContractPathsTest {
                         "modelInvocationSequence",
                         "phase",
                         "outputDeltaSequence",
-                        "reasoning",
                         "answer",
                         "checkpointedAt");
+        assertThat(
+                        schemas.path("AgentExecutionStreamCheckpoint")
+                                .path("properties")
+                                .has("reasoning"))
+                .isFalse();
     }
 
     @Test

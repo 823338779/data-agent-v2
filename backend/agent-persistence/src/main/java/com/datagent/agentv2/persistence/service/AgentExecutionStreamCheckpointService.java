@@ -65,10 +65,8 @@ public class AgentExecutionStreamCheckpointService
             long modelInvocationSequence,
             String ownerInstanceId,
             long outputDeltaSequence,
-            String reasoning,
             String answer,
             String phase,
-            Instant reasoningExpiresAt,
             Instant now) {
         return baseMapper.checkpoint(
                         executionId,
@@ -77,10 +75,8 @@ public class AgentExecutionStreamCheckpointService
                         modelInvocationSequence,
                         ownerInstanceId,
                         outputDeltaSequence,
-                        reasoning,
                         answer,
                         phase,
-                        reasoningExpiresAt,
                         now)
                 == 1;
     }
@@ -102,10 +98,5 @@ public class AgentExecutionStreamCheckpointService
                         answer,
                         now)
                 == 1;
-    }
-
-    /** 清理一页已到期终态执行检查点 reasoning。 */
-    public int clearExpiredReasoning(Instant now, int limit) {
-        return baseMapper.clearExpiredReasoning(now, limit);
     }
 }

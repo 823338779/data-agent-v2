@@ -72,6 +72,5 @@ public record ConversationView(
             long modelInvocationSequence,
             ExecutionPhase phase,
             long outputDeltaSequence,
-            String thinking,
             String answer) {}
 }

@@ -11,7 +11,7 @@ import { createIdempotencyKey } from './idempotencyKey';
 const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
 const JSON_CONTENT_TYPE = 'application/json';
 const ACTIVITY_EVENT = 'activity_snapshot';
-const STREAM_EVENT_TYPES = ['stream_snapshot', 'reasoning_delta', 'assistant_delta'] as const;
+const STREAM_EVENT_TYPES = ['stream_snapshot', 'assistant_delta'] as const;
 const SESSION_EVENT_TYPES = ['execution_queued', 'execution_started', 'execution_done'] as const;
 const EXECUTION_STATUSES: AgentExecutionStatus[] = [
   'idle',
@@ -57,9 +57,6 @@ interface BackendStreamCheckpoint {
   modelInvocationSequence?: number;
   phase: string;
   outputDeltaSequence?: number;
-  reasoning?: string;
-  /** 兼容计划三之前后端返回的字段名。 */
-  thinking?: string;
   answer: string;
   checkpointedAt?: string | null;
 }
@@ -83,11 +80,10 @@ export type ExecutionStreamEvent =
   | ({
       type: 'stream_snapshot';
       phase: string;
-      reasoning: string;
       answer: string;
       checkpointedAt: string | null;
     } & StreamCursor)
-  | ({ type: 'reasoning_delta' | 'assistant_delta'; delta: string } & StreamCursor);
+  | ({ type: 'assistant_delta'; delta: string } & StreamCursor);
 
 interface StreamCursor {
   executionAttemptNumber: number;
@@ -165,7 +161,6 @@ export function applyExecutionStreamEvent(
       modelInvocationSequence: event.modelInvocationSequence,
       phase: event.phase,
       outputDeltaSequence: event.outputDeltaSequence,
-      reasoning: event.reasoning,
       answer: event.answer,
       checkpointedAt: event.checkpointedAt,
     };
@@ -180,9 +175,7 @@ export function applyExecutionStreamEvent(
   return {
     ...current,
     outputDeltaSequence: event.outputDeltaSequence,
-    reasoning:
-      event.type === 'reasoning_delta' ? current.reasoning + event.delta : current.reasoning,
-    answer: event.type === 'assistant_delta' ? current.answer + event.delta : current.answer,
+    answer: current.answer + event.delta,
   };
 }
 
@@ -205,7 +198,6 @@ function toCheckpoint(checkpoint: BackendStreamCheckpoint): AgentExecutionStream
     modelInvocationSequence: checkpoint.modelInvocationSequence ?? 0,
     phase: checkpoint.phase,
     outputDeltaSequence: checkpoint.outputDeltaSequence ?? 0,
-    reasoning: checkpoint.reasoning ?? checkpoint.thinking ?? '',
     answer: checkpoint.answer,
     checkpointedAt: checkpoint.checkpointedAt ?? null,
   };

@@ -76,7 +76,7 @@ describe('backend agent client', () => {
       progress: 5,
       objective: '分析订单延迟',
       events: [],
-      streamCheckpoint: { phase: 'RECEIVED', thinking: '检查订单时间', answer: '发现延迟订单' },
+      streamCheckpoint: { phase: 'RECEIVED', answer: '发现延迟订单' },
     };
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
@@ -109,7 +109,7 @@ describe('backend agent client', () => {
     const [mapped] = await createFetchAgentBackendClient({ fetchImpl }).listSessions();
 
     expect(mapped.messages[0]).toMatchObject({ role: 'user', content: '分析订单延迟' });
-    expect(mapped.messages[1].execution?.streamCheckpoint?.reasoning).toBe('检查订单时间');
+    expect(mapped.messages[1].execution?.streamCheckpoint).not.toHaveProperty('reasoning');
     expect(mapped.execution).toMatchObject({ status: 'running', progress: 5 });
     expect(mapped).not.toHaveProperty('metricPlatformCredential');
   });
@@ -216,18 +216,17 @@ describe('backend agent client', () => {
     ]);
   });
 
-  it('accepts only continuous deltas and replaces partial output on a newer turn snapshot', () => {
+  it('accepts continuous answer deltas and replaces partial output on a newer turn snapshot', () => {
     const initial = {
       executionAttemptNumber: 1,
       modelInvocationSequence: 1,
-      phase: 'THINKING',
+      phase: 'ANSWERING',
       outputDeltaSequence: 1,
-      reasoning: 'A',
       answer: '',
       checkpointedAt: null,
     };
     const duplicate = applyExecutionStreamEvent(initial, {
-      type: 'reasoning_delta',
+      type: 'assistant_delta',
       executionAttemptNumber: 1,
       modelInvocationSequence: 1,
       outputDeltaSequence: 1,
@@ -238,7 +237,7 @@ describe('backend agent client', () => {
       executionAttemptNumber: 1,
       modelInvocationSequence: 1,
       outputDeltaSequence: 3,
-      delta: 'gap',
+      delta: 'answer',
     });
     const next = applyExecutionStreamEvent(initial, {
       type: 'assistant_delta',
@@ -252,8 +251,7 @@ describe('backend agent client', () => {
       executionAttemptNumber: 1,
       modelInvocationSequence: 2,
       outputDeltaSequence: 1,
-      phase: 'THINKING',
-      reasoning: 'B',
+      phase: 'ANSWERING',
       answer: '',
       checkpointedAt: '2026-08-01T08:02:00Z',
     });
@@ -263,7 +261,6 @@ describe('backend agent client', () => {
     expect(next.answer).toBe('answer');
     expect(replaced).toMatchObject({
       modelInvocationSequence: 2,
-      reasoning: 'B',
       answer: '',
       outputDeltaSequence: 1,
     });

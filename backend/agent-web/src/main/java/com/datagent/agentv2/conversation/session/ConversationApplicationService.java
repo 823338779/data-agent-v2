@@ -403,7 +403,6 @@ public class ConversationApplicationService {
                                 stream.getModelInvocationSequence(),
                                 ExecutionPhase.fromValue(stream.getPhase()),
                                 stream.getOutputDeltaSequence(),
-                                stream.getReasoning(),
                                 stream.getAnswer()));
     }
 
@@ -442,7 +441,6 @@ public class ConversationApplicationService {
             case RECEIVED -> 5;
             case PREPARING_CONTEXT -> 15;
             case CONNECTING_MODEL -> 25;
-            case THINKING -> 45;
             case ANSWERING -> 70;
             case PERSISTING -> 90;
             case COMPLETED -> 100;
@@ -461,7 +459,6 @@ public class ConversationApplicationService {
                 stream.getModelInvocationSequence(),
                 ExecutionPhase.fromValue(stream.getPhase()),
                 stream.getOutputDeltaSequence(),
-                stream.getReasoning(),
                 stream.getAnswer(),
                 stream.getCheckpointedAt());
     }
@@ -482,7 +479,6 @@ public class ConversationApplicationService {
             long modelInvocationSequence,
             ExecutionPhase phase,
             long outputDeltaSequence,
-            String reasoning,
             String answer,
             java.time.Instant checkpointedAt) {}
 

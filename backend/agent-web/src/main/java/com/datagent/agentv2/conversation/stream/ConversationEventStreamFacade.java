@@ -1,7 +1,6 @@
 package com.datagent.agentv2.conversation.stream;
 
 import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotification;
-import com.datagent.agentv2.conversation.cluster.ExecutionDeltaType;
 import com.datagent.agentv2.conversation.execution.ExecutionEventType;
 import com.datagent.agentv2.conversation.execution.ExecutionPhase;
 import com.datagent.agentv2.conversation.execution.ExecutionStatus;
@@ -225,7 +224,6 @@ public final class ConversationEventStreamFacade {
                             snapshot.modelInvocationSequence(),
                             snapshot.outputDeltaSequence(),
                             snapshot.phase(),
-                            snapshot.reasoning(),
                             snapshot.answer(),
                             snapshot.checkpointedAt(),
                             Instant.now()));
@@ -353,10 +351,10 @@ public final class ConversationEventStreamFacade {
                             envelope.modelInvocationSequence(),
                             envelope.outputDeltaSequence());
             send(
-                    envelope.deltaType().value(),
+                    ConversationStreamEventType.ASSISTANT_DELTA.value(),
                     cursor,
                     new DeltaEvent(
-                            envelope.deltaType(),
+                            ConversationStreamEventType.ASSISTANT_DELTA,
                             conversationSessionId,
                             envelope.executionId(),
                             envelope.executionAttemptNumber(),
@@ -442,7 +440,7 @@ public final class ConversationEventStreamFacade {
     private record LifecycleEventPayload(ExecutionStatus status) {}
 
     private record DeltaEvent(
-            ExecutionDeltaType type,
+            ConversationStreamEventType type,
             String conversationSessionId,
             String executionId,
             long executionAttemptNumber,
@@ -459,7 +457,6 @@ public final class ConversationEventStreamFacade {
             long modelInvocationSequence,
             long outputDeltaSequence,
             ExecutionPhase phase,
-            String reasoning,
             String answer,
             Instant checkpointedAt,
             Instant occurredAt) {}

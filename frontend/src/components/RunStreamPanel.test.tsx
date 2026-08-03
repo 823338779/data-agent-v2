@@ -3,23 +3,21 @@ import { describe, expect, it } from 'vitest';
 import { RunStreamPanel } from './RunStreamPanel';
 
 describe('RunStreamPanel', () => {
-  it('separates reasoning from answer and expands reasoning while running', () => {
+  it('renders only the streamed answer', () => {
     render(
       <RunStreamPanel
-        status="running"
         checkpoint={{
           executionAttemptNumber: 1,
           modelInvocationSequence: 1,
-          phase: 'THINKING',
+          phase: 'ANSWERING',
           outputDeltaSequence: 2,
-          reasoning: '正在检查订单',
           answer: '已找到结果',
           checkpointedAt: null,
         }}
       />,
     );
 
-    expect(screen.getByText('推理过程').closest('details')).toHaveAttribute('open');
     expect(screen.getByLabelText('回答')).toHaveTextContent('已找到结果');
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });

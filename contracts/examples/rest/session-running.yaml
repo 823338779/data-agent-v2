@@ -44,5 +44,4 @@ value:
       modelInvocationSequence: 1
       phase: planning
       outputDeltaSequence: 1
-      thinking: Preparing the metric query
       answer: ''

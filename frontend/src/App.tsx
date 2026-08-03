@@ -468,22 +468,11 @@ export default function App({
                     <time>{formatTimestamp(message.timestamp)}</time>
                   </header>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-                  {message.role === 'assistant' && message.execution && (
-                    <RunStreamPanel
-                      historical
-                      hideAnswer
-                      status={message.execution.status}
-                      checkpoint={message.execution.streamCheckpoint}
-                    />
-                  )}
                 </div>
               </article>
             ))}
             {!activeExecutionAnswerPersisted && active.execution && (
-              <RunStreamPanel
-                status={active.execution.status}
-                checkpoint={active.execution.streamCheckpoint}
-              />
+              <RunStreamPanel checkpoint={active.execution.streamCheckpoint} />
             )}
           </div>
 

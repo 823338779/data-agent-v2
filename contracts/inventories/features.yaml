@@ -16,7 +16,6 @@ features:
   - { id: multi-instance-redis-notification, entry: "多实例 Redis 通知", success: "Token 转发到持有浏览器 SSE 的节点", failure: "Redis 中断时保留数据库检查点", security: "消息只携带租户定位信息和流增量", phase: 1 }
   - { id: no-service-discovery, entry: "Nginx 单域名入口", success: "两个副本无需服务发现或直接 RPC", failure: "单副本故障由 Nginx 健康检查隔离", security: "浏览器不直连内部副本", phase: 1 }
   - { id: same-ingress-ollama, entry: "同入口节点执行 Ollama", success: "保存用户 Message 的节点在提交后执行模型", failure: "节点故障时不被其他节点领取或重试", security: "Agent 执行不进入跨节点工作队列", phase: 1 }
-  - { id: thinking-stream, entry: "reasoning_delta", success: "逐 Token 展示思考", failure: "空增量被过滤且序列保持单调", security: "只向已认证会话订阅者发送", phase: 1 }
   - { id: answer-stream, entry: "assistant_delta", success: "逐 Token 展示回答草稿", failure: "最终消息与草稿去重", security: "只持久化最终回答和累计检查点", phase: 1 }
   - { id: refresh-recovery, entry: "运行期间刷新", success: "从 AgentExecutionStreamCheckpoint 检查点恢复后继续实时流", failure: "重放/实时重叠按序列去重", security: "恢复仍需租户认证", phase: 1 }
   - { id: active-execution-conflict, entry: "同会话并发消息", success: "数据库仅允许一个活动 Agent 执行", failure: "第二个提交返回 409", security: "唯一约束包含 tenant_id 和 conversation_session_id", phase: 1 }

@@ -10,7 +10,6 @@ public enum ExecutionPhase {
     RECEIVED,
     PREPARING_CONTEXT,
     CONNECTING_MODEL,
-    THINKING,
     ANSWERING,
     PERSISTING,
     COMPLETED;

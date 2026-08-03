@@ -4,7 +4,8 @@ import com.fasterxml.jackson.annotation.JsonValue;
 
 /** 会话流中不属于执行生命周期或模型增量的事件类型。 */
 public enum ConversationStreamEventType {
-    SNAPSHOT("stream_snapshot");
+    SNAPSHOT("stream_snapshot"),
+    ASSISTANT_DELTA("assistant_delta");
 
     private final String value;
 

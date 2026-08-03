@@ -94,10 +94,15 @@ class ReactExecutionMigrationTest {
     }
 
     @Test
-    void modelInvocationChecksStateAndKeepsOnlyReasoningAsLargeText() throws SQLException {
+    void modelInvocationChecksStateWithoutPersistingModelPayloads() throws SQLException {
         assertThat(columnNames("model_invocation"))
-                .contains("reasoning")
-                .doesNotContain("prompt", "answer", "tool_calls", "tool_result");
+                .doesNotContain(
+                        "reasoning",
+                        "reasoning_expires_at",
+                        "prompt",
+                        "answer",
+                        "tool_calls",
+                        "tool_result");
         assertThatThrownBy(
                         () ->
                                 execute(

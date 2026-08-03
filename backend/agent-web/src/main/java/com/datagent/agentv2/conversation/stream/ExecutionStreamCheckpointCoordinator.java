@@ -2,8 +2,6 @@ package com.datagent.agentv2.conversation.stream;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
-import com.datagent.agentv2.conversation.model.ModelOutputDelta;
-import com.datagent.agentv2.conversation.react.ReactLimitsProperties;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
@@ -24,18 +22,15 @@ public final class ExecutionStreamCheckpointCoordinator {
 
     private final AgentExecutionStreamCheckpointService streamCheckpoints;
     private final AgentExecutionService agentExecutions;
-    private final ReactLimitsProperties limits;
     private final ConcurrentMap<ExecutionStreamKey, ExecutionStreamAccumulator> accumulators =
             new ConcurrentHashMap<>();
     private final ConcurrentMap<String, String> conversationSessionIds = new ConcurrentHashMap<>();
 
     public ExecutionStreamCheckpointCoordinator(
             AgentExecutionStreamCheckpointService streamCheckpoints,
-            AgentExecutionService agentExecutions,
-            ReactLimitsProperties limits) {
+            AgentExecutionService agentExecutions) {
         this.streamCheckpoints = streamCheckpoints;
         this.agentExecutions = agentExecutions;
-        this.limits = limits;
     }
 
     /** 切换执行尝试或模型调用时先持久化空投影，并清理该执行的旧本地累计。 */
@@ -60,46 +55,58 @@ public final class ExecutionStreamCheckpointCoordinator {
         accumulators.put(key(run, modelInvocationSequence), from(reset, now));
     }
 
-    /** 每个 delta 都获得序号；达到阈值时同步写入完整累计投影。 */
-    public PublishedDelta append(
+    /** 每个回答增量都获得序号；达到阈值时同步写入完整累计投影。 */
+    public AnswerDelta appendAnswer(
             AgentExecutionPort.ClaimedAgentExecution run,
             long modelInvocationSequence,
-            ModelOutputDelta delta,
+            String answerDelta,
             Instant now) {
+        Objects.requireNonNull(answerDelta, "answerDelta");
         ExecutionStreamAccumulator accumulator = accumulator(run, modelInvocationSequence, now);
         synchronized (accumulator) {
-            long outputDeltaSequence = accumulator.append(delta);
-            boolean checkpointed = accumulator.shouldCheckpoint(now);
-            if (checkpointed) {
+            long outputDeltaSequence = accumulator.appendAnswer(answerDelta);
+            if (accumulator.shouldCheckpoint(now)) {
                 persist(run, accumulator, now);
             }
-            return new PublishedDelta(
+            return new AnswerDelta(
                     run.tenantId(),
                     conversationSessionId(run.executionId()),
                     run.executionId(),
                     run.executionAttemptNumber(),
                     modelInvocationSequence,
                     outputDeltaSequence,
-                    delta.kind(),
-                    delta.content(),
-                    checkpointed,
+                    answerDelta,
                     now);
         }
     }
 
-    /** phase、模型调用、终态和 lease release 边界强制收敛尚未落库的短增量。 */
+    /** 模型调用边界强制收敛尚未落库的短增量，并保留当前执行的本地累计。 */
     public void flush(
             AgentExecutionPort.ClaimedAgentExecution run,
             long modelInvocationSequence,
-            Boundary boundary,
             Instant now) {
-        Objects.requireNonNull(boundary, "boundary");
+        flush(run, modelInvocationSequence, now, false);
+    }
+
+    /** 终态或 lease release 边界强制收敛短增量，并释放当前执行的本地累计。 */
+    public void flushAndRelease(
+            AgentExecutionPort.ClaimedAgentExecution run,
+            long modelInvocationSequence,
+            Instant now) {
+        flush(run, modelInvocationSequence, now, true);
+    }
+
+    private void flush(
+            AgentExecutionPort.ClaimedAgentExecution run,
+            long modelInvocationSequence,
+            Instant now,
+            boolean release) {
         ExecutionStreamAccumulator accumulator = accumulator(run, modelInvocationSequence, now);
         synchronized (accumulator) {
             if (accumulator.hasPending()) {
                 persist(run, accumulator, now);
             }
-            if (boundary == Boundary.LEASE_RELEASE || boundary == Boundary.TERMINAL) {
+            if (release) {
                 accumulators.remove(key(run, modelInvocationSequence), accumulator);
                 conversationSessionIds.remove(run.executionId());
             }
@@ -107,8 +114,8 @@ public final class ExecutionStreamCheckpointCoordinator {
     }
 
     /** owner 正常释放 lease 前，强制写入该执行尝试当前模型调用的短增量。 */
-    public void flushExecution(
-            AgentExecutionPort.ClaimedAgentExecution run, Boundary boundary, Instant now) {
+    public void flushExecutionAndRelease(
+            AgentExecutionPort.ClaimedAgentExecution run, Instant now) {
         accumulators.keySet().stream()
                 .filter(
                         key ->
@@ -116,7 +123,7 @@ public final class ExecutionStreamCheckpointCoordinator {
                                         && key.executionAttemptNumber()
                                                 == run.executionAttemptNumber())
                 .toList()
-                .forEach(key -> flush(run, key.modelInvocationSequence(), boundary, now));
+                .forEach(key -> flushAndRelease(run, key.modelInvocationSequence(), now));
     }
 
     private ExecutionStreamAccumulator accumulator(
@@ -144,7 +151,6 @@ public final class ExecutionStreamCheckpointCoordinator {
             ExecutionStreamAccumulator accumulator,
             Instant now) {
         AgentExecutionStreamCheckpoint current = requireStream(run.executionId());
-        Instant reasoningExpiresAt = now.plus(limits.getReasoningRetention());
         if (!streamCheckpoints.checkpoint(
                 run.executionId(),
                 current.getVersion(),
@@ -152,10 +158,8 @@ public final class ExecutionStreamCheckpointCoordinator {
                 accumulator.modelInvocationSequence(),
                 run.ownerInstanceId(),
                 accumulator.outputDeltaSequence(),
-                accumulator.reasoning(),
                 accumulator.answer(),
                 accumulator.phase().value(),
-                reasoningExpiresAt,
                 now)) {
             throw new ExecutionOwnershipLostException(run.executionId());
         }
@@ -191,7 +195,6 @@ public final class ExecutionStreamCheckpointCoordinator {
                 stream.getExecutionAttemptNumber(),
                 stream.getModelInvocationSequence(),
                 stream.getOutputDeltaSequence(),
-                stream.getReasoning(),
                 stream.getAnswer(),
                 stream.getPhase(),
                 checkpointedAt);
@@ -203,22 +206,13 @@ public final class ExecutionStreamCheckpointCoordinator {
                 run.executionId(), run.executionAttemptNumber(), modelInvocationSequence);
     }
 
-    public enum Boundary {
-        PHASE,
-        MODEL_INVOCATION,
-        TERMINAL,
-        LEASE_RELEASE
-    }
-
-    public record PublishedDelta(
+    public record AnswerDelta(
             String tenantId,
             String conversationSessionId,
             String executionId,
             long executionAttemptNumber,
             long modelInvocationSequence,
             long outputDeltaSequence,
-            ModelOutputDelta.Kind kind,
-            String delta,
-            boolean checkpointed,
+            String answerDelta,
             Instant occurredAt) {}
 }

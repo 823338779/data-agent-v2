@@ -1,6 +1,5 @@
 package com.datagent.agentv2.conversation.react;
 
-import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -13,9 +12,6 @@ public class ReactLimitsProperties {
 
     /** 单次 Agent 执行允许归档的最大工具调用数。 */
     private int maxToolCalls = 32;
-
-    /** reasoning 检查点在 stream 和 Model Turn 中的保留时长。 */
-    private Duration reasoningRetention = Duration.ofDays(30);
 
     public ReactLimitsProperties() {}
 
@@ -38,13 +34,5 @@ public class ReactLimitsProperties {
 
     public void setMaxToolCalls(int maxToolCalls) {
         this.maxToolCalls = maxToolCalls;
-    }
-
-    public Duration getReasoningRetention() {
-        return reasoningRetention;
-    }
-
-    public void setReasoningRetention(Duration reasoningRetention) {
-        this.reasoningRetention = reasoningRetention;
     }
 }

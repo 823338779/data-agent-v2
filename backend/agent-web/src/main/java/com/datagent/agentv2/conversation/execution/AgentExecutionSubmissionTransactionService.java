@@ -138,7 +138,6 @@ public class AgentExecutionSubmissionTransactionService {
                         ids.next(ID_PREFIX_EXECUTION_STREAM_CHECKPOINT),
                         run.getExecutionId(),
                         ExecutionPhase.QUEUED.value(),
-                        EMPTY_TEXT,
                         EMPTY_TEXT));
         return session;
     }

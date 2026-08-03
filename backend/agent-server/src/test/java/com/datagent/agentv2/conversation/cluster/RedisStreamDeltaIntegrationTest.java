@@ -108,14 +108,12 @@ class RedisStreamDeltaIntegrationTest {
 
     private static AgentExecutionDeltaNotification delta(long sequence, String content) {
         return new AgentExecutionDeltaNotification(
-                ExecutionDeltaNotificationType.STREAM_DELTA,
                 TENANT_ID,
                 SESSION_ID,
                 EXECUTION_ID,
                 1,
                 1,
                 sequence,
-                ExecutionDeltaType.REASONING,
                 content,
                 Instant.parse("2026-08-01T06:00:00Z"));
     }

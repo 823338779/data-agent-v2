@@ -9,13 +9,12 @@ export type AgentExecutionStatus =
   | 'cancelled'
   | 'failed';
 
-/** 可恢复的推理与回答流检查点，三个序号共同标识严格顺序。 */
+/** 可恢复的回答流检查点，三个序号共同标识严格顺序。 */
 export interface AgentExecutionStreamCheckpoint {
   executionAttemptNumber: number;
   modelInvocationSequence: number;
   phase: string;
   outputDeltaSequence: number;
-  reasoning: string;
   answer: string;
   checkpointedAt: string | null;
 }

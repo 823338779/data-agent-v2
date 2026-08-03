@@ -30,12 +30,6 @@ public final class ModelInvocationEntity extends TenantAuditedEntity {
     /** 模型调用恢复状态：streaming、completed、abandoned 或 failed。 */
     private String status;
 
-    /** provider reasoning 检查点；这是 Model Turn 唯一允许的大文本。 */
-    private String reasoning;
-
-    /** reasoning 检查点的到期清理时间。 */
-    private Instant reasoningExpiresAt;
-
     /** 模型调用开始时间。 */
     private Instant startedAt;
 

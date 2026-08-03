@@ -29,28 +29,18 @@ public final class AgentExecutionStreamCheckpoint {
     /** 当前 attempt 内最后发布的 delta 序号。 */
     private Long outputDeltaSequence;
 
-    /** 当前累计 reasoning。 */
-    private String reasoning;
-
     /** 当前累计回答草稿。 */
     private String answer;
 
     /** 最近一次完整流投影持久化时间。 */
     private Instant checkpointedAt;
 
-    /** reasoning 可被清理的时间边界。 */
-    private Instant reasoningExpiresAt;
-
     /** 检查点乐观锁版本。 */
     private Long version;
 
     /** 组装 queued 执行的初始空检查点。 */
     public static AgentExecutionStreamCheckpoint initial(
-            String checkpointId,
-            String executionId,
-            String phase,
-            String emptyReasoning,
-            String emptyAnswer) {
+            String checkpointId, String executionId, String phase, String emptyAnswer) {
         AgentExecutionStreamCheckpoint checkpoint = new AgentExecutionStreamCheckpoint();
         checkpoint.executionStreamCheckpointId = checkpointId;
         checkpoint.executionId = executionId;
@@ -58,7 +48,6 @@ public final class AgentExecutionStreamCheckpoint {
         checkpoint.modelInvocationSequence = 0L;
         checkpoint.phase = phase;
         checkpoint.outputDeltaSequence = 0L;
-        checkpoint.reasoning = emptyReasoning;
         checkpoint.answer = emptyAnswer;
         checkpoint.version = 0L;
         return checkpoint;

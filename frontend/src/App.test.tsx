@@ -21,7 +21,6 @@ const session: ConversationSession = {
 
 function completedExecution(
   executionId: string,
-  thinking: string,
   answer: string,
 ): NonNullable<ConversationSession['execution']> {
   return {
@@ -36,7 +35,6 @@ function completedExecution(
       modelInvocationSequence: 1,
       phase: 'COMPLETED',
       outputDeltaSequence: 1,
-      reasoning: thinking,
       answer,
       checkpointedAt: '2026-08-01T08:01:00Z',
     },
@@ -151,9 +149,9 @@ describe('server-backed conversation workspace', () => {
     expect(screen.getByRole('button', { name: '关闭会话列表' })).toBeInTheDocument();
   });
 
-  it('shows the matching Agent execution process below every persisted assistant answer', async () => {
-    const firstExecution = completedExecution('execution_1', '第一次思考', '第一条回答');
-    const secondExecution = completedExecution('execution_2', '第二次思考', '第二条回答');
+  it('does not duplicate persisted assistant answers with execution checkpoints', async () => {
+    const firstExecution = completedExecution('execution_1', '第一条回答');
+    const secondExecution = completedExecution('execution_2', '第二条回答');
     const history: ConversationSession = {
       ...session,
       messages: [
@@ -180,20 +178,16 @@ describe('server-backed conversation workspace', () => {
     render(<App client={client({ listSessions: vi.fn().mockResolvedValue([history]) })} />);
     fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
 
-    expect(screen.getAllByText('查看运行过程')).toHaveLength(2);
-    expect(screen.getByText('第一次思考')).toBeInTheDocument();
-    expect(screen.getByText('第二次思考')).toBeInTheDocument();
+    expect(screen.queryByText('推理过程')).not.toBeInTheDocument();
+    expect(screen.queryByText('查看运行过程')).not.toBeInTheDocument();
+    expect(screen.getAllByText('第一条回答')).toHaveLength(1);
     expect(screen.getAllByText('第二条回答')).toHaveLength(1);
   });
 
   it('places a streaming answer in the full-width message content column', async () => {
     const streaming: ConversationSession = {
       ...session,
-      execution: completedExecution(
-        'execution_streaming',
-        '正在思考',
-        '这是一条实时返回的完整回答',
-      ),
+      execution: completedExecution('execution_streaming', '这是一条实时返回的完整回答'),
     };
 
     const view = render(

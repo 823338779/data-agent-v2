@@ -39,7 +39,6 @@ class ContractExamplesTest {
                     "execution_started",
                     "user_message",
                     "assistant_message",
-                    "reasoning_delta",
                     "assistant_delta",
                     STREAM_SNAPSHOT,
                     "execution_phase_changed",
@@ -141,8 +140,7 @@ class ContractExamplesTest {
                 .isEqualTo("https://json-schema.org/draft/2020-12/schema");
         assertThat(actual).isEqualTo(SESSION_EVENTS);
         assertThat(schemaNode.path("oneOf")).hasSizeGreaterThanOrEqualTo(3);
-        assertThat(schemaNode.path("x-frontend-projection").path("reasoning_delta").asString())
-                .isEqualTo("reasoning.delta");
+        assertThat(schemaNode.path("x-frontend-projection").has("reasoning_delta")).isFalse();
         assertThat(schemaNode.path("x-frontend-projection").path("assistant_delta").asString())
                 .isEqualTo("assistant.draft");
         assertThat(
@@ -172,7 +170,6 @@ class ContractExamplesTest {
                         "executionAttemptNumber",
                         "modelInvocationSequence",
                         "outputDeltaSequence",
-                        "reasoning",
                         "answer",
                         "checkpointedAt");
         assertThat(
@@ -202,11 +199,11 @@ class ContractExamplesTest {
         assertThat(schema.path("properties").path("type").path("enum").toString())
                 .contains(STREAM_SNAPSHOT);
         assertThat(schema.path("properties").has("modelInvocationSequence")).isTrue();
-        assertThat(schema.path("properties").has("reasoning")).isTrue();
+        assertThat(schema.path("properties").has("reasoning")).isFalse();
         assertThat(schema.path("properties").has("answer")).isTrue();
         assertThat(schema.path("properties").has("checkpointedAt")).isTrue();
         assertThat(schema.path("x-sensitive-payload-fields-forbidden").toString())
-                .contains("reasoning", "prompt", "toolInput", "toolOutput");
+                .contains("prompt", "toolInput", "toolOutput");
     }
 
     @Test
@@ -228,7 +225,7 @@ class ContractExamplesTest {
                             .toList();
         }
 
-        assertThat(examples).hasSize(7);
+        assertThat(examples).hasSize(6);
         for (java.nio.file.Path example : examples) {
             tools.jackson.databind.JsonNode value = JSON.readTree(example);
             assertThat(schema.validate(value)).as(example.getFileName().toString()).isEmpty();

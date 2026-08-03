@@ -6,7 +6,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
-import com.datagent.agentv2.conversation.model.ModelOutputDelta;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
@@ -98,46 +97,25 @@ class AgentExecutionStreamCheckpointIntegrationTest {
 
         // 新 turn 从零开始；短增量先发布但尚未达到持久化阈值。
         TenantContext.run(TENANT_ID, () -> checkpoints.beginModelInvocation(run, 1, STARTED_AT));
-        ExecutionStreamCheckpointCoordinator.PublishedDelta first =
+        ExecutionStreamCheckpointCoordinator.AnswerDelta first =
                 TenantContext.call(
-                        TENANT_ID,
-                        () ->
-                                checkpoints.append(
-                                        run, 1, ModelOutputDelta.reasoning("a"), STARTED_AT));
+                        TENANT_ID, () -> checkpoints.appendAnswer(run, 1, "a", STARTED_AT));
         assertThat(first.outputDeltaSequence()).isEqualTo(1);
-        assertThat(first.checkpointed()).isFalse();
-        assertStream(run.executionId(), 1, 1, 0, "", "");
+        assertStream(run.executionId(), 1, 1, 0, "");
 
         // 累计达到 512 字符后写完整投影和最后已发布序号。
         String remainder = "b".repeat(511);
-        ExecutionStreamCheckpointCoordinator.PublishedDelta sized =
+        ExecutionStreamCheckpointCoordinator.AnswerDelta sized =
                 TenantContext.call(
-                        TENANT_ID,
-                        () ->
-                                checkpoints.append(
-                                        run, 1, ModelOutputDelta.reasoning(remainder), STARTED_AT));
+                        TENANT_ID, () -> checkpoints.appendAnswer(run, 1, remainder, STARTED_AT));
         assertThat(sized.outputDeltaSequence()).isEqualTo(2);
-        assertThat(sized.checkpointed()).isTrue();
-        assertStream(run.executionId(), 1, 1, 2, "a" + remainder, "");
+        assertStream(run.executionId(), 1, 1, 2, "a" + remainder);
         long staleVersion = currentStream(run.executionId()).getVersion();
 
-        // reasoning 切到 answer 的 phase 边界先到，短增量也立即收敛。
-        Instant phaseAt = STARTED_AT.plusMillis(1);
-        ExecutionStreamCheckpointCoordinator.PublishedDelta phased =
-                TenantContext.call(
-                        TENANT_ID,
-                        () -> checkpoints.append(run, 1, ModelOutputDelta.answer("z"), phaseAt));
-        assertThat(phased.checkpointed()).isTrue();
-        assertStream(run.executionId(), 1, 1, 3, "a" + remainder, "z");
-
         // 距离上次 checkpoint 250ms 后，同 phase 的一个字符也立即收敛。
-        Instant timedAt = phaseAt.plusMillis(250);
-        ExecutionStreamCheckpointCoordinator.PublishedDelta timed =
-                TenantContext.call(
-                        TENANT_ID,
-                        () -> checkpoints.append(run, 1, ModelOutputDelta.answer("q"), timedAt));
-        assertThat(timed.checkpointed()).isTrue();
-        assertStream(run.executionId(), 1, 1, 4, "a" + remainder, "zq");
+        Instant timedAt = STARTED_AT.plusMillis(250);
+        TenantContext.run(TENANT_ID, () -> checkpoints.appendAnswer(run, 1, "z", timedAt));
+        assertStream(run.executionId(), 1, 1, 3, "a" + remainder + "z");
         assertThat(
                         TenantContext.call(
                                 TENANT_ID,
@@ -148,11 +126,9 @@ class AgentExecutionStreamCheckpointIntegrationTest {
                                                 1,
                                                 1,
                                                 OWNER_ID,
-                                                5,
-                                                STALE_TEXT,
+                                                4,
                                                 STALE_TEXT,
                                                 PHASE_ANSWERING,
-                                                timedAt.plusSeconds(60),
                                                 timedAt.plusMillis(1))))
                 .isFalse();
         assertThat(
@@ -165,11 +141,9 @@ class AgentExecutionStreamCheckpointIntegrationTest {
                                                 1,
                                                 1,
                                                 STALE_OWNER_ID,
-                                                5,
-                                                STALE_TEXT,
+                                                4,
                                                 STALE_TEXT,
                                                 PHASE_ANSWERING,
-                                                timedAt.plusSeconds(60),
                                                 timedAt.plusMillis(1))))
                 .isFalse();
 
@@ -180,44 +154,21 @@ class AgentExecutionStreamCheckpointIntegrationTest {
         TenantContext.run(
                 TENANT_ID, () -> checkpoints.beginModelInvocation(run, 2, timedAt.plusMillis(1)));
         TenantContext.run(
-                TENANT_ID,
-                () ->
-                        checkpoints.append(
-                                run, 2, ModelOutputDelta.answer("new"), timedAt.plusMillis(2)));
+                TENANT_ID, () -> checkpoints.appendAnswer(run, 2, "new", timedAt.plusMillis(2)));
+        TenantContext.run(TENANT_ID, () -> checkpoints.flush(run, 2, timedAt.plusMillis(3)));
+        assertStream(run.executionId(), 1, 2, 1, "new");
         TenantContext.run(
-                TENANT_ID,
-                () ->
-                        checkpoints.flush(
-                                run,
-                                2,
-                                ExecutionStreamCheckpointCoordinator.Boundary.MODEL_INVOCATION,
-                                timedAt.plusMillis(3)));
-        assertStream(run.executionId(), 1, 2, 1, "", "new");
+                TENANT_ID, () -> checkpoints.appendAnswer(run, 2, "!", timedAt.plusMillis(4)));
         TenantContext.run(
-                TENANT_ID,
-                () ->
-                        checkpoints.append(
-                                run, 2, ModelOutputDelta.answer("!"), timedAt.plusMillis(4)));
-        TenantContext.run(
-                TENANT_ID,
-                () ->
-                        checkpoints.flush(
-                                run,
-                                2,
-                                ExecutionStreamCheckpointCoordinator.Boundary.LEASE_RELEASE,
-                                timedAt.plusMillis(5)));
-        assertStream(run.executionId(), 1, 2, 2, "", "new!");
+                TENANT_ID, () -> checkpoints.flushAndRelease(run, 2, timedAt.plusMillis(5)));
+        assertStream(run.executionId(), 1, 2, 2, "new!");
         assertThatThrownBy(
                         () ->
                                 TenantContext.run(
                                         TENANT_ID,
                                         () ->
-                                                checkpoints.flush(
-                                                        run,
-                                                        1,
-                                                        ExecutionStreamCheckpointCoordinator
-                                                                .Boundary.TERMINAL,
-                                                        timedAt.plusMillis(6))))
+                                                checkpoints.flushAndRelease(
+                                                        run, 1, timedAt.plusMillis(6))))
                 .isInstanceOf(ExecutionOwnershipLostException.class);
     }
 
@@ -257,17 +208,11 @@ class AgentExecutionStreamCheckpointIntegrationTest {
     }
 
     private void assertStream(
-            String executionId,
-            long attempt,
-            long turn,
-            long sequence,
-            String reasoning,
-            String answer) {
+            String executionId, long attempt, long turn, long sequence, String answer) {
         AgentExecutionStreamCheckpoint stream = currentStream(executionId);
         assertThat(stream.getExecutionAttemptNumber()).isEqualTo(attempt);
         assertThat(stream.getModelInvocationSequence()).isEqualTo(turn);
         assertThat(stream.getOutputDeltaSequence()).isEqualTo(sequence);
-        assertThat(stream.getReasoning()).isEqualTo(reasoning);
         assertThat(stream.getAnswer()).isEqualTo(answer);
     }
 

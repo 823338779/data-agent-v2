@@ -9,5 +9,5 @@ public interface AgentModelGateway {
     ModelInvocationResult complete(
             List<ModelInputMessage> messages,
             List<ModelToolDefinition> tools,
-            Consumer<ModelOutputDelta> deltaConsumer);
+            Consumer<String> answerDeltaConsumer);
 }

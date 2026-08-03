@@ -36,7 +36,7 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
     public ModelInvocationResult complete(
             List<ModelInputMessage> messages,
             List<ModelToolDefinition> tools,
-            Consumer<ModelOutputDelta> deltaConsumer) {
+            Consumer<String> answerDeltaConsumer) {
         String tenantId = TenantContext.requiredTenantId();
         OllamaApi.ChatRequest request =
                 OllamaApi.ChatRequest.builder(properties.getModel())
@@ -46,11 +46,10 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
                                 OllamaChatOptions.builder()
                                         .numPredict(properties.getMaxOutputTokens())
                                         .build())
-                        .enableThinking()
                         .stream(true)
                         .build();
         ExecutionStreamAccumulator accumulator =
-                new ExecutionStreamAccumulator(deltaConsumer, tenantId);
+                new ExecutionStreamAccumulator(answerDeltaConsumer, tenantId);
 
         // 只有 provider 明确返回 done 后才允许把累积内容提升为完整 ModelInvocationResult。
         try {
@@ -104,7 +103,7 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
 
     private final class ExecutionStreamAccumulator {
 
-        private final Consumer<ModelOutputDelta> deltaConsumer;
+        private final Consumer<String> answerDeltaConsumer;
 
         /**
          * Tenant restored around callbacks that Reactor dispatches on provider event-loop threads.
@@ -115,38 +114,30 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
         private final Map<String, ModelToolCall> toolCalls = new LinkedHashMap<>();
         private boolean done;
 
-        private ExecutionStreamAccumulator(
-                Consumer<ModelOutputDelta> deltaConsumer, String tenantId) {
-            this.deltaConsumer = deltaConsumer;
+        private ExecutionStreamAccumulator(Consumer<String> answerDeltaConsumer, String tenantId) {
+            this.answerDeltaConsumer = answerDeltaConsumer;
             this.tenantId = tenantId;
         }
 
         private void accept(OllamaApi.ChatResponse response) {
             OllamaApi.Message message = response.message();
             if (message != null) {
-                appendReasoning(message.thinking());
                 appendAnswer(message.content());
                 appendToolCalls(message.toolCalls());
             }
             done = done || Boolean.TRUE.equals(response.done());
         }
 
-        private void appendReasoning(String content) {
-            if (content != null && !content.isEmpty()) {
-                emit(ModelOutputDelta.reasoning(content));
-            }
-        }
-
         private void appendAnswer(String content) {
             if (content != null && !content.isEmpty()) {
                 answer.append(content);
-                emit(ModelOutputDelta.answer(content));
+                emit(content);
             }
         }
 
-        private void emit(ModelOutputDelta delta) {
+        private void emit(String answerDelta) {
             // Persistence checkpoints require the request tenant even on Reactor callback threads.
-            TenantContext.run(tenantId, () -> deltaConsumer.accept(delta));
+            TenantContext.run(tenantId, () -> answerDeltaConsumer.accept(answerDelta));
         }
 
         private void appendToolCalls(List<OllamaApi.Message.ToolCall> calls) {

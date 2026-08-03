@@ -1,6 +1,5 @@
 package com.datagent.agentv2.persistence.service.mapper;
 
-import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.datagent.agentv2.persistence.entity.AgentExecutionStreamCheckpointEntity;
 import java.time.Instant;
@@ -17,7 +16,7 @@ public interface AgentExecutionStreamCheckpointMapper
             update agent_execution_stream_checkpoint s
                set execution_attempt_number = #{executionAttemptNumber},
                    model_invocation_sequence = #{modelInvocationSequence}, phase = 'CONNECTING_MODEL',
-                   output_delta_sequence = 0, reasoning = '', answer = '', reasoning_expires_at = null,
+                   output_delta_sequence = 0, answer = '',
                    checkpointed_at = #{now}, updated_at = #{now}, version = version + 1
              where s.execution_id = #{executionId} and s.version = #{expectedVersion}
                and (s.execution_attempt_number < #{executionAttemptNumber}
@@ -40,8 +39,8 @@ public interface AgentExecutionStreamCheckpointMapper
     @Update(
             """
             update agent_execution_stream_checkpoint s
-               set reasoning = #{reasoning}, answer = #{answer}, phase = #{phase},
-                   output_delta_sequence = #{outputDeltaSequence}, reasoning_expires_at = #{reasoningExpiresAt},
+               set answer = #{answer}, phase = #{phase},
+                   output_delta_sequence = #{outputDeltaSequence},
                    checkpointed_at = #{now}, updated_at = #{now}, version = version + 1
              where s.execution_id = #{executionId} and s.version = #{expectedVersion}
                and s.execution_attempt_number = #{executionAttemptNumber}
@@ -60,10 +59,8 @@ public interface AgentExecutionStreamCheckpointMapper
             @Param("modelInvocationSequence") long modelInvocationSequence,
             @Param("ownerInstanceId") String ownerInstanceId,
             @Param("outputDeltaSequence") long outputDeltaSequence,
-            @Param("reasoning") String reasoning,
             @Param("answer") String answer,
             @Param("phase") String phase,
-            @Param("reasoningExpiresAt") Instant reasoningExpiresAt,
             @Param("now") Instant now);
 
     @Update(
@@ -89,27 +86,4 @@ public interface AgentExecutionStreamCheckpointMapper
             @Param("ownerInstanceId") String ownerInstanceId,
             @Param("answer") String answer,
             @Param("now") Instant now);
-
-    /** 使用 SKIP LOCKED 分页清空已到期终态执行的 reasoning，不触碰 answer。 */
-    @InterceptorIgnore(tenantLine = "true")
-    @Update(
-            """
-            with candidates as (
-                select checkpoint.id
-                  from agent_execution_stream_checkpoint checkpoint
-                  join agent_execution execution
-                    on execution.tenant_id = checkpoint.tenant_id
-                   and execution.execution_id = checkpoint.execution_id
-                 where execution.status in ('done', 'failed', 'cancelled')
-                   and checkpoint.reasoning_expires_at <= #{now}
-                   and checkpoint.reasoning <> ''
-                 order by checkpoint.reasoning_expires_at, checkpoint.id
-                 limit #{limit} for update of checkpoint skip locked
-            )
-            update agent_execution_stream_checkpoint checkpoint
-               set reasoning = '', reasoning_expires_at = null,
-                   updated_at = current_timestamp, version = version + 1
-             where checkpoint.id in (select id from candidates)
-            """)
-    int clearExpiredReasoning(@Param("now") Instant now, @Param("limit") int limit);
 }

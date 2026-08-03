@@ -30,17 +30,11 @@ public final class AgentExecutionStreamCheckpointEntity extends TenantAuditedEnt
     /** 当前 attempt/turn 内最后已发布的 delta 序号。 */
     private Long outputDeltaSequence;
 
-    /** 当前模型调用已经累计并写入检查点的 reasoning。 */
-    private String reasoning;
-
     /** 当前模型调用已经累计并写入检查点的回答草稿。 */
     private String answer;
 
     /** 最近一次完整流投影成功写入数据库的时间。 */
     private Instant checkpointedAt;
-
-    /** reasoning 可被清理的时间边界。 */
-    private Instant reasoningExpiresAt;
 
     /** 乐观锁版本，用于拒绝旧 owner 或并发检查点覆盖。 */
     @Version private Long version;

@@ -90,7 +90,7 @@ class ConversationExecutionSchemaMigrationTest {
                         .load()
                         .migrate()
                         .migrationsExecuted;
-        assertThat(migratedToLatest).isEqualTo(3);
+        assertThat(migratedToLatest).isEqualTo(5);
     }
 
     @AfterAll
@@ -199,6 +199,17 @@ class ConversationExecutionSchemaMigrationTest {
                 .containsExactly("1", "0", "0", "RECEIVED");
     }
 
+    @Test
+    void latestSchemaRemovesReasoningStorageAndThinkingPhase() throws SQLException {
+        assertThat(columnNames("agent_execution_stream_checkpoint"))
+                .doesNotContain("reasoning", "reasoning_expires_at");
+        assertThat(columnNames("model_invocation"))
+                .doesNotContain("reasoning", "reasoning_expires_at");
+        assertThat(constraintDefinition("ck_agent_execution_phase")).doesNotContain("THINKING");
+        assertThat(constraintDefinition("ck_agent_execution_stream_checkpoint_phase"))
+                .doesNotContain("THINKING");
+    }
+
     private static void execute(String sql) throws SQLException {
         try (Connection connection = connection();
                 Statement statement = connection.createStatement()) {
@@ -250,6 +261,15 @@ class ConversationExecutionSchemaMigrationTest {
                         """,
                         constraint)
                 .getFirst();
+    }
+
+    private static List<String> columnNames(String table) throws SQLException {
+        return query(
+                """
+                select lower(column_name) from information_schema.columns
+                 where table_schema = 'public' and table_name = ? order by ordinal_position
+                """,
+                table);
     }
 
     private static List<String> query(String sql, String argument) throws SQLException {

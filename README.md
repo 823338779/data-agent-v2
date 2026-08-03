@@ -48,7 +48,7 @@ npm.cmd ci
 npm.cmd run dev
 ```
 
-打开 `http://127.0.0.1:5173`，使用本地初始化账号 `admin/admin` 登录。当前可联调认证、多会话未读与排序、执行取消/重试、Ollama reasoning/answer 流以及 Redis 跨实例通知。
+打开 `http://127.0.0.1:5173`，使用本地初始化账号 `admin/admin` 登录。当前可联调认证、多会话未读与排序、执行取消/重试、Ollama answer 流以及 Redis 跨实例通知。
 
 ## 双实例运行与收敛参数
 
@@ -67,7 +67,6 @@ npm.cmd run dev
 - 每个实例最多执行 256 个并发 Run，由 `DATA_AGENT_MAX_CONCURRENT_EXECUTIONS_PER_INSTANCE` 调整；同一用户最多 3 个 Run 同时处于 running。
 - 队列领取和控制降级轮询默认 1 秒；详细会话 SSE 的 PostgreSQL reconciliation 默认 1 秒，可通过 `DATA_AGENT_SESSION_EVENT_RECONCILE_INTERVAL` 调整。
 - 用户级 activity SSE 默认每 2 秒从 PostgreSQL reconciliation，可通过 `DATA_AGENT_ACTIVITY_RECONCILE_INTERVAL` 调整。Redis 只负责低延迟通知，断开时以上轮询仍保证最终收敛。
-- reasoning 默认保留 30 天（写入时设置 `reasoning_expires_at`），可通过 `DATA_AGENT_REASONING_RETENTION` 调整；清理任务每小时分页运行，批量与轮数由 `DATA_AGENT_REASONING_RETENTION_BATCH_SIZE`、`DATA_AGENT_REASONING_RETENTION_MAX_BATCHES` 控制。
 
 ## 外部双实例验收
 
@@ -80,7 +79,7 @@ npm.cmd run dev
   '-Ddata.agent.acceptance.instance-b=http://127.0.0.1:8081' test
 ```
 
-验收会通过实例 B 创建并提交 4 个不同会话，从实例 A 观察“最多 3 running、其余 queued”，并验证 mark-read 与乐观重排跨实例可见。故障注入验收（在第 3 个工具边界终止实例、Redis 断开/恢复、Outbox 补发及人为到期 reasoning）需要部署环境提供进程和基础设施生命周期控制；产品正确性由 `agent-server` 中相应的双实例、恢复、Redis 降级和保留策略集成测试覆盖。
+验收会通过实例 B 创建并提交 4 个不同会话，从实例 A 观察“最多 3 running、其余 queued”，并验证 mark-read 与乐观重排跨实例可见。故障注入验收（在第 3 个工具边界终止实例、Redis 断开/恢复及 Outbox 补发）需要部署环境提供进程和基础设施生命周期控制；产品正确性由 `agent-server` 中相应的双实例、恢复和 Redis 降级集成测试覆盖。
 
 前端生产构建：
 

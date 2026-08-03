@@ -31,27 +31,6 @@ public class ModelInvocationService
                 .list();
     }
 
-    public boolean appendReasoning(
-            String executionId,
-            long modelInvocationSequence,
-            long executionAttemptNumber,
-            long expectedVersion,
-            String delta,
-            Instant expiresAt,
-            Instant now,
-            String ownerInstanceId) {
-        return baseMapper.appendReasoning(
-                        executionId,
-                        modelInvocationSequence,
-                        executionAttemptNumber,
-                        expectedVersion,
-                        delta,
-                        expiresAt,
-                        now,
-                        ownerInstanceId)
-                == 1;
-    }
-
     public boolean finishOwned(
             String executionId,
             long modelInvocationSequence,
@@ -88,10 +67,5 @@ public class ModelInvocationService
                         newExecutionAttemptNumber,
                         now)
                 == 1;
-    }
-
-    /** 清理一页已到期终态模型调用 reasoning。 */
-    public int clearExpiredReasoning(Instant now, int limit) {
-        return baseMapper.clearExpiredReasoning(now, limit);
     }
 }

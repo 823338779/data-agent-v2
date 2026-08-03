@@ -12,7 +12,6 @@ import com.datagent.agentv2.conversation.execution.ExecutionEventType;
 import com.datagent.agentv2.conversation.message.MessageRole;
 import com.datagent.agentv2.conversation.message.MessageVisibility;
 import com.datagent.agentv2.conversation.model.ModelInvocationStatus;
-import com.datagent.agentv2.conversation.model.ModelOutputDelta;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
 import com.datagent.agentv2.conversation.stream.ExecutionStreamCheckpointCoordinator;
@@ -55,7 +54,6 @@ public class ModelInvocationCoordinator {
     private final AgentExecutionAttemptService attempts;
     private final IdGenerator ids;
     private final ObjectMapper json;
-    private final ReactLimitsProperties limits;
 
     public ModelInvocationCoordinator(
             ModelInvocationService modelInvocations,
@@ -69,8 +67,7 @@ public class ModelInvocationCoordinator {
             AgentExecutionEventService events,
             AgentExecutionAttemptService attempts,
             IdGenerator ids,
-            ObjectMapper json,
-            ReactLimitsProperties limits) {
+            ObjectMapper json) {
         this.modelInvocations = modelInvocations;
         this.toolExecutions = toolExecutions;
         this.messages = messages;
@@ -83,7 +80,6 @@ public class ModelInvocationCoordinator {
         this.attempts = attempts;
         this.ids = ids;
         this.json = json;
-        this.limits = limits;
     }
 
     @Transactional
@@ -129,37 +125,19 @@ public class ModelInvocationCoordinator {
     public void checkpoint(
             AgentExecutionPort.ClaimedAgentExecution run,
             ModelInvocationBoundary boundary,
-            ModelOutputDelta delta) {
-        checkpointLocked(run, boundary, delta, Instant.now());
+            String answerDelta) {
+        checkpointLocked(run, boundary, answerDelta, Instant.now());
     }
 
     private void checkpointLocked(
             AgentExecutionPort.ClaimedAgentExecution run,
             ModelInvocationBoundary boundary,
-            ModelOutputDelta delta,
+            String answerDelta,
             Instant now) {
-        String reasoning = delta.kind() == ModelOutputDelta.Kind.REASONING ? delta.content() : "";
-        Instant expiresAt = now.plus(limits.getReasoningRetention());
-        ExecutionStreamCheckpointCoordinator.PublishedDelta published =
-                streamCheckpointCoordinator.append(
-                        run, boundary.modelInvocationSequence(), delta, now);
+        ExecutionStreamCheckpointCoordinator.AnswerDelta published =
+                streamCheckpointCoordinator.appendAnswer(
+                        run, boundary.modelInvocationSequence(), answerDelta, now);
         applicationEvents.publishEvent(AgentExecutionDeltaNotification.from(published));
-        if (!reasoning.isEmpty()) {
-            ModelInvocationEntity modelInvocation =
-                    modelInvocations.findModelInvocation(
-                            run.executionId(), boundary.modelInvocationSequence());
-            if (!modelInvocations.appendReasoning(
-                    run.executionId(),
-                    boundary.modelInvocationSequence(),
-                    run.executionAttemptNumber(),
-                    modelInvocation.getVersion(),
-                    reasoning,
-                    expiresAt,
-                    now,
-                    run.ownerInstanceId())) {
-                throw new ExecutionOwnershipLostException(run.executionId());
-            }
-        }
     }
 
     @Transactional
@@ -176,11 +154,7 @@ public class ModelInvocationCoordinator {
             List<ModelToolCall> calls,
             Instant now) {
         AgentExecution owned = lockOwned(run);
-        streamCheckpointCoordinator.flush(
-                run,
-                boundary.modelInvocationSequence(),
-                ExecutionStreamCheckpointCoordinator.Boundary.MODEL_INVOCATION,
-                now);
+        streamCheckpointCoordinator.flush(run, boundary.modelInvocationSequence(), now);
         finishModelInvocation(run, boundary, now);
         ConversationMessage assistant =
                 assistantMessage(owned, MessageVisibility.INTERNAL.value(), "");
@@ -215,11 +189,7 @@ public class ModelInvocationCoordinator {
             String answer,
             Instant now) {
         AgentExecution owned = lockOwned(run);
-        streamCheckpointCoordinator.flush(
-                run,
-                boundary.modelInvocationSequence(),
-                ExecutionStreamCheckpointCoordinator.Boundary.TERMINAL,
-                now);
+        streamCheckpointCoordinator.flushAndRelease(run, boundary.modelInvocationSequence(), now);
         finishModelInvocation(run, boundary, now);
         AgentExecutionStreamCheckpoint stream =
                 persistedStreamCheckpoints.findByExecutionId(run.executionId());

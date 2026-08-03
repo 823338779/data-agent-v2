@@ -3,6 +3,6 @@
   "conversationSessionId": "session_demo",
   "executionId": "execution_demo",
   "executionEventSequence": 2,
-  "phase": "THINKING",
+  "phase": "ANSWERING",
   "occurredAt": "2026-08-01T06:00:01Z"
 }

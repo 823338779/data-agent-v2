@@ -12,7 +12,6 @@
         "execution_started",
         "user_message",
         "assistant_message",
-        "reasoning_delta",
         "assistant_delta",
         "stream_snapshot",
         "execution_phase_changed",
@@ -41,7 +40,6 @@
     "modelInvocationSequence": { "type": "integer", "minimum": 0 },
     "outputDeltaSequence": { "type": "integer", "minimum": 0 },
     "delta": { "type": "string" },
-    "reasoning": { "type": "string" },
     "answer": { "type": "string" },
     "checkpointedAt": { "type": ["string", "null"], "format": "date-time" },
     "occurredAt": { "type": "string", "format": "date-time" },
@@ -51,7 +49,6 @@
         "RECEIVED",
         "PREPARING_CONTEXT",
         "CONNECTING_MODEL",
-        "THINKING",
         "ANSWERING",
         "PERSISTING",
         "COMPLETED",
@@ -62,7 +59,7 @@
       "type": "object",
       "propertyNames": {
         "not": {
-          "enum": ["reasoning", "prompt", "input", "output", "toolInput", "toolOutput"]
+          "enum": ["prompt", "input", "output", "toolInput", "toolOutput"]
         }
       }
     }
@@ -98,11 +95,6 @@
       "required": ["executionEventSequence", "occurredAt"]
     },
     {
-      "title": "思考增量",
-      "properties": { "type": { "const": "reasoning_delta" } },
-      "required": ["executionId", "executionAttemptNumber", "modelInvocationSequence", "outputDeltaSequence", "delta", "occurredAt"]
-    },
-    {
       "title": "回答增量",
       "x-v2-extension": true,
       "properties": { "type": { "const": "assistant_delta" } },
@@ -117,7 +109,6 @@
         "executionAttemptNumber",
         "modelInvocationSequence",
         "outputDeltaSequence",
-        "reasoning",
         "answer",
         "checkpointedAt",
         "occurredAt"
@@ -131,7 +122,6 @@
     }
   ],
   "x-frontend-projection": {
-    "reasoning_delta": "reasoning.delta",
     "assistant_delta": "assistant.draft",
     "stream_snapshot": "execution.streamCheckpoint",
     "execution_phase_changed": "execution.timeline"
@@ -141,7 +131,6 @@
     "pattern": "^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$"
   },
   "x-sensitive-payload-fields-forbidden": [
-    "reasoning",
     "prompt",
     "input",
     "output",

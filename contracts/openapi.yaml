@@ -1122,13 +1122,12 @@ components:
             - { type: 'null' }
     AgentExecutionStreamCheckpoint:
       type: object
-      required: [executionAttemptNumber, modelInvocationSequence, phase, outputDeltaSequence, reasoning, answer, checkpointedAt]
+      required: [executionAttemptNumber, modelInvocationSequence, phase, outputDeltaSequence, answer, checkpointedAt]
       properties:
         executionAttemptNumber: { type: integer, minimum: 0 }
         modelInvocationSequence: { type: integer, minimum: 0 }
         phase: { type: string }
         outputDeltaSequence: { type: integer, format: int64, minimum: 0 }
-        reasoning: { type: string }
         answer: { type: string }
         checkpointedAt: { type: [string, 'null'], format: date-time }
     AgentExecutionEvent:
@@ -1142,7 +1141,6 @@ components:
           enum:
             - user_message
             - assistant_message
-            - reasoning_delta
             - skill_activated
             - context_compaction_started
             - context_compaction_completed

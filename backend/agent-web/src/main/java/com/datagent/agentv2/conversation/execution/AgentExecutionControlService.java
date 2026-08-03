@@ -182,7 +182,6 @@ public class AgentExecutionControlService {
                         ids.next(ID_PREFIX_EXECUTION_STREAM_CHECKPOINT),
                         retry.getExecutionId(),
                         ExecutionPhase.QUEUED.value(),
-                        EMPTY_TEXT,
                         EMPTY_TEXT));
         return retry;
     }

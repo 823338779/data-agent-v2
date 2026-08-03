@@ -44,10 +44,8 @@ public final class ExecutionOwnerRegistry {
                 TenantContext.run(
                         ownership.execution().tenantId(),
                         () ->
-                                checkpoints.flushExecution(
-                                        ownership.execution(),
-                                        ExecutionStreamCheckpointCoordinator.Boundary.LEASE_RELEASE,
-                                        Instant.now()));
+                                checkpoints.flushExecutionAndRelease(
+                                        ownership.execution(), Instant.now()));
             } catch (ExecutionOwnershipLostException ignored) {
                 // Lease 已被接管或执行已终态化时，新的 owner/终态投影是权威结果。
             } finally {

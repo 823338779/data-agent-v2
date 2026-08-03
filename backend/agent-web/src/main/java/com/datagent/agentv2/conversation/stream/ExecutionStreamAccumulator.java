@@ -1,7 +1,6 @@
 package com.datagent.agentv2.conversation.stream;
 
 import com.datagent.agentv2.conversation.execution.ExecutionPhase;
-import com.datagent.agentv2.conversation.model.ModelOutputDelta;
 import java.time.Duration;
 import java.time.Instant;
 
@@ -13,11 +12,9 @@ public final class ExecutionStreamAccumulator {
 
     private final long executionAttemptNumber;
     private final long modelInvocationSequence;
-    private final StringBuilder reasoning;
     private final StringBuilder answer;
     private long outputDeltaSequence;
     private int uncheckpointedCharacters;
-    private boolean phaseBoundaryReached;
     private Instant checkpointedAt;
     private ExecutionPhase phase;
 
@@ -25,34 +22,23 @@ public final class ExecutionStreamAccumulator {
             long executionAttemptNumber,
             long modelInvocationSequence,
             long outputDeltaSequence,
-            String reasoning,
             String answer,
             String phase,
             Instant checkpointedAt) {
         this.executionAttemptNumber = executionAttemptNumber;
         this.modelInvocationSequence = modelInvocationSequence;
         this.outputDeltaSequence = outputDeltaSequence;
-        this.reasoning = new StringBuilder(reasoning);
         this.answer = new StringBuilder(answer);
         this.phase = ExecutionPhase.fromValue(phase);
         this.checkpointedAt = checkpointedAt;
     }
 
     /** 先分配并记录发布序号，再把正文累计到当前投影。 */
-    public long append(ModelOutputDelta delta) {
+    public long appendAnswer(String answerDelta) {
         outputDeltaSequence++;
-        uncheckpointedCharacters += delta.content().length();
-        ExecutionPhase nextPhase =
-                delta.kind() == ModelOutputDelta.Kind.REASONING
-                        ? ExecutionPhase.THINKING
-                        : ExecutionPhase.ANSWERING;
-        phaseBoundaryReached = isStreamingPhase(phase) && phase != nextPhase;
-        if (delta.kind() == ModelOutputDelta.Kind.REASONING) {
-            reasoning.append(delta.content());
-        } else {
-            answer.append(delta.content());
-        }
-        phase = nextPhase;
+        uncheckpointedCharacters += answerDelta.length();
+        answer.append(answerDelta);
+        phase = ExecutionPhase.ANSWERING;
         return outputDeltaSequence;
     }
 
@@ -60,14 +46,12 @@ public final class ExecutionStreamAccumulator {
     public boolean shouldCheckpoint(Instant now) {
         return uncheckpointedCharacters > 0
                 && (uncheckpointedCharacters >= MAX_UNCHECKPOINTED_CHARACTERS
-                        || phaseBoundaryReached
                         || !now.isBefore(checkpointedAt.plus(MAX_CHECKPOINT_INTERVAL)));
     }
 
     public void checkpointed(Instant now) {
         checkpointedAt = now;
         uncheckpointedCharacters = 0;
-        phaseBoundaryReached = false;
     }
 
     public boolean hasPending() {
@@ -86,19 +70,11 @@ public final class ExecutionStreamAccumulator {
         return outputDeltaSequence;
     }
 
-    public String reasoning() {
-        return reasoning.toString();
-    }
-
     public String answer() {
         return answer.toString();
     }
 
     public ExecutionPhase phase() {
         return phase;
-    }
-
-    private static boolean isStreamingPhase(ExecutionPhase value) {
-        return value == ExecutionPhase.THINKING || value == ExecutionPhase.ANSWERING;
     }
 }
