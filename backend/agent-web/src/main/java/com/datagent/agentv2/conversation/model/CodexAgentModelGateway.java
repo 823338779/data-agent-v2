@@ -14,7 +14,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 /** 将 V2 模型端口适配到本机已登录的 Codex App Server。 */
 @Service
-@ConditionalOnProperty(prefix = "data-agent.model", name = "provider", havingValue = "codex")
+@ConditionalOnProperty(value = "data-agent.model.provider", havingValue = "codex")
 public final class CodexAgentModelGateway implements AgentModelGateway {
 
     private static final String PROMPT_PREFIX =
