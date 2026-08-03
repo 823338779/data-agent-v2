@@ -4,6 +4,7 @@ import static org.springframework.security.config.http.SessionCreationPolicy.STA
 
 import com.datagent.agentv2.auth.application.AuthenticationService;
 import com.datagent.agentv2.auth.config.AuthProperties;
+import jakarta.servlet.DispatcherType;
 import java.io.IOException;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -34,7 +35,10 @@ public class WebSecurityConfiguration {
                 .sessionManagement(session -> session.sessionCreationPolicy(STATELESS))
                 .authorizeHttpRequests(
                         requests ->
-                                requests.requestMatchers(
+                                // 初始 REQUEST 已完成鉴权；SSE 完成后的 ASYNC redispatch 不应重复授权。
+                                requests.dispatcherTypeMatchers(DispatcherType.ASYNC)
+                                        .permitAll()
+                                        .requestMatchers(
                                                 "/api/v1/auth/login", "/actuator/health/**")
                                         .permitAll()
                                         .anyRequest()
