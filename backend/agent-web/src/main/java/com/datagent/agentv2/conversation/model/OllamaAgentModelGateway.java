@@ -1,5 +1,6 @@
 package com.datagent.agentv2.conversation.model;
 
+import com.datagent.agentv2.conversation.exception.ModelStreamInterruptedException;
 import com.datagent.agentv2.conversation.react.ModelInputMessage;
 import com.datagent.agentv2.conversation.react.ModelToolCall;
 import com.datagent.agentv2.platform.context.TenantContext;
@@ -10,10 +11,16 @@ import java.util.Map;
 import java.util.function.Consumer;
 import org.springframework.ai.ollama.api.OllamaApi;
 import org.springframework.ai.ollama.api.OllamaChatOptions;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
+@ConditionalOnProperty(
+        prefix = "data-agent.model",
+        name = "provider",
+        havingValue = "ollama",
+        matchIfMissing = true)
 public final class OllamaAgentModelGateway implements AgentModelGateway {
 
     private static final String ERROR_INTERRUPTED =

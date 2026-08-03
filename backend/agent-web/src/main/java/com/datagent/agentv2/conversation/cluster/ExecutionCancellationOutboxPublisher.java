@@ -1,6 +1,6 @@
 package com.datagent.agentv2.conversation.cluster;
 
-import com.datagent.agentv2.conversation.execution.ExecutionNotificationType;
+import com.datagent.agentv2.conversation.enums.ExecutionNotificationType;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeProperties;
 import com.datagent.agentv2.persistence.entity.NotificationOutboxMessageEntity;
 import com.datagent.agentv2.persistence.service.NotificationOutboxMessageService;

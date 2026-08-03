@@ -1,9 +1,11 @@
 package com.datagent.agentv2.conversation.runtime;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
-import com.datagent.agentv2.conversation.execution.ExecutionFailureCode;
-import com.datagent.agentv2.conversation.execution.ExecutionResumeReason;
-import com.datagent.agentv2.conversation.execution.ExecutionStatus;
+import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
+import com.datagent.agentv2.conversation.enums.ExecutionResumeReason;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
+import com.datagent.agentv2.conversation.exception.ExecutionDeadlineExceededException;
+import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
 import com.datagent.agentv2.persistence.entity.AgentExecutionAttemptEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionAttemptService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;

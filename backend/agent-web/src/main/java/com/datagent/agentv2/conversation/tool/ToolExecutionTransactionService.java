@@ -1,10 +1,11 @@
 package com.datagent.agentv2.conversation.tool;
 
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
-import com.datagent.agentv2.conversation.message.MessageRole;
-import com.datagent.agentv2.conversation.message.MessageVisibility;
+import com.datagent.agentv2.conversation.enums.MessageRole;
+import com.datagent.agentv2.conversation.enums.MessageVisibility;
+import com.datagent.agentv2.conversation.enums.ToolExecutionStatus;
+import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
-import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;

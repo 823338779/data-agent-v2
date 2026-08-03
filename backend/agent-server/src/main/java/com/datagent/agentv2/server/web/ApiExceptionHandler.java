@@ -1,8 +1,8 @@
 package com.datagent.agentv2.server.web;
 
-import com.datagent.agentv2.conversation.activity.SessionOrderConflictException;
-import com.datagent.agentv2.conversation.execution.ActiveExecutionConflictException;
-import com.datagent.agentv2.conversation.execution.IdempotencyKeyReusedException;
+import com.datagent.agentv2.conversation.exception.ActiveExecutionConflictException;
+import com.datagent.agentv2.conversation.exception.IdempotencyKeyReusedException;
+import com.datagent.agentv2.conversation.exception.SessionOrderConflictException;
 import com.datagent.agentv2.server.context.RequestContext;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;

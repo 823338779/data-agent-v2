@@ -2,6 +2,7 @@ package com.datagent.agentv2.conversation.react;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -14,29 +15,39 @@ import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.tool.AgentToolRegistry;
 import com.datagent.agentv2.conversation.tool.ToolExecutionCoordinator;
 import com.datagent.agentv2.conversation.tool.ToolExecutionResult;
+import com.datagent.agentv2.conversation.tool.builtin.CurrentTimeTool;
+import com.datagent.agentv2.conversation.tool.builtin.SystemTimezoneTool;
+import com.datagent.agentv2.conversation.tool.builtin.WebSearchTool;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.client.RestClient;
 import tools.jackson.databind.json.JsonMapper;
 
 class ReactExecutionEngineIntegrationTest {
 
     @Test
-    void runsThreeModelInvocationsReadsAllObservationsAndCompletesFinalAnswer() {
+    void runsRegisteredBuiltInToolsAcrossThreeModelInvocationsAndCompletesFinalAnswer() {
+        JsonMapper json = JsonMapper.builder().build();
         AgentModelGateway model = mock(AgentModelGateway.class);
         ConversationContextLoader contexts = mock(ConversationContextLoader.class);
         ModelInvocationCoordinator modelInvocations = mock(ModelInvocationCoordinator.class);
         ToolExecutionCoordinator tools = mock(ToolExecutionCoordinator.class);
         AgentExecutionLeaseService leases = mock(AgentExecutionLeaseService.class);
-        AgentToolRegistry registry = new AgentToolRegistry(List.of());
+        AgentToolRegistry registry =
+                new AgentToolRegistry(
+                        List.of(
+                                new SystemTimezoneTool(json),
+                                new CurrentTimeTool(json),
+                                new WebSearchTool(RestClient.builder(), json)));
         ReactLimitsProperties limits = new ReactLimitsProperties(12, 32);
         AgentExecutionPort.ClaimedAgentExecution run =
                 new AgentExecutionPort.ClaimedAgentExecution(
                         "tenant-react", "execution-react", "owner-react", 1);
         AtomicInteger invocation = new AtomicInteger();
-        ModelToolCall first = call("call-1", "first");
-        ModelToolCall second = call("call-2", "second");
-        ModelToolCall failed = call("call-3", "failed");
+        ModelToolCall first = call("call-1", "system_timezone", "{}");
+        ModelToolCall second = call("call-2", "current_time", "{}");
+        ModelToolCall failed = call("call-3", "web_search", "{\"query\":\"ReAct\",\"limit\":1}");
 
         when(modelInvocations.beginModelInvocation(run))
                 .thenReturn(
@@ -50,16 +61,17 @@ class ReactExecutionEngineIntegrationTest {
                         List.of(
                                 ModelInputMessage.plain("user", "question"),
                                 ModelInputMessage.assistantToolCalls(List.of(first)),
-                                ModelInputMessage.tool("success-one", "call-1", "first")));
+                                ModelInputMessage.tool(
+                                        "success-one", "call-1", "system_timezone")));
         when(contexts.load("execution-react", 6))
                 .thenReturn(
                         List.of(
                                 ModelInputMessage.plain("user", "question"),
                                 ModelInputMessage.assistantToolCalls(List.of(first)),
-                                ModelInputMessage.tool("success-one", "call-1", "first"),
+                                ModelInputMessage.tool("success-one", "call-1", "system_timezone"),
                                 ModelInputMessage.assistantToolCalls(List.of(second, failed)),
-                                ModelInputMessage.tool("success-two", "call-2", "second"),
-                                ModelInputMessage.tool("failed-three", "call-3", "failed")));
+                                ModelInputMessage.tool("success-two", "call-2", "current_time"),
+                                ModelInputMessage.tool("failed-three", "call-3", "web_search")));
         when(model.complete(any(), any(), any()))
                 .thenAnswer(
                         ignored ->
@@ -87,6 +99,7 @@ class ReactExecutionEngineIntegrationTest {
                 .execute(run);
 
         assertThat(invocation).hasValue(3);
+        verify(model, times(3)).complete(any(), eq(registry.modelDefinitions()), any());
         verify(modelInvocations)
                 .archiveToolCalls(
                         run,
@@ -106,7 +119,7 @@ class ReactExecutionEngineIntegrationTest {
         verify(leases, times(3)).cancelIfRequested(run);
     }
 
-    private static ModelToolCall call(String id, String name) {
-        return new ModelToolCall(id, name, JsonMapper.builder().build().readTree("{\"value\":1}"));
+    private static ModelToolCall call(String id, String name, String arguments) {
+        return new ModelToolCall(id, name, JsonMapper.builder().build().readTree(arguments));
     }
 }

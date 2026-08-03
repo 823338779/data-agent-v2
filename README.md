@@ -36,6 +36,28 @@ Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多�
 - Redis 默认连接 `localhost:6379`，用户名和密码为 `default/redis_local_dev`，可通过 `SPRING_DATA_REDIS_HOST`、`SPRING_DATA_REDIS_PORT`、`SPRING_DATA_REDIS_USERNAME`、`SPRING_DATA_REDIS_PASSWORD` 覆盖。
 - Ollama 默认使用 `qwen3.5:9b`。先执行 `ollama pull qwen3.5:9b`，再通过 `SPRING_AI_OLLAMA_BASE_URL` 指定服务地址；模型、超时和最大输出分别可由 `DATA_AGENT_MODEL_OLLAMA_MODEL`、`DATA_AGENT_MODEL_OLLAMA_TIMEOUT`、`DATA_AGENT_MODEL_OLLAMA_MAX_OUTPUT_TOKENS` 覆盖。
 
+### 使用本机 Codex 登录态
+
+没有 OpenAI API key、但已通过 ChatGPT 订阅登录 Codex 时，可以让 V2 通过本机 `codex app-server` 调用模型。先确认当前运行后端的系统用户能够执行：
+
+```powershell
+codex login status
+```
+
+输出包含 `Logged in using ChatGPT` 后，在启动后端前设置：
+
+```powershell
+$env:DATA_AGENT_MODEL_PROVIDER = 'codex'
+```
+
+该模式不读取或保存 OpenAI API key。每次模型调用使用临时、只读、禁止审批的 Codex thread；Codex 仅能选择 V2 注册的领域工具，真正的工具执行、持久化和租户隔离仍由 V2 ReAct 执行器完成。可选配置包括 `DATA_AGENT_MODEL_CODEX_EXECUTABLE`、`DATA_AGENT_MODEL_CODEX_MODEL`、`DATA_AGENT_MODEL_CODEX_EFFORT`、`DATA_AGENT_MODEL_CODEX_TIMEOUT` 和 `DATA_AGENT_MODEL_CODEX_WORKING_DIRECTORY`。部署到服务器或容器时，必须在运行后端的同一系统用户和环境中单独完成 Codex 登录；个人 ChatGPT 登录态不应复制到共享服务。
+
+### 内置 ReAct 验证工具
+
+服务启动后会自动注册三个无凭据的轻量工具：`system_timezone` 返回服务端 JVM 时区，`current_time` 返回同一时钟快照中的绝对时间和本地时间，`web_search` 通过 MediaWiki Action API 检索中文 Wikipedia 并返回最多 5 条标题、纯文本摘要和页面链接。网页检索仅用于验证工具调用链路，不是通用浏览器或全网搜索服务，运行环境需要能够访问 `https://zh.wikipedia.org`。
+
+可以使用“先获取服务端时区，再获取当前时间，然后检索中文 Wikipedia 中的 ReAct，最后汇总三步结果”作为验证提示。模型应经历至少三轮调用：选择工具、读取持久化 observation、继续选择工具，最后生成回答。
+
 单实例联调分别启动：
 
 ```powershell

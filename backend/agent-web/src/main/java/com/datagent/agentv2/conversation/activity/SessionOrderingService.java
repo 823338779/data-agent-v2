@@ -1,5 +1,6 @@
 package com.datagent.agentv2.conversation.activity;
 
+import com.datagent.agentv2.conversation.exception.SessionOrderConflictException;
 import com.datagent.agentv2.persistence.entity.ConversationPreferenceEntity;
 import com.datagent.agentv2.persistence.entity.ConversationSessionUserStateEntity;
 import com.datagent.agentv2.persistence.service.ConversationPreferenceService;

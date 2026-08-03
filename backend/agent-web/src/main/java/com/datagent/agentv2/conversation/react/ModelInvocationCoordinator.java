@@ -8,14 +8,14 @@ import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
-import com.datagent.agentv2.conversation.execution.ExecutionEventType;
-import com.datagent.agentv2.conversation.message.MessageRole;
-import com.datagent.agentv2.conversation.message.MessageVisibility;
-import com.datagent.agentv2.conversation.model.ModelInvocationStatus;
+import com.datagent.agentv2.conversation.enums.ExecutionEventType;
+import com.datagent.agentv2.conversation.enums.MessageRole;
+import com.datagent.agentv2.conversation.enums.MessageVisibility;
+import com.datagent.agentv2.conversation.enums.ModelInvocationStatus;
+import com.datagent.agentv2.conversation.enums.ToolExecutionStatus;
+import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
-import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
 import com.datagent.agentv2.conversation.stream.ExecutionStreamCheckpointCoordinator;
-import com.datagent.agentv2.conversation.tool.ToolExecutionStatus;
 import com.datagent.agentv2.persistence.entity.ModelInvocationEntity;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionAttemptService;
@@ -36,25 +36,53 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
+/** 协调模型调用、流式 checkpoint、工具归档和最终回答落库的事务边界。 */
 @Service
 public class ModelInvocationCoordinator {
 
+    /** 模型调用业务主键使用的统一前缀。 */
     private static final String ID_PREFIX_MODEL_INVOCATION = "model_invocation";
+
+    /** 内部 assistant 工具调用文档的结构版本。 */
     private static final int TOOL_CALL_DOCUMENT_VERSION = 1;
 
+    /** 维护模型调用序号、状态和恢复输入边界。 */
     private final ModelInvocationService modelInvocations;
+
+    /** 批量保存模型已经声明但尚未执行的工具调用。 */
     private final ToolExecutionService toolExecutions;
+
+    /** 保存内部 assistant 工具消息及最终用户可见回答。 */
     private final ConversationMessageService messages;
+
+    /** 读取会话消息上界并分配消息、执行事件序号。 */
     private final ConversationSessionService sessions;
+
+    /** 锁定执行并完成 owner fenced 的终态更新。 */
     private final AgentExecutionService agentExecutions;
+
+    /** 读取和完成数据库中的权威回答 checkpoint。 */
     private final AgentExecutionStreamCheckpointService persistedStreamCheckpoints;
+
+    /** 管理本地回答累计、checkpoint 阈值和发布序号。 */
     private final ExecutionStreamCheckpointCoordinator streamCheckpointCoordinator;
+
+    /** 在当前事务提交后触发本地与 Redis 回答增量通知。 */
     private final ApplicationEventPublisher applicationEvents;
+
+    /** 保存会话级执行生命周期事件。 */
     private final AgentExecutionEventService events;
+
+    /** 完成当前执行 attempt 的恢复状态记录。 */
     private final AgentExecutionAttemptService attempts;
+
+    /** 为模型调用、消息和事件生成业务标识。 */
     private final IdGenerator ids;
+
+    /** 构造版本化工具调用 JSON 文档。 */
     private final ObjectMapper json;
 
+    /** 装配模型调用事务所需的持久化服务、流协调器和事件发布器。 */
     public ModelInvocationCoordinator(
             ModelInvocationService modelInvocations,
             ToolExecutionService toolExecutions,
@@ -82,28 +110,47 @@ public class ModelInvocationCoordinator {
         this.json = json;
     }
 
+    /**
+     * 使用当前会话消息上界开始一次新的模型调用。
+     *
+     * @param run 当前 owner 已领取的执行
+     * @return 新模型调用的序号与输入边界
+     */
     @Transactional
     public ModelInvocationBoundary beginModelInvocation(
             AgentExecutionPort.ClaimedAgentExecution run) {
         return beginModelInvocation(run, null);
     }
 
+    /**
+     * 使用显式恢复输入边界开始模型调用，保证重试输入不漂移。
+     *
+     * @param run 当前 owner 已领取的执行
+     * @param recoveredInputBoundary 上次中断调用持久化的消息序号上界
+     * @return 新模型调用的序号与输入边界
+     */
     @Transactional
     public ModelInvocationBoundary beginModelInvocation(
             AgentExecutionPort.ClaimedAgentExecution run, Long recoveredInputBoundary) {
         return beginModelInvocationLocked(run, recoveredInputBoundary);
     }
 
+    /** 在执行行锁保护下建立模型调用记录，并重置该调用的流 checkpoint。 */
     private ModelInvocationBoundary beginModelInvocationLocked(
             AgentExecutionPort.ClaimedAgentExecution run, Long recoveredInputBoundary) {
+        // 锁定执行并校验 owner/attempt，保证后续模型调用记录属于当前领取者。
         AgentExecution owned = lockOwned(run);
         long modelInvocationSequence = modelInvocations.nextSequence(run.executionId());
+
+        // 正常调用读取当前消息上界；恢复调用固定使用旧边界以保持输入确定性。
         long inputUpToConversationMessageSequence =
                 recoveredInputBoundary == null
                         ? sessions.findByUuid(owned.getConversationSessionId())
                                 .getConversationMessageSequence()
                         : recoveredInputBoundary;
         Instant now = Instant.now();
+
+        // 先持久化 streaming 模型调用，takeover 才能识别并安全重试未完成调用。
         ModelInvocationEntity modelInvocation = new ModelInvocationEntity();
         modelInvocation.setModelInvocationId(ids.next(ID_PREFIX_MODEL_INVOCATION));
         modelInvocation.setExecutionId(run.executionId());
@@ -116,11 +163,19 @@ public class ModelInvocationCoordinator {
         modelInvocation.setVersion(0L);
         modelInvocations.save(modelInvocation);
 
+        // 模型调用序号持久化成功后，再清空回答投影并建立对应本地累计器。
         streamCheckpointCoordinator.beginModelInvocation(run, modelInvocationSequence, now);
         return new ModelInvocationBoundary(
                 modelInvocationSequence, inputUpToConversationMessageSequence);
     }
 
+    /**
+     * 把单个回答增量纳入 checkpoint，并发布事务事件。
+     *
+     * @param run 当前 owner 已领取的执行
+     * @param boundary 当前模型调用边界
+     * @param answerDelta 模型返回的非空回答片段
+     */
     @Transactional
     public void checkpoint(
             AgentExecutionPort.ClaimedAgentExecution run,
@@ -129,17 +184,28 @@ public class ModelInvocationCoordinator {
         checkpointLocked(run, boundary, answerDelta, Instant.now());
     }
 
+    /** 使用同一时间戳完成增量累计和通知对象创建。 */
     private void checkpointLocked(
             AgentExecutionPort.ClaimedAgentExecution run,
             ModelInvocationBoundary boundary,
             String answerDelta,
             Instant now) {
+        // 协调器先分配输出序号并按阈值落库，再形成可发布的回答增量。
         ExecutionStreamCheckpointCoordinator.AnswerDelta published =
                 streamCheckpointCoordinator.appendAnswer(
                         run, boundary.modelInvocationSequence(), answerDelta, now);
+
+        // Spring 事务事件在提交后进入本地 SSE 与 Redis bridge，避免发布未提交状态。
         applicationEvents.publishEvent(AgentExecutionDeltaNotification.from(published));
     }
 
+    /**
+     * 归档模型返回的完整工具调用集合。
+     *
+     * @param run 当前 owner 已领取的执行
+     * @param boundary 当前模型调用边界
+     * @param calls 已完成解析和校验的工具调用
+     */
     @Transactional
     public void archiveToolCalls(
             AgentExecutionPort.ClaimedAgentExecution run,
@@ -148,14 +214,18 @@ public class ModelInvocationCoordinator {
         archiveToolCallsLocked(run, boundary, calls, Instant.now());
     }
 
+    /** 在一个事务中收敛流、完成模型调用并建立待执行工具记录。 */
     private void archiveToolCallsLocked(
             AgentExecutionPort.ClaimedAgentExecution run,
             ModelInvocationBoundary boundary,
             List<ModelToolCall> calls,
             Instant now) {
+        // 工具归档前再次执行 fencing，并强制收敛不足 checkpoint 阈值的短增量。
         AgentExecution owned = lockOwned(run);
         streamCheckpointCoordinator.flush(run, boundary.modelInvocationSequence(), now);
         finishModelInvocation(run, boundary, now);
+
+        // 工具调用作为内部 assistant 消息保存，不进入用户可见会话正文。
         ConversationMessage assistant =
                 assistantMessage(owned, MessageVisibility.INTERNAL.value(), "");
         assistant.attachToolCalls(toolCallsJson(calls));
@@ -175,6 +245,13 @@ public class ModelInvocationCoordinator {
         toolExecutions.saveBatch(prepared);
     }
 
+    /**
+     * 将最终回答提升为用户消息并完成整个 Agent 执行。
+     *
+     * @param run 当前 owner 已领取的执行
+     * @param boundary 当前模型调用边界
+     * @param answer 模型确认完成后的完整回答
+     */
     @Transactional
     public void completeFinalAnswer(
             AgentExecutionPort.ClaimedAgentExecution run,
@@ -183,16 +260,21 @@ public class ModelInvocationCoordinator {
         completeFinalAnswerLocked(run, boundary, answer, Instant.now());
     }
 
+    /** 在同一事务中完成流投影、模型调用、执行 attempt 和生命周期事件。 */
     private void completeFinalAnswerLocked(
             AgentExecutionPort.ClaimedAgentExecution run,
             ModelInvocationBoundary boundary,
             String answer,
             Instant now) {
+        // 最终回答落库前先锁定执行，并把所有短增量写入后释放本地累计器。
         AgentExecution owned = lockOwned(run);
         streamCheckpointCoordinator.flushAndRelease(run, boundary.modelInvocationSequence(), now);
         finishModelInvocation(run, boundary, now);
+
+        // 使用最新 checkpoint 版本完成投影，拒绝旧 owner 或并发写入覆盖最终回答。
         AgentExecutionStreamCheckpoint stream =
                 persistedStreamCheckpoints.findByExecutionId(run.executionId());
+        // 完成更新必须同时匹配 checkpoint 版本、owner 和模型调用边界。
         if (!persistedStreamCheckpoints.complete(
                 run.executionId(),
                 stream.getVersion(),
@@ -203,11 +285,17 @@ public class ModelInvocationCoordinator {
                 now)) {
             throw new ExecutionOwnershipLostException(run.executionId());
         }
+
+        // 回答投影完成后保存用户可见消息，二者由当前事务原子提交。
         messages.save(assistantMessage(owned, MessageVisibility.USER.value(), answer));
+
+        // 执行终态更新同时释放 lease；失败表示 owner 已经丢失。
         if (!agentExecutions.completeOwned(
                 run.executionId(), run.ownerInstanceId(), run.executionAttemptNumber(), now)) {
             throw new ExecutionOwnershipLostException(run.executionId());
         }
+
+        // attempt 和会话事件作为恢复审计信息随执行终态一起提交。
         attempts.finish(
                 run.executionId(),
                 run.executionAttemptNumber(),
@@ -225,13 +313,16 @@ public class ModelInvocationCoordinator {
                         now));
     }
 
+    /** 以模型调用自身乐观锁版本完成当前 owner 的 streaming 记录。 */
     private void finishModelInvocation(
             AgentExecutionPort.ClaimedAgentExecution run,
             ModelInvocationBoundary boundary,
             Instant now) {
+        // 先读取最新版本，再通过 owner/attempt/version 联合条件完成 fenced 更新。
         ModelInvocationEntity modelInvocation =
                 modelInvocations.findModelInvocation(
                         run.executionId(), boundary.modelInvocationSequence());
+        // 记录缺失或 fenced 更新失败都说明当前 worker 已不能完成该模型调用。
         if (modelInvocation == null
                 || !modelInvocations.finishOwned(
                         run.executionId(),
@@ -245,6 +336,7 @@ public class ModelInvocationCoordinator {
         }
     }
 
+    /** 按给定可见性创建带有稳定会话序号的 assistant 消息。 */
     private ConversationMessage assistantMessage(
             AgentExecution run, String visibility, String content) {
         return ConversationMessage.assistant(
@@ -257,11 +349,13 @@ public class ModelInvocationCoordinator {
                 visibility);
     }
 
+    /** 将一个模型工具调用映射为尚未执行的持久化记录。 */
     private ToolExecutionEntity preparedExecution(
             AgentExecutionPort.ClaimedAgentExecution run,
             ModelInvocationBoundary boundary,
             String assistantConversationMessageId,
             ModelToolCall call) {
+        // prepared 记录绑定 execution、attempt、model invocation 和内部 assistant 消息。
         ToolExecutionEntity execution = new ToolExecutionEntity();
         execution.setToolExecutionId(ids.next("tool_execution"));
         execution.setExecutionId(run.executionId());
@@ -276,10 +370,14 @@ public class ModelInvocationCoordinator {
         return execution;
     }
 
+    /** 将工具调用集合编码为带版本的内部 assistant 消息附件。 */
     private String toolCallsJson(List<ModelToolCall> calls) {
+        // 根对象携带结构版本，便于未来读取方兼容文档演进。
         ObjectNode root = json.createObjectNode();
         root.put("version", TOOL_CALL_DOCUMENT_VERSION);
         ArrayNode array = root.putArray("calls");
+
+        // 只保存恢复和再次构造模型上下文所需的 ID、名称及参数。
         for (ModelToolCall call : calls) {
             ObjectNode item = array.addObject();
             item.put("id", call.toolCallId());
@@ -289,8 +387,11 @@ public class ModelInvocationCoordinator {
         return json.writeValueAsString(root);
     }
 
+    /** 对执行行加锁并校验运行状态、owner 实例及 attempt fencing token。 */
     private AgentExecution lockOwned(AgentExecutionPort.ClaimedAgentExecution run) {
         AgentExecution owned = agentExecutions.lockById(run.executionId());
+
+        // 任一所有权条件不匹配都必须立即停止当前事务，避免旧 worker 写入。
         if (owned == null
                 || !"running".equals(owned.getStatus())
                 || !run.ownerInstanceId().equals(owned.getOwnerInstanceId())
@@ -300,6 +401,12 @@ public class ModelInvocationCoordinator {
         return owned;
     }
 
+    /**
+     * 固定一次模型调用的身份和输入消息上界。
+     *
+     * @param modelInvocationSequence 执行内单调递增的模型调用序号
+     * @param inputUpToConversationMessageSequence 本次调用允许读取的最大消息序号
+     */
     public record ModelInvocationBoundary(
             long modelInvocationSequence, long inputUpToConversationMessageSequence) {}
 }

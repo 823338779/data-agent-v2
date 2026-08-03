@@ -6,8 +6,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
+import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
-import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
 import com.datagent.agentv2.platform.context.TenantContext;
 import jakarta.servlet.http.Cookie;

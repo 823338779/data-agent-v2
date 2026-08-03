@@ -2,12 +2,12 @@ package com.datagent.agentv2.conversation.react;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
-import com.datagent.agentv2.conversation.execution.ExecutionStatus;
-import com.datagent.agentv2.conversation.message.MessageRole;
-import com.datagent.agentv2.conversation.model.ModelInvocationStatus;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
+import com.datagent.agentv2.conversation.enums.MessageRole;
+import com.datagent.agentv2.conversation.enums.ModelInvocationStatus;
+import com.datagent.agentv2.conversation.enums.ToolExecutionStatus;
+import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
-import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
-import com.datagent.agentv2.conversation.tool.ToolExecutionStatus;
 import com.datagent.agentv2.persistence.entity.ModelInvocationEntity;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;

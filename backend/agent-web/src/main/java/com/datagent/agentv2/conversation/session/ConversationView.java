@@ -1,9 +1,10 @@
 package com.datagent.agentv2.conversation.session;
 
-import com.datagent.agentv2.conversation.execution.ExecutionEventType;
-import com.datagent.agentv2.conversation.execution.ExecutionPhase;
-import com.datagent.agentv2.conversation.execution.ExecutionStatus;
-import com.datagent.agentv2.conversation.message.MessageRole;
+import com.datagent.agentv2.conversation.enums.ConversationSessionType;
+import com.datagent.agentv2.conversation.enums.ExecutionEventType;
+import com.datagent.agentv2.conversation.enums.ExecutionPhase;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
+import com.datagent.agentv2.conversation.enums.MessageRole;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;

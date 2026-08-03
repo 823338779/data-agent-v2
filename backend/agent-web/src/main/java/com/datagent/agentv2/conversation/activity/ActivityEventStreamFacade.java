@@ -1,5 +1,7 @@
 package com.datagent.agentv2.conversation.activity;
 
+import com.datagent.agentv2.conversation.enums.ActivityEventType;
+import com.datagent.agentv2.conversation.enums.SessionActivityStatus;
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
 import com.datagent.agentv2.conversation.session.ConversationView;
 import com.datagent.agentv2.platform.context.OperatorContext;

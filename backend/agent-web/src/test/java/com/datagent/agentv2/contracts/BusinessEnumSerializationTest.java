@@ -2,12 +2,12 @@ package com.datagent.agentv2.contracts;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.datagent.agentv2.conversation.activity.ActivityEventType;
-import com.datagent.agentv2.conversation.cluster.ExecutionControlType;
-import com.datagent.agentv2.conversation.execution.ExecutionEventType;
-import com.datagent.agentv2.conversation.execution.ExecutionPhase;
-import com.datagent.agentv2.conversation.execution.ExecutionStatus;
-import com.datagent.agentv2.conversation.message.MessageRole;
+import com.datagent.agentv2.conversation.enums.ActivityEventType;
+import com.datagent.agentv2.conversation.enums.ExecutionControlType;
+import com.datagent.agentv2.conversation.enums.ExecutionEventType;
+import com.datagent.agentv2.conversation.enums.ExecutionPhase;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
+import com.datagent.agentv2.conversation.enums.MessageRole;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 

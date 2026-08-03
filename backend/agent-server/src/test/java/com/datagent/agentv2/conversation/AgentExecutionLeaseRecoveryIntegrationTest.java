@@ -3,11 +3,11 @@ package com.datagent.agentv2.conversation;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.datagent.agentv2.conversation.exception.ExecutionDeadlineExceededException;
+import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort.ClaimedAgentExecution;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionRecoveryScheduler;
-import com.datagent.agentv2.conversation.runtime.ExecutionDeadlineExceededException;
-import com.datagent.agentv2.conversation.runtime.ExecutionOwnershipLostException;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.sql.Timestamp;
 import java.time.Instant;

@@ -1,4 +1,12 @@
 data-agent:
+  model:
+    provider: ${DATA_AGENT_MODEL_PROVIDER:ollama}
+    codex:
+      executable: ${DATA_AGENT_MODEL_CODEX_EXECUTABLE:codex}
+      model: ${DATA_AGENT_MODEL_CODEX_MODEL:}
+      effort: ${DATA_AGENT_MODEL_CODEX_EFFORT:}
+      timeout: ${DATA_AGENT_MODEL_CODEX_TIMEOUT:5m}
+      working-directory: ${DATA_AGENT_MODEL_CODEX_WORKING_DIRECTORY:}
   runtime:
     max-concurrent-executions-per-instance: ${DATA_AGENT_MAX_CONCURRENT_EXECUTIONS_PER_INSTANCE:256}
     queue-scan-interval: ${DATA_AGENT_QUEUE_SCAN_INTERVAL:1s}

@@ -1,6 +1,6 @@
 package com.datagent.agentv2.conversation.react;
 
-import com.datagent.agentv2.conversation.message.MessageRole;
+import com.datagent.agentv2.conversation.enums.MessageRole;
 import java.util.List;
 import java.util.Objects;
 

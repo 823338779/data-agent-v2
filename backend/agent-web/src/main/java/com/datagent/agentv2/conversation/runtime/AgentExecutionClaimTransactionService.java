@@ -4,8 +4,8 @@ import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
-import com.datagent.agentv2.conversation.execution.ExecutionEventType;
-import com.datagent.agentv2.conversation.execution.ExecutionStatus;
+import com.datagent.agentv2.conversation.enums.ExecutionEventType;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.persistence.entity.AgentExecutionAttemptEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionAttemptService;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;

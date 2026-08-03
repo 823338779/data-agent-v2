@@ -1,7 +1,7 @@
 package com.datagent.agentv2.conversation.activity;
 
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
-import com.datagent.agentv2.conversation.execution.ExecutionEventType;
+import com.datagent.agentv2.conversation.enums.ExecutionEventType;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventPersisted;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
 import com.datagent.agentv2.persistence.service.ConversationSessionUserStateService;

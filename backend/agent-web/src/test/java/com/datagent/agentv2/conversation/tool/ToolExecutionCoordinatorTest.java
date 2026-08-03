@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.exception.ToolBusinessException;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
@@ -178,8 +179,7 @@ class ToolExecutionCoordinatorTest {
                         "business",
                         Duration.ofSeconds(1),
                         arguments -> {
-                            throw new AgentTool.BusinessFailure(
-                                    "business_failure", "not available");
+                            throw new ToolBusinessException("business_failure", "not available");
                         }));
     }
 

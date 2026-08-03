@@ -1,5 +1,7 @@
 package com.datagent.agentv2.conversation.tool;
 
+import com.datagent.agentv2.conversation.enums.ToolFailureCode;
+import com.datagent.agentv2.conversation.exception.ToolBusinessException;
 import java.util.concurrent.TimeoutException;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
@@ -15,7 +17,7 @@ public final class ToolFailureSanitizer {
     public ToolFailureSanitizer(ObjectMapper ignored) {}
 
     public ToolExecutionResult sanitize(Throwable failure) {
-        if (failure instanceof AgentTool.BusinessFailure business) {
+        if (failure instanceof ToolBusinessException business) {
             return ToolExecutionResult.failed(business.code(), business.safeMessage());
         }
         if (failure instanceof IllegalArgumentException) {

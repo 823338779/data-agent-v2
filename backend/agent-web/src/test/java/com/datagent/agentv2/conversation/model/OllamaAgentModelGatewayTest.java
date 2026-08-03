@@ -3,6 +3,7 @@ package com.datagent.agentv2.conversation.model;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.datagent.agentv2.conversation.exception.ModelStreamInterruptedException;
 import com.datagent.agentv2.conversation.react.ModelInputMessage;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.sun.net.httpserver.HttpExchange;

@@ -1,7 +1,7 @@
 package com.datagent.agentv2.conversation.cluster;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
-import com.datagent.agentv2.conversation.execution.ExecutionStatus;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnerRegistry;

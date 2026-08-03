@@ -1,7 +1,7 @@
 package com.datagent.agentv2.conversation.react;
 
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
-import com.datagent.agentv2.conversation.message.MessageRole;
+import com.datagent.agentv2.conversation.enums.MessageRole;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ToolExecutionService;
