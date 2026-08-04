@@ -36,8 +36,10 @@ public interface ConversationPersistenceMapper {
 
     List<ConversationSession> toSessionModels(List<ConversationSessionEntity> entities);
 
+    @Mapping(target = "thinkingProcess", ignore = true)
     ConversationMessage toModel(ConversationMessageEntity entity);
 
+    @Mapping(target = "thinkingProcess", ignore = true)
     ConversationMessageEntity toEntity(ConversationMessage model);
 
     @Mapping(target = "id", ignore = true)
@@ -46,8 +48,10 @@ public interface ConversationPersistenceMapper {
     @Mapping(target = "updatedAt", ignore = true)
     @Mapping(target = "deletedAt", ignore = true)
     @Mapping(target = "deleted", ignore = true)
+    @Mapping(target = "thinkingProcess", ignore = true)
     void updateEntity(ConversationMessage model, @MappingTarget ConversationMessageEntity entity);
 
+    @Mapping(target = "thinkingProcess", ignore = true)
     void updateModel(ConversationMessageEntity entity, @MappingTarget ConversationMessage model);
 
     List<ConversationMessage> toMessageModels(List<ConversationMessageEntity> entities);

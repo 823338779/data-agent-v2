@@ -1,6 +1,7 @@
 package com.datagent.agentv2.conversation.domain;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -25,6 +26,9 @@ public final class ConversationMessage {
 
     /** 消息正文。 */
     private String content;
+
+    /** 与真实消息正文绑定的有序生成过程；用户消息当前固定为空列表。 */
+    private List<ThinkingProcessItem> thinkingProcess = List.of();
 
     /** 消息在会话内的单调递增序号。 */
     private Long conversationMessageSequence;
@@ -109,6 +113,11 @@ public final class ConversationMessage {
     /** 补充 assistant 消息的工具调用文档。 */
     public void attachToolCalls(String toolCalls) {
         this.toolCalls = toolCalls;
+    }
+
+    /** 使用不可变副本替换过程列表，避免持久化后被调用方继续修改。 */
+    public void setThinkingProcess(List<ThinkingProcessItem> thinkingProcess) {
+        this.thinkingProcess = thinkingProcess == null ? List.of() : List.copyOf(thinkingProcess);
     }
 
     private static ConversationMessage base(

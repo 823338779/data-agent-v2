@@ -28,6 +28,10 @@ public final class ConversationMessageEntity extends TenantAuditedEntity {
     /** 消息正文；工具消息保存经过清理的 observation。 */
     private String content;
 
+    /** 与消息正文绑定的有序 ProcessItem JSONB 数组。 */
+    @TableField(jdbcType = JdbcType.OTHER)
+    private String thinkingProcess;
+
     /** 消息在所属会话内的单调递增业务序号。 */
     private Long conversationMessageSequence;
 
