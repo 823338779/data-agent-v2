@@ -309,7 +309,7 @@ public class ConversationProcessCoordinator {
     }
 
     /** 使用完整工具结果构建成功或失败终态，并仅把有界表示写入 JSONB。 */
-    public void finishTool(
+    public ProcessAuditEvent finishTool(
             AgentExecutionPort.ClaimedAgentExecution run,
             UUID processItemId,
             ToolExecutionResult result,
@@ -324,37 +324,37 @@ public class ConversationProcessCoordinator {
         boolean succeeded = result.status() == ToolExecutionResult.Status.SUCCEEDED;
         String safeFailureMessage = sanitizer.sanitizeText(result.failureMessage());
 
-        mutate(
-                run,
-                now,
-                assistant -> {
-                    ToolThinkingProcessItem current = requireTool(assistant, processItemId);
-                    ThinkingProcessStatus status =
-                            succeeded
-                                    ? ThinkingProcessStatus.SUCCEEDED
-                                    : ThinkingProcessStatus.FAILED;
-                    ToolThinkingProcessItem changed =
-                            toolItem(
-                                    current,
-                                    status,
-                                    current.startedAt(),
-                                    now,
-                                    boundedOutput,
-                                    succeeded,
-                                    result.failureCode(),
-                                    safeFailureMessage);
-                    assistant.replaceProcessItem(processItemId, changed);
-                    return new Mutation<>(
-                            null,
-                            List.of(
+        ProcessAuditEvent auditEvent =
+                mutate(
+                        run,
+                        now,
+                        assistant -> {
+                            ToolThinkingProcessItem current = requireTool(assistant, processItemId);
+                            ThinkingProcessStatus status =
+                                    succeeded
+                                            ? ThinkingProcessStatus.SUCCEEDED
+                                            : ThinkingProcessStatus.FAILED;
+                            ToolThinkingProcessItem changed =
+                                    toolItem(
+                                            current,
+                                            status,
+                                            current.startedAt(),
+                                            now,
+                                            boundedOutput,
+                                            succeeded,
+                                            result.failureCode(),
+                                            safeFailureMessage);
+                            assistant.replaceProcessItem(processItemId, changed);
+                            ProcessAuditEvent event =
                                     new ProcessAuditEvent(
                                             changed,
                                             null,
                                             toolInputBuffers.get(key(run, processItemId)),
-                                            fullSafeOutput)),
-                            true);
-                });
+                                            fullSafeOutput);
+                            return new Mutation<>(event, List.of(event), true);
+                        });
         afterCommit(() -> toolInputBuffers.remove(key(run, processItemId)));
+        return auditEvent;
     }
 
     /** 在执行异常边界一次更新中把所有未完成节点收敛为 FAILED。 */

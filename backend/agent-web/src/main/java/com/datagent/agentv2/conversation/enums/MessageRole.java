@@ -8,8 +8,7 @@ import java.util.Arrays;
 public enum MessageRole {
     SYSTEM("system"),
     USER("user"),
-    ASSISTANT("assistant"),
-    TOOL("tool");
+    ASSISTANT("assistant");
 
     private final String value;
 

@@ -39,22 +39,6 @@ public final class ConversationMessageEntity extends TenantAuditedEntity {
     /** 用户消息作者的租户用户业务标识；非用户消息为空。 */
     private String authorUserId;
 
-    /** assistant 消息的版本化工具调用文档；其他角色保持为空。 */
-    @TableField(jdbcType = JdbcType.OTHER, typeHandler = JsonbStringTypeHandler.class)
-    private String toolCalls;
-
-    /** tool observation 对应的内部工具执行业务标识。 */
-    private String toolExecutionId;
-
-    /** provider 在当前模型调用内生成的工具调用标识。 */
-    private String toolCallId;
-
-    /** tool observation 对应的注册工具名称。 */
-    private String toolName;
-
-    /** 消息投影范围，user 对外可见，internal 仅用于模型上下文。 */
-    private String visibility;
-
     /** 乐观锁版本，防止补充执行关联时覆盖并发更新。 */
     @Version private Long version;
 }

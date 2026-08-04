@@ -46,7 +46,6 @@ public interface ToolExecutionMapper extends BaseMapper<ToolExecutionEntity> {
             """
             update tool_execution e
                set status = #{status},
-                   observation_conversation_message_id = #{observationConversationMessageId},
                    failure_code = #{failureCode},
                    completed_at = #{completedAt},
                    updated_at = #{completedAt},
@@ -69,7 +68,6 @@ public interface ToolExecutionMapper extends BaseMapper<ToolExecutionEntity> {
             @Param("toolExecutionId") String toolExecutionId,
             @Param("expectedVersion") long expectedVersion,
             @Param("status") String status,
-            @Param("observationConversationMessageId") String observationConversationMessageId,
             @Param("completedAt") Instant completedAt,
             @Param("failureCode") String failureCode,
             @Param("ownerInstanceId") String ownerInstanceId,

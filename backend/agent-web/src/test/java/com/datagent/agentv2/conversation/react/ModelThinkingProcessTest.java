@@ -26,7 +26,6 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
-import tools.jackson.databind.json.JsonMapper;
 
 class ModelThinkingProcessTest {
 
@@ -86,8 +85,7 @@ class ModelThinkingProcessTest {
                         mock(ApplicationEventPublisher.class),
                         mock(AgentExecutionEventService.class),
                         mock(AgentExecutionAttemptService.class),
-                        mock(IdGenerator.class),
-                        JsonMapper.builder().build());
+                        mock(IdGenerator.class));
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.datagent.agentv2.persistence.entity;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
 import java.time.Instant;
+import java.util.UUID;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -27,6 +28,9 @@ public final class ToolExecutionEntity extends TenantAuditedEntity {
     /** 产生工具调用的 assistant 会话消息标识。 */
     private String assistantConversationMessageId;
 
+    /** assistant 中心消息 thinking_process 数组内对应 TOOL 节点 UUID。 */
+    private UUID toolProcessItemId;
+
     /** provider 在当前模型调用内生成的工具调用标识。 */
     private String toolCallId;
 
@@ -41,9 +45,6 @@ public final class ToolExecutionEntity extends TenantAuditedEntity {
 
     /** 支持幂等的工具在首次准备时固定下来的幂等键。 */
     private String idempotencyKey;
-
-    /** terminal 工具执行唯一关联的 tool observation 会话消息标识。 */
-    private String observationConversationMessageId;
 
     /** 经过清理的稳定失败分类，不保存敏感异常正文。 */
     private String failureCode;

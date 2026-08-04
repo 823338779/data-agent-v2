@@ -2,8 +2,9 @@ package com.datagent.agentv2.conversation.react;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
+import com.datagent.agentv2.conversation.domain.ToolThinkingProcessItem;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
-import com.datagent.agentv2.conversation.enums.MessageRole;
 import com.datagent.agentv2.conversation.enums.ModelInvocationStatus;
 import com.datagent.agentv2.conversation.enums.ToolExecutionStatus;
 import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
@@ -22,8 +23,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ReactRecoveryPlanner {
 
-    private static final String ERROR_TERMINAL_OBSERVATION =
-            "Terminal tool execution is missing its observation";
+    private static final String ERROR_TERMINAL_PROCESS_ITEM =
+            "Terminal tool execution is missing its process item result";
 
     private final AgentExecutionService agentExecutions;
     private final ModelInvocationService modelInvocations;
@@ -83,7 +84,7 @@ public class ReactRecoveryPlanner {
                     last.getInputUpToConversationMessageSequence());
         }
         for (ToolExecutionEntity execution : toolExecutionRows) {
-            validateTerminalObservation(execution);
+            validateTerminalProcessItem(execution);
         }
         return RecoveryPlan.continueModel();
     }
@@ -103,18 +104,32 @@ public class ReactRecoveryPlanner {
                 || ToolExecutionStatus.EXECUTING.matches(execution.getStatus());
     }
 
-    private void validateTerminalObservation(ToolExecutionEntity execution) {
+    private void validateTerminalProcessItem(ToolExecutionEntity execution) {
         if (!ToolExecutionStatus.SUCCEEDED.matches(execution.getStatus())
                 && !ToolExecutionStatus.FAILED.matches(execution.getStatus())) {
-            throw new IllegalStateException(ERROR_TERMINAL_OBSERVATION);
+            throw new IllegalStateException(ERROR_TERMINAL_PROCESS_ITEM);
         }
-        ConversationMessage observation =
-                messages.findByConversationMessageId(
-                        execution.getObservationConversationMessageId());
-        if (observation == null
-                || !MessageRole.TOOL.value().equals(observation.getRole())
-                || !execution.getToolExecutionId().equals(observation.getToolExecutionId())) {
-            throw new IllegalStateException(ERROR_TERMINAL_OBSERVATION);
+        ConversationMessage assistant =
+                messages.findByConversationMessageId(execution.getAssistantConversationMessageId());
+        if (assistant == null || execution.getToolProcessItemId() == null) {
+            throw new IllegalStateException(ERROR_TERMINAL_PROCESS_ITEM);
+        }
+        if (!(assistant.requireProcessItem(execution.getToolProcessItemId())
+                instanceof ToolThinkingProcessItem item)) {
+            throw new IllegalStateException(ERROR_TERMINAL_PROCESS_ITEM);
+        }
+
+        // 工具行和中心消息中的终态节点必须描述同一次调用及同一成功/失败结果。
+        boolean succeeded = ToolExecutionStatus.SUCCEEDED.matches(execution.getStatus());
+        ThinkingProcessStatus expectedStatus =
+                succeeded ? ThinkingProcessStatus.SUCCEEDED : ThinkingProcessStatus.FAILED;
+        if (item.status() != expectedStatus
+                || item.output() == null
+                || !Boolean.valueOf(succeeded).equals(item.success())
+                || !execution.getToolExecutionId().equals(item.toolExecutionId())
+                || !execution.getToolCallId().equals(item.toolCallId())
+                || !execution.getToolName().equals(item.toolName())) {
+            throw new IllegalStateException(ERROR_TERMINAL_PROCESS_ITEM);
         }
     }
 

@@ -1,6 +1,5 @@
 package com.datagent.agentv2.conversation.react;
 
-import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_CONVERSATION_MESSAGE;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_EXECUTION_EVENT;
 
 import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotification;
@@ -10,8 +9,6 @@ import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
 import com.datagent.agentv2.conversation.enums.ExecutionEventType;
-import com.datagent.agentv2.conversation.enums.MessageRole;
-import com.datagent.agentv2.conversation.enums.MessageVisibility;
 import com.datagent.agentv2.conversation.enums.ModelInvocationStatus;
 import com.datagent.agentv2.conversation.enums.ToolExecutionStatus;
 import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
@@ -40,9 +37,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.node.ArrayNode;
-import tools.jackson.databind.node.ObjectNode;
 
 /** 协调模型调用、流式 checkpoint、工具归档和最终回答落库的事务边界。 */
 @Service
@@ -51,8 +45,8 @@ public class ModelInvocationCoordinator {
     /** 模型调用业务主键使用的统一前缀。 */
     private static final String ID_PREFIX_MODEL_INVOCATION = "model_invocation";
 
-    /** 内部 assistant 工具调用文档的结构版本。 */
-    private static final int TOOL_CALL_DOCUMENT_VERSION = 1;
+    /** 工具执行业务主键使用的统一前缀。 */
+    private static final String ID_PREFIX_TOOL_EXECUTION = "tool_execution";
 
     /** 维护模型调用序号、状态和恢复输入边界。 */
     private final ModelInvocationService modelInvocations;
@@ -90,9 +84,6 @@ public class ModelInvocationCoordinator {
     /** 为模型调用、消息和事件生成业务标识。 */
     private final IdGenerator ids;
 
-    /** 构造版本化工具调用 JSON 文档。 */
-    private final ObjectMapper json;
-
     /** 按 execution/attempt/model invocation 跟踪当前未完成 thinking 节点 UUID。 */
     private final ConcurrentMap<ModelThinkingKey, UUID> activeThinkingItems =
             new ConcurrentHashMap<>();
@@ -110,8 +101,7 @@ public class ModelInvocationCoordinator {
             ApplicationEventPublisher applicationEvents,
             AgentExecutionEventService events,
             AgentExecutionAttemptService attempts,
-            IdGenerator ids,
-            ObjectMapper json) {
+            IdGenerator ids) {
         this.modelInvocations = modelInvocations;
         this.toolExecutions = toolExecutions;
         this.messages = messages;
@@ -124,7 +114,6 @@ public class ModelInvocationCoordinator {
         this.events = events;
         this.attempts = attempts;
         this.ids = ids;
-        this.json = json;
     }
 
     /**
@@ -277,27 +266,27 @@ public class ModelInvocationCoordinator {
         // 工具调用结果是本轮 thinking 的终止边界，必须在归档工具记录前完成节点。
         finishThinking(run, boundary, ThinkingProcessStatus.SUCCEEDED, now);
         // 工具归档前再次执行 fencing，并强制收敛不足 checkpoint 阈值的短增量。
-        AgentExecution owned = lockOwned(run);
+        lockOwned(run);
         streamCheckpointCoordinator.flush(run, boundary.modelInvocationSequence(), now);
         finishModelInvocation(run, boundary, now);
 
-        // 工具调用作为内部 assistant 消息保存，不进入用户可见会话正文。
-        ConversationMessage assistant =
-                assistantMessage(owned, MessageVisibility.INTERNAL.value(), "");
-        assistant.attachToolCalls(toolCallsJson(calls));
-        messages.save(assistant);
-
-        // assistant 消息先提交到当前事务，再批量建立 prepared execution 外键边界。
-        List<ToolExecutionEntity> prepared =
-                calls.stream()
-                        .map(
-                                call ->
-                                        preparedExecution(
-                                                run,
-                                                boundary,
-                                                assistant.getConversationMessageId(),
-                                                call))
-                        .toList();
+        // 每个 provider call 先追加 PREPARED TOOL 节点，再建立指向中心消息和 UUID 的工具行。
+        ConversationMessage assistant = messages.lockAssistantByExecutionId(run.executionId());
+        List<ToolExecutionEntity> prepared = new java.util.ArrayList<>();
+        for (ModelToolCall call : calls) {
+            String toolExecutionId = ids.next(ID_PREFIX_TOOL_EXECUTION);
+            UUID processItemId =
+                    conversationProcesses.prepareTool(
+                            run, boundary.modelInvocationSequence(), call, toolExecutionId, now);
+            prepared.add(
+                    preparedExecution(
+                            run,
+                            boundary,
+                            assistant.getConversationMessageId(),
+                            processItemId,
+                            toolExecutionId,
+                            call));
+        }
         toolExecutions.saveBatch(prepared);
     }
 
@@ -344,8 +333,12 @@ public class ModelInvocationCoordinator {
             throw new ExecutionOwnershipLostException(run.executionId());
         }
 
-        // 回答投影完成后保存用户可见消息，二者由当前事务原子提交。
-        messages.save(assistantMessage(owned, MessageVisibility.USER.value(), answer));
+        // 回答投影完成后更新预建中心消息正文，不再创建第二条 assistant 消息。
+        ConversationMessage assistant = messages.lockAssistantByExecutionId(run.executionId());
+        assistant.completeAssistantContent(answer);
+        if (!messages.updateById(assistant)) {
+            throw new ExecutionOwnershipLostException(run.executionId());
+        }
 
         // 执行终态更新同时释放 lease；失败表示 owner 已经丢失。
         if (!agentExecutions.completeOwned(
@@ -394,55 +387,28 @@ public class ModelInvocationCoordinator {
         }
     }
 
-    /** 按给定可见性创建带有稳定会话序号的 assistant 消息。 */
-    private ConversationMessage assistantMessage(
-            AgentExecution run, String visibility, String content) {
-        return ConversationMessage.assistant(
-                ids.next(ID_PREFIX_CONVERSATION_MESSAGE),
-                run.getConversationSessionId(),
-                run.getExecutionId(),
-                content,
-                sessions.nextConversationMessageSequence(run.getConversationSessionId()),
-                MessageRole.ASSISTANT.value(),
-                visibility);
-    }
-
     /** 将一个模型工具调用映射为尚未执行的持久化记录。 */
     private ToolExecutionEntity preparedExecution(
             AgentExecutionPort.ClaimedAgentExecution run,
             ModelInvocationBoundary boundary,
             String assistantConversationMessageId,
+            UUID toolProcessItemId,
+            String toolExecutionId,
             ModelToolCall call) {
-        // prepared 记录绑定 execution、attempt、model invocation 和内部 assistant 消息。
+        // prepared 记录绑定 execution、attempt、model invocation、中心消息和 TOOL UUID。
         ToolExecutionEntity execution = new ToolExecutionEntity();
-        execution.setToolExecutionId(ids.next("tool_execution"));
+        execution.setToolExecutionId(toolExecutionId);
         execution.setExecutionId(run.executionId());
         execution.setModelInvocationSequence(boundary.modelInvocationSequence());
         execution.setExecutionAttemptNumber(run.executionAttemptNumber());
         execution.setAssistantConversationMessageId(assistantConversationMessageId);
+        execution.setToolProcessItemId(toolProcessItemId);
         execution.setToolCallId(call.toolCallId());
         execution.setToolName(call.name());
         execution.setStatus(ToolExecutionStatus.PREPARED.value());
         execution.setExecutionCount(0);
         execution.setVersion(0L);
         return execution;
-    }
-
-    /** 将工具调用集合编码为带版本的内部 assistant 消息附件。 */
-    private String toolCallsJson(List<ModelToolCall> calls) {
-        // 根对象携带结构版本，便于未来读取方兼容文档演进。
-        ObjectNode root = json.createObjectNode();
-        root.put("version", TOOL_CALL_DOCUMENT_VERSION);
-        ArrayNode array = root.putArray("calls");
-
-        // 只保存恢复和再次构造模型上下文所需的 ID、名称及参数。
-        for (ModelToolCall call : calls) {
-            ObjectNode item = array.addObject();
-            item.put("id", call.toolCallId());
-            item.put("name", call.name());
-            item.set("arguments", call.arguments());
-        }
-        return json.writeValueAsString(root);
     }
 
     /** 对执行行加锁并校验运行状态、owner 实例及 attempt fencing token。 */

@@ -43,12 +43,11 @@ public class ToolExecutionService extends ServiceImpl<ToolExecutionMapper, ToolE
                 == 1;
     }
 
-    /** 以相同 fencing 条件把 execution 和唯一 Observation 一起提升为 terminal。 */
+    /** 以相同 fencing 条件把 execution 与中心消息 TOOL 节点一起提升为 terminal。 */
     public boolean completeExecution(
             String toolExecutionId,
             long expectedVersion,
             String status,
-            String observationConversationMessageId,
             Instant completedAt,
             String failureCode,
             String ownerInstanceId,
@@ -58,7 +57,6 @@ public class ToolExecutionService extends ServiceImpl<ToolExecutionMapper, ToolE
                         toolExecutionId,
                         expectedVersion,
                         status,
-                        observationConversationMessageId,
                         completedAt,
                         failureCode,
                         ownerInstanceId,

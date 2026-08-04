@@ -13,7 +13,6 @@ import org.springframework.stereotype.Service;
 public class ConversationMessageService
         extends ServiceImpl<ConversationMessageMapper, ConversationMessageEntity> {
 
-    private static final String VISIBILITY_USER = "user";
     private static final String ROLE_USER = "user";
     private static final String ROLE_ASSISTANT = "assistant";
 
@@ -56,7 +55,7 @@ public class ConversationMessageService
         return updated;
     }
 
-    /** 对外会话投影只返回 user visibility 消息，并保持稳定序号。 */
+    /** 对外会话投影只返回真实 user/assistant 消息，并保持稳定序号。 */
     public List<ConversationMessage> findUserVisibleByConversationSessionId(
             String conversationSessionId) {
         return toModels(
@@ -64,7 +63,17 @@ public class ConversationMessageService
                         .eq(
                                 ConversationMessageEntity::getConversationSessionId,
                                 conversationSessionId)
-                        .eq(ConversationMessageEntity::getVisibility, VISIBILITY_USER)
+                        .in(ConversationMessageEntity::getRole, ROLE_USER, ROLE_ASSISTANT)
+                        .orderByAsc(ConversationMessageEntity::getConversationMessageSequence)
+                        .list());
+    }
+
+    /** 读取一次 Agent 执行已经产生的用户可见消息，供 SSE 增量更新直接合并界面状态。 */
+    public List<ConversationMessage> findUserVisibleByExecutionId(String executionId) {
+        return toModels(
+                lambdaQuery()
+                        .eq(ConversationMessageEntity::getExecutionId, executionId)
+                        .in(ConversationMessageEntity::getRole, ROLE_USER, ROLE_ASSISTANT)
                         .orderByAsc(ConversationMessageEntity::getConversationMessageSequence)
                         .list());
     }
@@ -84,7 +93,6 @@ public class ConversationMessageService
                                 conversationSessionId)
                         .le(ConversationMessageEntity::getConversationMessageSequence, sequence)
                         .in(ConversationMessageEntity::getRole, ROLE_USER, ROLE_ASSISTANT)
-                        .eq(ConversationMessageEntity::getVisibility, VISIBILITY_USER)
                         .orderByAsc(ConversationMessageEntity::getConversationMessageSequence)
                         .list());
     }
@@ -95,18 +103,18 @@ public class ConversationMessageService
                 lambdaQuery()
                         .eq(ConversationMessageEntity::getExecutionId, executionId)
                         .in(ConversationMessageEntity::getRole, ROLE_USER, ROLE_ASSISTANT)
-                        .eq(ConversationMessageEntity::getVisibility, VISIBILITY_USER)
                         .orderByAsc(ConversationMessageEntity::getConversationMessageSequence)
                         .list());
     }
 
-    /** 模型上下文读取完整消息日志，不过滤 internal 消息。 */
+    /** 模型上下文读取真实 user/assistant 消息，不再依赖 internal 日志。 */
     public List<ConversationMessage> findContextByExecutionIdUpTo(
             String executionId, long sequence) {
         return toModels(
                 lambdaQuery()
                         .eq(ConversationMessageEntity::getExecutionId, executionId)
                         .le(ConversationMessageEntity::getConversationMessageSequence, sequence)
+                        .in(ConversationMessageEntity::getRole, ROLE_USER, ROLE_ASSISTANT)
                         .orderByAsc(ConversationMessageEntity::getConversationMessageSequence)
                         .list());
     }

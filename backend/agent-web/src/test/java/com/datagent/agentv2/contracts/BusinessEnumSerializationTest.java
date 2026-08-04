@@ -35,6 +35,7 @@ class BusinessEnumSerializationTest {
         assertThat(ExecutionEventType.fromValue("execution_done"))
                 .isEqualTo(ExecutionEventType.DONE);
         assertThat(ExecutionStatus.fromValue("running")).isEqualTo(ExecutionStatus.RUNNING);
-        assertThat(MessageRole.fromValue("tool")).isEqualTo(MessageRole.TOOL);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> MessageRole.fromValue("tool"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

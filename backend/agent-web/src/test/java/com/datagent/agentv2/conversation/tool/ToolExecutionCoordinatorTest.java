@@ -5,22 +5,29 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.datagent.agentv2.conversation.domain.BoundedProcessPayload;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.domain.ThinkingProcessItem;
+import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
+import com.datagent.agentv2.conversation.domain.ToolThinkingProcessItem;
 import com.datagent.agentv2.conversation.exception.ToolBusinessException;
+import com.datagent.agentv2.conversation.process.ConversationProcessCoordinator;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
-import com.datagent.agentv2.persistence.service.ConversationSessionService;
 import com.datagent.agentv2.persistence.service.ToolExecutionService;
-import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -29,36 +36,21 @@ class ToolExecutionCoordinatorTest {
     private static final String EXECUTION_ID = "execution-tools";
     private static final String ASSISTANT_ID = "assistant-tools";
     private static final String SESSION_ID = "session-tools";
-    private static final String TOOL_CALLS =
-            """
-            {"version":1,"calls":[
-              {"id":"call-success","name":"success","arguments":{}},
-              {"id":"call-arguments","name":"arguments","arguments":{}},
-              {"id":"call-denied","name":"denied","arguments":{}},
-              {"id":"call-timeout","name":"timeout","arguments":{}},
-              {"id":"call-exception","name":"exception","arguments":{}},
-              {"id":"call-business","name":"business","arguments":{}}
-            ]}
-            """;
+    private static final String EMPTY_JSON_SHA256 =
+            "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+    private static final String JSON_CONTENT_TYPE = "application/json";
 
     @Test
-    void persistsSanitizedObservationForEveryOutcomeAndContinuesAfterFailures() {
+    void persistsEveryOutcomeThroughTheBoundToolProcessItemAndContinuesAfterFailures() {
         JsonMapper json = JsonMapper.builder().build();
         ToolExecutionService toolExecutions = mock(ToolExecutionService.class);
         ConversationMessageService messages = mock(ConversationMessageService.class);
-        ConversationSessionService sessions = mock(ConversationSessionService.class);
+        ConversationProcessCoordinator processes = mock(ConversationProcessCoordinator.class);
         AgentExecutionLeaseService leases = mock(AgentExecutionLeaseService.class);
-        IdGenerator ids = mock(IdGenerator.class);
         List<ToolExecutionEntity> rows = toolExecutions();
-        List<ConversationMessage> observations = new ArrayList<>();
-        AtomicInteger conversationMessageSequence = new AtomicInteger(10);
-        AtomicInteger conversationMessageId = new AtomicInteger();
-        ConversationMessage assistant =
-                ConversationMessage.assistant(
-                        ASSISTANT_ID, SESSION_ID, EXECUTION_ID, "", 1L, "assistant", "internal");
-        assistant.attachToolCalls(TOOL_CALLS);
+        ConversationMessage assistant = assistantWithPreparedTools(rows);
 
-        when(toolExecutions.findByTurn(EXECUTION_ID, 1)).thenReturn(rows);
+        when(toolExecutions.findByTurn(EXECUTION_ID, 1L)).thenReturn(rows);
         for (ToolExecutionEntity row : rows) {
             when(toolExecutions.findByToolExecutionId(row.getToolExecutionId())).thenReturn(row);
         }
@@ -66,38 +58,16 @@ class ToolExecutionCoordinatorTest {
                         anyString(), anyLong(), any(), any(), anyString(), anyLong()))
                 .thenAnswer(
                         invocation -> {
-                            String id = invocation.getArgument(0);
-                            ToolExecutionEntity row =
-                                    rows.stream()
-                                            .filter(value -> value.getToolExecutionId().equals(id))
-                                            .findFirst()
-                                            .orElseThrow();
+                            ToolExecutionEntity row = row(rows, invocation.getArgument(0));
                             row.setStatus("executing");
                             row.setExecutionCount(row.getExecutionCount() + 1);
                             row.setVersion(row.getVersion() + 1);
                             return true;
                         });
         when(toolExecutions.completeExecution(
-                        anyString(),
-                        anyLong(),
-                        anyString(),
-                        anyString(),
-                        any(),
-                        any(),
-                        anyString(),
-                        anyLong()))
+                        anyString(), anyLong(), anyString(), any(), any(), anyString(), anyLong()))
                 .thenReturn(true);
         when(messages.findByConversationMessageId(ASSISTANT_ID)).thenReturn(assistant);
-        when(messages.save(any(ConversationMessage.class)))
-                .thenAnswer(
-                        invocation -> {
-                            observations.add(invocation.getArgument(0));
-                            return true;
-                        });
-        when(sessions.nextConversationMessageSequence(SESSION_ID))
-                .thenAnswer(ignored -> (long) conversationMessageSequence.incrementAndGet());
-        when(ids.next(anyString()))
-                .thenAnswer(ignored -> "observation-" + conversationMessageId.incrementAndGet());
 
         ToolExecutionCoordinator coordinator =
                 new ToolExecutionCoordinator(
@@ -107,18 +77,15 @@ class ToolExecutionCoordinatorTest {
                                 new AgentToolRegistry(tools(json)),
                                 toolExecutions,
                                 messages,
-                                sessions,
-                                ids,
+                                processes,
                                 json),
                         new ToolFailureSanitizer(json));
         try {
-            List<ToolExecutionResult> result =
-                    coordinator.executeModelInvocationTools(
-                            new AgentExecutionPort.ClaimedAgentExecution(
-                                    "tenant-tools", EXECUTION_ID, "owner", 1),
-                            1);
+            AgentExecutionPort.ClaimedAgentExecution run =
+                    new AgentExecutionPort.ClaimedAgentExecution(
+                            "tenant-tools", EXECUTION_ID, "owner", 1L);
+            List<ToolExecutionResult> result = coordinator.executeModelInvocationTools(run, 1L);
 
-            assertThat(result).hasSize(6);
             assertThat(result)
                     .extracting(ToolExecutionResult::status)
                     .containsExactly(
@@ -137,14 +104,73 @@ class ToolExecutionCoordinatorTest {
                             "timeout",
                             "tool_error",
                             "business_failure");
-            assertThat(observations).hasSize(6);
-            assertThat(observations).allMatch(value -> "tool".equals(value.getRole()));
-            assertThat(observations).allMatch(value -> "internal".equals(value.getVisibility()));
-            assertThat(observations)
-                    .noneMatch(value -> value.getContent().contains("secret-token"));
+
+            // 每个结果都通过 UUID 绑定的 TOOL ProcessItem 收敛，不再创建 observation 消息。
+            ArgumentCaptor<ToolExecutionResult> persisted =
+                    ArgumentCaptor.forClass(ToolExecutionResult.class);
+            for (ToolExecutionEntity row : rows) {
+                verify(processes)
+                        .startTool(
+                                any(),
+                                org.mockito.ArgumentMatchers.eq(row.getToolProcessItemId()),
+                                any());
+                verify(processes)
+                        .finishTool(
+                                any(),
+                                org.mockito.ArgumentMatchers.eq(row.getToolProcessItemId()),
+                                persisted.capture(),
+                                any());
+            }
+            assertThat(persisted.getAllValues())
+                    .noneMatch(
+                            value ->
+                                    value.failureMessage() != null
+                                            && value.failureMessage().contains("secret-token"));
         } finally {
             coordinator.close();
         }
+    }
+
+    private static ConversationMessage assistantWithPreparedTools(List<ToolExecutionEntity> rows) {
+        ConversationMessage assistant =
+                ConversationMessage.assistant(
+                        ASSISTANT_ID, SESSION_ID, EXECUTION_ID, "", 1L, "assistant");
+        Instant createdAt = Instant.parse("2026-08-04T00:00:00Z");
+        for (ToolExecutionEntity row : rows) {
+            assistant.appendProcessItem(
+                    new ToolThinkingProcessItem(
+                            row.getToolProcessItemId(),
+                            assistant.nextProcessSequence(),
+                            ThinkingProcessStatus.PREPARED,
+                            createdAt,
+                            null,
+                            null,
+                            null,
+                            ThinkingProcessItem.CURRENT_SCHEMA_VERSION,
+                            row.getToolName(),
+                            row.getToolName(),
+                            row.getToolExecutionId(),
+                            row.getToolCallId(),
+                            row.getModelInvocationSequence(),
+                            emptyInput(),
+                            null,
+                            null,
+                            null,
+                            null));
+        }
+        return assistant;
+    }
+
+    private static BoundedProcessPayload emptyInput() {
+        return new BoundedProcessPayload(
+                Map.of(), null, false, 2L, EMPTY_JSON_SHA256, JSON_CONTENT_TYPE);
+    }
+
+    private static ToolExecutionEntity row(List<ToolExecutionEntity> rows, String toolExecutionId) {
+        return rows.stream()
+                .filter(value -> value.getToolExecutionId().equals(toolExecutionId))
+                .findFirst()
+                .orElseThrow();
     }
 
     private static List<AgentTool> tools(JsonMapper json) {
@@ -166,7 +192,7 @@ class ToolExecutionCoordinatorTest {
                         "timeout",
                         Duration.ofMillis(5),
                         arguments -> {
-                            Thread.sleep(100);
+                            Thread.sleep(100L);
                             return json.readTree("{}");
                         }),
                 tool(
@@ -217,9 +243,11 @@ class ToolExecutionCoordinatorTest {
         List<String> names =
                 List.of("success", "arguments", "denied", "timeout", "exception", "business");
         List<ToolExecutionEntity> rows = new ArrayList<>();
-        for (String name : names) {
+        for (int index = 0; index < names.size(); index++) {
+            String name = names.get(index);
             ToolExecutionEntity row = new ToolExecutionEntity();
             row.setToolExecutionId("execution-" + name);
+            row.setToolProcessItemId(new UUID(0L, index + 1L));
             row.setExecutionId(EXECUTION_ID);
             row.setModelInvocationSequence(1L);
             row.setExecutionAttemptNumber(1L);

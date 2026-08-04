@@ -62,21 +62,6 @@ public final class ConversationMessage {
     /** 用户消息作者标识。 */
     private String authorUserId;
 
-    /** assistant 消息的工具调用文档。 */
-    private String toolCalls;
-
-    /** tool observation 对应的工具执行标识。 */
-    private String toolExecutionId;
-
-    /** provider 生成的工具调用标识。 */
-    private String toolCallId;
-
-    /** observation 对应的工具名称。 */
-    private String toolName;
-
-    /** 消息投影范围。 */
-    private String visibility;
-
     /** 消息乐观锁版本。 */
     private Long version;
 
@@ -112,31 +97,9 @@ public final class ConversationMessage {
             String executionId,
             String content,
             long sequence,
-            String role,
-            String visibility) {
+            String role) {
         ConversationMessage message = base(messageId, sessionId, role, content, sequence);
         message.executionId = executionId;
-        message.visibility = visibility;
-        return message;
-    }
-
-    /** 组装工具 observation 消息。 */
-    public static ConversationMessage observation(
-            String messageId,
-            String sessionId,
-            String executionId,
-            String content,
-            long sequence,
-            String role,
-            String visibility,
-            String toolExecutionId,
-            String toolCallId,
-            String toolName) {
-        ConversationMessage message =
-                assistant(messageId, sessionId, executionId, content, sequence, role, visibility);
-        message.toolExecutionId = toolExecutionId;
-        message.toolCallId = toolCallId;
-        message.toolName = toolName;
         return message;
     }
 
@@ -145,9 +108,9 @@ public final class ConversationMessage {
         this.executionId = executionId;
     }
 
-    /** 补充 assistant 消息的工具调用文档。 */
-    public void attachToolCalls(String toolCalls) {
-        this.toolCalls = toolCalls;
+    /** 在执行终态把预建 assistant 占位正文替换为真实模型回答。 */
+    public void completeAssistantContent(String content) {
+        this.content = Objects.requireNonNull(content, "content");
     }
 
     /** 使用不可变副本替换过程列表，避免持久化后被调用方继续修改。 */

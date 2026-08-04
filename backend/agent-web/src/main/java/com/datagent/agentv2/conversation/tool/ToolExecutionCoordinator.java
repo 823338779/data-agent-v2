@@ -6,6 +6,7 @@ import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import jakarta.annotation.PreDestroy;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
@@ -55,7 +56,8 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
                     transactionOperations.beginInvocation(run, row);
             ToolExecutionResult observation = invoke(invocation, run, modelInvocationSequence);
             leases.assertOwnedAndWithinBudget(run);
-            transactionOperations.persistObservation(run, invocation, observation);
+            transactionOperations.persistResult(
+                    run, invocation.execution(), observation, Instant.now());
             observations.add(observation);
         }
         return List.copyOf(observations);
