@@ -6,8 +6,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.datagent.agentv2.conversation.runtime.AgentExecutionClaimService;
+import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionRecoveryScheduler;
-import com.datagent.agentv2.platform.context.TenantContext;
+import com.datagent.agentv2.conversation.runtime.ExecutionOwnerRegistry;
+import com.datagent.agentv2.conversation.runtime.ExecutionWorkerCapacity;
 import jakarta.servlet.http.Cookie;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -67,6 +69,8 @@ class AgentExecutionControlIntegrationTest {
     @Autowired private ObjectMapper json;
     @Autowired private AgentExecutionClaimService claims;
     @Autowired private AgentExecutionRecoveryScheduler recovery;
+    @Autowired private ExecutionOwnerRegistry owners;
+    @Autowired private ExecutionWorkerCapacity capacity;
 
     @BeforeEach
     void clearExecutions() {
@@ -120,7 +124,12 @@ class AgentExecutionControlIntegrationTest {
     @Test
     void ownerPollingFinalizesRunningCancellationAndReleasesCapacity() throws Exception {
         Fixture fixture = queued("cancel-owned");
-        assertThat(TenantContext.call("tenant_local", claims::claimNext)).isTrue();
+        String ownerInstanceId = claims.instanceId();
+        makeRunning(fixture.executionId(), ownerInstanceId);
+        AgentExecutionPort.ClaimedAgentExecution claimed =
+                new AgentExecutionPort.ClaimedAgentExecution(
+                        "tenant_local", fixture.executionId(), ownerInstanceId, 1L);
+        assertThat(owners.register(claimed, capacity.tryAcquire().orElseThrow())).isTrue();
         cancel(fixture).andExpect(jsonPath("$.status").value("running"));
 
         recovery.pollExecutionCancellationsNow();
@@ -131,6 +140,8 @@ class AgentExecutionControlIntegrationTest {
                                 String.class,
                                 fixture.executionId()))
                 .isEqualTo("cancelled");
+        assertThat(owners.owns(fixture.executionId())).isFalse();
+        assertThat(capacity.available()).isEqualTo(capacity.maximum());
         assertThat(
                         jdbc.queryForObject(
                                 "select status from agent_execution_attempt where execution_id=?",
@@ -205,14 +216,19 @@ class AgentExecutionControlIntegrationTest {
     }
 
     private void makeRunning(String executionId) {
+        makeRunning(executionId, "instance_control");
+    }
+
+    private void makeRunning(String executionId, String ownerInstanceId) {
         Instant now = Instant.now();
         jdbc.update(
                 """
                 update agent_execution set status='running', phase='RECEIVED', execution_attempt_number=1,
-                  owner_instance_id='instance_control', started_at=?, heartbeat_at=?,
+                  owner_instance_id=?, started_at=?, heartbeat_at=?,
                   lease_expires_at=?, active_segment_started_at=?, hard_deadline_at=?
                 where execution_id=?
                 """,
+                ownerInstanceId,
                 Timestamp.from(now),
                 Timestamp.from(now),
                 Timestamp.from(now.plusSeconds(60)),
@@ -220,9 +236,10 @@ class AgentExecutionControlIntegrationTest {
                 Timestamp.from(now.plusSeconds(600)),
                 executionId);
         jdbc.update(
-                "insert into agent_execution_attempt(execution_attempt_id, tenant_id, execution_id, execution_attempt_number, owner_instance_id, status, started_at) values (?, 'tenant_local', ?, 1, 'instance_control', 'running', ?)",
+                "insert into agent_execution_attempt(execution_attempt_id, tenant_id, execution_id, execution_attempt_number, owner_instance_id, status, started_at) values (?, 'tenant_local', ?, 1, ?, 'running', ?)",
                 "attempt_control_" + executionId,
                 executionId,
+                ownerInstanceId,
                 Timestamp.from(now));
     }
 
