@@ -132,7 +132,7 @@ class ConversationExecutionSchemaMigrationTest {
                         .load()
                         .migrate()
                         .migrationsExecuted;
-        assertThat(migratedToLatest).isEqualTo(6);
+        assertThat(migratedToLatest).isEqualTo(7);
     }
 
     @AfterAll
@@ -303,10 +303,11 @@ class ConversationExecutionSchemaMigrationTest {
                                 """))
                 .satisfies(values -> assertThat(values.get(0)).isEqualTo(values.get(1)));
 
-        // V13 是扩展迁移；旧列由停止旧写入的 V14 再统一删除。
+        // V14 完成 contract 阶段后，运行时只保留正文中心和过程数组。
         assertThat(columnNames("conversation_message"))
-                .contains("tool_calls", "visibility", "tool_execution_id");
-        assertThat(columnNames("tool_execution")).contains("observation_conversation_message_id");
+                .doesNotContain("tool_calls", "visibility", "tool_execution_id");
+        assertThat(columnNames("tool_execution"))
+                .doesNotContain("observation_conversation_message_id");
     }
 
     private static void execute(String sql) throws SQLException {

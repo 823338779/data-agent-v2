@@ -64,7 +64,7 @@ class SessionUserActivityMigrationTest {
                         .load()
                         .migrate()
                         .migrationsExecuted;
-        assertThat(migrated).isEqualTo(3);
+        assertThat(migrated).isEqualTo(5);
     }
 
     @AfterAll

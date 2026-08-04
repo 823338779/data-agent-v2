@@ -172,33 +172,32 @@ class ReactExecutionMigrationTest {
     }
 
     @Test
-    void messageSupportsVersionedToolCallsAndVisibilityChecks() throws SQLException {
+    void messageUsesContentCenteredProcessStorageWithoutLegacyColumns() throws SQLException {
         execute(
                 """
-                insert into conversation_message(
-                    conversation_message_id, tenant_id, conversation_session_id, execution_id, role, content, conversation_message_sequence,
-                    tool_calls, visibility)
-                values (
-                    'message_assistant', 'tenant_react', 'session_react', 'execution_react',
-                    'assistant', '', 10,
-                    '{"version":1,"calls":[{"id":"provider-1","name":"test_tool","arguments":{"x":1}}]}',
-                    'internal');
+                update conversation_message
+                   set thinking_process = '[{"processItemId":"00000000-0000-0000-0000-000000000001","sequence":1,"type":"THINKING"}]',
+                       version = version + 1
+                 where conversation_message_id = 'assistant_existing';
                 """);
 
         assertThat(
                         row(
                                 """
-                                select role, visibility, jsonb_typeof(tool_calls),
-                                       tool_calls #>> '{calls,0,id}'
-                                  from conversation_message where conversation_message_id = 'message_assistant'
+                                select role, content, jsonb_typeof(thinking_process),
+                                       thinking_process #>> '{0,type}', version
+                                  from conversation_message
+                                 where conversation_message_id = 'assistant_existing'
                                 """))
-                .containsExactly("assistant", "internal", "object", "provider-1");
+                .containsExactly("assistant", "existing", "array", "THINKING", "1");
+        assertThat(columnNames("conversation_message"))
+                .doesNotContain("tool_calls", "visibility", "tool_execution_id");
         assertThatThrownBy(
                         () ->
                                 execute(
                                         """
-                                        update conversation_message set visibility = 'private'
-                                         where conversation_message_id = 'message_assistant'
+                                        update conversation_message set thinking_process = '{}'::jsonb
+                                         where conversation_message_id = 'assistant_existing'
                                         """))
                 .isInstanceOf(SQLException.class);
     }
@@ -230,8 +229,8 @@ class ReactExecutionMigrationTest {
             throws SQLException {
         execute(modelInvocationInsert(1));
         execute(modelInvocationInsert(2));
-        execute(assistantAndPreparedExecution("assistant_turn_1", "execution_1", 1, 2));
-        execute(assistantAndPreparedExecution("assistant_turn_2", "execution_2", 2, 3));
+        execute(preparedExecution("execution_1", 1));
+        execute(preparedExecution("execution_2", 2));
 
         // provider tool_call_id 可在不同 Model Turn 复用，但同一 Turn 内必须唯一。
         assertThatThrownBy(
@@ -241,36 +240,29 @@ class ReactExecutionMigrationTest {
                                         insert into tool_execution(
                                             tenant_id, tool_execution_id, execution_id,
                                             model_invocation_sequence, assistant_conversation_message_id, tool_call_id,
-                                            tool_name, status)
+                                            tool_name, tool_process_item_id, status)
                                         values ('tenant_react', 'execution_duplicate', 'execution_react', 1,
-                                                'assistant_turn_1', 'provider-shared', 'test_tool',
-                                                'prepared')
+                                                'assistant_existing', 'provider-shared', 'test_tool',
+                                                '00000000-0000-0000-0000-000000000099', 'prepared')
                                         """))
                 .isInstanceOf(SQLException.class);
 
         execute(
                 """
-                insert into conversation_message(
-                    conversation_message_id, tenant_id, conversation_session_id, execution_id, role, content, conversation_message_sequence,
-                    tool_execution_id, tool_call_id, tool_name, visibility)
-                values ('observation_1', 'tenant_react', 'session_react', 'execution_react', 'tool',
-                        '{"status":"succeeded","content":{"value":1}}', 4, 'execution_1',
-                        'provider-shared', 'test_tool', 'internal');
                 update tool_execution
-                   set status = 'succeeded', observation_conversation_message_id = 'observation_1',
-                       completed_at = current_timestamp
-                 where tenant_id = 'tenant_react' and tool_execution_id = 'execution_1';
+                   set status = 'succeeded', completed_at = current_timestamp
+                  where tenant_id = 'tenant_react' and tool_execution_id = 'execution_1';
                 """);
         assertThat(
                         row(
-                                "select status, observation_conversation_message_id from tool_execution where tool_execution_id = 'execution_1'"))
-                .containsExactly("succeeded", "observation_1");
+                                "select status, tool_process_item_id is not null from tool_execution where tool_execution_id = 'execution_1'"))
+                .containsExactly("succeeded", "t");
         assertThatThrownBy(
                         () ->
                                 execute(
                                         """
                                         update tool_execution
-                                           set status = 'failed', observation_conversation_message_id = null
+                                           set status = 'failed', completed_at = null
                                          where tool_execution_id = 'execution_2'
                                         """))
                 .isInstanceOf(SQLException.class);
@@ -305,7 +297,7 @@ class ReactExecutionMigrationTest {
                                        thinking_process #>> '{0,type}'
                                   from conversation_message
                                  where execution_id = 'execution_migration_a'
-                                   and role = 'assistant' and visibility = 'user'
+                                   and role = 'assistant'
                                  order by conversation_message_sequence desc
                                  limit 1
                                 """))
@@ -315,13 +307,13 @@ class ReactExecutionMigrationTest {
         assertThat(
                         row(
                                 """
-                                select conversation_message_id, content, visibility,
+                                select conversation_message_id, content,
                                        jsonb_array_length(thinking_process)
                                   from conversation_message
                                  where execution_id = 'execution_migration_b'
-                                   and role = 'assistant' and visibility = 'user'
+                                   and role = 'assistant'
                                 """))
-                .containsExactly("assistant_migration_b", "", "user", "0");
+                .containsExactly("assistant_migration_b", "", "0");
         assertThat(
                         row(
                                 """
@@ -329,7 +321,7 @@ class ReactExecutionMigrationTest {
                                        min(jsonb_array_length(thinking_process))
                                   from conversation_message
                                  where execution_id = 'execution_migration_c'
-                                   and role = 'assistant' and visibility = 'user'
+                                   and role = 'assistant'
                                 """))
                 .containsExactly("1", "", "0");
         assertThat(
@@ -354,30 +346,17 @@ class ReactExecutionMigrationTest {
                 .formatted(sequence, sequence);
     }
 
-    private static String assistantAndPreparedExecution(
-            String conversationMessageId,
-            String executionId,
-            long turnSequence,
-            long conversationMessageSequence) {
+    private static String preparedExecution(String executionId, long turnSequence) {
         return """
-                insert into conversation_message(
-                    conversation_message_id, tenant_id, conversation_session_id, execution_id, role, content, conversation_message_sequence,
-                    tool_calls, visibility)
-                values ('%s', 'tenant_react', 'session_react', 'execution_react', 'assistant', '', %d,
-                        '{"version":1,"calls":[{"id":"provider-shared","name":"test_tool","arguments":{}}]}',
-                        'internal');
                 insert into tool_execution(
                     tenant_id, tool_execution_id, execution_id, model_invocation_sequence,
-                    assistant_conversation_message_id, tool_call_id, tool_name, status)
-                values ('tenant_react', '%s', 'execution_react', %d, '%s', 'provider-shared',
-                        'test_tool', 'prepared');
+                    assistant_conversation_message_id, tool_call_id, tool_name,
+                    tool_process_item_id, status)
+                values ('tenant_react', '%s', 'execution_react', %d, 'assistant_existing',
+                        'provider-shared', 'test_tool',
+                        '00000000-0000-0000-0000-%012d', 'prepared');
                 """
-                .formatted(
-                        conversationMessageId,
-                        conversationMessageSequence,
-                        executionId,
-                        turnSequence,
-                        conversationMessageId);
+                .formatted(executionId, turnSequence, turnSequence);
     }
 
     private static void execute(String sql) throws SQLException {
