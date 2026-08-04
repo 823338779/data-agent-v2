@@ -23,6 +23,7 @@ import tools.jackson.databind.ObjectMapper;
         matchIfMissing = true)
 public final class OllamaAgentModelGateway implements AgentModelGateway {
 
+    private static final String MODEL_PROVIDER = "ollama";
     private static final String ERROR_INTERRUPTED =
             "Ollama stream ended before a complete model result";
     private static final String ERROR_AMBIGUOUS =
@@ -43,7 +44,7 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
     public ModelInvocationResult complete(
             List<ModelInputMessage> messages,
             List<ModelToolDefinition> tools,
-            Consumer<String> answerDeltaConsumer) {
+            Consumer<ModelOutputDelta> outputDeltaConsumer) {
         String tenantId = TenantContext.requiredTenantId();
         OllamaApi.ChatRequest request =
                 OllamaApi.ChatRequest.builder(properties.getModel())
@@ -53,10 +54,11 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
                                 OllamaChatOptions.builder()
                                         .numPredict(properties.getMaxOutputTokens())
                                         .build())
+                        .enableThinking()
                         .stream(true)
                         .build();
         ExecutionStreamAccumulator accumulator =
-                new ExecutionStreamAccumulator(answerDeltaConsumer, tenantId);
+                new ExecutionStreamAccumulator(outputDeltaConsumer, tenantId);
 
         // 只有 provider 明确返回 done 后才允许把累积内容提升为完整 ModelInvocationResult。
         try {
@@ -110,7 +112,7 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
 
     private final class ExecutionStreamAccumulator {
 
-        private final Consumer<String> answerDeltaConsumer;
+        private final Consumer<ModelOutputDelta> outputDeltaConsumer;
 
         /**
          * Tenant restored around callbacks that Reactor dispatches on provider event-loop threads.
@@ -121,30 +123,38 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
         private final Map<String, ModelToolCall> toolCalls = new LinkedHashMap<>();
         private boolean done;
 
-        private ExecutionStreamAccumulator(Consumer<String> answerDeltaConsumer, String tenantId) {
-            this.answerDeltaConsumer = answerDeltaConsumer;
+        private ExecutionStreamAccumulator(
+                Consumer<ModelOutputDelta> outputDeltaConsumer, String tenantId) {
+            this.outputDeltaConsumer = outputDeltaConsumer;
             this.tenantId = tenantId;
         }
 
         private void accept(OllamaApi.ChatResponse response) {
             OllamaApi.Message message = response.message();
             if (message != null) {
+                appendThinking(message.thinking());
                 appendAnswer(message.content());
                 appendToolCalls(message.toolCalls());
             }
             done = done || Boolean.TRUE.equals(response.done());
         }
 
-        private void appendAnswer(String content) {
+        private void appendThinking(String content) {
             if (content != null && !content.isEmpty()) {
-                answer.append(content);
-                emit(content);
+                emit(ModelOutputDelta.thinking(content, MODEL_PROVIDER, properties.getModel()));
             }
         }
 
-        private void emit(String answerDelta) {
+        private void appendAnswer(String content) {
+            if (content != null && !content.isEmpty()) {
+                answer.append(content);
+                emit(ModelOutputDelta.answer(content, MODEL_PROVIDER, properties.getModel()));
+            }
+        }
+
+        private void emit(ModelOutputDelta outputDelta) {
             // Persistence checkpoints require the request tenant even on Reactor callback threads.
-            TenantContext.run(tenantId, () -> answerDeltaConsumer.accept(answerDelta));
+            TenantContext.run(tenantId, () -> outputDeltaConsumer.accept(outputDelta));
         }
 
         private void appendToolCalls(List<OllamaApi.Message.ToolCall> calls) {

@@ -1,5 +1,6 @@
 package com.datagent.agentv2.conversation.react;
 
+import com.datagent.agentv2.conversation.exception.ModelStreamInterruptedException;
 import com.datagent.agentv2.conversation.exception.ReactLimitExceededException;
 import com.datagent.agentv2.conversation.model.AgentModelGateway;
 import com.datagent.agentv2.conversation.model.ModelInvocationResult;
@@ -107,13 +108,20 @@ public final class ReactExecutionEngine {
 
             // 调用前后都执行 fencing；流式片段在回调中同步形成 checkpoint 和通知。
             leases.assertOwnedAndWithinBudget(run);
-            ModelInvocationResult result =
-                    model.complete(
-                            input,
-                            registry.modelDefinitions(),
-                            delta ->
-                                    modelInvocationCoordinator.checkpoint(
-                                            run, modelInvocation, delta));
+            ModelInvocationResult result;
+            try {
+                result =
+                        model.complete(
+                                input,
+                                registry.modelDefinitions(),
+                                delta ->
+                                        modelInvocationCoordinator.checkpoint(
+                                                run, modelInvocation, delta));
+            } catch (ModelStreamInterruptedException failure) {
+                // provider 失败也必须把已展示的 thinking 节点收敛为失败终态。
+                modelInvocationCoordinator.failModelOutput(run, modelInvocation);
+                throw failure;
+            }
             leases.assertOwnedAndWithinBudget(run);
 
             // 工具结果必须先归档，再执行工具并进入下一轮模型调用。

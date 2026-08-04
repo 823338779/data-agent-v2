@@ -35,11 +35,15 @@ import tools.jackson.databind.JsonNode;
 @Transactional
 public class ConversationProcessCoordinator {
 
+    private static final int THINKING_CHECKPOINT_CHARACTERS = 512;
+    private static final long THINKING_CHECKPOINT_MILLIS = 250L;
     private static final String STATUS_RUNNING = "running";
     private static final String ERROR_ASSISTANT_MESSAGE_MISSING =
             "assistant center message is missing for execution: ";
     private static final String ERROR_THINKING_ITEM_REQUIRED =
             "process item is not a thinking item";
+    private static final String ERROR_THINKING_ITEM_NOT_RUNNING =
+            "thinking process item is not running";
     private static final String ERROR_TOOL_ITEM_REQUIRED = "process item is not a tool item";
     private static final String ERROR_TERMINAL_STATUS_REQUIRED =
             "terminal thinking status is required";
@@ -63,7 +67,7 @@ public class ConversationProcessCoordinator {
     private final ApplicationEventPublisher applicationEvents;
 
     /** 保存当前 owner attempt 的完整安全 thinking，外层列表不做总大小限制。 */
-    private final ConcurrentMap<ProcessBufferKey, String> thinkingBuffers =
+    private final ConcurrentMap<ProcessBufferKey, ThinkingCheckpointBuffer> thinkingBuffers =
             new ConcurrentHashMap<>();
 
     /** 保存当前 owner attempt 的完整安全工具入参，供后续状态审计关联。 */
@@ -128,9 +132,15 @@ public class ConversationProcessCoordinator {
                                     itemId,
                                     List.of(
                                             new ProcessAuditEvent(
-                                                    item, fullSafeContent, null, null)));
+                                                    item, fullSafeContent, null, null)),
+                                    true);
                         });
-        afterCommit(() -> thinkingBuffers.put(key(run, processItemId), fullSafeContent));
+        afterCommit(
+                () ->
+                        thinkingBuffers.put(
+                                key(run, processItemId),
+                                new ThinkingCheckpointBuffer(
+                                        fullSafeContent, fullSafeContent.length(), now)));
         return processItemId;
     }
 
@@ -142,31 +152,54 @@ public class ConversationProcessCoordinator {
             Instant now) {
         Objects.requireNonNull(delta, "delta");
         String safeDelta = sanitizer.sanitizeText(delta);
-        String fullSafeContent =
+        ThinkingAppendResult appended =
                 mutate(
                         run,
                         now,
                         assistant -> {
                             ModelThinkingProcessItem current =
                                     requireThinking(assistant, processItemId);
-                            String currentFull =
+                            if (current.status() != ThinkingProcessStatus.RUNNING) {
+                                throw new IllegalStateException(ERROR_THINKING_ITEM_NOT_RUNNING);
+                            }
+                            ThinkingCheckpointBuffer buffer =
                                     thinkingBuffers.getOrDefault(
-                                            key(run, processItemId), current.content());
-                            String changedFull = currentFull + safeDelta;
+                                            key(run, processItemId),
+                                            new ThinkingCheckpointBuffer(
+                                                    current.content(),
+                                                    current.content().length(),
+                                                    current.createdAt()));
+                            String changedFull = buffer.fullSafeContent() + safeDelta;
                             ModelThinkingProcessItem changed =
                                     thinkingItem(
                                             current,
                                             ThinkingProcessStatus.RUNNING,
                                             null,
                                             changedFull);
-                            assistant.replaceProcessItem(processItemId, changed);
+                            boolean checkpoint = shouldCheckpoint(buffer, changedFull, now);
+                            if (checkpoint) {
+                                assistant.replaceProcessItem(processItemId, changed);
+                            }
                             return new Mutation<>(
-                                    changedFull,
+                                    new ThinkingAppendResult(
+                                            changedFull,
+                                            checkpoint
+                                                    ? changedFull.length()
+                                                    : buffer.checkpointedCharacters(),
+                                            checkpoint ? now : buffer.checkpointedAt()),
                                     List.of(
                                             new ProcessAuditEvent(
-                                                    changed, changedFull, null, null)));
+                                                    changed, changedFull, null, null)),
+                                    checkpoint);
                         });
-        afterCommit(() -> thinkingBuffers.put(key(run, processItemId), fullSafeContent));
+        afterCommit(
+                () ->
+                        thinkingBuffers.put(
+                                key(run, processItemId),
+                                new ThinkingCheckpointBuffer(
+                                        appended.fullSafeContent(),
+                                        appended.checkpointedCharacters(),
+                                        appended.checkpointedAt())));
     }
 
     /** 将 thinking 节点收敛为成功或失败终态，并记录完整安全正文。 */
@@ -181,15 +214,16 @@ public class ConversationProcessCoordinator {
                 now,
                 assistant -> {
                     ModelThinkingProcessItem current = requireThinking(assistant, processItemId);
+                    ThinkingCheckpointBuffer buffer = thinkingBuffers.get(key(run, processItemId));
                     String fullSafeContent =
-                            thinkingBuffers.getOrDefault(
-                                    key(run, processItemId), current.content());
+                            buffer == null ? current.content() : buffer.fullSafeContent();
                     ModelThinkingProcessItem changed =
                             thinkingItem(current, status, now, fullSafeContent);
                     assistant.replaceProcessItem(processItemId, changed);
                     return new Mutation<>(
                             null,
-                            List.of(new ProcessAuditEvent(changed, fullSafeContent, null, null)));
+                            List.of(new ProcessAuditEvent(changed, fullSafeContent, null, null)),
+                            true);
                 });
         afterCommit(() -> thinkingBuffers.remove(key(run, processItemId)));
     }
@@ -236,9 +270,8 @@ public class ConversationProcessCoordinator {
                             assistant.appendProcessItem(item);
                             return new Mutation<>(
                                     itemId,
-                                    List.of(
-                                            new ProcessAuditEvent(
-                                                    item, null, fullSafeInput, null)));
+                                    List.of(new ProcessAuditEvent(item, null, fullSafeInput, null)),
+                                    true);
                         });
         afterCommit(() -> toolInputBuffers.put(key(run, processItemId), fullSafeInput.deepCopy()));
         return processItemId;
@@ -270,7 +303,8 @@ public class ConversationProcessCoordinator {
                                             changed,
                                             null,
                                             toolInputBuffers.get(key(run, processItemId)),
-                                            null)));
+                                            null)),
+                            true);
                 });
     }
 
@@ -317,7 +351,8 @@ public class ConversationProcessCoordinator {
                                             changed,
                                             null,
                                             toolInputBuffers.get(key(run, processItemId)),
-                                            fullSafeOutput)));
+                                            fullSafeOutput)),
+                            true);
                 });
         afterCommit(() -> toolInputBuffers.remove(key(run, processItemId)));
     }
@@ -340,8 +375,9 @@ public class ConversationProcessCoordinator {
             ProcessBufferKey bufferKey =
                     new ProcessBufferKey(executionId, attempt, item.processItemId());
             if (item instanceof ModelThinkingProcessItem thinking) {
+                ThinkingCheckpointBuffer buffer = thinkingBuffers.get(bufferKey);
                 String fullSafeContent =
-                        thinkingBuffers.getOrDefault(bufferKey, thinking.content());
+                        buffer == null ? thinking.content() : buffer.fullSafeContent();
                 ModelThinkingProcessItem failed =
                         thinkingItem(thinking, ThinkingProcessStatus.FAILED, now, fullSafeContent);
                 assistant.replaceProcessItem(item.processItemId(), failed);
@@ -383,7 +419,12 @@ public class ConversationProcessCoordinator {
         requireOwnedLocked(run, now);
         ConversationMessage assistant = requireAssistantLocked(run.executionId());
         Mutation<T> changed = mutation.apply(assistant);
-        saveAndPublish(run.tenantId(), assistant, changed.auditEvents());
+        if (changed.messageChanged()) {
+            saveAndPublish(run.tenantId(), assistant, changed.auditEvents());
+        } else {
+            // 未达到 checkpoint 阈值时仍按审计要求输出完整安全节点详情。
+            changed.auditEvents().forEach(applicationEvents::publishEvent);
+        }
         return changed.result();
     }
 
@@ -526,6 +567,17 @@ public class ConversationProcessCoordinator {
         return Math.max(0L, Duration.between(startedAt, completedAt).toMillis());
     }
 
+    /** thinking 累计达到 512 字符或距上次落库 250ms 时生成一次消息版本。 */
+    private static boolean shouldCheckpoint(
+            ThinkingCheckpointBuffer buffer, String changedFull, Instant now) {
+        boolean sizeReached =
+                changedFull.length() - buffer.checkpointedCharacters()
+                        >= THINKING_CHECKPOINT_CHARACTERS;
+        boolean timeReached =
+                !now.isBefore(buffer.checkpointedAt().plusMillis(THINKING_CHECKPOINT_MILLIS));
+        return sizeReached || timeReached;
+    }
+
     private static ProcessBufferKey key(
             AgentExecutionPort.ClaimedAgentExecution run, UUID processItemId) {
         return new ProcessBufferKey(run.executionId(), run.executionAttemptNumber(), processItemId);
@@ -547,7 +599,16 @@ public class ConversationProcessCoordinator {
     }
 
     /** 一次消息变更的返回值以及与该版本绑定的完整安全审计事件。 */
-    private record Mutation<T>(T result, List<ProcessAuditEvent> auditEvents) {}
+    private record Mutation<T>(
+            T result, List<ProcessAuditEvent> auditEvents, boolean messageChanged) {}
+
+    /** thinking append 返回完整安全正文以及更新后的 checkpoint 游标。 */
+    private record ThinkingAppendResult(
+            String fullSafeContent, int checkpointedCharacters, Instant checkpointedAt) {}
+
+    /** 当前 owner 本地保留的完整安全 thinking 及最近数据库 checkpoint。 */
+    private record ThinkingCheckpointBuffer(
+            String fullSafeContent, int checkpointedCharacters, Instant checkpointedAt) {}
 
     /** execution、attempt 和 ProcessItem UUID 共同隔离本地完整安全缓冲。 */
     private record ProcessBufferKey(

@@ -24,6 +24,9 @@ class CodexAppServerClientTest {
     private static final String TENANT_ID = "tenant-codex-test";
     private static final String PROMPT = "conversation";
     private static final String FINAL_ANSWER = "answer";
+    private static final String MODEL_NAME = "test-codex-model";
+    private static final String RAW_REASONING = "raw reasoning";
+    private static final String SUMMARY_REASONING = "summary reasoning";
     private static final String TOOL_NAME = "lookup";
     private static final String TOOL_CALL_ID = "call-1";
     private static final String LIVE_TEST_PROPERTY = "data.agent.codex.live.enabled";
@@ -33,6 +36,13 @@ class CodexAppServerClientTest {
             {"id":1,"result":{}}
             {"id":2,"result":{"thread":{"id":"thread-1"}}}
             {"id":3,"result":{"turn":{"id":"turn-1"}}}
+            {"method":"item/started","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"reasoning","id":"reasoning-1"}}}
+            {"method":"item/reasoning/summaryTextDelta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"reasoning-1","delta":"discarded summary"}}
+            {"method":"item/reasoning/textDelta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"reasoning-1","delta":"raw reasoning"}}
+            {"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"reasoning","id":"reasoning-1"}}}
+            {"method":"item/started","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"reasoning","id":"reasoning-2"}}}
+            {"method":"item/reasoning/summaryTextDelta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"reasoning-2","delta":"summary reasoning"}}
+            {"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"reasoning","id":"reasoning-2"}}}
             {"method":"item/started","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"agentMessage","id":"message-1","text":"","phase":"final_answer"}}}
             {"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"message-1","delta":"answer"}}
             {"method":"item/completed","params":{"threadId":"thread-1","turnId":"turn-1","item":{"type":"agentMessage","id":"message-1","text":"answer","phase":"final_answer"}}}
@@ -51,10 +61,10 @@ class CodexAppServerClientTest {
     private final JsonMapper json = JsonMapper.builder().build();
 
     @Test
-    void streamsOnlyFinalAnswerAndReturnsCompletedText() {
+    void prefersRawReasoningAndEmitsSummaryOnlyWhenRawReasoningIsAbsent() {
         InMemoryConnection connection = new InMemoryConnection(FINAL_PROTOCOL);
         CodexAppServerClient client = client(connection);
-        List<String> deltas = new ArrayList<>();
+        List<ModelOutputDelta> deltas = new ArrayList<>();
         List<String> callbackTenants = new ArrayList<>();
 
         ModelInvocationResult result =
@@ -70,7 +80,11 @@ class CodexAppServerClientTest {
                                         }));
 
         assertThat(result).isEqualTo(new ModelInvocationResult.FinalAnswer(FINAL_ANSWER));
-        assertThat(deltas).containsExactly(FINAL_ANSWER);
+        assertThat(deltas)
+                .containsExactly(
+                        ModelOutputDelta.thinking(RAW_REASONING, "codex", MODEL_NAME),
+                        ModelOutputDelta.thinking(SUMMARY_REASONING, "codex", MODEL_NAME),
+                        ModelOutputDelta.answer(FINAL_ANSWER, "codex", MODEL_NAME));
         assertThat(callbackTenants).containsOnly(TENANT_ID);
         assertThat(connection.output())
                 .contains(
@@ -180,6 +194,7 @@ class CodexAppServerClientTest {
     /** 创建使用固定内存 JSONL 输入的客户端。 */
     private CodexAppServerClient client(InMemoryConnection connection) {
         CodexModelProperties properties = new CodexModelProperties();
+        properties.setModel(MODEL_NAME);
         properties.setTimeout(Duration.ofSeconds(2));
         return new CodexAppServerClient(properties, json, () -> connection);
     }

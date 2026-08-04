@@ -52,8 +52,8 @@ public final class CodexAgentModelGateway implements AgentModelGateway {
     public ModelInvocationResult complete(
             List<ModelInputMessage> messages,
             List<ModelToolDefinition> tools,
-            Consumer<String> answerDeltaConsumer) {
-        return client.complete(toPrompt(messages), tools, answerDeltaConsumer);
+            Consumer<ModelOutputDelta> outputDeltaConsumer) {
+        return client.complete(toPrompt(messages), tools, outputDeltaConsumer);
     }
 
     /** 序列化角色、工具调用和工具观察，避免依赖 Codex thread 持久历史。 */

@@ -8,12 +8,15 @@ import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
 import com.datagent.agentv2.conversation.enums.ExecutionEventType;
 import com.datagent.agentv2.conversation.enums.MessageRole;
 import com.datagent.agentv2.conversation.enums.MessageVisibility;
 import com.datagent.agentv2.conversation.enums.ModelInvocationStatus;
 import com.datagent.agentv2.conversation.enums.ToolExecutionStatus;
 import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
+import com.datagent.agentv2.conversation.model.ModelOutputDelta;
+import com.datagent.agentv2.conversation.process.ConversationProcessCoordinator;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.stream.ExecutionStreamCheckpointCoordinator;
 import com.datagent.agentv2.persistence.entity.ModelInvocationEntity;
@@ -29,9 +32,14 @@ import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
@@ -67,6 +75,9 @@ public class ModelInvocationCoordinator {
     /** 管理本地回答累计、checkpoint 阈值和发布序号。 */
     private final ExecutionStreamCheckpointCoordinator streamCheckpointCoordinator;
 
+    /** 将模型 thinking 片段绑定到执行唯一 assistant 中心消息。 */
+    private final ConversationProcessCoordinator conversationProcesses;
+
     /** 在当前事务提交后触发本地与 Redis 回答增量通知。 */
     private final ApplicationEventPublisher applicationEvents;
 
@@ -82,6 +93,10 @@ public class ModelInvocationCoordinator {
     /** 构造版本化工具调用 JSON 文档。 */
     private final ObjectMapper json;
 
+    /** 按 execution/attempt/model invocation 跟踪当前未完成 thinking 节点 UUID。 */
+    private final ConcurrentMap<ModelThinkingKey, UUID> activeThinkingItems =
+            new ConcurrentHashMap<>();
+
     /** 装配模型调用事务所需的持久化服务、流协调器和事件发布器。 */
     public ModelInvocationCoordinator(
             ModelInvocationService modelInvocations,
@@ -91,6 +106,7 @@ public class ModelInvocationCoordinator {
             AgentExecutionService agentExecutions,
             AgentExecutionStreamCheckpointService persistedStreamCheckpoints,
             ExecutionStreamCheckpointCoordinator streamCheckpointCoordinator,
+            ConversationProcessCoordinator conversationProcesses,
             ApplicationEventPublisher applicationEvents,
             AgentExecutionEventService events,
             AgentExecutionAttemptService attempts,
@@ -103,6 +119,7 @@ public class ModelInvocationCoordinator {
         this.agentExecutions = agentExecutions;
         this.persistedStreamCheckpoints = persistedStreamCheckpoints;
         this.streamCheckpointCoordinator = streamCheckpointCoordinator;
+        this.conversationProcesses = conversationProcesses;
         this.applicationEvents = applicationEvents;
         this.events = events;
         this.attempts = attempts;
@@ -170,33 +187,70 @@ public class ModelInvocationCoordinator {
     }
 
     /**
-     * 把单个回答增量纳入 checkpoint，并发布事务事件。
+     * 把单个强类型模型增量纳入 thinking 或回答 checkpoint。
      *
      * @param run 当前 owner 已领取的执行
      * @param boundary 当前模型调用边界
-     * @param answerDelta 模型返回的非空回答片段
+     * @param outputDelta 模型返回的非空 thinking/answer 片段
      */
     @Transactional
     public void checkpoint(
             AgentExecutionPort.ClaimedAgentExecution run,
             ModelInvocationBoundary boundary,
-            String answerDelta) {
-        checkpointLocked(run, boundary, answerDelta, Instant.now());
+            ModelOutputDelta outputDelta) {
+        checkpointLocked(run, boundary, outputDelta, Instant.now());
     }
 
-    /** 使用同一时间戳完成增量累计和通知对象创建。 */
+    /** 使用同一时间戳路由 thinking 或完成回答增量累计与通知对象创建。 */
     private void checkpointLocked(
             AgentExecutionPort.ClaimedAgentExecution run,
             ModelInvocationBoundary boundary,
-            String answerDelta,
+            ModelOutputDelta outputDelta,
             Instant now) {
+        if (outputDelta.kind() == ModelOutputDelta.Kind.THINKING) {
+            checkpointThinking(run, boundary, outputDelta, now);
+            return;
+        }
+
+        // 首个答案片段是 thinking 的确定边界，先完成过程节点再发布正文增量。
+        finishThinking(run, boundary, ThinkingProcessStatus.SUCCEEDED, now);
         // 协调器先分配输出序号并按阈值落库，再形成可发布的回答增量。
         ExecutionStreamCheckpointCoordinator.AnswerDelta published =
                 streamCheckpointCoordinator.appendAnswer(
-                        run, boundary.modelInvocationSequence(), answerDelta, now);
+                        run, boundary.modelInvocationSequence(), outputDelta.content(), now);
 
         // Spring 事务事件在提交后进入本地 SSE 与 Redis bridge，避免发布未提交状态。
         applicationEvents.publishEvent(AgentExecutionDeltaNotification.from(published));
+    }
+
+    /** 首个 thinking 增量创建 UUID，后续增量始终追加到同一节点。 */
+    private void checkpointThinking(
+            AgentExecutionPort.ClaimedAgentExecution run,
+            ModelInvocationBoundary boundary,
+            ModelOutputDelta outputDelta,
+            Instant now) {
+        ModelThinkingKey key = thinkingKey(run, boundary);
+        UUID processItemId = activeThinkingItems.get(key);
+        if (processItemId == null) {
+            UUID created =
+                    conversationProcesses.startThinking(
+                            run,
+                            boundary.modelInvocationSequence(),
+                            outputDelta.modelProvider(),
+                            outputDelta.modelName(),
+                            outputDelta.content(),
+                            now);
+            afterCommit(() -> activeThinkingItems.put(key, created));
+            return;
+        }
+        conversationProcesses.appendThinking(run, processItemId, outputDelta.content(), now);
+    }
+
+    /** provider 中断时把本轮仍开放的 thinking 节点失败收敛，重复调用保持无操作。 */
+    @Transactional
+    public void failModelOutput(
+            AgentExecutionPort.ClaimedAgentExecution run, ModelInvocationBoundary boundary) {
+        finishThinking(run, boundary, ThinkingProcessStatus.FAILED, Instant.now());
     }
 
     /**
@@ -220,6 +274,8 @@ public class ModelInvocationCoordinator {
             ModelInvocationBoundary boundary,
             List<ModelToolCall> calls,
             Instant now) {
+        // 工具调用结果是本轮 thinking 的终止边界，必须在归档工具记录前完成节点。
+        finishThinking(run, boundary, ThinkingProcessStatus.SUCCEEDED, now);
         // 工具归档前再次执行 fencing，并强制收敛不足 checkpoint 阈值的短增量。
         AgentExecution owned = lockOwned(run);
         streamCheckpointCoordinator.flush(run, boundary.modelInvocationSequence(), now);
@@ -266,6 +322,8 @@ public class ModelInvocationCoordinator {
             ModelInvocationBoundary boundary,
             String answer,
             Instant now) {
+        // 无 answer delta 的供应商也必须在最终回答边界完成仍开放的 thinking 节点。
+        finishThinking(run, boundary, ThinkingProcessStatus.SUCCEEDED, now);
         // 最终回答落库前先锁定执行，并把所有短增量写入后释放本地累计器。
         AgentExecution owned = lockOwned(run);
         streamCheckpointCoordinator.flushAndRelease(run, boundary.modelInvocationSequence(), now);
@@ -400,6 +458,48 @@ public class ModelInvocationCoordinator {
         }
         return owned;
     }
+
+    /** 仅对当前模型调用开放的 UUID 执行一次终态转换。 */
+    private void finishThinking(
+            AgentExecutionPort.ClaimedAgentExecution run,
+            ModelInvocationBoundary boundary,
+            ThinkingProcessStatus status,
+            Instant now) {
+        ModelThinkingKey key = thinkingKey(run, boundary);
+        UUID processItemId = activeThinkingItems.get(key);
+        if (processItemId == null) {
+            return;
+        }
+        conversationProcesses.finishThinking(run, processItemId, status, now);
+        afterCommit(() -> activeThinkingItems.remove(key, processItemId));
+    }
+
+    private static ModelThinkingKey thinkingKey(
+            AgentExecutionPort.ClaimedAgentExecution run, ModelInvocationBoundary boundary) {
+        return new ModelThinkingKey(
+                run.executionId(),
+                run.executionAttemptNumber(),
+                boundary.modelInvocationSequence());
+    }
+
+    /** 本地生命周期状态只在事务提交后改变，避免回滚后误判节点已经创建或完成。 */
+    private static void afterCommit(Runnable action) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        action.run();
+                    }
+                });
+    }
+
+    /** execution、attempt 和模型调用序号共同隔离 active thinking UUID。 */
+    private record ModelThinkingKey(
+            String executionId, long executionAttemptNumber, long modelInvocationSequence) {}
 
     /**
      * 固定一次模型调用的身份和输入消息上界。

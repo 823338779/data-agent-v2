@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,12 +44,14 @@ final class CodexAppServerClient {
     private static final String CLIENT_TITLE = "Data Agent V2";
     private static final String CLIENT_VERSION = "1";
     private static final String SERVICE_NAME = "data-agent-v2";
+    private static final String MODEL_PROVIDER = "codex";
     private static final String SANDBOX_READ_ONLY = "read-only";
     private static final String APPROVAL_NEVER = "never";
     private static final String CONTENT_TYPE_INPUT_TEXT = "inputText";
     private static final String INPUT_TYPE_TEXT = "text";
     private static final String TOOL_TYPE_FUNCTION = "function";
     private static final String ITEM_TYPE_AGENT_MESSAGE = "agentMessage";
+    private static final String ITEM_TYPE_REASONING = "reasoning";
     private static final String PHASE_FINAL_ANSWER = "final_answer";
     private static final String STATUS_COMPLETED = "completed";
     private static final String TOOL_ACCEPTED_MESSAGE =
@@ -72,7 +75,10 @@ final class CodexAppServerClient {
     private static final String METHOD_TURN_START = "turn/start";
     private static final String METHOD_TURN_INTERRUPT = "turn/interrupt";
     private static final String METHOD_DYNAMIC_TOOL_CALL = "item/tool/call";
-    private static final String METHOD_AGENT_MESSAGE_DELTA = "item/agentMessage/delta";
+    private static final String NOTIFICATION_REASONING_TEXT_DELTA = "item/reasoning/textDelta";
+    private static final String NOTIFICATION_REASONING_SUMMARY_TEXT_DELTA =
+            "item/reasoning/summaryTextDelta";
+    private static final String NOTIFICATION_AGENT_MESSAGE_DELTA = "item/agentMessage/delta";
     private static final String METHOD_ITEM_STARTED = "item/started";
     private static final String METHOD_ITEM_COMPLETED = "item/completed";
     private static final String METHOD_TURN_COMPLETED = "turn/completed";
@@ -142,7 +148,9 @@ final class CodexAppServerClient {
 
     /** 在超时边界内执行一个临时 Codex thread，并返回领域模型结果。 */
     ModelInvocationResult complete(
-            String prompt, List<ModelToolDefinition> tools, Consumer<String> answerDeltaConsumer) {
+            String prompt,
+            List<ModelToolDefinition> tools,
+            Consumer<ModelOutputDelta> outputDeltaConsumer) {
         String tenantId = TenantContext.requiredTenantId();
 
         // 子进程阻塞读取放入虚拟线程；超时关闭连接会同步解除 readLine 阻塞。
@@ -158,7 +166,7 @@ final class CodexAppServerClient {
                                                             connection,
                                                             prompt,
                                                             tools,
-                                                            answerDeltaConsumer)));
+                                                            outputDeltaConsumer)));
             try {
                 return invocation.get(properties.getTimeout().toMillis(), TimeUnit.MILLISECONDS);
             } finally {
@@ -186,7 +194,7 @@ final class CodexAppServerClient {
             Connection connection,
             String prompt,
             List<ModelToolDefinition> tools,
-            Consumer<String> answerDeltaConsumer) {
+            Consumer<ModelOutputDelta> outputDeltaConsumer) {
         SessionState state = new SessionState();
         send(connection, initializeRequest());
 
@@ -211,7 +219,7 @@ final class CodexAppServerClient {
                                 method,
                                 envelope.path(KEY_PARAMS),
                                 state,
-                                answerDeltaConsumer);
+                                outputDeltaConsumer);
                 if (completed != null) {
                     return completed;
                 }
@@ -249,17 +257,30 @@ final class CodexAppServerClient {
             String method,
             JsonNode params,
             SessionState state,
-            Consumer<String> answerDeltaConsumer) {
+            Consumer<ModelOutputDelta> outputDeltaConsumer) {
         if (METHOD_ITEM_STARTED.equals(method) || METHOD_ITEM_COMPLETED.equals(method)) {
-            handleItem(params.path(KEY_ITEM), state, METHOD_ITEM_COMPLETED.equals(method));
+            handleItem(
+                    params.path(KEY_ITEM),
+                    state,
+                    METHOD_ITEM_COMPLETED.equals(method),
+                    outputDeltaConsumer);
             return null;
         }
-        if (METHOD_AGENT_MESSAGE_DELTA.equals(method)) {
+        if (NOTIFICATION_REASONING_TEXT_DELTA.equals(method)) {
+            handleReasoningDelta(params, state, outputDeltaConsumer, true);
+            return null;
+        }
+        if (NOTIFICATION_REASONING_SUMMARY_TEXT_DELTA.equals(method)) {
+            handleReasoningDelta(params, state, outputDeltaConsumer, false);
+            return null;
+        }
+        if (NOTIFICATION_AGENT_MESSAGE_DELTA.equals(method)) {
             String itemId = text(params, KEY_ITEM_ID);
             String delta = text(params, KEY_DELTA);
             if (PHASE_FINAL_ANSWER.equals(state.itemPhases.get(itemId)) && !delta.isEmpty()) {
                 state.streamedAnswer.append(delta);
-                answerDeltaConsumer.accept(delta);
+                outputDeltaConsumer.accept(
+                        ModelOutputDelta.answer(delta, MODEL_PROVIDER, properties.getModel()));
             }
             return null;
         }
@@ -283,16 +304,27 @@ final class CodexAppServerClient {
             throw new ModelStreamInterruptedException(ERROR_PROTOCOL);
         }
         if (state.streamedAnswer.isEmpty()) {
-            answerDeltaConsumer.accept(answer);
+            outputDeltaConsumer.accept(
+                    ModelOutputDelta.answer(answer, MODEL_PROVIDER, properties.getModel()));
         }
         return new ModelInvocationResult.FinalAnswer(answer);
     }
 
     /** 记录 agentMessage 阶段和完整正文，并拒绝 Codex 内置工具 item。 */
-    private void handleItem(JsonNode item, SessionState state, boolean completed) {
+    private void handleItem(
+            JsonNode item,
+            SessionState state,
+            boolean completed,
+            Consumer<ModelOutputDelta> outputDeltaConsumer) {
         String type = text(item, KEY_TYPE);
         if (DISABLED_ITEM_TYPES.contains(type)) {
             throw new ModelStreamInterruptedException(ERROR_BUILT_IN_TOOL + type);
+        }
+        if (ITEM_TYPE_REASONING.equals(type)) {
+            if (completed) {
+                finishReasoningItem(text(item, KEY_ID), state, outputDeltaConsumer);
+            }
+            return;
         }
         if (!ITEM_TYPE_AGENT_MESSAGE.equals(type)) {
             return;
@@ -302,6 +334,44 @@ final class CodexAppServerClient {
         state.itemPhases.put(itemId, phase);
         if (completed && PHASE_FINAL_ANSWER.equals(phase)) {
             state.completedAnswer = text(item, KEY_TEXT);
+        }
+    }
+
+    /** raw reasoning 到达后丢弃同 item 的 summary；summary 只缓冲到 item 完成。 */
+    private void handleReasoningDelta(
+            JsonNode params,
+            SessionState state,
+            Consumer<ModelOutputDelta> outputDeltaConsumer,
+            boolean raw) {
+        String itemId = text(params, KEY_ITEM_ID);
+        String delta = text(params, KEY_DELTA);
+        if (delta.isEmpty()) {
+            return;
+        }
+        if (raw) {
+            if (state.rawReasoningItems.add(itemId)) {
+                state.reasoningSummaries.remove(itemId);
+            }
+            outputDeltaConsumer.accept(
+                    ModelOutputDelta.thinking(delta, MODEL_PROVIDER, properties.getModel()));
+            return;
+        }
+        if (!state.rawReasoningItems.contains(itemId)) {
+            state.reasoningSummaries
+                    .computeIfAbsent(itemId, ignored -> new StringBuilder())
+                    .append(delta);
+        }
+    }
+
+    /** reasoning item 完成时仅在没有 raw 文本的情况下输出一次累计 summary。 */
+    private void finishReasoningItem(
+            String itemId, SessionState state, Consumer<ModelOutputDelta> outputDeltaConsumer) {
+        StringBuilder summary = state.reasoningSummaries.remove(itemId);
+        boolean rawReceived = state.rawReasoningItems.remove(itemId);
+        if (!rawReceived && summary != null && !summary.isEmpty()) {
+            outputDeltaConsumer.accept(
+                    ModelOutputDelta.thinking(
+                            summary.toString(), MODEL_PROVIDER, properties.getModel()));
         }
     }
 
@@ -444,6 +514,8 @@ final class CodexAppServerClient {
     /** 一次协议会话内累计的 thread、回答阶段和工具调用状态。 */
     private static final class SessionState {
         private final Map<String, String> itemPhases = new HashMap<>();
+        private final Map<String, StringBuilder> reasoningSummaries = new HashMap<>();
+        private final Set<String> rawReasoningItems = new HashSet<>();
         private final StringBuilder streamedAnswer = new StringBuilder();
         private final List<ModelToolCall> toolCalls = new ArrayList<>();
         private String threadId = EMPTY_TEXT;

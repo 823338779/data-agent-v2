@@ -65,8 +65,8 @@ class OllamaAgentModelGatewayTest {
     }
 
     @Test
-    void ignoresProviderThinkingAndStreamsOnlyTheFinalAnswer() {
-        List<String> deltas = new ArrayList<>();
+    void enablesProviderThinkingAndStreamsTypedDeltasInProviderOrder() {
+        List<ModelOutputDelta> deltas = new ArrayList<>();
         List<String> callbackTenants = new ArrayList<>();
 
         ModelInvocationResult result =
@@ -78,11 +78,14 @@ class OllamaAgentModelGatewayTest {
                             deltas.add(delta);
                         });
 
-        assertThat(deltas).containsExactly("answer");
+        assertThat(deltas)
+                .containsExactly(
+                        ModelOutputDelta.thinking("inspect", "ollama", MODEL_NAME),
+                        ModelOutputDelta.answer("answer", "ollama", MODEL_NAME));
         assertThat(callbackTenants).containsOnly(TENANT_ID);
         assertThat(result).isEqualTo(new ModelInvocationResult.FinalAnswer("answer"));
         assertThat(request.get()).contains("\"model\":\"test-model\"", "\"num_predict\":512");
-        assertThat(request.get()).doesNotContain("\"think\":true");
+        assertThat(request.get()).contains("\"think\":true");
     }
 
     @Test
@@ -127,9 +130,9 @@ class OllamaAgentModelGatewayTest {
     private ModelInvocationResult complete(
             List<ModelInputMessage> messages,
             List<ModelToolDefinition> tools,
-            Consumer<String> answerDeltaConsumer) {
+            Consumer<ModelOutputDelta> outputDeltaConsumer) {
         return TenantContext.call(
-                TENANT_ID, () -> gateway.complete(messages, tools, answerDeltaConsumer));
+                TENANT_ID, () -> gateway.complete(messages, tools, outputDeltaConsumer));
     }
 
     private void respond(HttpExchange exchange) throws IOException {
