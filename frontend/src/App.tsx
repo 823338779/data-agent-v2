@@ -13,7 +13,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   AgentBackendClient,
-  applyExecutionStreamEvent,
+  applyConversationStreamEvent,
   BackendApiError,
   createFetchAgentBackendClient,
 } from './api/backendAgentClient';
@@ -25,9 +25,10 @@ import {
 } from './app/workspaceRoute';
 import { AppShell } from './components/shell/AppShell';
 import { ConversationList } from './components/ConversationList';
+import { MessageProcessTimeline } from './components/MessageProcessTimeline';
 import { ConversationStatus } from './components/ConversationStatus';
 import { RunStreamPanel } from './components/RunStreamPanel';
-import { ConversationSession, formatTimestamp } from './domain/agentPrototype';
+import { ConversationSession, formatTimestamp, isProcessingStatus } from './domain/agentPrototype';
 
 interface AppProps {
   subject?: string;
@@ -39,6 +40,7 @@ interface AppProps {
 const narrowScreenQuery = '(max-width: 820px)';
 const TITLE_CONFLICT_MESSAGE = '标题已在其他位置更新，已加载最新标题。';
 const TITLE_SAVE_ERROR_MESSAGE = '标题保存失败，请稍后重试。';
+export const BACKGROUND_POLL_INTERVAL_MS = 60_000;
 
 function isNarrowScreen(): boolean {
   return window.matchMedia?.(narrowScreenQuery).matches ?? false;
@@ -61,6 +63,7 @@ export default function App({
   const [creating, setCreating] = useState(false);
   const [reordering, setReordering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadedDetailSessionId, setLoadedDetailSessionId] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const readCursorRef = useRef<Record<string, number>>({});
 
@@ -84,6 +87,13 @@ export default function App({
           (message) => message.content === active.execution?.streamCheckpoint?.answer,
         ))),
   );
+  const activeStatus = active?.execution?.status ?? active?.activityStatus ?? 'idle';
+  const hasBackgroundProcessingSession = sessions.some(
+    (session) =>
+      session.conversationSessionId !==
+        (route.kind === 'session' ? route.conversationSessionId : null) &&
+      isProcessingStatus(session.execution?.status ?? session.activityStatus ?? 'idle'),
+  );
 
   function handleFailure(failure: unknown, message: string) {
     if (failure instanceof BackendApiError && failure.status === 401) {
@@ -106,12 +116,31 @@ export default function App({
     });
   }
 
+  /** 摘要只能更新列表字段，不能覆盖当前页已经流式收敛的消息和执行详情。 */
+  function mergeSessionSummaries(loaded: ConversationSession[]) {
+    setSessions((current) =>
+      loaded.map((summary) => {
+        const detail = current.find(
+          (item) => item.conversationSessionId === summary.conversationSessionId,
+        );
+        return detail
+          ? {
+              ...detail,
+              ...summary,
+              messages: detail.messages,
+              execution: detail.execution,
+            }
+          : summary;
+      }),
+    );
+  }
+
   async function loadSessions() {
     setLoading(true);
     setError(null);
     try {
       const loaded = await backend.listSessions();
-      setSessions(loaded);
+      mergeSessionSummaries(loaded);
       if (
         route.kind === 'session' &&
         !loaded.some((item) => item.conversationSessionId === route.conversationSessionId)
@@ -122,6 +151,15 @@ export default function App({
       handleFailure(failure, '暂时无法读取会话，请检查服务端后重试。');
     } finally {
       setLoading(false);
+    }
+  }
+
+  /** 后台轮询失败不打断当前会话，只保留现有摘要等待下一次轮询。 */
+  async function loadSessionSummariesSilently() {
+    try {
+      mergeSessionSummaries(await backend.listSessions());
+    } catch (failure) {
+      handleFailure(failure, '后台会话状态更新失败，将在下一周期重试。');
     }
   }
 
@@ -141,73 +179,70 @@ export default function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backend]);
 
-  // activity SSE 跨会话常驻，只合并轻量字段；sortOrder 才能改变列表顺序。
+  // 每次打开会话都先读取权威详情，只有该响应完成后才允许建立对应详情流。
   useEffect(() => {
-    const close = backend.subscribeActivity(
-      (snapshot) => {
-        const activityById = new Map(
-          snapshot.sessions.map((activity) => [activity.conversationSessionId, activity]),
-        );
-        setSessions((current) =>
-          current
-            .map((session) => {
-              const activity = activityById.get(session.conversationSessionId);
-              return activity
-                ? {
-                    ...session,
-                    activityStatus: activity.status,
-                    unread: activity.unread,
-                    lastNotifiableEventSequence: activity.lastNotifiableEventSequence,
-                    sortOrder: activity.sortOrder,
-                    orderingVersion: snapshot.orderingVersion,
-                    updatedAt: activity.updatedAt,
-                  }
-                : session;
-            })
-            .sort((left, right) => left.sortOrder - right.sortOrder),
-        );
-      },
-      () => {
-        setError('会话活动连接已中断，正在重新同步。');
-        void loadSessions();
-      },
-    );
-    return close;
-    // activity 连接不随当前会话切换而重建。
+    if (route.kind !== 'session') {
+      setLoadedDetailSessionId(null);
+      return;
+    }
+    const conversationSessionId = route.conversationSessionId;
+    let cancelled = false;
+    setLoadedDetailSessionId(null);
+    void backend
+      .getSession(conversationSessionId)
+      .then((detail) => {
+        if (cancelled) return;
+        replaceSession(detail);
+        setLoadedDetailSessionId(conversationSessionId);
+      })
+      .catch((failure) => {
+        if (!cancelled) handleFailure(failure, '无法读取会话详情。');
+      });
+    return () => {
+      cancelled = true;
+    };
+    // 会话标识变化时重新加载，状态更新不应重复发起详情请求。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend]);
+  }, [backend, route.kind, route.kind === 'session' ? route.conversationSessionId : null]);
 
+  // 页面最多持有当前打开且正在处理的会话的一条 SSE，终态或切换页面会触发清理。
   useEffect(() => {
-    if (!active) return;
+    if (
+      !active ||
+      loadedDetailSessionId !== active.conversationSessionId ||
+      !isProcessingStatus(activeStatus)
+    ) {
+      return;
+    }
     const conversationSessionId = active.conversationSessionId;
-    const close = backend.subscribeExecutionEvents(
+    const close = backend.subscribeSessionEvents(
       conversationSessionId,
-      (event) =>
+      (event) => {
+        if (event.conversationSessionId !== conversationSessionId) return;
         setSessions((current) =>
           current.map((session) =>
-            session.conversationSessionId === conversationSessionId && session.execution
-              ? {
-                  ...session,
-                  execution: {
-                    ...session.execution,
-                    streamCheckpoint: applyExecutionStreamEvent(
-                      session.execution.streamCheckpoint,
-                      event,
-                    ),
-                  },
-                }
+            session.conversationSessionId === conversationSessionId
+              ? applyConversationStreamEvent(session, event)
               : session,
           ),
-        ),
-      () =>
-        void backend
-          .getSession(conversationSessionId)
-          .then(replaceSession)
-          .catch((failure) => handleFailure(failure, '无法刷新最新运行状态。')),
+        );
+      },
       () => setError('实时状态连接已中断；会话内容仍可继续查看。'),
     );
     return close;
-  }, [active?.conversationSessionId, backend]);
+  }, [active?.conversationSessionId, activeStatus, backend, loadedDetailSessionId]);
+
+  // 未打开的处理中会话只通过一分钟摘要轮询更新，不占用任何长连接。
+  useEffect(() => {
+    if (!hasBackgroundProcessingSession) return;
+    const timer = window.setInterval(
+      () => void loadSessionSummariesSilently(),
+      BACKGROUND_POLL_INTERVAL_MS,
+    );
+    return () => window.clearInterval(timer);
+    // 轮询只由是否存在后台处理中会话控制。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backend, hasBackgroundProcessingSession]);
 
   // 当前会话的通知已提交到 DOM 后，按活动快照中的精确序号推进已读游标。
   useEffect(() => {
@@ -288,7 +323,22 @@ export default function App({
     setReordering(true);
     try {
       const result = await backend.reorderSessions(completeIds, sessions[0]?.orderingVersion ?? 0);
-      setSessions(result.sessions);
+      // 重排接口只返回摘要；保留已经加载的当前会话消息和执行详情。
+      setSessions((current) =>
+        result.sessions.map((summary) => {
+          const detail = current.find(
+            (item) => item.conversationSessionId === summary.conversationSessionId,
+          );
+          return detail
+            ? {
+                ...detail,
+                ...summary,
+                messages: detail.messages,
+                execution: detail.execution,
+              }
+            : summary;
+        }),
+      );
     } catch (failure) {
       if (failure instanceof BackendApiError && failure.status === 409) {
         await loadSessions();
@@ -468,6 +518,9 @@ export default function App({
                     <time>{formatTimestamp(message.timestamp)}</time>
                   </header>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                  {message.role === 'assistant' && (
+                    <MessageProcessTimeline items={message.thinkingProcess} />
+                  )}
                 </div>
               </article>
             ))}

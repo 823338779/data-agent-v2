@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { applyExecutionStreamEvent, createFetchAgentBackendClient } from './backendAgentClient';
+import {
+  applyConversationStreamEvent,
+  applyExecutionStreamEvent,
+  createFetchAgentBackendClient,
+} from './backendAgentClient';
 
 const session = {
   conversationSessionId: 'session_1',
@@ -90,6 +94,8 @@ describe('backend agent client', () => {
               author: 'admin',
               content: '分析订单延迟',
               createdAt: '2026-08-01T08:01:00Z',
+              version: 0,
+              thinkingProcess: [],
               execution: null,
             },
             {
@@ -98,6 +104,8 @@ describe('backend agent client', () => {
               author: 'assistant',
               content: '发现延迟订单',
               createdAt: '2026-08-01T08:02:00Z',
+              version: 2,
+              thinkingProcess: [],
               execution,
             },
           ],
@@ -114,18 +122,20 @@ describe('backend agent client', () => {
     expect(mapped).not.toHaveProperty('metricPlatformCredential');
   });
 
-  it('refreshes for every persisted Agent execution lifecycle event', () => {
+  it('subscribes to one snapshot and directly reducible incremental event protocol', () => {
     const addEventListener = vi.fn();
     const close = vi.fn();
     const source = { addEventListener, close, onerror: null } as unknown as EventSource;
     const client = createFetchAgentBackendClient({ eventSourceFactory: () => source });
 
-    const unsubscribe = client.subscribeEvents('session_1', vi.fn(), vi.fn());
+    const unsubscribe = client.subscribeSessionEvents('session_1', vi.fn(), vi.fn());
 
     expect(addEventListener.mock.calls.map(([eventName]) => eventName)).toEqual([
-      'execution_queued',
-      'execution_started',
-      'execution_done',
+      'session_snapshot',
+      'execution_update',
+      'message_update',
+      'stream_snapshot',
+      'assistant_delta',
     ]);
     unsubscribe();
     expect(close).toHaveBeenCalledOnce();
@@ -195,7 +205,7 @@ describe('backend agent client', () => {
     );
   });
 
-  it('opens activity and detail streams with credentials', () => {
+  it('opens only the selected session detail stream with credentials', () => {
     const sources: Array<{ url: string; init?: EventSourceInit }> = [];
     const eventSourceFactory = vi.fn((url: string, init?: EventSourceInit) => {
       sources.push({ url, init });
@@ -207,13 +217,79 @@ describe('backend agent client', () => {
     });
     const client = createFetchAgentBackendClient({ eventSourceFactory });
 
-    client.subscribeActivity(vi.fn(), vi.fn());
-    client.subscribeExecutionEvents('session_1', vi.fn(), vi.fn(), vi.fn());
+    client.subscribeSessionEvents('session_1', vi.fn(), vi.fn());
 
     expect(sources).toEqual([
-      { url: '/api/v1/agent-sessions/activity-events', init: { withCredentials: true } },
       { url: '/api/v1/agent-sessions/session_1/events', init: { withCredentials: true } },
     ]);
+  });
+
+  it('persists the SSE cursor and reuses it when a new detail stream is created', () => {
+    const listeners = new Map<string, EventListener>();
+    const urls: string[] = [];
+    const eventSourceFactory = vi.fn((url: string) => {
+      urls.push(url);
+      return {
+        addEventListener: vi.fn((type: string, listener: EventListener) =>
+          listeners.set(type, listener),
+        ),
+        close: vi.fn(),
+        onerror: null,
+      } as unknown as EventSource;
+    });
+    const onEvent = vi.fn();
+    const client = createFetchAgentBackendClient({ eventSourceFactory });
+
+    client.subscribeSessionEvents('session_1', onEvent, vi.fn());
+    listeners.get('session_snapshot')?.({
+      data: JSON.stringify({
+        conversationSessionId: 'session_1',
+        session,
+        occurredAt: '2026-08-01T08:00:00Z',
+      }),
+      lastEventId: 'e=4;a=1;t=2;s=9',
+    } as MessageEvent<string>);
+    client.subscribeSessionEvents('session_1', vi.fn(), vi.fn());
+
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'session_snapshot', session: expect.any(Object) }),
+    );
+    expect(urls[1]).toBe(
+      '/api/v1/agent-sessions/session_1/events?cursor=e%3D4%3Ba%3D1%3Bt%3D2%3Bs%3D9',
+    );
+  });
+
+  it('rejects an SSE event routed for another session', () => {
+    const listeners = new Map<string, EventListener>();
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    const client = createFetchAgentBackendClient({
+      eventSourceFactory: () =>
+        ({
+          addEventListener: vi.fn((type: string, listener: EventListener) =>
+            listeners.set(type, listener),
+          ),
+          close: vi.fn(),
+          onerror: null,
+        }) as unknown as EventSource,
+    });
+    client.subscribeSessionEvents('session_1', onEvent, onError);
+
+    listeners.get('assistant_delta')?.({
+      data: JSON.stringify({
+        type: 'assistant_delta',
+        conversationSessionId: 'session_2',
+        executionAttemptNumber: 1,
+        modelInvocationSequence: 1,
+        outputDeltaSequence: 1,
+        delta: '错误会话',
+      }),
+    } as MessageEvent<string>);
+
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'SSE_PROTOCOL_SESSION_MISMATCH' }),
+    );
   });
 
   it('accepts continuous answer deltas and replaces partial output on a newer turn snapshot', () => {
@@ -227,6 +303,9 @@ describe('backend agent client', () => {
     };
     const duplicate = applyExecutionStreamEvent(initial, {
       type: 'assistant_delta',
+      conversationSessionId: 'session_1',
+      executionId: 'execution_1',
+      occurredAt: '2026-08-01T08:01:00Z',
       executionAttemptNumber: 1,
       modelInvocationSequence: 1,
       outputDeltaSequence: 1,
@@ -234,6 +313,9 @@ describe('backend agent client', () => {
     });
     const gap = applyExecutionStreamEvent(initial, {
       type: 'assistant_delta',
+      conversationSessionId: 'session_1',
+      executionId: 'execution_1',
+      occurredAt: '2026-08-01T08:01:00Z',
       executionAttemptNumber: 1,
       modelInvocationSequence: 1,
       outputDeltaSequence: 3,
@@ -241,6 +323,9 @@ describe('backend agent client', () => {
     });
     const next = applyExecutionStreamEvent(initial, {
       type: 'assistant_delta',
+      conversationSessionId: 'session_1',
+      executionId: 'execution_1',
+      occurredAt: '2026-08-01T08:01:00Z',
       executionAttemptNumber: 1,
       modelInvocationSequence: 1,
       outputDeltaSequence: 2,
@@ -248,6 +333,9 @@ describe('backend agent client', () => {
     });
     const replaced = applyExecutionStreamEvent(next, {
       type: 'stream_snapshot',
+      conversationSessionId: 'session_1',
+      executionId: 'execution_1',
+      occurredAt: '2026-08-01T08:02:00Z',
       executionAttemptNumber: 1,
       modelInvocationSequence: 2,
       outputDeltaSequence: 1,
@@ -264,5 +352,46 @@ describe('backend agent client', () => {
       answer: '',
       outputDeltaSequence: 1,
     });
+  });
+
+  it('replaces a message only when message_update advances its version', () => {
+    const current = {
+      ...session,
+      unread: false,
+      lastNotifiableEventSequence: 0,
+      sortOrder: 0,
+      orderingVersion: 0,
+      messages: [
+        {
+          conversationMessageId: 'assistant_1',
+          executionId: 'execution_1',
+          role: 'assistant' as const,
+          author: 'assistant',
+          content: '旧回答',
+          timestamp: '2026-08-04T01:00:00Z',
+          version: 1,
+          thinkingProcess: [],
+          execution: null,
+        },
+      ],
+      execution: null,
+    };
+    const message = { ...current.messages[0], content: '新回答', version: 2 };
+
+    const advanced = applyConversationStreamEvent(current, {
+      type: 'message_update',
+      conversationSessionId: 'session_1',
+      message,
+      occurredAt: '2026-08-04T01:00:01Z',
+    });
+    const duplicate = applyConversationStreamEvent(advanced, {
+      type: 'message_update',
+      conversationSessionId: 'session_1',
+      message: { ...message, content: '重复回答' },
+      occurredAt: '2026-08-04T01:00:02Z',
+    });
+
+    expect(advanced.messages[0]).toMatchObject({ content: '新回答', version: 2 });
+    expect(duplicate).toBe(advanced);
   });
 });

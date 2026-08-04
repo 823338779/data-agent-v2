@@ -58,6 +58,9 @@ function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient
           author: 'admin',
           content: '分析订单延迟',
           timestamp: '2026-08-01T08:01:00Z',
+          version: 0,
+          thinkingProcess: [],
+          execution: null,
         },
       ],
       execution: {
@@ -74,9 +77,7 @@ function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient
     retryExecution: vi.fn(),
     markRead: vi.fn().mockResolvedValue(session),
     reorderSessions: vi.fn().mockResolvedValue({ orderingVersion: 1, sessions: [session] }),
-    subscribeActivity: vi.fn().mockReturnValue(() => undefined),
-    subscribeExecutionEvents: vi.fn().mockReturnValue(() => undefined),
-    subscribeEvents: vi.fn().mockReturnValue(() => undefined),
+    subscribeSessionEvents: vi.fn().mockReturnValue(() => undefined),
     ...overrides,
   };
 }
@@ -84,6 +85,7 @@ function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   window.history.replaceState(null, '', '/');
 });
 
@@ -161,6 +163,8 @@ describe('server-backed conversation workspace', () => {
           author: 'assistant',
           content: '第一条回答',
           timestamp: '2026-08-01T08:01:00Z',
+          version: 1,
+          thinkingProcess: [],
           execution: firstExecution,
         },
         {
@@ -169,6 +173,8 @@ describe('server-backed conversation workspace', () => {
           author: 'assistant',
           content: '第二条回答',
           timestamp: '2026-08-01T08:02:00Z',
+          version: 1,
+          thinkingProcess: [],
           execution: secondExecution,
         },
       ],
@@ -191,7 +197,12 @@ describe('server-backed conversation workspace', () => {
     };
 
     const view = render(
-      <App client={client({ listSessions: vi.fn().mockResolvedValue([streaming]) })} />,
+      <App
+        client={client({
+          listSessions: vi.fn().mockResolvedValue([streaming]),
+          getSession: vi.fn().mockResolvedValue(streaming),
+        })}
+      />,
     );
     fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
 
@@ -200,70 +211,211 @@ describe('server-backed conversation workspace', () => {
     expect(view.container.querySelector('.stream-answer-content')).toContainElement(answer);
   });
 
-  it('keeps one activity stream while switching detail streams without cancelling executions', async () => {
-    const second = {
+  it('closes the previous detail stream before opening the viewed processing session', async () => {
+    const running = {
       ...session,
+      activityStatus: 'running' as const,
+      execution: {
+        ...completedExecution('execution_1', ''),
+        status: 'running' as const,
+        progress: 25,
+        streamCheckpoint: null,
+      },
+    };
+    const second = {
+      ...running,
       conversationSessionId: 'session_2',
       title: '库存分析',
       sortOrder: 1,
     };
-    const backend = client({ listSessions: vi.fn().mockResolvedValue([session, second]) });
+    const closeFirst = vi.fn();
+    const closeSecond = vi.fn();
+    const backend = client({
+      listSessions: vi.fn().mockResolvedValue([running, second]),
+      getSession: vi.fn((sessionId) =>
+        Promise.resolve(sessionId === 'session_1' ? running : second),
+      ),
+      subscribeSessionEvents: vi
+        .fn()
+        .mockReturnValueOnce(closeFirst)
+        .mockReturnValueOnce(closeSecond),
+    });
     render(<App client={backend} />);
 
     fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
     await waitFor(() =>
-      expect(backend.subscribeExecutionEvents).toHaveBeenCalledWith(
+      expect(backend.subscribeSessionEvents).toHaveBeenCalledWith(
         'session_1',
-        expect.any(Function),
         expect.any(Function),
         expect.any(Function),
       ),
     );
     fireEvent.click(screen.getByRole('button', { name: /库存分析/ }));
 
-    await waitFor(() => expect(backend.subscribeExecutionEvents).toHaveBeenCalledTimes(2));
-    expect(backend.subscribeActivity).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(backend.subscribeSessionEvents).toHaveBeenCalledTimes(2));
+    expect(closeFirst).toHaveBeenCalledOnce();
     expect(backend.cancelExecution).not.toHaveBeenCalled();
   });
 
-  it('marks the current session read at the exact displayed notification sequence', async () => {
-    let activityListener:
-      | ((
-          snapshot: Parameters<AgentBackendClient['subscribeActivity']>[0] extends (
-            value: infer T,
-          ) => void
-            ? T
-            : never,
-        ) => void)
-      | undefined;
+  it('applies execution updates from SSE without refetching the full session', async () => {
+    const running = {
+      ...session,
+      activityStatus: 'running' as const,
+      execution: {
+        ...completedExecution('execution_1', ''),
+        status: 'running' as const,
+        streamCheckpoint: null,
+      },
+    };
     const backend = client({
-      subscribeActivity: vi.fn((listener) => {
-        activityListener = listener;
-        return () => undefined;
+      listSessions: vi.fn().mockResolvedValue([running]),
+      getSession: vi.fn().mockResolvedValue(running),
+    });
+    render(<App client={backend} />);
+
+    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+    await waitFor(() => expect(backend.subscribeSessionEvents).toHaveBeenCalledOnce());
+    const onEvent = vi.mocked(backend.subscribeSessionEvents).mock.calls[0][1];
+
+    act(() =>
+      onEvent({
+        type: 'execution_update',
+        conversationSessionId: 'session_1',
+        execution: {
+          executionId: 'execution_1',
+          status: 'running',
+          progress: 25,
+          objective: '分析订单延迟',
+          cancellationRequestedAt: null,
+          streamCheckpoint: null,
+        },
+        event: {
+          executionEventId: 'event_1',
+          executionEventSequence: 1,
+          type: 'execution_started',
+          occurredAt: '2026-08-01T08:01:00Z',
+          title: '开始执行',
+          summary: null,
+        },
+        messages: [],
+      }),
+    );
+
+    expect(screen.getAllByText('处理中')).not.toHaveLength(0);
+    expect(backend.getSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the current detail stream after a terminal execution update', async () => {
+    const running = {
+      ...session,
+      activityStatus: 'running' as const,
+      execution: {
+        ...completedExecution('execution_1', ''),
+        status: 'running' as const,
+        streamCheckpoint: null,
+      },
+    };
+    const closeDetail = vi.fn();
+    let listener: Parameters<AgentBackendClient['subscribeSessionEvents']>[1] | undefined;
+    const backend = client({
+      listSessions: vi.fn().mockResolvedValue([running]),
+      getSession: vi.fn().mockResolvedValue(running),
+      subscribeSessionEvents: vi.fn((_sessionId, onEvent) => {
+        listener = onEvent;
+        return closeDetail;
       }),
     });
     render(<App client={backend} />);
     fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+    await waitFor(() => expect(listener).toBeDefined());
 
     act(() =>
-      activityListener?.({
-        type: 'activity_snapshot',
-        orderingVersion: 0,
-        sessions: [
-          {
-            conversationSessionId: 'session_1',
-            status: 'done',
-            unread: true,
-            lastNotifiableEventSequence: 7,
-            sortOrder: 0,
-            updatedAt: '2026-08-01T08:02:00Z',
-          },
-        ],
-        snapshotAt: '2026-08-01T08:02:02Z',
+      listener?.({
+        type: 'execution_update',
+        conversationSessionId: 'session_1',
+        execution: {
+          executionId: 'execution_1',
+          status: 'done',
+          progress: 100,
+          objective: '分析订单延迟',
+          cancellationRequestedAt: null,
+          streamCheckpoint: null,
+        },
+        event: {
+          executionEventId: 'event_done',
+          executionEventSequence: 2,
+          type: 'execution_completed',
+          occurredAt: '2026-08-01T08:02:00Z',
+          title: '执行完成',
+          summary: null,
+        },
+        messages: [],
       }),
     );
 
+    await waitFor(() => expect(closeDetail).toHaveBeenCalledOnce());
+    expect(backend.cancelExecution).not.toHaveBeenCalled();
+  });
+
+  it('marks the current session read at the exact detail notification sequence', async () => {
+    const unread = { ...session, unread: true, lastNotifiableEventSequence: 7 };
+    const backend = client({
+      getSession: vi.fn().mockResolvedValue(unread),
+    });
+    render(<App client={backend} />);
+    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+
     await waitFor(() => expect(backend.markRead).toHaveBeenCalledWith('session_1', 7));
+  });
+
+  it('opens no SSE for a terminal current session', async () => {
+    const terminal = { ...session, execution: completedExecution('execution_done', '完成') };
+    const backend = client({ getSession: vi.fn().mockResolvedValue(terminal) });
+    render(<App client={backend} />);
+
+    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+
+    await waitFor(() => expect(backend.getSession).toHaveBeenCalledWith('session_1'));
+    expect(backend.subscribeSessionEvents).not.toHaveBeenCalled();
+  });
+
+  it('polls processing background summaries every minute and preserves viewed details', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const viewed = {
+      ...session,
+      messages: [
+        {
+          conversationMessageId: 'assistant_1',
+          executionId: 'execution_viewed',
+          role: 'assistant' as const,
+          author: 'assistant',
+          content: '当前详情回答',
+          timestamp: '2026-08-01T08:01:00Z',
+          version: 1,
+          thinkingProcess: [],
+          execution: completedExecution('execution_viewed', '当前详情回答'),
+        },
+      ],
+      execution: completedExecution('execution_viewed', '当前详情回答'),
+    };
+    const background = {
+      ...session,
+      conversationSessionId: 'session_2',
+      title: '后台分析',
+      sortOrder: 1,
+      activityStatus: 'running' as const,
+    };
+    const listSessions = vi.fn().mockResolvedValue([viewed, background]);
+    const backend = client({ listSessions, getSession: vi.fn().mockResolvedValue(viewed) });
+    render(<App client={backend} />);
+    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+    await screen.findByText('当前详情回答');
+
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+
+    expect(listSessions).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByText('当前详情回答')).toHaveLength(1);
+    expect(backend.subscribeSessionEvents).not.toHaveBeenCalled();
   });
 
   it('renames a session from the sidebar and updates the active heading', async () => {
@@ -272,9 +424,10 @@ describe('server-backed conversation workspace', () => {
     render(<App client={backend} />);
     const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
 
-    fireEvent.click(within(sidebar).getByRole('button', { name: /订单延迟分析/ }));
+    const sessionButton = await within(sidebar).findByRole('button', { name: /订单延迟分析/ });
+    fireEvent.click(sessionButton);
     expect(await screen.findByRole('heading', { name: '订单延迟分析' })).toBeInTheDocument();
-    fireEvent.doubleClick(within(sidebar).getByRole('button', { name: /订单延迟分析/ }));
+    fireEvent.doubleClick(sessionButton);
     const titleInput = within(sidebar).getByRole('textbox', {
       name: '编辑“订单延迟分析”标题',
     });
@@ -298,7 +451,7 @@ describe('server-backed conversation workspace', () => {
     render(<App client={backend} />);
     const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
 
-    fireEvent.doubleClick(within(sidebar).getByRole('button', { name: /订单延迟分析/ }));
+    fireEvent.doubleClick(await within(sidebar).findByRole('button', { name: /订单延迟分析/ }));
     const titleInput = within(sidebar).getByRole('textbox', {
       name: '编辑“订单延迟分析”标题',
     });
@@ -320,7 +473,7 @@ describe('server-backed conversation workspace', () => {
     render(<App client={backend} />);
     const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
 
-    fireEvent.doubleClick(within(sidebar).getByRole('button', { name: /订单延迟分析/ }));
+    fireEvent.doubleClick(await within(sidebar).findByRole('button', { name: /订单延迟分析/ }));
     const titleInput = within(sidebar).getByRole('textbox', {
       name: '编辑“订单延迟分析”标题',
     });

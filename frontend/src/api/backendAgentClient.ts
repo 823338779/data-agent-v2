@@ -2,17 +2,28 @@ import {
   AgentExecution,
   AgentExecutionStatus,
   AgentExecutionStreamCheckpoint,
-  ConversationActivitySnapshot,
+  ConversationMessage,
   ConversationSession,
   MessageRole,
+  ThinkingProcessItem,
 } from '../domain/agentPrototype';
 import { createIdempotencyKey } from './idempotencyKey';
 
 const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
 const JSON_CONTENT_TYPE = 'application/json';
-const ACTIVITY_EVENT = 'activity_snapshot';
-const STREAM_EVENT_TYPES = ['stream_snapshot', 'assistant_delta'] as const;
-const SESSION_EVENT_TYPES = ['execution_queued', 'execution_started', 'execution_done'] as const;
+const SESSION_SNAPSHOT_EVENT = 'session_snapshot';
+const EXECUTION_UPDATE_EVENT = 'execution_update';
+const MESSAGE_UPDATE_EVENT = 'message_update';
+const STREAM_SNAPSHOT_EVENT = 'stream_snapshot';
+const ASSISTANT_DELTA_EVENT = 'assistant_delta';
+const SESSION_MISMATCH_ERROR = 'SSE_PROTOCOL_SESSION_MISMATCH';
+const SESSION_EVENT_TYPES = [
+  SESSION_SNAPSHOT_EVENT,
+  EXECUTION_UPDATE_EVENT,
+  MESSAGE_UPDATE_EVENT,
+  STREAM_SNAPSHOT_EVENT,
+  ASSISTANT_DELTA_EVENT,
+] as const;
 const EXECUTION_STATUSES: AgentExecutionStatus[] = [
   'idle',
   'queued',
@@ -22,13 +33,17 @@ const EXECUTION_STATUSES: AgentExecutionStatus[] = [
   'done',
   'cancelled',
   'failed',
+  'lost',
 ];
 
 interface BackendMessage {
   conversationMessageId: string;
+  executionId?: string | null;
   role: string;
   author: string;
   content: string;
+  version: number;
+  thinkingProcess: ThinkingProcessItem[];
   createdAt: string;
   execution: BackendAgentExecution | null;
 }
@@ -52,6 +67,34 @@ interface BackendAgentExecution {
   streamCheckpoint: BackendStreamCheckpoint | null;
 }
 
+interface BackendAgentExecutionState {
+  executionId: string;
+  status: string;
+  progress: number;
+  objective: string;
+  cancellationRequestedAt?: string | null;
+  streamCheckpoint: BackendStreamCheckpoint | null;
+}
+
+interface BackendExecutionUpdate {
+  conversationSessionId: string;
+  execution: BackendAgentExecutionState;
+  event: BackendAgentExecutionEvent;
+  messages: BackendMessage[];
+}
+
+interface BackendSessionSnapshot {
+  conversationSessionId: string;
+  session: BackendSession;
+  occurredAt: string;
+}
+
+interface BackendMessageUpdate {
+  conversationSessionId: string;
+  message: BackendMessage;
+  occurredAt: string;
+}
+
 interface BackendStreamCheckpoint {
   executionAttemptNumber?: number;
   modelInvocationSequence?: number;
@@ -61,7 +104,7 @@ interface BackendStreamCheckpoint {
   checkpointedAt?: string | null;
 }
 
-interface BackendSession {
+interface BackendSessionSummary {
   conversationSessionId: string;
   title: string;
   tag: string | null;
@@ -72,6 +115,10 @@ interface BackendSession {
   lastNotifiableEventSequence?: number;
   sortOrder?: number;
   orderingVersion?: number;
+  status?: string;
+}
+
+interface BackendSession extends BackendSessionSummary {
   messages: BackendMessage[];
   execution: BackendAgentExecution | null;
 }
@@ -79,11 +126,42 @@ interface BackendSession {
 export type ExecutionStreamEvent =
   | ({
       type: 'stream_snapshot';
+      conversationSessionId: string;
+      executionId: string;
       phase: string;
       answer: string;
       checkpointedAt: string | null;
+      occurredAt: string;
     } & StreamCursor)
-  | ({ type: 'assistant_delta'; delta: string } & StreamCursor);
+  | ({
+      type: 'assistant_delta';
+      conversationSessionId: string;
+      executionId: string;
+      delta: string;
+      occurredAt: string;
+    } & StreamCursor);
+
+export type ConversationStreamEvent =
+  | {
+      type: 'session_snapshot';
+      conversationSessionId: string;
+      session: ConversationSession;
+      occurredAt: string;
+    }
+  | {
+      type: 'execution_update';
+      conversationSessionId: string;
+      execution: Omit<AgentExecution, 'events'>;
+      event: AgentExecution['events'][number];
+      messages: ConversationMessage[];
+    }
+  | {
+      type: 'message_update';
+      conversationSessionId: string;
+      message: ConversationMessage;
+      occurredAt: string;
+    }
+  | ExecutionStreamEvent;
 
 interface StreamCursor {
   executionAttemptNumber: number;
@@ -119,20 +197,10 @@ export interface AgentBackendClient {
     conversationSessionIds: string[],
     expectedOrderingVersion: number,
   ): Promise<ReorderSessionsResult>;
-  subscribeActivity(
-    onSnapshot: (snapshot: ConversationActivitySnapshot) => void,
-    onError: () => void,
-  ): () => void;
-  subscribeExecutionEvents(
+  subscribeSessionEvents(
     conversationSessionId: string,
-    onStreamEvent: (event: ExecutionStreamEvent) => void,
-    onLifecycleEvent: () => void,
-    onError: () => void,
-  ): () => void;
-  subscribeEvents(
-    conversationSessionId: string,
-    onEvent: () => void,
-    onError: () => void,
+    onEvent: (event: ConversationStreamEvent) => void,
+    onError: (error?: Error) => void,
   ): () => void;
 }
 
@@ -179,6 +247,74 @@ export function applyExecutionStreamEvent(
   };
 }
 
+/** 将详情 SSE 的快照或增量幂等合并到单个会话状态。 */
+export function applyConversationStreamEvent(
+  current: ConversationSession,
+  event: ConversationStreamEvent,
+): ConversationSession {
+  // 路由会话标识是详情流的隔离边界，异常载荷不能污染当前页面。
+  if (event.conversationSessionId !== current.conversationSessionId) return current;
+  if (event.type === SESSION_SNAPSHOT_EVENT) return event.session;
+  if (event.type === MESSAGE_UPDATE_EVENT) {
+    const index = current.messages.findIndex(
+      (message) => message.conversationMessageId === event.message.conversationMessageId,
+    );
+    if (index >= 0 && current.messages[index].version >= event.message.version) return current;
+    const messages = [...current.messages];
+    if (index >= 0) messages[index] = event.message;
+    else messages.push(event.message);
+    return { ...current, messages };
+  }
+  if (event.type === STREAM_SNAPSHOT_EVENT || event.type === ASSISTANT_DELTA_EVENT) {
+    if (!current.execution) return current;
+    return {
+      ...current,
+      execution: {
+        ...current.execution,
+        streamCheckpoint: applyExecutionStreamEvent(current.execution.streamCheckpoint, event),
+      },
+    };
+  }
+
+  const previousExecution =
+    current.execution?.executionId === event.execution.executionId ? current.execution : null;
+  const events = previousExecution?.events ?? [];
+  const nextEvents = events.some(
+    (item) => item.executionEventSequence === event.event.executionEventSequence,
+  )
+    ? events
+    : [...events, event.event].sort(
+        (left, right) => left.executionEventSequence - right.executionEventSequence,
+      );
+  const execution: AgentExecution = {
+    ...event.execution,
+    events: nextEvents,
+    streamCheckpoint:
+      event.execution.streamCheckpoint ?? previousExecution?.streamCheckpoint ?? null,
+  };
+
+  // 先更新已经显示的同 execution 回答，再按消息标识追加本次新增消息。
+  const messages = current.messages.map((message) =>
+    message.role === 'assistant' &&
+    (message.executionId === execution.executionId ||
+      message.execution?.executionId === execution.executionId)
+      ? { ...message, execution }
+      : message,
+  );
+  event.messages.forEach((message) => {
+    const nextMessage =
+      message.executionId === execution.executionId && message.role === 'assistant'
+        ? { ...message, execution }
+        : message;
+    const index = messages.findIndex(
+      (item) => item.conversationMessageId === nextMessage.conversationMessageId,
+    );
+    if (index >= 0) messages[index] = nextMessage;
+    else messages.push(nextMessage);
+  });
+  return { ...current, messages, execution };
+}
+
 function compareTurn(left: StreamCursor, right: StreamCursor): number {
   return (
     left.executionAttemptNumber - right.executionAttemptNumber ||
@@ -215,7 +351,35 @@ function toExecution(execution: BackendAgentExecution): AgentExecution {
   };
 }
 
-function toSession(session: BackendSession): ConversationSession {
+function toExecutionState(execution: BackendAgentExecutionState): Omit<AgentExecution, 'events'> {
+  return {
+    executionId: execution.executionId,
+    status: toStatus(execution.status),
+    progress: execution.progress,
+    objective: execution.objective,
+    cancellationRequestedAt: execution.cancellationRequestedAt ?? null,
+    streamCheckpoint: execution.streamCheckpoint ? toCheckpoint(execution.streamCheckpoint) : null,
+  };
+}
+
+function toMessage(message: BackendMessage): ConversationMessage {
+  return {
+    conversationMessageId: message.conversationMessageId,
+    executionId: message.executionId ?? message.execution?.executionId ?? null,
+    role: (['user', 'assistant', 'system'].includes(message.role)
+      ? message.role
+      : 'system') as MessageRole,
+    author: message.author,
+    content: message.content,
+    timestamp: message.createdAt,
+    version: message.version,
+    thinkingProcess: message.thinkingProcess.map((item) => ({ ...item })),
+    execution: message.execution ? toExecution(message.execution) : null,
+  };
+}
+
+function toSession(session: BackendSession | BackendSessionSummary): ConversationSession {
+  const detail = session as Partial<BackendSession>;
   return {
     conversationSessionId: session.conversationSessionId,
     title: session.title,
@@ -227,17 +391,9 @@ function toSession(session: BackendSession): ConversationSession {
     lastNotifiableEventSequence: session.lastNotifiableEventSequence ?? 0,
     sortOrder: session.sortOrder ?? 0,
     orderingVersion: session.orderingVersion ?? 0,
-    messages: session.messages.map((message) => ({
-      conversationMessageId: message.conversationMessageId,
-      role: (['user', 'assistant', 'system'].includes(message.role)
-        ? message.role
-        : 'system') as MessageRole,
-      author: message.author,
-      content: message.content,
-      timestamp: message.createdAt,
-      execution: message.execution ? toExecution(message.execution) : null,
-    })),
-    execution: session.execution ? toExecution(session.execution) : null,
+    activityStatus: session.status ? toStatus(session.status) : undefined,
+    messages: detail.messages?.map(toMessage) ?? [],
+    execution: detail.execution ? toExecution(detail.execution) : null,
   };
 }
 
@@ -254,6 +410,8 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
     (typeof EventSource === 'undefined'
       ? undefined
       : (url: string, init?: EventSourceInit) => new EventSource(url, init));
+  // 只在当前客户端生命周期内保存游标；页面刷新必须重新获取权威详情快照。
+  const sessionCursors = new Map<string, string>();
 
   // 所有 HTTP 调用统一携带 cookie；只有拥有幂等键的操作才自动重试网络故障。
   async function fetchResponse(path: string, init?: RequestInit, retryNetwork = false) {
@@ -292,7 +450,7 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
 
   return {
     async listSessions() {
-      return (await json<BackendSession[]>(await fetchResponse(''))).map(toSession);
+      return (await json<BackendSessionSummary[]>(await fetchResponse(''))).map(toSession);
     },
     createSession(title, tag) {
       return sessionRequest('', { method: 'POST', body: JSON.stringify({ title, tag }) });
@@ -339,7 +497,7 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
       });
     },
     async reorderSessions(conversationSessionIds, expectedOrderingVersion) {
-      const response = await json<{ orderingVersion: number; sessions: BackendSession[] }>(
+      const response = await json<{ orderingVersion: number; sessions: BackendSessionSummary[] }>(
         await fetchResponse(':reorder', {
           method: 'POST',
           body: JSON.stringify({ conversationSessionIds, expectedOrderingVersion }),
@@ -350,28 +508,68 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
         sessions: response.sessions.map(toSession),
       };
     },
-    subscribeActivity(onSnapshot, onError) {
-      const source = openSource('/activity-events');
-      if (!source) return () => undefined;
-      listenJson(source, ACTIVITY_EVENT, onSnapshot);
-      source.onerror = onError;
-      return () => source.close();
-    },
-    subscribeExecutionEvents(conversationSessionId, onStreamEvent, onLifecycleEvent, onError) {
-      const source = openSource(`/${encodeURIComponent(conversationSessionId)}/events`);
-      if (!source) return () => undefined;
-      STREAM_EVENT_TYPES.forEach((eventType) => listenJson(source, eventType, onStreamEvent));
-      SESSION_EVENT_TYPES.forEach((eventType) =>
-        source.addEventListener(eventType, onLifecycleEvent),
+    subscribeSessionEvents(conversationSessionId, onEvent, onError) {
+      const savedCursor = sessionCursors.get(conversationSessionId);
+      const cursorQuery = savedCursor ? `?cursor=${encodeURIComponent(savedCursor)}` : '';
+      const source = openSource(
+        `/${encodeURIComponent(conversationSessionId)}/events${cursorQuery}`,
       );
-      source.onerror = onError;
-      return () => source.close();
-    },
-    subscribeEvents(conversationSessionId, onEvent, onError) {
-      const source = openSource(`/${encodeURIComponent(conversationSessionId)}/events`);
       if (!source) return () => undefined;
-      SESSION_EVENT_TYPES.forEach((eventType) => source.addEventListener(eventType, onEvent));
-      source.onerror = onError;
+      SESSION_EVENT_TYPES.forEach((eventType) =>
+        source.addEventListener(eventType, ((raw: MessageEvent<string>) => {
+          if (raw.lastEventId) sessionCursors.set(conversationSessionId, raw.lastEventId);
+          if (eventType === SESSION_SNAPSHOT_EVENT) {
+            const snapshot = JSON.parse(raw.data) as BackendSessionSnapshot;
+            if (snapshot.conversationSessionId !== conversationSessionId) {
+              onError(new Error(SESSION_MISMATCH_ERROR));
+              return;
+            }
+            onEvent({
+              type: SESSION_SNAPSHOT_EVENT,
+              conversationSessionId: snapshot.conversationSessionId,
+              session: toSession(snapshot.session),
+              occurredAt: snapshot.occurredAt,
+            });
+            return;
+          }
+          if (eventType === EXECUTION_UPDATE_EVENT) {
+            const update = JSON.parse(raw.data) as BackendExecutionUpdate;
+            if (update.conversationSessionId !== conversationSessionId) {
+              onError(new Error(SESSION_MISMATCH_ERROR));
+              return;
+            }
+            onEvent({
+              type: EXECUTION_UPDATE_EVENT,
+              conversationSessionId: update.conversationSessionId,
+              execution: toExecutionState(update.execution),
+              event: { ...update.event },
+              messages: update.messages.map(toMessage),
+            });
+            return;
+          }
+          if (eventType === MESSAGE_UPDATE_EVENT) {
+            const update = JSON.parse(raw.data) as BackendMessageUpdate;
+            if (update.conversationSessionId !== conversationSessionId) {
+              onError(new Error(SESSION_MISMATCH_ERROR));
+              return;
+            }
+            onEvent({
+              type: MESSAGE_UPDATE_EVENT,
+              conversationSessionId: update.conversationSessionId,
+              message: toMessage(update.message),
+              occurredAt: update.occurredAt,
+            });
+            return;
+          }
+          const streamEvent = JSON.parse(raw.data) as ExecutionStreamEvent;
+          if (streamEvent.conversationSessionId !== conversationSessionId) {
+            onError(new Error(SESSION_MISMATCH_ERROR));
+            return;
+          }
+          onEvent(streamEvent);
+        }) as EventListener),
+      );
+      source.onerror = () => onError();
       return () => source.close();
     },
   };

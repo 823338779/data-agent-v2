@@ -15,6 +15,7 @@ const STATUS_LABELS: Record<AgentExecutionStatus, string> = {
   done: '已完成',
   cancelled: '已取消',
   failed: '失败',
+  lost: '已失联',
 };
 
 /** 展示执行状态及该状态允许的最小控制集合。 */

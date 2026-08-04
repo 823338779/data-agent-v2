@@ -7,7 +7,72 @@ export type AgentExecutionStatus =
   | 'waiting_confirmation'
   | 'done'
   | 'cancelled'
-  | 'failed';
+  | 'failed'
+  | 'lost';
+
+const PROCESSING_STATUSES = new Set<AgentExecutionStatus>([
+  'queued',
+  'running',
+  'waiting_for_user',
+  'waiting_confirmation',
+]);
+
+/** 判断会话是否仍需要实时详情更新。 */
+export function isProcessingStatus(status: AgentExecutionStatus): boolean {
+  return PROCESSING_STATUSES.has(status);
+}
+
+export type ThinkingProcessStatus = 'PREPARED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+
+/** 数据库内保存的工具入参或出参；超限时只包含安全预览和完整内容摘要。 */
+export interface BoundedProcessPayload {
+  value: unknown | null;
+  preview: string | null;
+  truncated: boolean;
+  originalSizeBytes: number;
+  sha256: string;
+  contentType: string;
+}
+
+/** 每种过程节点都具备的身份、顺序和耗时字段。 */
+interface ProcessItemBase {
+  processItemId: string;
+  sequence: number;
+  status: ThinkingProcessStatus;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMillis: number | null;
+  schemaVersion: 1;
+}
+
+export interface ModelThinkingProcessItem extends ProcessItemBase {
+  type: 'THINKING';
+  content: string;
+  contentTruncated: boolean;
+  originalContentSizeBytes: number;
+  contentSha256: string;
+  modelInvocationSequence: number;
+  modelProvider: string;
+  modelName: string;
+}
+
+export interface ToolThinkingProcessItem extends ProcessItemBase {
+  type: 'TOOL';
+  toolId: string;
+  toolName: string;
+  toolExecutionId: string;
+  toolCallId: string;
+  modelInvocationSequence: number;
+  input: BoundedProcessPayload;
+  output: BoundedProcessPayload | null;
+  success: boolean | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
+/** 与一条 assistant 正文绑定、按 sequence 有序展示的过程节点。 */
+export type ThinkingProcessItem = ModelThinkingProcessItem | ToolThinkingProcessItem;
 
 /** 可恢复的回答流检查点，三个序号共同标识严格顺序。 */
 export interface AgentExecutionStreamCheckpoint {
@@ -21,10 +86,16 @@ export interface AgentExecutionStreamCheckpoint {
 
 export interface ConversationMessage {
   conversationMessageId: string;
+  /** 消息关联的 Agent 执行标识，用于把 SSE 增量关联回对应回答。 */
+  executionId?: string | null;
   role: MessageRole;
   author: string;
   content: string;
   timestamp: string;
+  /** 消息完整替换事件的幂等版本。 */
+  version: number;
+  /** 与当前消息正文一同持久化的有序思考和工具过程。 */
+  thinkingProcess: ThinkingProcessItem[];
   /** 回答对应的持久化 Agent 执行，用于恢复该条消息自己的执行过程。 */
   execution: AgentExecution | null;
 }
@@ -65,27 +136,10 @@ export interface ConversationSession {
   lastNotifiableEventSequence: number;
   sortOrder: number;
   orderingVersion: number;
-  /** activity SSE 提供的轻量状态，可早于详细会话刷新到达。 */
+  /** 摘要轮询提供的轻量状态，可早于详细会话刷新到达。 */
   activityStatus?: AgentExecutionStatus;
   messages: ConversationMessage[];
   execution: AgentExecution | null;
-}
-
-/** 用户级活动流中的轻量会话投影。 */
-export interface ConversationActivityItem {
-  conversationSessionId: string;
-  status: AgentExecutionStatus;
-  unread: boolean;
-  lastNotifiableEventSequence: number;
-  sortOrder: number;
-  updatedAt: string;
-}
-
-export interface ConversationActivitySnapshot {
-  type: 'activity_snapshot';
-  orderingVersion: number;
-  sessions: ConversationActivityItem[];
-  snapshotAt: string;
 }
 
 const BEIJING_TIME_ZONE = 'Asia/Shanghai';
