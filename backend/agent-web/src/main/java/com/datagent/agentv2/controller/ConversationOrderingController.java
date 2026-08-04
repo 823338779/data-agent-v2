@@ -1,7 +1,7 @@
 package com.datagent.agentv2.controller;
 
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
-import com.datagent.agentv2.conversation.session.ConversationView;
+import com.datagent.agentv2.conversation.session.ConversationSummaryView;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -28,7 +28,7 @@ public class ConversationOrderingController {
                 conversations.reorder(
                         request.conversationSessionIds(), request.expectedOrderingVersion());
         return new ReorderConversationSessionsResponse(
-                reordered.orderingVersion(), conversations.list());
+                reordered.orderingVersion(), conversations.listSummaries());
     }
 
     /** 携带完整可见会话集合和乐观版本的重排请求。 */
@@ -38,5 +38,5 @@ public class ConversationOrderingController {
 
     /** 返回重排后的版本和完整服务端顺序，供冲突恢复复用。 */
     record ReorderConversationSessionsResponse(
-            long orderingVersion, List<ConversationView> sessions) {}
+            long orderingVersion, List<ConversationSummaryView> sessions) {}
 }

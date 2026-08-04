@@ -3,6 +3,7 @@ package com.datagent.agentv2.controller;
 import com.datagent.agentv2.conversation.activity.ActivityEventStreamFacade;
 import com.datagent.agentv2.conversation.execution.AgentExecutionControlService;
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
+import com.datagent.agentv2.conversation.session.ConversationSummaryView;
 import com.datagent.agentv2.conversation.session.ConversationTitleService;
 import com.datagent.agentv2.conversation.session.ConversationView;
 import com.datagent.agentv2.conversation.stream.ConversationEventStreamFacade;
@@ -44,8 +45,8 @@ public class ConversationController {
     private final ActivityEventStreamFacade activityEvents;
 
     @GetMapping
-    List<ConversationView> list() {
-        return conversations.list();
+    List<ConversationSummaryView> list() {
+        return conversations.listSummaries();
     }
 
     @PostMapping
@@ -88,8 +89,14 @@ public class ConversationController {
             produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     SseEmitter events(
             @PathVariable String conversationSessionId,
-            @RequestHeader(value = "Last-Event-ID", required = false) String lastExecutionEventId) {
-        return eventStreams.open(conversationSessionId, lastExecutionEventId);
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastExecutionEventId,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String cursor) {
+        // 原生 EventSource 自动重连使用 Last-Event-ID；切换会话后新建连接使用 query cursor。
+        String resumeCursor =
+                lastExecutionEventId == null || lastExecutionEventId.isBlank()
+                        ? cursor
+                        : lastExecutionEventId;
+        return eventStreams.open(conversationSessionId, resumeCursor);
     }
 
     @PostMapping("/{conversationSessionId}/messages")

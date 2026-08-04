@@ -6,6 +6,7 @@ import com.datagent.agentv2.persistence.entity.ConversationMessageEntity;
 import com.datagent.agentv2.persistence.json.ConversationProcessDocumentCodec;
 import com.datagent.agentv2.persistence.mapping.ConversationPersistenceMapper;
 import com.datagent.agentv2.persistence.service.mapper.ConversationMessageMapper;
+import java.util.Collection;
 import java.util.List;
 import org.springframework.stereotype.Service;
 
@@ -127,6 +128,22 @@ public class ConversationMessageService
                                 ConversationMessageEntity::getConversationMessageId,
                                 conversationMessageId)
                         .one());
+    }
+
+    /** 一次查询读取指定会话集合中的全部 assistant 消息，供 SSE reconciliation 选取最新中心消息。 */
+    public List<ConversationMessage> findAssistantsByConversationSessionIds(
+            Collection<String> conversationSessionIds) {
+        if (conversationSessionIds.isEmpty()) {
+            return List.of();
+        }
+        return toModels(
+                lambdaQuery()
+                        .in(
+                                ConversationMessageEntity::getConversationSessionId,
+                                conversationSessionIds)
+                        .eq(ConversationMessageEntity::getRole, ROLE_ASSISTANT)
+                        .orderByAsc(ConversationMessageEntity::getConversationMessageSequence)
+                        .list());
     }
 
     /** 读取 Entity 并在唯一 codec 边界恢复强类型 ProcessItem 列表。 */

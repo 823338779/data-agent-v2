@@ -1,0 +1,36 @@
+{
+  "type": "message_update",
+  "conversationSessionId": "session_demo",
+  "message": {
+    "conversationMessageId": "message_assistant_demo",
+    "executionId": "execution_demo",
+    "role": "assistant",
+    "author": "assistant",
+    "content": "",
+    "version": 2,
+    "thinkingProcess": [
+      {
+        "processItemId": "00000000-0000-0000-0000-000000000101",
+        "sequence": 1,
+        "type": "THINKING",
+        "status": "RUNNING",
+        "createdAt": "2026-08-01T06:00:01Z",
+        "startedAt": "2026-08-01T06:00:01Z",
+        "completedAt": null,
+        "durationMillis": null,
+        "schemaVersion": 1,
+        "content": "正在分析",
+        "contentTruncated": false,
+        "originalContentSizeBytes": 12,
+        "contentSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "modelInvocationSequence": 1,
+        "modelProvider": "codex",
+        "modelName": "gpt-5"
+      }
+    ],
+    "createdAt": "2026-08-01T06:00:00Z",
+    "citations": [],
+    "execution": null
+  },
+  "occurredAt": "2026-08-01T06:00:02Z"
+}

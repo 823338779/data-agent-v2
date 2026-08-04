@@ -3,7 +3,7 @@ package com.datagent.agentv2.conversation.activity;
 import com.datagent.agentv2.conversation.enums.ActivityEventType;
 import com.datagent.agentv2.conversation.enums.SessionActivityStatus;
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
-import com.datagent.agentv2.conversation.session.ConversationView;
+import com.datagent.agentv2.conversation.session.ConversationSummaryView;
 import com.datagent.agentv2.platform.context.OperatorContext;
 import com.datagent.agentv2.platform.context.OperatorIdentity;
 import com.datagent.agentv2.platform.context.TenantContext;
@@ -94,17 +94,14 @@ public final class ActivityEventStreamFacade {
     }
 
     private ActivitySnapshot snapshot() {
-        List<ConversationView> visible = conversations.list();
+        List<ConversationSummaryView> visible = conversations.listSummaries();
         long orderingVersion = visible.isEmpty() ? 0L : visible.getFirst().orderingVersion();
         List<ActivityItem> items = new ArrayList<>(visible.size());
-        for (ConversationView session : visible) {
+        for (ConversationSummaryView session : visible) {
             items.add(
                     new ActivityItem(
                             session.conversationSessionId(),
-                            session.execution() == null
-                                    ? SessionActivityStatus.IDLE
-                                    : SessionActivityStatus.fromExecutionStatus(
-                                            session.execution().status()),
+                            session.status(),
                             session.unread(),
                             session.lastNotifiableEventSequence(),
                             session.sortOrder(),

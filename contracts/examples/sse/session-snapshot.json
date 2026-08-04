@@ -1,0 +1,11 @@
+{
+  "type": "session_snapshot",
+  "conversationSessionId": "session_demo",
+  "session": {
+    "conversationSessionId": "session_demo",
+    "title": "示例会话",
+    "messages": [],
+    "execution": null
+  },
+  "occurredAt": "2026-08-01T06:00:00Z"
+}

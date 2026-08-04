@@ -53,7 +53,7 @@ paths:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/ConversationSession' }
+                items: { $ref: '#/components/schemas/ConversationSessionSummary' }
         '401': { $ref: '#/components/responses/AuthenticationRequired' }
     post:
       operationId: createConversationSession
@@ -242,12 +242,25 @@ paths:
           schema:
             type: string
             pattern: '^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$'
+        - name: cursor
+          in: query
+          required: false
+          description: Cursor retained by a newly created EventSource after navigating back to a session.
+          schema:
+            type: string
+            pattern: '^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$'
       responses:
         '200':
-          description: Replay followed by live session events
+          description: One authoritative snapshot for a new client, or cursor replay followed by live incremental events
           content:
             text/event-stream:
-              schema: { $ref: '#/components/schemas/AgentExecutionEvent' }
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/ConversationSessionSnapshotEvent' }
+                  - { $ref: '#/components/schemas/ConversationExecutionUpdateEvent' }
+                  - { $ref: '#/components/schemas/ConversationMessageUpdateEvent' }
+                  - { $ref: '#/components/schemas/AgentExecutionStreamSnapshotEvent' }
+                  - { $ref: '#/components/schemas/AssistantDeltaEvent' }
         '401': { $ref: '#/components/responses/AuthenticationRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/agent-sessions/{conversationSessionId}/confirmations/{confirmationId}:
@@ -1020,6 +1033,24 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/MetricPlatformCredentialBinding' }
             - { type: 'null' }
+    ConversationSessionSummary:
+      type: object
+      description: Lightweight session-list projection without messages, execution history, or answer content.
+      required: [conversationSessionId, title, tag, createdAt, updatedAt, version, unread, lastNotifiableEventSequence, sortOrder, orderingVersion, status]
+      properties:
+        conversationSessionId: { type: string }
+        title: { type: string }
+        tag: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer, format: int64 }
+        unread: { type: boolean }
+        lastNotifiableEventSequence: { type: integer, format: int64, minimum: 0 }
+        sortOrder: { type: integer, format: int64 }
+        orderingVersion: { type: integer, format: int64, minimum: 0 }
+        status:
+          type: string
+          enum: [idle, queued, running, waiting_for_user, waiting_confirmation, done, cancelled, failed, lost]
         messages:
           type: array
           items: { $ref: '#/components/schemas/ConversationMessage' }
@@ -1056,7 +1087,7 @@ components:
         orderingVersion: { type: integer, format: int64, minimum: 0 }
         sessions:
           type: array
-          items: { $ref: '#/components/schemas/ConversationSession' }
+          items: { $ref: '#/components/schemas/ConversationSessionSummary' }
     MetricPlatformCredentialBinding:
       type: object
       required: [metricPlatformCredentialId]
@@ -1068,12 +1099,19 @@ components:
         status: { type: [string, 'null'] }
     ConversationMessage:
       type: object
-      required: [conversationMessageId, role, author, content, createdAt, citations]
+      required: [conversationMessageId, executionId, role, author, content, version, thinkingProcess, createdAt, citations]
       properties:
         conversationMessageId: { type: string }
+        executionId:
+          description: Agent execution associated with this message, or null before association.
+          type: [string, 'null']
         role: { type: string, enum: [user, assistant, system] }
         author: { type: string }
         content: { type: string }
+        version: { type: integer, format: int64, minimum: 0 }
+        thinkingProcess:
+          type: array
+          items: { $ref: '#/components/schemas/ThinkingProcessItem' }
         createdAt: { type: string, format: date-time }
         citations:
           type: array
@@ -1083,6 +1121,141 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/AgentExecution' }
             - { type: 'null' }
+    ThinkingProcessItem:
+      oneOf:
+        - { $ref: '#/components/schemas/ModelThinkingProcessItem' }
+        - { $ref: '#/components/schemas/ToolThinkingProcessItem' }
+      discriminator:
+        propertyName: type
+        mapping:
+          THINKING: '#/components/schemas/ModelThinkingProcessItem'
+          TOOL: '#/components/schemas/ToolThinkingProcessItem'
+    ThinkingProcessItemCommon:
+      type: object
+      required: [processItemId, sequence, type, status, createdAt, startedAt, completedAt, durationMillis, schemaVersion]
+      properties:
+        processItemId: { type: string, format: uuid }
+        sequence: { type: integer, format: int64, minimum: 1 }
+        type: { type: string, enum: [THINKING, TOOL] }
+        status: { type: string, enum: [PREPARED, RUNNING, SUCCEEDED, FAILED] }
+        createdAt: { type: string, format: date-time }
+        startedAt: { type: [string, 'null'], format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        durationMillis: { type: [integer, 'null'], format: int64, minimum: 0 }
+        schemaVersion: { type: integer, minimum: 1 }
+    ModelThinkingProcessItem:
+      allOf:
+        - { $ref: '#/components/schemas/ThinkingProcessItemCommon' }
+        - type: object
+          required: [content, contentTruncated, originalContentSizeBytes, contentSha256, modelInvocationSequence, modelProvider, modelName]
+          properties:
+            type: { type: string, const: THINKING }
+            content: { type: string }
+            contentTruncated: { type: boolean }
+            originalContentSizeBytes: { type: integer, format: int64, minimum: 0 }
+            contentSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+            modelInvocationSequence: { type: integer, format: int64, minimum: 1 }
+            modelProvider: { type: string }
+            modelName: { type: string }
+    ToolThinkingProcessItem:
+      allOf:
+        - { $ref: '#/components/schemas/ThinkingProcessItemCommon' }
+        - type: object
+          required: [toolId, toolName, toolExecutionId, toolCallId, modelInvocationSequence, input, output, success, errorCode, errorMessage]
+          properties:
+            type: { type: string, const: TOOL }
+            toolId: { type: string }
+            toolName: { type: string }
+            toolExecutionId: { type: string }
+            toolCallId: { type: string }
+            modelInvocationSequence: { type: integer, format: int64, minimum: 1 }
+            input: { $ref: '#/components/schemas/BoundedProcessPayload' }
+            output:
+              oneOf:
+                - { $ref: '#/components/schemas/BoundedProcessPayload' }
+                - { type: 'null' }
+            success: { type: [boolean, 'null'] }
+            errorCode: { type: [string, 'null'] }
+            errorMessage: { type: [string, 'null'] }
+    BoundedProcessPayload:
+      type: object
+      required: [value, preview, truncated, originalSizeBytes, sha256, contentType]
+      properties:
+        value: {}
+        preview: { type: [string, 'null'] }
+        truncated: { type: boolean }
+        originalSizeBytes: { type: integer, format: int64, minimum: 0 }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        contentType: { type: string }
+    AgentExecutionState:
+      type: object
+      description: Lightweight execution state carried by incremental SSE updates.
+      required: [executionId, status, progress, objective, cancellationRequestedAt, streamCheckpoint]
+      properties:
+        executionId: { type: string }
+        status:
+          type: string
+          enum: [queued, running, waiting_for_user, waiting_confirmation, done, cancelled, failed, lost]
+        progress: { type: integer }
+        objective: { type: string }
+        cancellationRequestedAt: { type: [string, 'null'], format: date-time }
+        streamCheckpoint:
+          oneOf:
+            - { $ref: '#/components/schemas/AgentExecutionStreamCheckpoint' }
+            - { type: 'null' }
+    ConversationSessionSnapshotEvent:
+      type: object
+      required: [type, conversationSessionId, session, occurredAt]
+      properties:
+        type: { type: string, const: session_snapshot }
+        conversationSessionId: { type: string }
+        session: { $ref: '#/components/schemas/ConversationSession' }
+        occurredAt: { type: string, format: date-time }
+    ConversationExecutionUpdateEvent:
+      type: object
+      required: [type, conversationSessionId, execution, event, messages]
+      properties:
+        type: { type: string, const: execution_update }
+        conversationSessionId: { type: string }
+        execution: { $ref: '#/components/schemas/AgentExecutionState' }
+        event: { $ref: '#/components/schemas/AgentExecutionEvent' }
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/ConversationMessage' }
+    ConversationMessageUpdateEvent:
+      type: object
+      required: [type, conversationSessionId, message, occurredAt]
+      properties:
+        type: { type: string, const: message_update }
+        conversationSessionId: { type: string }
+        message: { $ref: '#/components/schemas/ConversationMessage' }
+        occurredAt: { type: string, format: date-time }
+    AgentExecutionStreamSnapshotEvent:
+      type: object
+      required: [type, conversationSessionId, executionId, executionAttemptNumber, modelInvocationSequence, outputDeltaSequence, phase, answer, checkpointedAt, occurredAt]
+      properties:
+        type: { type: string, const: stream_snapshot }
+        conversationSessionId: { type: string }
+        executionId: { type: string }
+        executionAttemptNumber: { type: integer, minimum: 0 }
+        modelInvocationSequence: { type: integer, minimum: 0 }
+        outputDeltaSequence: { type: integer, format: int64, minimum: 0 }
+        phase: { type: string }
+        answer: { type: string }
+        checkpointedAt: { type: [string, 'null'], format: date-time }
+        occurredAt: { type: string, format: date-time }
+    AssistantDeltaEvent:
+      type: object
+      required: [type, conversationSessionId, executionId, executionAttemptNumber, modelInvocationSequence, outputDeltaSequence, delta, occurredAt]
+      properties:
+        type: { type: string, const: assistant_delta }
+        conversationSessionId: { type: string }
+        executionId: { type: string }
+        executionAttemptNumber: { type: integer, minimum: 0 }
+        modelInvocationSequence: { type: integer, minimum: 0 }
+        outputDeltaSequence: { type: integer, format: int64, minimum: 0 }
+        delta: { type: string }
+        occurredAt: { type: string, format: date-time }
     CitationSummary:
       type: object
       required: [token, label, queryResultArtifactId, queryId]

@@ -1,41 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://data-agent.local/contracts/session-sse-event.schema.json",
-  "title": "会话 SSE 事件",
+  "title": "会话详情 SSE 事件",
   "type": "object",
-  "additionalProperties": false,
+  "additionalProperties": true,
   "required": ["type", "conversationSessionId"],
   "properties": {
     "type": {
       "type": "string",
-      "enum": [
-        "execution_started",
-        "user_message",
-        "assistant_message",
-        "assistant_delta",
-        "stream_snapshot",
-        "execution_phase_changed",
-        "skill_activated",
-        "context_compaction_started",
-        "context_compaction_completed",
-        "context_compaction_failed",
-        "tool_call_started",
-        "tool_call_completed",
-        "tool_call_result",
-        "tool_call_failed",
-        "interaction_requested",
-        "interaction_resolved",
-        "user_confirmation_requested",
-        "user_confirmation_resolved",
-        "execution_completed",
-        "execution_failed",
-        "execution_cancelled",
-        "error"
-      ]
+      "enum": ["session_snapshot", "execution_update", "message_update", "assistant_delta", "stream_snapshot"]
     },
     "conversationSessionId": { "type": "string", "minLength": 1 },
+    "session": { "type": "object" },
+    "execution": { "type": "object" },
+    "event": { "type": "object" },
+    "messages": { "type": "array", "items": { "$ref": "#/$defs/message" } },
+    "message": { "$ref": "#/$defs/message" },
     "executionId": { "type": "string", "minLength": 1 },
-    "executionEventSequence": { "type": "integer", "minimum": 1 },
     "executionAttemptNumber": { "type": "integer", "minimum": 0 },
     "modelInvocationSequence": { "type": "integer", "minimum": 0 },
     "outputDeltaSequence": { "type": "integer", "minimum": 0 },
@@ -43,98 +24,136 @@
     "answer": { "type": "string" },
     "checkpointedAt": { "type": ["string", "null"], "format": "date-time" },
     "occurredAt": { "type": "string", "format": "date-time" },
-    "phase": {
-      "type": "string",
-      "enum": [
-        "RECEIVED",
-        "PREPARING_CONTEXT",
-        "CONNECTING_MODEL",
-        "ANSWERING",
-        "PERSISTING",
-        "COMPLETED",
-        "FAILED"
-      ]
-    },
-    "payload": {
-      "type": "object",
-      "propertyNames": {
-        "not": {
-          "enum": ["prompt", "input", "output", "toolInput", "toolOutput"]
-        }
-      }
-    }
+    "phase": { "type": "string" }
   },
   "oneOf": [
     {
-      "title": "持久化生命周期事件",
-      "properties": {
-        "type": {
-          "enum": [
-            "execution_started",
-            "user_message",
-            "assistant_message",
-            "skill_activated",
-            "context_compaction_started",
-            "context_compaction_completed",
-            "context_compaction_failed",
-            "tool_call_started",
-            "tool_call_completed",
-            "tool_call_result",
-            "tool_call_failed",
-            "interaction_requested",
-            "interaction_resolved",
-            "user_confirmation_requested",
-            "user_confirmation_resolved",
-            "execution_completed",
-            "execution_failed",
-            "execution_cancelled",
-            "error"
-          ]
-        }
-      },
-      "required": ["executionEventSequence", "occurredAt"]
+      "title": "首次及重连权威会话快照",
+      "properties": { "type": { "const": "session_snapshot" } },
+      "required": ["session", "occurredAt"]
+    },
+    {
+      "title": "可直接归约的执行更新",
+      "properties": { "type": { "const": "execution_update" } },
+      "required": ["execution", "event", "messages"]
+    },
+    {
+      "title": "中心消息完整替换",
+      "properties": { "type": { "const": "message_update" } },
+      "required": ["message", "occurredAt"]
     },
     {
       "title": "回答增量",
-      "x-v2-extension": true,
       "properties": { "type": { "const": "assistant_delta" } },
       "required": ["executionId", "executionAttemptNumber", "modelInvocationSequence", "outputDeltaSequence", "delta", "occurredAt"]
     },
     {
       "title": "流检查点快照",
-      "x-v2-extension": true,
       "properties": { "type": { "const": "stream_snapshot" } },
-      "required": [
-        "executionId",
-        "executionAttemptNumber",
-        "modelInvocationSequence",
-        "outputDeltaSequence",
-        "answer",
-        "checkpointedAt",
-        "occurredAt"
-      ]
-    },
-    {
-      "title": "运行阶段变化",
-      "x-v2-extension": true,
-      "properties": { "type": { "const": "execution_phase_changed" } },
-      "required": ["executionId", "executionEventSequence", "phase", "occurredAt"]
+      "required": ["executionId", "executionAttemptNumber", "modelInvocationSequence", "outputDeltaSequence", "answer", "checkpointedAt", "occurredAt"]
     }
   ],
+  "$defs": {
+    "message": {
+      "type": "object",
+      "required": ["conversationMessageId", "executionId", "role", "author", "content", "version", "thinkingProcess", "createdAt", "citations"],
+      "properties": {
+        "conversationMessageId": { "type": "string" },
+        "executionId": { "type": ["string", "null"] },
+        "role": { "enum": ["user", "assistant", "system"] },
+        "author": { "type": "string" },
+        "content": { "type": "string" },
+        "version": { "type": "integer", "minimum": 0 },
+        "thinkingProcess": { "type": "array", "items": { "$ref": "#/$defs/processItem" } },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "citations": { "type": "array" }
+      }
+    },
+    "processItem": {
+      "oneOf": [
+        { "$ref": "#/$defs/thinkingItem" },
+        { "$ref": "#/$defs/toolItem" }
+      ]
+    },
+    "processCommon": {
+      "type": "object",
+      "required": ["processItemId", "sequence", "type", "status", "createdAt", "startedAt", "completedAt", "durationMillis", "schemaVersion"],
+      "properties": {
+        "processItemId": { "type": "string", "format": "uuid" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "type": { "enum": ["THINKING", "TOOL"] },
+        "status": { "enum": ["PREPARED", "RUNNING", "SUCCEEDED", "FAILED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "startedAt": { "type": ["string", "null"], "format": "date-time" },
+        "completedAt": { "type": ["string", "null"], "format": "date-time" },
+        "durationMillis": { "type": ["integer", "null"], "minimum": 0 },
+        "schemaVersion": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "thinkingItem": {
+      "allOf": [
+        { "$ref": "#/$defs/processCommon" },
+        {
+          "type": "object",
+          "required": ["content", "contentTruncated", "originalContentSizeBytes", "contentSha256", "modelInvocationSequence", "modelProvider", "modelName"],
+          "properties": {
+            "type": { "const": "THINKING" },
+            "content": { "type": "string" },
+            "contentTruncated": { "type": "boolean" },
+            "originalContentSizeBytes": { "type": "integer", "minimum": 0 },
+            "contentSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "modelInvocationSequence": { "type": "integer", "minimum": 1 },
+            "modelProvider": { "type": "string" },
+            "modelName": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "toolItem": {
+      "allOf": [
+        { "$ref": "#/$defs/processCommon" },
+        {
+          "type": "object",
+          "required": ["toolId", "toolName", "toolExecutionId", "toolCallId", "modelInvocationSequence", "input", "output", "success", "errorCode", "errorMessage"],
+          "properties": {
+            "type": { "const": "TOOL" },
+            "toolId": { "type": "string" },
+            "toolName": { "type": "string" },
+            "toolExecutionId": { "type": "string" },
+            "toolCallId": { "type": "string" },
+            "modelInvocationSequence": { "type": "integer", "minimum": 1 },
+            "input": { "$ref": "#/$defs/boundedPayload" },
+            "output": { "anyOf": [{ "$ref": "#/$defs/boundedPayload" }, { "type": "null" }] },
+            "success": { "type": ["boolean", "null"] },
+            "errorCode": { "type": ["string", "null"] },
+            "errorMessage": { "type": ["string", "null"] }
+          }
+        }
+      ]
+    },
+    "boundedPayload": {
+      "type": "object",
+      "required": ["value", "preview", "truncated", "originalSizeBytes", "sha256", "contentType"],
+      "properties": {
+        "value": {},
+        "preview": { "type": ["string", "null"] },
+        "truncated": { "type": "boolean" },
+        "originalSizeBytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "contentType": { "type": "string" }
+      }
+    }
+  },
   "x-frontend-projection": {
+    "session_snapshot": "conversation.detail",
+    "execution_update": "execution.timeline",
+    "message_update": "conversation.message",
     "assistant_delta": "assistant.draft",
-    "stream_snapshot": "execution.streamCheckpoint",
-    "execution_phase_changed": "execution.timeline"
+    "stream_snapshot": "execution.streamCheckpoint"
   },
   "x-sse-event-id": {
     "encoding": "e={sessionExecutionEventSequence};a={executionAttemptNumber};t={modelInvocationSequence};s={outputDeltaSequence}",
     "pattern": "^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$"
   },
-  "x-sensitive-payload-fields-forbidden": [
-    "prompt",
-    "input",
-    "output",
-    "toolInput",
-    "toolOutput"
-  ]
+  "x-sensitive-payload-fields-forbidden": ["prompt", "toolInput", "toolOutput"]
 }

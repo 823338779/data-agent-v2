@@ -102,7 +102,10 @@ class AgentV2ApplicationTest {
 
         mvc.perform(get("/api/v1/agent-sessions").cookie(session))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].conversationSessionId").value(conversationSessionId));
+                .andExpect(jsonPath("$[0].conversationSessionId").value(conversationSessionId))
+                .andExpect(jsonPath("$[0].status").value("idle"))
+                .andExpect(jsonPath("$[0].messages").doesNotExist())
+                .andExpect(jsonPath("$[0].execution").doesNotExist());
         mvc.perform(
                         get("/api/v1/agent-sessions/{conversationSessionId}", conversationSessionId)
                                 .cookie(session))
@@ -255,7 +258,7 @@ class AgentV2ApplicationTest {
     }
 
     @Test
-    void eventStreamReplaysPersistedExecutionEventsAndStaysOpen() throws Exception {
+    void eventStreamStartsWithOneAuthoritativeSessionSnapshotAndStaysOpen() throws Exception {
         Cookie session = login();
         String created =
                 mvc.perform(
@@ -291,7 +294,35 @@ class AgentV2ApplicationTest {
                         content()
                                 .string(
                                         org.hamcrest.Matchers.containsString(
-                                                "event:execution_queued")))
+                                                "event:session_snapshot")))
+                .andExpect(
+                        content()
+                                .string(
+                                        org.hamcrest.Matchers.not(
+                                                org.hamcrest.Matchers.containsString(
+                                                        "event:execution_queued"))))
+                .andExpect(request().asyncStarted());
+
+        // 新建 EventSource 显式携带旧游标时只补发增量更新，不再重复完整详情快照。
+        mvc.perform(
+                        get(
+                                        "/api/v1/agent-sessions/{conversationSessionId}/events",
+                                        conversationSessionId)
+                                .queryParam("cursor", "e=0;a=0;t=0;s=0")
+                                .cookie(session)
+                                .accept(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(status().isOk())
+                .andExpect(
+                        content()
+                                .string(
+                                        org.hamcrest.Matchers.containsString(
+                                                "event:execution_update")))
+                .andExpect(
+                        content()
+                                .string(
+                                        org.hamcrest.Matchers.not(
+                                                org.hamcrest.Matchers.containsString(
+                                                        "event:session_snapshot"))))
                 .andExpect(request().asyncStarted());
     }
 
@@ -332,7 +363,7 @@ class AgentV2ApplicationTest {
                                 .content("{\"content\":\"stream live\"}"))
                 .andExpect(status().isAccepted());
 
-        assertThat(stream.getResponse().getContentAsString()).contains("event:execution_queued");
+        assertThat(stream.getResponse().getContentAsString()).contains("event:execution_update");
     }
 
     private Cookie login() throws Exception {

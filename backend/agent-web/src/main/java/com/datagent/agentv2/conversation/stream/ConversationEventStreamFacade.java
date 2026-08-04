@@ -2,9 +2,9 @@ package com.datagent.agentv2.conversation.stream;
 
 import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotification;
 import com.datagent.agentv2.conversation.enums.ConversationStreamEventType;
-import com.datagent.agentv2.conversation.enums.ExecutionEventType;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
+import com.datagent.agentv2.conversation.process.ConversationMessageChanged;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeProperties;
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
 import com.datagent.agentv2.conversation.session.ConversationView;
@@ -115,17 +115,8 @@ public final class ConversationEventStreamFacade {
         emitter.onTimeout(() -> remove(subscription));
         emitter.onError(ignored -> remove(subscription));
 
-        // replay 后发送数据库 snapshot，最后按坐标刷新握手期间到达的缓冲。
-        conversations
-                .replayEvents(conversationSessionId, cursor.executionEventSequence())
-                .forEach(subscription::acceptEvent);
-        ConversationApplicationService.ExecutionStreamCheckpointView snapshot =
-                conversations.currentStream(conversationSessionId);
-
-        // 没有执行流时只 replay 生命周期事件，不发送空 snapshot。
-        if (snapshot != null) {
-            sendSnapshot(subscription, snapshot);
-        }
+        // 首次连接直接发送一个权威会话快照；续传连接只 replay 游标之后的缺失更新。
+        subscription.acceptInitialSnapshot(conversations.streamBootstrap(conversationSessionId));
         subscription.finishInitialization();
         return emitter;
     }
@@ -144,11 +135,32 @@ public final class ConversationEventStreamFacade {
         if (sessionSubscriptions == null || sessionSubscriptions.isEmpty()) {
             return;
         }
-        ConversationView.AgentExecutionEventView event =
-                conversations.eventView(notification.event());
+        ConversationView.AgentExecutionUpdateView update =
+                conversations.executionUpdate(notification.event());
 
         // 每个连接自行依据 cursor 去重并处理初始化缓冲。
-        sessionSubscriptions.forEach(subscription -> subscription.acceptEvent(event));
+        sessionSubscriptions.forEach(subscription -> subscription.acceptUpdate(update));
+    }
+
+    /** 中心消息事务提交后，把完整消息替换实时投递到本实例同一会话的连接。 */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void publish(ConversationMessageChanged changed) {
+        SessionKey key = new SessionKey(changed.tenantId(), changed.conversationSessionId());
+        Set<Subscription> sessionSubscriptions = subscriptions.get(key);
+        if (sessionSubscriptions == null || sessionSubscriptions.isEmpty()) {
+            return;
+        }
+        ConversationView.MessageView message =
+                conversations.messageViewById(
+                        changed.conversationSessionId(), changed.conversationMessageId());
+        boolean active = conversations.hasActiveExecution(changed.conversationSessionId());
+        sessionSubscriptions.forEach(
+                subscription -> {
+                    subscription.acceptMessage(message);
+                    if (!active) {
+                        subscription.completeAfterPending();
+                    }
+                });
     }
 
     /** 每秒仅扫描本实例仍有详细连接的会话，补齐持久事件与 checkpoint。 */
@@ -204,19 +216,34 @@ public final class ConversationEventStreamFacade {
                                 reconciliation
                                         .snapshotsBySession()
                                         .get(key.conversationSessionId()),
+                                reconciliation
+                                        .assistantMessagesBySession()
+                                        .get(key.conversationSessionId()),
+                                reconciliation
+                                        .activeBySession()
+                                        .getOrDefault(key.conversationSessionId(), false),
                                 now));
     }
 
     /** 使用持久事件和最新 checkpoint 对账一个会话的全部本地连接。 */
     private void reconcileSession(
             Set<Subscription> values,
-            List<ConversationView.AgentExecutionEventView> events,
+            List<ConversationView.AgentExecutionUpdateView> events,
             ConversationApplicationService.ExecutionStreamCheckpointView snapshot,
+            ConversationView.MessageView assistantMessage,
+            boolean active,
             Instant now) {
         // CopyOnWrite set 允许连接关闭与当前遍历并发发生。
         for (Subscription subscription : values) {
             // 持久事件由连接游标去重，因此可向同一会话全部连接投递。
-            events.forEach(subscription::acceptEvent);
+            events.forEach(subscription::acceptUpdate);
+            if (assistantMessage != null) {
+                subscription.acceptMessage(assistantMessage);
+            }
+            if (!active) {
+                subscription.completeAfterPending();
+                continue;
+            }
 
             // snapshot 只在身份、投影、序号或 gap 状态能够推进时发送。
             if (snapshot != null && subscription.needs(snapshot)) {
@@ -347,7 +374,7 @@ public final class ConversationEventStreamFacade {
         private final SseEmitter emitter;
 
         /** 连接级回答增量乱序缓冲与 snapshot 对账器。 */
-        private final ExecutionStreamResynchronizer resynchronizer;
+        private ExecutionStreamResynchronizer resynchronizer;
 
         /** 保证单连接事件按入队顺序串行写入 emitter 的专属执行器。 */
         private final ThreadPoolExecutor sender;
@@ -356,11 +383,17 @@ public final class ConversationEventStreamFacade {
         private final AtomicBoolean closed = new AtomicBoolean();
 
         /** 握手期间到达的持久生命周期事件。 */
-        private final List<ConversationView.AgentExecutionEventView> pendingEvents =
+        private final List<ConversationView.AgentExecutionUpdateView> pendingEvents =
                 new ArrayList<>();
 
         /** 握手期间由本地或 Redis 到达的瞬时回答增量。 */
         private final List<AgentExecutionDeltaNotification> pendingDeltas = new ArrayList<>();
+
+        /** 握手期间到达的中心消息全量替换。 */
+        private final List<ConversationView.MessageView> pendingMessages = new ArrayList<>();
+
+        /** 当前连接已发送的每条消息版本，用于本地事件和跨实例对账共同去重。 */
+        private final Map<String, Long> messageVersions = new HashMap<>();
 
         /** 当前连接已经确认的持久事件与流复合游标。 */
         private volatile CompositeSseCursor cursor;
@@ -388,19 +421,76 @@ public final class ConversationEventStreamFacade {
             this.sender = sender();
         }
 
-        /** 接受持久生命周期事件，并按连接事件游标去重或暂存。 */
-        private synchronized void acceptEvent(ConversationView.AgentExecutionEventView event) {
+        /** 接受持久执行更新，并按连接事件游标去重或暂存。 */
+        private synchronized void acceptUpdate(ConversationView.AgentExecutionUpdateView update) {
             // 已经 replay/发送过的事件序号不再重复入队。
-            if (event.executionEventSequence() <= cursor.executionEventSequence()) {
+            if (update.event().executionEventSequence() <= cursor.executionEventSequence()) {
                 return;
             }
 
             // 初始化完成前先缓冲，保证 replay、snapshot 和实时事件顺序可控。
             if (initializing) {
-                pendingEvents.add(event);
+                pendingEvents.add(update);
                 return;
             }
-            sendEvent(event);
+            sendUpdate(update);
+        }
+
+        /** 仅当消息版本前进时发送完整替换，重复本地事件和 reconciliation 保持幂等。 */
+        private synchronized void acceptMessage(ConversationView.MessageView message) {
+            long knownVersion = messageVersions.getOrDefault(message.conversationMessageId(), -1L);
+            if (message.version() <= knownVersion) {
+                return;
+            }
+            if (initializing) {
+                pendingMessages.add(message);
+                return;
+            }
+            sendMessage(message);
+        }
+
+        /** 使用首次数据库快照建立复合游标，并只发送一次完整会话状态。 */
+        private synchronized void acceptInitialSnapshot(
+                ConversationApplicationService.SessionStreamBootstrapView bootstrap) {
+            ConversationView.AgentExecutionView execution = bootstrap.session().execution();
+            ConversationView.AgentExecutionStreamCheckpointView checkpoint =
+                    execution == null ? null : execution.streamCheckpoint();
+            CompositeSseCursor bootstrapCursor =
+                    checkpoint == null
+                            ? new CompositeSseCursor(bootstrap.executionEventSequence(), 0L, 0L, 0L)
+                            : new CompositeSseCursor(
+                                    bootstrap.executionEventSequence(),
+                                    checkpoint.executionAttemptNumber(),
+                                    checkpoint.modelInvocationSequence(),
+                                    checkpoint.outputDeltaSequence());
+            cursor = bootstrapCursor;
+            resynchronizer = new ExecutionStreamResynchronizer(bootstrapCursor);
+            bootstrap
+                    .session()
+                    .messages()
+                    .forEach(
+                            message ->
+                                    messageVersions.put(
+                                            message.conversationMessageId(), message.version()));
+            if (checkpoint != null) {
+                snapshotExecutionId = execution.executionId();
+                localRegistration.resume(
+                        execution.executionId(),
+                        checkpoint.executionAttemptNumber(),
+                        checkpoint.modelInvocationSequence(),
+                        checkpoint.outputDeltaSequence());
+            }
+            send(
+                    ConversationStreamEventType.SESSION_SNAPSHOT.value(),
+                    bootstrapCursor,
+                    new SessionSnapshotEvent(
+                            ConversationStreamEventType.SESSION_SNAPSHOT,
+                            conversationSessionId,
+                            bootstrap.session(),
+                            Instant.now()));
+            if (execution == null || isTerminal(execution.status())) {
+                completeAfterPending();
+            }
         }
 
         /** 接受回答增量，并在初始化后交给重同步器筛选连续消息。 */
@@ -426,9 +516,12 @@ public final class ConversationEventStreamFacade {
             pendingEvents.stream()
                     .sorted(
                             Comparator.comparingLong(
-                                    ConversationView.AgentExecutionEventView
-                                            ::executionEventSequence))
-                    .forEach(this::sendEvent);
+                                    update -> update.event().executionEventSequence()))
+                    .filter(
+                            update ->
+                                    update.event().executionEventSequence()
+                                            > cursor.executionEventSequence())
+                    .forEach(this::sendUpdate);
 
             // 回答增量按 attempt、模型调用、delta 三段坐标排序后交给重同步器。
             pendingDeltas.stream()
@@ -443,25 +536,53 @@ public final class ConversationEventStreamFacade {
                     .flatMap(envelope -> resynchronizer.accept(envelope, Instant.now()).stream())
                     .forEach(this::sendDelta);
 
+            // 初始化快照之后只发送版本更高的并发消息替换。
+            pendingMessages.stream()
+                    .sorted(Comparator.comparingLong(ConversationView.MessageView::version))
+                    .forEach(this::acceptMessageAfterSnapshot);
+
             // 清空临时引用后再关闭初始化标记，使之后入站消息直接实时处理。
             pendingEvents.clear();
             pendingDeltas.clear();
+            pendingMessages.clear();
             initializing = false;
         }
 
+        private void acceptMessageAfterSnapshot(ConversationView.MessageView message) {
+            long knownVersion = messageVersions.getOrDefault(message.conversationMessageId(), -1L);
+            if (message.version() > knownVersion) {
+                sendMessage(message);
+            }
+        }
+
         /** 推进持久事件游标并把生命周期事件加入连接发送队列。 */
-        private void sendEvent(ConversationView.AgentExecutionEventView event) {
-            cursor = cursor.withEvent(event.executionEventSequence());
+        private void sendUpdate(ConversationView.AgentExecutionUpdateView update) {
+            cursor = cursor.withEvent(update.event().executionEventSequence());
             send(
-                    event.type().value(),
+                    ConversationStreamEventType.EXECUTION_UPDATE.value(),
                     cursor,
-                    new LifecycleEvent(
-                            event.type(),
+                    new ExecutionUpdateEvent(
+                            ConversationStreamEventType.EXECUTION_UPDATE,
+                            update.conversationSessionId(),
+                            update.execution(),
+                            update.event(),
+                            update.messages()));
+            if (isTerminal(update.execution().status())) {
+                completeAfterPending();
+            }
+        }
+
+        /** 记录新版本并发送不带补丁语义的完整消息替换。 */
+        private void sendMessage(ConversationView.MessageView message) {
+            messageVersions.put(message.conversationMessageId(), message.version());
+            send(
+                    ConversationStreamEventType.MESSAGE_UPDATE.value(),
+                    cursor,
+                    new MessageUpdateEvent(
+                            ConversationStreamEventType.MESSAGE_UPDATE,
                             conversationSessionId,
-                            event.executionId(),
-                            event.executionEventSequence(),
-                            event.occurredAt(),
-                            new LifecycleEventPayload(event.status())));
+                            message,
+                            Instant.now()));
         }
 
         /** 推进流坐标并把回答增量事件加入连接发送队列。 */
@@ -511,6 +632,25 @@ public final class ConversationEventStreamFacade {
             } catch (RejectedExecutionException failure) {
                 // 有界队列已满说明客户端持续过慢，关闭连接让其通过 snapshot 重连。
                 closeWithError(this, new IllegalStateException("SSE client is too slow", failure));
+            }
+        }
+
+        /** 在已经排队的最终事件写出后主动结束终态或空闲会话连接。 */
+        private void completeAfterPending() {
+            if (closed.get()) {
+                return;
+            }
+            try {
+                sender.execute(
+                        () -> {
+                            try {
+                                emitter.complete();
+                            } finally {
+                                remove(this);
+                            }
+                        });
+            } catch (RejectedExecutionException ignored) {
+                remove(this);
             }
         }
 
@@ -564,30 +704,44 @@ public final class ConversationEventStreamFacade {
      */
     private record SessionKey(String tenantId, String conversationSessionId) {}
 
-    /**
-     * 发送给客户端的持久执行生命周期事件。
-     *
-     * @param type 事件类型，同时作为 SSE event name
-     * @param conversationSessionId 会话标识
-     * @param executionId Agent 执行标识
-     * @param executionEventSequence 会话内持久事件序号
-     * @param occurredAt 事件发生时间
-     * @param payload 固定状态载荷
-     */
-    private record LifecycleEvent(
-            ExecutionEventType type,
-            String conversationSessionId,
-            String executionId,
-            long executionEventSequence,
-            Instant occurredAt,
-            LifecycleEventPayload payload) {}
+    /** 终态或空闲会话不再占用详情 SSE 连接。 */
+    private static boolean isTerminal(ExecutionStatus status) {
+        return status == ExecutionStatus.DONE
+                || status == ExecutionStatus.CANCELLED
+                || status == ExecutionStatus.FAILED
+                || status == ExecutionStatus.LOST;
+    }
 
-    /**
-     * 生命周期事件的固定状态载荷。
-     *
-     * @param status Agent 执行状态
-     */
-    private record LifecycleEventPayload(ExecutionStatus status) {}
+    /** 首次详情流发送的完整会话快照。 */
+    private record SessionSnapshotEvent(
+            /** 固定为 session_snapshot。 */
+            ConversationStreamEventType type,
+            /** 快照所属会话。 */
+            String conversationSessionId,
+            /** 当前数据库权威会话投影。 */
+            ConversationView session,
+            /** 快照发送时间。 */
+            Instant occurredAt) {}
+
+    /** 前端可以直接幂等归约的执行状态、单个时间线事件和相关消息。 */
+    private record ExecutionUpdateEvent(
+            /** 固定为 execution_update。 */
+            ConversationStreamEventType type,
+            /** 更新所属会话。 */
+            String conversationSessionId,
+            /** 当前轻量执行状态。 */
+            ConversationView.AgentExecutionStateView execution,
+            /** 本次新增的持久时间线事件。 */
+            ConversationView.AgentExecutionEventView event,
+            /** 当前执行已经产生的用户可见消息。 */
+            List<ConversationView.MessageView> messages) {}
+
+    /** assistant 正文及 thinkingProcess 更新使用的完整消息替换事件。 */
+    private record MessageUpdateEvent(
+            ConversationStreamEventType type,
+            String conversationSessionId,
+            ConversationView.MessageView message,
+            Instant occurredAt) {}
 
     /**
      * 发送给客户端的瞬时回答增量事件。

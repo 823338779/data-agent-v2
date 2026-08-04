@@ -36,28 +36,11 @@ class ContractExamplesTest {
                     .build();
     private static final Set<String> SESSION_EVENTS =
             Set.of(
-                    "execution_started",
-                    "user_message",
-                    "assistant_message",
+                    "session_snapshot",
+                    "execution_update",
+                    "message_update",
                     "assistant_delta",
-                    STREAM_SNAPSHOT,
-                    "execution_phase_changed",
-                    "skill_activated",
-                    "context_compaction_started",
-                    "context_compaction_completed",
-                    "context_compaction_failed",
-                    "tool_call_started",
-                    "tool_call_completed",
-                    "tool_call_result",
-                    "tool_call_failed",
-                    "interaction_requested",
-                    "interaction_resolved",
-                    "user_confirmation_requested",
-                    "user_confirmation_resolved",
-                    "execution_completed",
-                    "execution_failed",
-                    "execution_cancelled",
-                    "error");
+                    STREAM_SNAPSHOT);
 
     @ParameterizedTest
     @ValueSource(
@@ -143,13 +126,12 @@ class ContractExamplesTest {
         assertThat(schemaNode.path("x-frontend-projection").has("reasoning_delta")).isFalse();
         assertThat(schemaNode.path("x-frontend-projection").path("assistant_delta").asString())
                 .isEqualTo("assistant.draft");
-        assertThat(
-                        schemaNode
-                                .path("x-frontend-projection")
-                                .path("execution_phase_changed")
-                                .asString())
+        assertThat(schemaNode.path("x-frontend-projection").path("execution_update").asString())
                 .isEqualTo("execution.timeline");
-        assertThat(schemaNode.toString()).contains("\"x-v2-extension\":true");
+        assertThat(schemaNode.path("x-frontend-projection").path("session_snapshot").asString())
+                .isEqualTo("conversation.detail");
+        assertThat(schemaNode.path("x-frontend-projection").path("message_update").asString())
+                .isEqualTo("conversation.message");
     }
 
     @Test
@@ -225,7 +207,7 @@ class ContractExamplesTest {
                             .toList();
         }
 
-        assertThat(examples).hasSize(6);
+        assertThat(examples).hasSize(5);
         for (java.nio.file.Path example : examples) {
             tools.jackson.databind.JsonNode value = JSON.readTree(example);
             assertThat(schema.validate(value)).as(example.getFileName().toString()).isEmpty();
