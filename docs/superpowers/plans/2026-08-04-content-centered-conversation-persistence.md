@@ -42,7 +42,7 @@
 - `backend/agent-web/.../process/ThinkingProcessAuditLogger.java`：事务提交后向专用 logger 输出一次完整安全事件。
 - `backend/agent-web/.../process/ConversationMessageChanged.java`：事务提交后触发本机 SSE 消息替换事件。
 - `frontend/src/components/MessageProcessTimeline.tsx`：按 assistant 消息渲染可展开的 thinking/tool 时间线。
-- `frontend/src/App.tsx`：根据处理中会话集合和当前路由按需建立、切换及关闭 activity/detail SSE。
+- `frontend/src/App.tsx`：只为当前页面正在处理的 sessionId 建立详情 SSE，并以 60 秒 REST 轮询更新后台处理中的会话摘要。
 
 ### Task 1: 定义强类型 ProcessItem 并完成 JSONB 编解码
 
@@ -908,10 +908,11 @@ git commit -m "feat: converge process items at execution boundaries"
 **Interfaces:**
 - `ConversationView.MessageView` adds `long version` and `List<ThinkingProcessItem> thinkingProcess`.
 - Adds SSE event `message_update` with `{type, conversationSessionId, message, occurredAt}`.
+- Every event emitted by `GET /api/v1/agent-sessions/{conversationSessionId}/events` includes that exact `conversationSessionId`, including `session_snapshot`, `execution_update`, `message_update`, `stream_snapshot`, and `assistant_delta`.
 
 - [ ] **Step 1: Write contract and SSE replacement tests**
 
-Assert REST, `session_snapshot`, `execution_update`, and `message_update` use the same Message schema; user messages return `thinkingProcess: []`; assistant update includes the same message ID, incremented version, ordered nodes, timestamps, durations, truncation metadata, and final content.
+Assert REST, `session_snapshot`, `execution_update`, and `message_update` use the same Message schema; user messages return `thinkingProcess: []`; assistant update includes the same message ID, incremented version, ordered nodes, timestamps, durations, truncation metadata, and final content. Assert every detail SSE example carries the route sessionId and no event from another session is emitted to that subscription.
 
 Cross-instance integration test opens SSE on instance A, mutates the process on instance B, runs the existing reconciliation tick, and expects one `message_update`. Repeating the same version must not send another replacement. Reconnect must receive the PostgreSQL snapshot even if the low-latency update was missed.
 
@@ -932,7 +933,7 @@ Expected: FAIL because MessageView and the SSE union do not contain process data
 
 `ConversationEventStreamFacade` listens for `ConversationMessageChanged` AFTER_COMMIT and immediately sends `message_update` to local subscribers. Its one-second reconciliation also compares `(conversationMessageId, version)` so another instance converges without Redis. `message_update` is a full replacement, not a patch; frontend idempotency therefore depends on message ID/version and ProcessItem UUID. Initial/reconnect `session_snapshot` remains authoritative.
 
-Update OpenAPI and JSON Schema with discriminated THINKING/TOOL shapes, required common timestamp fields, nullable lifecycle fields, and the bounded payload object. Keep `thinkingProcess` required and allow an empty array.
+Update OpenAPI and JSON Schema with discriminated THINKING/TOOL shapes, required common timestamp fields, nullable lifecycle fields, and the bounded payload object. Keep `thinkingProcess` required and allow an empty array. Make `conversationSessionId` required on all five detail SSE variants; keep the URL sessionId as the server-side routing/filter key.
 
 - [ ] **Step 4: Run contract/SSE tests**
 
@@ -973,7 +974,7 @@ git commit -m "feat: stream conversation process message updates"
 
 **Interfaces:**
 - Produces: discriminated TypeScript union `ThinkingProcessItem = ModelThinkingProcessItem | ToolThinkingProcessItem`; SSE reducer replaces messages by ID/version; `MessageProcessTimeline` uses `processItemId` as React key.
-- Produces: `isProcessingStatus(AgentExecutionStatus): boolean`; 页面在没有处理中会话时保持零 SSE，最多同时持有一条 activity SSE 和一条当前会话 detail SSE。
+- Produces: `isProcessingStatus(AgentExecutionStatus): boolean`; `BACKGROUND_POLL_INTERVAL_MS = 60_000`; 页面最多只持有一条与当前 `conversationSessionId` 绑定的 detail SSE，后台状态只通过摘要 REST 轮询。
 
 - [ ] **Step 1: Write mapper, reducer, and UI tests**
 
@@ -989,26 +990,32 @@ it('renders ordered process items under their assistant message', () => {
 
 Also test `thinkingProcess: []` renders nothing, failed tools display error code/message, `message_update` with higher version replaces one message, and duplicate/older versions are ignored.
 
-Add connection-lifecycle tests with explicit close spies:
+Add connection and polling lifecycle tests with explicit close/timer assertions:
 
 ```tsx
-it('opens streams only for processing sessions and closes them after terminal merge', async () => {
-  const closeActivity = vi.fn();
+it('uses one session SSE for the viewed run and polls background runs every minute', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
   const closeDetail = vi.fn();
   let detailListener: Parameters<AgentBackendClient['subscribeSessionEvents']>[1] | undefined;
-  const queuedSession: ConversationSession = {
+  const backgroundSummary: ConversationSession = {
     ...session,
+    conversationSessionId: 'session_2',
+    title: '后台分析',
+    activityStatus: 'running',
+  };
+  const backgroundDetail: ConversationSession = {
+    ...backgroundSummary,
     execution: {
       ...completedExecution('execution_1', ''),
-      status: 'queued',
-      progress: 0,
+      status: 'running',
+      progress: 25,
       streamCheckpoint: null,
     },
   };
   const backend = client({
-    listSessions: vi.fn().mockResolvedValue([session]),
-    submitMessage: vi.fn().mockResolvedValue(queuedSession),
-    subscribeActivity: vi.fn(() => closeActivity),
+    listSessions: vi.fn().mockResolvedValue([session, backgroundSummary]),
+    getSession: vi.fn((sessionId) => Promise.resolve(
+      sessionId === 'session_2' ? backgroundDetail : session)),
     subscribeSessionEvents: vi.fn((_sessionId, listener) => {
       detailListener = listener;
       return closeDetail;
@@ -1016,21 +1023,19 @@ it('opens streams only for processing sessions and closes them after terminal me
   });
   render(<App client={backend} />);
 
-  expect(backend.subscribeActivity).not.toHaveBeenCalled();
   expect(backend.subscribeSessionEvents).not.toHaveBeenCalled();
 
-  fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
-  fireEvent.change(screen.getByLabelText('输入消息'), {
-    target: { value: '分析订单延迟' },
-  });
-  fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
-  await waitFor(() => expect(backend.subscribeActivity).toHaveBeenCalledTimes(1));
-  expect(backend.subscribeSessionEvents).toHaveBeenCalledWith(
-    'session_1', expect.any(Function), expect.any(Function));
+  await act(async () => vi.advanceTimersByTimeAsync(60_000));
+  expect(backend.listSessions).toHaveBeenCalledTimes(2);
+
+  fireEvent.click(screen.getByRole('button', { name: /后台分析/ }));
+  await waitFor(() => expect(backend.getSession).toHaveBeenCalledWith('session_2'));
+  await waitFor(() => expect(backend.subscribeSessionEvents).toHaveBeenCalledWith(
+    'session_2', expect.any(Function), expect.any(Function)));
 
   act(() => detailListener?.({
     type: 'execution_update',
-    conversationSessionId: 'session_1',
+    conversationSessionId: 'session_2',
     execution: {
       executionId: 'execution_1', status: 'done', progress: 100,
       objective: '分析订单延迟', cancellationRequestedAt: null, streamCheckpoint: null,
@@ -1047,13 +1052,13 @@ it('opens streams only for processing sessions and closes them after terminal me
       thinkingProcess: [], execution: null,
     }],
   }));
-  expect(closeDetail).toHaveBeenCalledTimes(1);
-  expect(closeActivity).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(closeDetail).toHaveBeenCalledTimes(1));
   expect(screen.getByText('最终回答')).toBeInTheDocument();
+  vi.useRealTimers();
 });
 ```
 
-Add a second test with two background processing sessions: switching to a terminal history page closes the old detail SSE but keeps exactly one activity SSE; opening another processing session replaces, rather than adds, the detail SSE. Assert `cancelExecution` is never called by connection cleanup.
+Add separate tests that (1) a terminal current session performs one `getSession(sessionId)` and opens no SSE, (2) switching session IDs closes the previous detail SSE before opening another, (3) an SSE payload with a different `conversationSessionId` is rejected without changing state, (4) background summary polling preserves current-page messages/process items, and (5) when no background session is processing the 60-second timer is cleared. Remove the obsolete activity-subscription test and assert connection cleanup never calls `cancelExecution`.
 
 - [ ] **Step 2: Run frontend tests and verify missing types/component**
 
@@ -1109,7 +1114,19 @@ export function isProcessingStatus(status: AgentExecutionStatus): boolean {
 }
 ```
 
-In `App.tsx`, derive `hasProcessingSession` from `session.execution?.status ?? session.activityStatus ?? 'idle'`. The activity effect returns without subscribing when false. The detail effect returns unless the routed `active` session is processing. Both effects return the unsubscribe callback, so status transition, route switch, backend replacement, and unmount close the old EventSource before another is opened. Apply a terminal `execution_update` (including its final message) to state before the derived status becomes terminal and triggers cleanup. On SSE error, perform one existing REST synchronization; do not create a retry loop when the refreshed state has no processing session.
+Use the exact polling constant:
+
+```ts
+const BACKGROUND_POLL_INTERVAL_MS = 60_000;
+```
+
+Remove the activity subscription effect from `App.tsx` and remove `subscribeActivity` plus unused activity event types/constants from the frontend client/domain. Keep the backend endpoint untouched for compatibility; the browser no longer calls it.
+
+On every route sessionId change, set a local `loadedDetailSessionId` gate to `null`, call `backend.getSession(sessionId)`, ignore a late response after cleanup, merge the returned detail, then set the gate to that same sessionId. The detail SSE effect requires `loadedDetailSessionId === active.conversationSessionId` and `isProcessingStatus(active.execution?.status ?? active.activityStatus ?? 'idle')`; it calls only `subscribeSessionEvents(active.conversationSessionId, ...)` and returns its close callback. Applying a matching terminal `execution_update` first changes state to terminal and only then triggers effect cleanup.
+
+Derive `hasBackgroundProcessingSession` by excluding the routed sessionId and checking the same processing-status helper. When true, install `window.setInterval(() => void loadSessionSummariesSilently(), BACKGROUND_POLL_INTERVAL_MS)`; when false or on unmount, clear the timer. The silent summary merge updates only title/tag/version/status/unread/order/timestamps and preserves the current page’s messages, execution details, answer, and `thinkingProcess`. Opening any background session always performs a fresh detail GET before deciding whether to establish its session-specific SSE.
+
+In `backendAgentClient.subscribeSessionEvents`, validate every decoded event before invoking `onEvent`: `session_snapshot.conversationSessionId`, `execution_update.conversationSessionId`, `message_update.conversationSessionId`, `stream_snapshot.conversationSessionId`, and `assistant_delta.conversationSessionId` must equal the sessionId used in the URL. A mismatch calls `onError` with a stable protocol error and is not reduced into UI state.
 
 - [ ] **Step 4: Run frontend tests and production build**
 
@@ -1219,5 +1236,5 @@ Copy the exit code and concise result of each Step 3–5 command into the execut
 - [ ] thinking 不进入模型上下文，工具上下文仅从数据库中的 Tool ProcessItem 重建，终态工具不重复执行。
 - [ ] 完成、失败、取消、deadline 和 recovery exhaustion 后不存在未收敛节点。
 - [ ] REST、SSE 和前端围绕同一 message ID/version 展示 `content + thinkingProcess`，断线后由 PostgreSQL 快照恢复。
-- [ ] 没有处理中会话时页面占用零条 SSE；有后台执行时最多一条 activity SSE，且只有当前查看的处理中会话额外占用一条 detail SSE。
+- [ ] 前端不调用 activity SSE；最多只为当前查看且正在处理的 sessionId 建立一条 detail SSE，后台处理中会话通过 60 秒摘要 REST 轮询更新。
 - [ ] 后端最小测试、全量 `verify`、前端测试和生产构建均通过，或明确记录不可用基础设施造成的唯一未验证项。
