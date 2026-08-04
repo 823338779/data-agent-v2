@@ -22,7 +22,6 @@ import tools.jackson.databind.json.JsonMapper;
 class ContractExamplesTest {
 
     private static final String ACTIVITY_SNAPSHOT_EXAMPLE = "session-activity-snapshot.json";
-    private static final String COMPOSITE_CURSOR_PATTERN = "^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$";
     private static final String STREAM_SNAPSHOT = "stream_snapshot";
 
     private static final YAMLMapper YAML = new YAMLMapper();
@@ -31,7 +30,6 @@ class ContractExamplesTest {
             Dialect.builder(Draft202012.getInstance())
                     .keyword(new NonValidationKeyword("x-v2-extension"))
                     .keyword(new NonValidationKeyword("x-frontend-projection"))
-                    .keyword(new NonValidationKeyword("x-sse-event-id"))
                     .keyword(new NonValidationKeyword("x-sensitive-payload-fields-forbidden"))
                     .build();
     private static final Set<String> SESSION_EVENTS =
@@ -169,13 +167,9 @@ class ContractExamplesTest {
                                 .asInt())
                 .isZero();
 
-        // Last-Event-ID 使用稳定 e/a/t/s 编码，同时恢复持久事件与瞬时流位置。
-        JsonNode lastExecutionEventId = eventPath.path("parameters").path(1);
-        assertThat(lastExecutionEventId.path("name").asText()).isEqualTo("Last-Event-ID");
-        assertThat(lastExecutionEventId.path("schema").path("pattern").asText())
-                .isEqualTo(COMPOSITE_CURSOR_PATTERN);
-        assertThat(schema.path("x-sse-event-id").path("pattern").asString())
-                .isEqualTo(COMPOSITE_CURSOR_PATTERN);
+        // 会话详情 SSE 总是从权威快照开始，不再暴露客户端续传游标。
+        assertThat(eventPath.path("parameters").size()).isOne();
+        assertThat(schema.has("x-sse-event-id")).isFalse();
 
         // Delta 带完整流坐标，snapshot 额外携带可收敛的累计正文与 checkpoint 时间。
         assertThat(schema.path("properties").path("type").path("enum").toString())

@@ -87,16 +87,9 @@ public class ConversationController {
     @GetMapping(
             value = "/{conversationSessionId}/events",
             produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    SseEmitter events(
-            @PathVariable String conversationSessionId,
-            @RequestHeader(value = "Last-Event-ID", required = false) String lastExecutionEventId,
-            @org.springframework.web.bind.annotation.RequestParam(required = false) String cursor) {
-        // 原生 EventSource 自动重连使用 Last-Event-ID；切换会话后新建连接使用 query cursor。
-        String resumeCursor =
-                lastExecutionEventId == null || lastExecutionEventId.isBlank()
-                        ? cursor
-                        : lastExecutionEventId;
-        return eventStreams.open(conversationSessionId, resumeCursor);
+    SseEmitter events(@PathVariable String conversationSessionId) {
+        // 每次连接都从权威会话快照开始，客户端无需提交历史续传位置。
+        return eventStreams.open(conversationSessionId);
     }
 
     @PostMapping("/{conversationSessionId}/messages")

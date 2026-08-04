@@ -67,22 +67,20 @@ public final class ConversationEventStreamFacade {
     }
 
     /**
-     * 打开一个经过会话鉴权的详细 SSE 连接，并完成事件 replay 与流 snapshot 握手。
+     * 打开一个经过会话鉴权的详细 SSE 连接，并完成权威 snapshot 与实时流握手。
      *
      * @param conversationSessionId 目标会话标识
-     * @param lastExecutionEventId 客户端上次确认的复合 SSE 游标
      * @return 无服务端超时、由连接生命周期主动关闭的 emitter
      */
-    public SseEmitter open(String conversationSessionId, String lastExecutionEventId) {
+    public SseEmitter open(String conversationSessionId) {
         // 鉴权必须在注册任何本地/Redis 资源之前完成，避免越权连接短暂接收消息。
         String tenantId = TenantContext.requiredTenantId();
         conversations.requireAccessibleSession(conversationSessionId);
 
-        // 客户端游标同时包含持久事件位置和回答流三段坐标。
-        CompositeSseCursor cursor = CompositeSseCursor.parse(lastExecutionEventId);
         SseEmitter emitter = new SseEmitter(0L);
         Subscription subscription =
-                new Subscription(tenantId, conversationSessionId, emitter, cursor);
+                new Subscription(
+                        tenantId, conversationSessionId, emitter, CompositeSseCursor.ZERO);
 
         // 先建立本地缓冲与 Redis 动态订阅，再读取持久化 replay，消除 subscribe gap。
         LocalSseRegistry.Registration localRegistration =
@@ -115,7 +113,7 @@ public final class ConversationEventStreamFacade {
         emitter.onTimeout(() -> remove(subscription));
         emitter.onError(ignored -> remove(subscription));
 
-        // 首次连接直接发送一个权威会话快照；续传连接只 replay 游标之后的缺失更新。
+        // 每次连接先发送权威会话快照，再归并握手期间到达的增量更新。
         subscription.acceptInitialSnapshot(conversations.streamBootstrap(conversationSessionId));
         subscription.finishInitialization();
         return emitter;
@@ -309,7 +307,6 @@ public final class ConversationEventStreamFacade {
             // snapshot 先进入单连接发送队列，随后才排入其后的连续 delta。
             subscription.send(
                     ConversationStreamEventType.SNAPSHOT.value(),
-                    cursor,
                     new StreamSnapshotEvent(
                             ConversationStreamEventType.SNAPSHOT,
                             subscription.conversationSessionId,
@@ -482,7 +479,6 @@ public final class ConversationEventStreamFacade {
             }
             send(
                     ConversationStreamEventType.SESSION_SNAPSHOT.value(),
-                    bootstrapCursor,
                     new SessionSnapshotEvent(
                             ConversationStreamEventType.SESSION_SNAPSHOT,
                             conversationSessionId,
@@ -560,7 +556,6 @@ public final class ConversationEventStreamFacade {
             cursor = cursor.withEvent(update.event().executionEventSequence());
             send(
                     ConversationStreamEventType.EXECUTION_UPDATE.value(),
-                    cursor,
                     new ExecutionUpdateEvent(
                             ConversationStreamEventType.EXECUTION_UPDATE,
                             update.conversationSessionId(),
@@ -577,7 +572,6 @@ public final class ConversationEventStreamFacade {
             messageVersions.put(message.conversationMessageId(), message.version());
             send(
                     ConversationStreamEventType.MESSAGE_UPDATE.value(),
-                    cursor,
                     new MessageUpdateEvent(
                             ConversationStreamEventType.MESSAGE_UPDATE,
                             conversationSessionId,
@@ -594,7 +588,6 @@ public final class ConversationEventStreamFacade {
                             envelope.outputDeltaSequence());
             send(
                     ConversationStreamEventType.ASSISTANT_DELTA.value(),
-                    cursor,
                     new DeltaEvent(
                             ConversationStreamEventType.ASSISTANT_DELTA,
                             conversationSessionId,
@@ -607,21 +600,20 @@ public final class ConversationEventStreamFacade {
         }
 
         /** 在有界单线程队列中异步写 SSE，隔离慢客户端和业务线程。 */
-        private void send(String eventName, CompositeSseCursor eventCursor, Object data) {
+        private void send(String eventName, Object data) {
             // 已关闭连接不再接受新的发送任务。
             if (closed.get()) {
                 return;
             }
             // 提交发送任务可能因有界队列满或执行器关闭而被拒绝。
             try {
-                // 单线程执行器保持本连接 event id 与 data 的入队顺序。
+                // 单线程执行器保持本连接事件数据的入队顺序。
                 sender.execute(
                         () -> {
                             // 实际网络写入在连接专属线程中执行，避免阻塞事件发布线程。
                             try {
                                 emitter.send(
                                         SseEmitter.event()
-                                                .id(eventCursor.encode())
                                                 .name(eventName)
                                                 .data(data, MediaType.APPLICATION_JSON));
                             } catch (IOException | IllegalStateException failure) {

@@ -15,6 +15,7 @@ import {
   AgentBackendClient,
   applyConversationStreamEvent,
   BackendApiError,
+  ConversationStreamEvent,
   createFetchAgentBackendClient,
 } from './api/backendAgentClient';
 import {
@@ -40,10 +41,17 @@ interface AppProps {
 const narrowScreenQuery = '(max-width: 820px)';
 const TITLE_CONFLICT_MESSAGE = '标题已在其他位置更新，已加载最新标题。';
 const TITLE_SAVE_ERROR_MESSAGE = '标题保存失败，请稍后重试。';
+const STREAM_INTERRUPTED_MESSAGE = '实时状态连接已中断；会话内容仍可继续查看。';
 export const BACKGROUND_POLL_INTERVAL_MS = 60_000;
 
 function isNarrowScreen(): boolean {
   return window.matchMedia?.(narrowScreenQuery).matches ?? false;
+}
+
+/** 只把成功完成识别为正常结束，失败和取消仍保留原有异常提示语义。 */
+function isCompletedStreamEvent(event: ConversationStreamEvent): boolean {
+  if (event.type === 'session_snapshot') return event.session.execution?.status === 'done';
+  return event.type === 'execution_update' && event.execution.status === 'done';
 }
 
 export default function App({
@@ -213,10 +221,16 @@ export default function App({
       return;
     }
     const conversationSessionId = active.conversationSessionId;
+    let completedNormally = false;
     const close = backend.subscribeSessionEvents(
       conversationSessionId,
       (event) => {
         if (event.conversationSessionId !== conversationSessionId) return;
+        // 最终完成事件先于服务端主动关流到达，用本连接内标记区分正常关闭与意外断线。
+        if (isCompletedStreamEvent(event)) {
+          completedNormally = true;
+          setError(null);
+        }
         setSessions((current) =>
           current.map((session) =>
             session.conversationSessionId === conversationSessionId
@@ -225,7 +239,9 @@ export default function App({
           ),
         );
       },
-      () => setError('实时状态连接已中断；会话内容仍可继续查看。'),
+      () => {
+        if (!completedNormally) setError(STREAM_INTERRUPTED_MESSAGE);
+      },
     );
     return close;
   }, [active?.conversationSessionId, activeIsProcessing, backend, loadedDetailSessionId]);

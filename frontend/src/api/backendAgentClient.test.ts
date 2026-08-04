@@ -270,7 +270,7 @@ describe('backend agent client', () => {
     ]);
   });
 
-  it('persists the SSE cursor and reuses it when a new detail stream is created', () => {
+  it('creates a fresh snapshot stream without carrying the previous SSE event id', () => {
     const listeners = new Map<string, EventListener>();
     const urls: string[] = [];
     const eventSourceFactory = vi.fn((url: string) => {
@@ -300,9 +300,7 @@ describe('backend agent client', () => {
     expect(onEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'session_snapshot', session: expect.any(Object) }),
     );
-    expect(urls[1]).toBe(
-      '/api/v1/agent-sessions/session_1/events?cursor=e%3D4%3Ba%3D1%3Bt%3D2%3Bs%3D9',
-    );
+    expect(urls[1]).toBe('/api/v1/agent-sessions/session_1/events');
   });
 
   it('rejects an SSE event routed for another session', () => {

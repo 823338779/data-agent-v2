@@ -358,7 +358,7 @@ describe('server-backed conversation workspace', () => {
     expect(closeDetail).not.toHaveBeenCalled();
   });
 
-  it('closes the current detail stream after a terminal execution update', async () => {
+  it('shows no notice or connection warning after a completed execution', async () => {
     const running = {
       ...session,
       activityStatus: 'running' as const,
@@ -370,11 +370,13 @@ describe('server-backed conversation workspace', () => {
     };
     const closeDetail = vi.fn();
     let listener: Parameters<AgentBackendClient['subscribeSessionEvents']>[1] | undefined;
+    let errorListener: Parameters<AgentBackendClient['subscribeSessionEvents']>[2] | undefined;
     const backend = client({
       listSessions: vi.fn().mockResolvedValue([running]),
       getSession: vi.fn().mockResolvedValue(running),
-      subscribeSessionEvents: vi.fn((_sessionId, onEvent) => {
+      subscribeSessionEvents: vi.fn((_sessionId, onEvent, onError) => {
         listener = onEvent;
+        errorListener = onError;
         return closeDetail;
       }),
     });
@@ -407,6 +409,9 @@ describe('server-backed conversation workspace', () => {
     );
 
     await waitFor(() => expect(closeDetail).toHaveBeenCalledOnce());
+    act(() => errorListener?.());
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(backend.cancelExecution).not.toHaveBeenCalled();
   });
 

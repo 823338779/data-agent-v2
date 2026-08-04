@@ -15,12 +15,12 @@ class ConversationSseIntegrationTest {
     private static final Instant STARTED_AT = Instant.parse("2026-08-01T06:00:00Z");
 
     @Test
-    void compositeCursorRoundTripsPersistedAndStreamPositions() {
+    void internalCursorAdvancesPersistedAndStreamPositions() {
         CompositeSseCursor cursor = new CompositeSseCursor(4, 2, 3, 9);
 
-        assertThat(cursor.encode()).isEqualTo("e=4;a=2;t=3;s=9");
-        assertThat(CompositeSseCursor.parse(cursor.encode())).isEqualTo(cursor);
-        assertThat(CompositeSseCursor.parse(null)).isEqualTo(CompositeSseCursor.ZERO);
+        assertThat(cursor.withEvent(5)).isEqualTo(new CompositeSseCursor(5, 2, 3, 9));
+        assertThat(cursor.withStream(3, 4, 10))
+                .isEqualTo(new CompositeSseCursor(4, 3, 4, 10));
     }
 
     @Test

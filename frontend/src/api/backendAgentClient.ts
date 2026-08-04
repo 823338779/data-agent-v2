@@ -425,9 +425,6 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
     (typeof EventSource === 'undefined'
       ? undefined
       : (url: string, init?: EventSourceInit) => new EventSource(url, init));
-  // 只在当前客户端生命周期内保存游标；页面刷新必须重新获取权威详情快照。
-  const sessionCursors = new Map<string, string>();
-
   // 所有 HTTP 调用统一携带 cookie；只有拥有幂等键的操作才自动重试网络故障。
   async function fetchResponse(path: string, init?: RequestInit, retryNetwork = false) {
     const requestInit: RequestInit = {
@@ -524,15 +521,10 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
       };
     },
     subscribeSessionEvents(conversationSessionId, onEvent, onError) {
-      const savedCursor = sessionCursors.get(conversationSessionId);
-      const cursorQuery = savedCursor ? `?cursor=${encodeURIComponent(savedCursor)}` : '';
-      const source = openSource(
-        `/${encodeURIComponent(conversationSessionId)}/events${cursorQuery}`,
-      );
+      const source = openSource(`/${encodeURIComponent(conversationSessionId)}/events`);
       if (!source) return () => undefined;
       SESSION_EVENT_TYPES.forEach((eventType) =>
         source.addEventListener(eventType, ((raw: MessageEvent<string>) => {
-          if (raw.lastEventId) sessionCursors.set(conversationSessionId, raw.lastEventId);
           if (eventType === SESSION_SNAPSHOT_EVENT) {
             const snapshot = JSON.parse(raw.data) as BackendSessionSnapshot;
             if (snapshot.conversationSessionId !== conversationSessionId) {

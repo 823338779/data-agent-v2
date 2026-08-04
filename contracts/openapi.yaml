@@ -235,23 +235,9 @@ paths:
       security: [{ sessionCookie: [] }]
       parameters:
         - { $ref: '#/components/parameters/ConversationSessionId' }
-        - name: Last-Event-ID
-          in: header
-          required: false
-          description: Stable composite cursor restoring both persisted events and stream position.
-          schema:
-            type: string
-            pattern: '^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$'
-        - name: cursor
-          in: query
-          required: false
-          description: Cursor retained by a newly created EventSource after navigating back to a session.
-          schema:
-            type: string
-            pattern: '^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$'
       responses:
         '200':
-          description: One authoritative snapshot for a new client, or cursor replay followed by live incremental events
+          description: One authoritative snapshot followed by live incremental events
           content:
             text/event-stream:
               schema:

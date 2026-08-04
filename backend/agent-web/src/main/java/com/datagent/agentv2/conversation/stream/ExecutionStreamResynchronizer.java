@@ -29,7 +29,7 @@ public final class ExecutionStreamResynchronizer {
     /** 首次发现连续序号缺口的时间。 */
     private Instant gapSince;
 
-    /** 从客户端 Last-Event-ID 解码出的游标创建重同步器。 */
+    /** 从当前服务端连接位置创建增量重同步器。 */
     public ExecutionStreamResynchronizer(CompositeSseCursor cursor) {
         this.cursor = cursor;
     }

@@ -151,9 +151,5 @@
     "assistant_delta": "assistant.draft",
     "stream_snapshot": "execution.streamCheckpoint"
   },
-  "x-sse-event-id": {
-    "encoding": "e={sessionExecutionEventSequence};a={executionAttemptNumber};t={modelInvocationSequence};s={outputDeltaSequence}",
-    "pattern": "^e=[0-9]+;a=[0-9]+;t=[0-9]+;s=[0-9]+$"
-  },
   "x-sensitive-payload-fields-forbidden": ["prompt", "toolInput", "toolOutput"]
 }
