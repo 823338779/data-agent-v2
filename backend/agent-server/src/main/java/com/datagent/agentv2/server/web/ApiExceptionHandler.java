@@ -15,6 +15,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
@@ -31,6 +32,15 @@ public final class ApiExceptionHandler {
     private static final String VALIDATION_PROBLEM_TITLE = "Validation Failed";
     private static final String VALIDATION_PROBLEM_CODE = "VALIDATION_FAILED";
     private static final String ERROR_REQUEST_VALIDATION_FAILED = "Request validation failed";
+    private static final String CLIENT_DISCONNECTED_MESSAGE =
+            "Client disconnected from an asynchronous response";
+
+    /** 客户端关闭 SSE 等异步响应后无需再写错误响应。 */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    void handleDisconnectedClient(AsyncRequestNotUsableException exception) {
+        // 响应已经提交或连接已经关闭，只保留低级别诊断信息。
+        log.debug(CLIENT_DISCONNECTED_MESSAGE, exception);
+    }
 
     /**
      * 处理同一会话存在活动执行任务时产生的冲突。

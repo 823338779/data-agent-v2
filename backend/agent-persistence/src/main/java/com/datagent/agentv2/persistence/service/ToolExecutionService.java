@@ -5,6 +5,7 @@ import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.mapper.ToolExecutionMapper;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import org.springframework.stereotype.Service;
 
@@ -15,6 +16,17 @@ public class ToolExecutionService extends ServiceImpl<ToolExecutionMapper, ToolE
     public List<ToolExecutionEntity> findByExecutionId(String executionId) {
         return lambdaQuery()
                 .eq(ToolExecutionEntity::getExecutionId, executionId)
+                .orderByAsc(ToolExecutionEntity::getId)
+                .list();
+    }
+
+    /** 批量读取模型上下文中所有历史执行的工具行，避免多轮会话只索引当前 execution。 */
+    public List<ToolExecutionEntity> findByExecutionIds(Collection<String> executionIds) {
+        if (executionIds.isEmpty()) {
+            return List.of();
+        }
+        return lambdaQuery()
+                .in(ToolExecutionEntity::getExecutionId, executionIds)
                 .orderByAsc(ToolExecutionEntity::getId)
                 .list();
     }

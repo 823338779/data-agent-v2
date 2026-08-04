@@ -1,6 +1,6 @@
 data-agent:
   model:
-    provider: ${DATA_AGENT_MODEL_PROVIDER:codex}
+    provider: ${DATA_AGENT_MODEL_PROVIDER:ollama}
     codex:
       executable: ${DATA_AGENT_MODEL_CODEX_EXECUTABLE:codex}
       model: ${DATA_AGENT_MODEL_CODEX_MODEL:gpt-5.5}

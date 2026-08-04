@@ -151,6 +151,27 @@ class AgentExecutionControlIntegrationTest {
     }
 
     @Test
+    void ownerPollingReleasesARegistryEntryCompletedAfterItsSnapshot() throws Exception {
+        // 先保留本地 owner 快照，再模拟数据库执行在取消轮询前已经并发完成。
+        Fixture fixture = queued("completed-race");
+        String ownerInstanceId = claims.instanceId();
+        makeRunning(fixture.executionId(), ownerInstanceId);
+        AgentExecutionPort.ClaimedAgentExecution claimed =
+                new AgentExecutionPort.ClaimedAgentExecution(
+                        "tenant_local", fixture.executionId(), ownerInstanceId, 1L);
+        assertThat(owners.register(claimed, capacity.tryAcquire().orElseThrow())).isTrue();
+        jdbc.update(
+                "update agent_execution set status='done', owner_instance_id=null, hard_deadline_at=null, active_segment_started_at=null, heartbeat_at=null, lease_expires_at=null where execution_id=?",
+                fixture.executionId());
+
+        // 轮询应把正常 ownership 丢失收敛为本地资源释放，而不是抛出调度异常。
+        recovery.pollExecutionCancellationsNow();
+
+        assertThat(owners.owns(fixture.executionId())).isFalse();
+        assertThat(capacity.available()).isEqualTo(capacity.maximum());
+    }
+
+    @Test
     void terminalExecutionRetryIsIdempotentAndCreatesQueuedSuccessor() throws Exception {
         Fixture fixture = queued("retry");
         cancel(fixture);

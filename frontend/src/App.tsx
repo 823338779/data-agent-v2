@@ -88,6 +88,8 @@ export default function App({
         ))),
   );
   const activeStatus = active?.execution?.status ?? active?.activityStatus ?? 'idle';
+  // SSE effect 只依赖“是否仍在处理”，避免同一处理阶段内的状态细化触发先关闭再重连。
+  const activeIsProcessing = isProcessingStatus(activeStatus);
   const hasBackgroundProcessingSession = sessions.some(
     (session) =>
       session.conversationSessionId !==
@@ -207,11 +209,7 @@ export default function App({
 
   // 页面最多持有当前打开且正在处理的会话的一条 SSE，终态或切换页面会触发清理。
   useEffect(() => {
-    if (
-      !active ||
-      loadedDetailSessionId !== active.conversationSessionId ||
-      !isProcessingStatus(activeStatus)
-    ) {
+    if (!active || loadedDetailSessionId !== active.conversationSessionId || !activeIsProcessing) {
       return;
     }
     const conversationSessionId = active.conversationSessionId;
@@ -230,7 +228,7 @@ export default function App({
       () => setError('实时状态连接已中断；会话内容仍可继续查看。'),
     );
     return close;
-  }, [active?.conversationSessionId, activeStatus, backend, loadedDetailSessionId]);
+  }, [active?.conversationSessionId, activeIsProcessing, backend, loadedDetailSessionId]);
 
   // 未打开的处理中会话只通过一分钟摘要轮询更新，不占用任何长连接。
   useEffect(() => {

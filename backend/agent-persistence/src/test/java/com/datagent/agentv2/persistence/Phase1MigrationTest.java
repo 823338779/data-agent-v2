@@ -33,6 +33,21 @@ class Phase1MigrationTest {
                     "tool_execution",
                     "user_account");
     private static final List<String> AUDITED_TABLES = TABLES;
+    private static final List<String> IDENTITY_TABLES =
+            List.of(
+                    "agent_execution",
+                    "agent_execution_attempt",
+                    "agent_execution_event",
+                    "agent_execution_stream_checkpoint",
+                    "conversation_message",
+                    "conversation_session",
+                    "conversation_session_user_state",
+                    "model_invocation",
+                    "notification_outbox_message",
+                    "tenant",
+                    "tenant_membership",
+                    "tool_execution",
+                    "user_account");
     private static final List<String> APPLICATION_TABLES =
             List.of(
                     "agent_execution",
@@ -81,7 +96,7 @@ class Phase1MigrationTest {
                                 POSTGRES.getPassword())
                         .locations("classpath:db/migration")
                         .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(14);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(16);
     }
 
     @AfterAll
@@ -134,6 +149,23 @@ class Phase1MigrationTest {
                     .as("unique business id for %s", table)
                     .contains("unique (" + businessIdColumn + ")");
         }
+    }
+
+    @Test
+    void everyIdentityPrimaryKeyIsTheFirstColumn() throws SQLException {
+        for (String table : IDENTITY_TABLES) {
+            assertThat(columns(table))
+                    .as("physical column order for %s", table)
+                    .startsWith("id");
+            assertThat(primaryKey(table))
+                    .as("identity primary key for %s", table)
+                    .isEqualTo("primary key (id)");
+            assertThat(identityFlag(table, "id"))
+                    .as("identity id for %s", table)
+                    .isEqualTo("YES");
+        }
+        assertThat(uniqueConstraints("conversation_session_user_state"))
+                .contains("unique (tenant_id, user_id, conversation_session_id)");
     }
 
     @Test

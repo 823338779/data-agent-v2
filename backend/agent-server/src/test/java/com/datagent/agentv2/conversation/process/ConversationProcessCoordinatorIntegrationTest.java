@@ -13,7 +13,9 @@ import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostExcepti
 import com.datagent.agentv2.conversation.react.ModelToolCall;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.tool.ToolExecutionResult;
+import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
+import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import com.datagent.agentv2.platform.context.TenantContext;
 import jakarta.servlet.http.Cookie;
 import java.sql.Timestamp;
@@ -51,6 +53,9 @@ class ConversationProcessCoordinatorIntegrationTest {
     private static final String TOOL_NAME = "query_metric";
     private static final String TOOL_EXECUTION_ID = "tool_execution_1";
     private static final String TOOL_CALL_ID = "tool_call_1";
+    private static final String MODEL_INVOCATION_ID = "model_invocation_tool_uuid";
+    private static final String TOOL_EXECUTION_STATUS_PREPARED = "prepared";
+    private static final String EMPTY_JSON = "{}";
     private static final String FIRST_THINKING_DELTA = "分析";
     private static final String SECOND_THINKING_DELTA = "完成";
     private static final String SECRET_VALUE = "do-not-store";
@@ -91,6 +96,7 @@ class ConversationProcessCoordinatorIntegrationTest {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private ObjectMapper json;
     @Autowired private ConversationMessageService messages;
+    @Autowired private ToolExecutionService toolExecutions;
     @Autowired private ConversationProcessCoordinator coordinator;
 
     @BeforeEach
@@ -99,6 +105,8 @@ class ConversationProcessCoordinatorIntegrationTest {
         jdbc.update("delete from agent_execution_event");
         jdbc.update("delete from agent_execution_stream_checkpoint");
         jdbc.update("delete from agent_execution_attempt");
+        jdbc.update("delete from tool_execution");
+        jdbc.update("delete from model_invocation");
         jdbc.update("update conversation_message set execution_id = null");
         jdbc.update("delete from agent_execution");
         jdbc.update("delete from conversation_message");
@@ -185,6 +193,59 @@ class ConversationProcessCoordinatorIntegrationTest {
         assertThat(tool.durationMillis()).isEqualTo(5L);
         assertThat(json.valueToTree(tool.input().value()).path("token").asString())
                 .isEqualTo(REDACTED_VALUE);
+    }
+
+    @Test
+    void toolExecutionRoundTripKeepsItsProcessItemUuid() throws Exception {
+        AgentExecutionPort.ClaimedAgentExecution run = createRunningExecution("tool-uuid");
+        UUID itemId =
+                TenantContext.call(
+                        TENANT_ID,
+                        () ->
+                                coordinator.prepareTool(
+                                        run,
+                                        1L,
+                                        new ModelToolCall(
+                                                TOOL_CALL_ID, TOOL_NAME, json.readTree(EMPTY_JSON)),
+                                        TOOL_EXECUTION_ID,
+                                        STARTED_AT));
+
+        // 工具执行必须关联一个已归档的模型调用边界，保持测试数据符合生产外键约束。
+        jdbc.update(
+                """
+                insert into model_invocation(
+                    model_invocation_id, tenant_id, execution_id, model_invocation_sequence,
+                    execution_attempt_number, input_up_to_conversation_message_sequence,
+                    status, started_at, completed_at)
+                values (?, ?, ?, 1, 1, 1, 'completed', ?, ?)
+                """,
+                MODEL_INVOCATION_ID,
+                TENANT_ID,
+                run.executionId(),
+                Timestamp.from(STARTED_AT),
+                Timestamp.from(STARTED_AT.plusMillis(1)));
+
+        // 按生产路径保存并重新查询工具执行，验证 UUID 不会在 MyBatis 结果映射时丢失。
+        ToolExecutionEntity execution = new ToolExecutionEntity();
+        execution.setToolExecutionId(TOOL_EXECUTION_ID);
+        execution.setExecutionId(run.executionId());
+        execution.setModelInvocationSequence(1L);
+        execution.setExecutionAttemptNumber(run.executionAttemptNumber());
+        execution.setAssistantConversationMessageId(
+                assistant(run.executionId()).getConversationMessageId());
+        execution.setToolProcessItemId(itemId);
+        execution.setToolCallId(TOOL_CALL_ID);
+        execution.setToolName(TOOL_NAME);
+        execution.setStatus(TOOL_EXECUTION_STATUS_PREPARED);
+        execution.setExecutionCount(0);
+        execution.setVersion(0L);
+        TenantContext.run(TENANT_ID, () -> toolExecutions.save(execution));
+
+        ToolExecutionEntity reloaded =
+                TenantContext.call(
+                        TENANT_ID,
+                        () -> toolExecutions.findByToolExecutionId(TOOL_EXECUTION_ID));
+        assertThat(reloaded.getToolProcessItemId()).isEqualTo(itemId);
     }
 
     @Test

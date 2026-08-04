@@ -37,6 +37,10 @@ public class ConversationContextLoader {
     private static final String KEY_ORIGINAL_SIZE_BYTES = "originalSizeBytes";
     private static final String KEY_SHA256 = "sha256";
     private static final String KEY_CONTENT_TYPE = "contentType";
+    private static final String KEY_STATUS = "status";
+    private static final String KEY_ERROR_CODE = "errorCode";
+    private static final String KEY_ERROR_MESSAGE = "errorMessage";
+    private static final String TOOL_STATUS_FAILED = "failed";
 
     private final AgentExecutionService agentExecutions;
     private final ConversationMessageService messages;
@@ -52,7 +56,7 @@ public class ConversationContextLoader {
         List<ConversationMessage> rows =
                 messages.findByConversationSessionIdUpTo(
                         execution.getConversationSessionId(), inputUpToConversationMessageSequence);
-        Map<UUID, ToolExecutionEntity> executionsByProcessItem = executionIndex(executionId);
+        Map<UUID, ToolExecutionEntity> executionsByProcessItem = executionIndex(rows);
         List<ModelInputMessage> result = new ArrayList<>(rows.size());
 
         // 真实消息按会话顺序回放；assistant 的工具轮次在其正文之前展开为模型协议消息。
@@ -66,9 +70,20 @@ public class ConversationContextLoader {
         return List.copyOf(result);
     }
 
-    private Map<UUID, ToolExecutionEntity> executionIndex(String executionId) {
+    private Map<UUID, ToolExecutionEntity> executionIndex(List<ConversationMessage> messages) {
+        // 模型上下文会跨越多轮 assistant 消息，因此工具索引必须覆盖这些消息各自所属的 execution。
+        List<String> contextExecutionIds =
+                messages.stream()
+                        .filter(
+                                message ->
+                                        MessageRole.ASSISTANT.value().equals(message.getRole()))
+                        .map(ConversationMessage::getExecutionId)
+                        .filter(java.util.Objects::nonNull)
+                        .distinct()
+                        .toList();
         Map<UUID, ToolExecutionEntity> result = new HashMap<>();
-        for (ToolExecutionEntity execution : toolExecutions.findByExecutionId(executionId)) {
+        for (ToolExecutionEntity execution :
+                toolExecutions.findByExecutionIds(contextExecutionIds)) {
             UUID processItemId = execution.getToolProcessItemId();
             if (processItemId == null || result.put(processItemId, execution) != null) {
                 throw new IllegalStateException(ERROR_MISMATCHED_TOOL_PROCESS);
@@ -109,7 +124,7 @@ public class ConversationContextLoader {
                 if (isTerminal(item.status())) {
                     result.add(
                             ModelInputMessage.tool(
-                                    outputContent(item.output()),
+                                    outputContent(item),
                                     item.toolCallId(),
                                     item.toolName()));
                 }
@@ -143,7 +158,16 @@ public class ConversationContextLoader {
         return json.valueToTree(payloadPreview(input));
     }
 
-    private String outputContent(BoundedProcessPayload output) {
+    private String outputContent(ToolThinkingProcessItem item) {
+        BoundedProcessPayload output = item.output();
+        // 失败工具没有业务 output，仍需生成一条合法 TOOL observation 维持模型协议配对。
+        if (output == null && item.status() == ThinkingProcessStatus.FAILED) {
+            var failure = json.createObjectNode();
+            failure.put(KEY_STATUS, TOOL_STATUS_FAILED);
+            failure.put(KEY_ERROR_CODE, item.errorCode());
+            failure.put(KEY_ERROR_MESSAGE, item.errorMessage());
+            return json.writeValueAsString(failure);
+        }
         if (output == null) {
             throw new IllegalStateException(ERROR_MISMATCHED_TOOL_PROCESS);
         }

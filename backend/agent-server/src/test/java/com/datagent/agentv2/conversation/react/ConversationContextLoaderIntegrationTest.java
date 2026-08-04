@@ -25,6 +25,7 @@ import tools.jackson.databind.json.JsonMapper;
 class ConversationContextLoaderIntegrationTest {
 
     private static final String EXECUTION_ID = "execution_context";
+    private static final String PREVIOUS_EXECUTION_ID = "execution_previous";
     private static final String SESSION_ID = "session_context";
     private static final String ASSISTANT_ID = "message-3";
     private static final UUID PROCESS_ITEM_ID =
@@ -32,6 +33,9 @@ class ConversationContextLoaderIntegrationTest {
     private static final String PAYLOAD_SHA256 =
             "0000000000000000000000000000000000000000000000000000000000000000";
     private static final String CONTENT_TYPE = "application/json";
+    private static final String FAILURE_CODE = "EXECUTION_FAILED";
+    private static final String FAILURE_MESSAGE = "tool execution stopped";
+    private static final String TOOL_STATUS_FAILED = "failed";
 
     private final AgentExecutionService agentExecutions = mock(AgentExecutionService.class);
     private final ConversationMessageService messages = mock(ConversationMessageService.class);
@@ -52,7 +56,7 @@ class ConversationContextLoaderIntegrationTest {
                                 message(1L, "system", "system"),
                                 message(2L, "user", "question"),
                                 assistant));
-        when(toolExecutions.findByExecutionId(EXECUTION_ID))
+        when(toolExecutions.findByExecutionIds(List.of(EXECUTION_ID)))
                 .thenReturn(List.of(execution(PROCESS_ITEM_ID, "call-1")));
 
         List<ModelInputMessage> context = loader.load(EXECUTION_ID, 3L);
@@ -82,8 +86,6 @@ class ConversationContextLoaderIntegrationTest {
         when(messages.findByConversationSessionIdUpTo(SESSION_ID, 2L))
                 .thenReturn(
                         List.of(message(1L, "system", "system"), message(2L, "user", "question")));
-        when(toolExecutions.findByExecutionId(EXECUTION_ID)).thenReturn(List.of());
-
         assertThat(loader.load(EXECUTION_ID, 2L))
                 .extracting(ModelInputMessage::content)
                 .containsExactly("system", "question");
@@ -97,12 +99,53 @@ class ConversationContextLoaderIntegrationTest {
         assistant.setThinkingProcess(List.of(terminalTool(PROCESS_ITEM_ID, "call-1")));
         when(messages.findByConversationSessionIdUpTo(SESSION_ID, 1L))
                 .thenReturn(List.of(assistant));
-        when(toolExecutions.findByExecutionId(EXECUTION_ID))
+        when(toolExecutions.findByExecutionIds(List.of(EXECUTION_ID)))
                 .thenReturn(List.of(execution(PROCESS_ITEM_ID, "wrong-call")));
 
         assertThatThrownBy(() -> loader.load(EXECUTION_ID, 1L))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Tool process item does not match its execution row");
+    }
+
+    @Test
+    void indexesToolExecutionsFromPreviousAssistantTurns() {
+        stubExecution();
+        ConversationMessage assistant = message(1L, "assistant", "final");
+        assistant.setConversationMessageId(ASSISTANT_ID);
+        assistant.setExecutionId(PREVIOUS_EXECUTION_ID);
+        assistant.setThinkingProcess(List.of(terminalTool(PROCESS_ITEM_ID, "call-1")));
+        when(messages.findByConversationSessionIdUpTo(SESSION_ID, 2L))
+                .thenReturn(List.of(assistant, message(2L, "user", "next question")));
+        when(toolExecutions.findByExecutionIds(List.of(PREVIOUS_EXECUTION_ID)))
+                .thenReturn(List.of(execution(PROCESS_ITEM_ID, "call-1")));
+
+        assertThat(loader.load(EXECUTION_ID, 2L))
+                .extracting(ModelInputMessage::role)
+                .containsExactly(
+                        ModelInputMessage.Role.ASSISTANT,
+                        ModelInputMessage.Role.TOOL,
+                        ModelInputMessage.Role.ASSISTANT,
+                        ModelInputMessage.Role.USER);
+    }
+
+    @Test
+    void rebuildsFailedToolObservationWhenNoOutputWasPersisted() {
+        stubExecution();
+        ConversationMessage assistant = message(1L, "assistant", "");
+        assistant.setConversationMessageId(ASSISTANT_ID);
+        assistant.setThinkingProcess(List.of(failedTool(PROCESS_ITEM_ID, "call-1")));
+        when(messages.findByConversationSessionIdUpTo(SESSION_ID, 1L))
+                .thenReturn(List.of(assistant));
+        when(toolExecutions.findByExecutionIds(List.of(EXECUTION_ID)))
+                .thenReturn(List.of(execution(PROCESS_ITEM_ID, "call-1")));
+
+        List<ModelInputMessage> context = loader.load(EXECUTION_ID, 1L);
+        var failure = JsonMapper.builder().build().readTree(context.get(1).content());
+
+        assertThat(context).hasSize(2);
+        assertThat(failure.path("status").asString()).isEqualTo(TOOL_STATUS_FAILED);
+        assertThat(failure.path("errorCode").asString()).isEqualTo(FAILURE_CODE);
+        assertThat(failure.path("errorMessage").asString()).isEqualTo(FAILURE_MESSAGE);
     }
 
     private void stubExecution() {
@@ -145,6 +188,30 @@ class ConversationContextLoaderIntegrationTest {
                 true,
                 null,
                 null);
+    }
+
+    private static ToolThinkingProcessItem failedTool(UUID processItemId, String callId) {
+        Instant createdAt = Instant.parse("2026-08-04T00:00:00Z");
+        Instant completedAt = createdAt.plusSeconds(1L);
+        return new ToolThinkingProcessItem(
+                processItemId,
+                1L,
+                ThinkingProcessStatus.FAILED,
+                createdAt,
+                null,
+                completedAt,
+                null,
+                ThinkingProcessItem.CURRENT_SCHEMA_VERSION,
+                "catalog_query",
+                "catalog_query",
+                "execution-1",
+                callId,
+                1L,
+                payload(Map.of("limit", 10)),
+                null,
+                false,
+                FAILURE_CODE,
+                FAILURE_MESSAGE);
     }
 
     private static BoundedProcessPayload payload(Object value) {

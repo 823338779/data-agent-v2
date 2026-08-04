@@ -2,6 +2,7 @@ package com.datagent.agentv2.conversation.runtime;
 
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_EXECUTION_ALREADY_OWNED_PREFIX;
 
+import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
 import com.datagent.agentv2.persistence.service.TenantService;
 import com.datagent.agentv2.platform.context.TenantContext;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -88,8 +89,14 @@ public final class AgentExecutionRecoveryScheduler {
 
     public void pollExecutionCancellationsNow() {
         for (AgentExecutionPort.ClaimedAgentExecution run : owners.ownedExecutions()) {
-            boolean cancelled =
-                    TenantContext.call(run.tenantId(), () -> leases.cancelIfRequested(run));
+            boolean cancelled;
+            try {
+                cancelled = TenantContext.call(run.tenantId(), () -> leases.cancelIfRequested(run));
+            } catch (ExecutionOwnershipLostException ignored) {
+                // 执行可能在 owner 快照生成后并发完成；释放过期本地句柄并继续轮询。
+                owners.release(run.executionId());
+                continue;
+            }
             if (cancelled) {
                 try {
                     execution.cancel(run);

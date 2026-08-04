@@ -305,6 +305,59 @@ describe('server-backed conversation workspace', () => {
     expect(backend.getSession).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps one detail stream while execution moves between processing states', async () => {
+    const queued = {
+      ...session,
+      activityStatus: 'queued' as const,
+      execution: {
+        ...completedExecution('execution_1', ''),
+        status: 'queued' as const,
+        progress: 0,
+        streamCheckpoint: null,
+      },
+    };
+    const closeDetail = vi.fn();
+    let listener: Parameters<AgentBackendClient['subscribeSessionEvents']>[1] | undefined;
+    const backend = client({
+      listSessions: vi.fn().mockResolvedValue([queued]),
+      getSession: vi.fn().mockResolvedValue(queued),
+      subscribeSessionEvents: vi.fn((_sessionId, onEvent) => {
+        listener = onEvent;
+        return closeDetail;
+      }),
+    });
+    render(<App client={backend} />);
+    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+    await waitFor(() => expect(listener).toBeDefined());
+
+    act(() =>
+      listener?.({
+        type: 'execution_update',
+        conversationSessionId: 'session_1',
+        execution: {
+          executionId: 'execution_1',
+          status: 'running',
+          progress: 25,
+          objective: '分析订单延迟',
+          cancellationRequestedAt: null,
+          streamCheckpoint: null,
+        },
+        event: {
+          executionEventId: 'event_running',
+          executionEventSequence: 1,
+          type: 'execution_started',
+          occurredAt: '2026-08-01T08:01:00Z',
+          title: '开始执行',
+          summary: null,
+        },
+        messages: [],
+      }),
+    );
+
+    expect(backend.subscribeSessionEvents).toHaveBeenCalledOnce();
+    expect(closeDetail).not.toHaveBeenCalled();
+  });
+
   it('closes the current detail stream after a terminal execution update', async () => {
     const running = {
       ...session,

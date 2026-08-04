@@ -21,6 +21,11 @@ public sealed interface ThinkingProcessItem
     /** 节点的多态类型。 */
     ThinkingProcessType type();
 
+    /** 以 JavaBean 属性公开节点类型，确保会话 HTTP/SSE 投影包含稳定的 type 判别字段。 */
+    default ThinkingProcessType getType() {
+        return type();
+    }
+
     /** 节点当前生命周期状态。 */
     ThinkingProcessStatus status();
 

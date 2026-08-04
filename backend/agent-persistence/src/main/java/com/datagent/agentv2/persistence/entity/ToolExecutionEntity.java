@@ -1,16 +1,19 @@
 package com.datagent.agentv2.persistence.entity;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
+import com.datagent.agentv2.persistence.typehandler.UuidTypeHandler;
 import java.time.Instant;
 import java.util.UUID;
 import lombok.Getter;
 import lombok.Setter;
+import org.apache.ibatis.type.JdbcType;
 
 /** 持久化模型请求的一次工具执行及其幂等、恢复和结果关联信息。 */
 @Getter
 @Setter
-@TableName("tool_execution")
+@TableName(value = "tool_execution", autoResultMap = true)
 public final class ToolExecutionEntity extends TenantAuditedEntity {
 
     /** 工具执行的业务唯一标识。 */
@@ -29,6 +32,7 @@ public final class ToolExecutionEntity extends TenantAuditedEntity {
     private String assistantConversationMessageId;
 
     /** assistant 中心消息 thinking_process 数组内对应 TOOL 节点 UUID。 */
+    @TableField(jdbcType = JdbcType.OTHER, typeHandler = UuidTypeHandler.class)
     private UUID toolProcessItemId;
 
     /** provider 在当前模型调用内生成的工具调用标识。 */

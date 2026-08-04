@@ -1,5 +1,7 @@
 package com.datagent.agentv2.persistence.entity;
 
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
 import java.time.Instant;
@@ -11,6 +13,10 @@ import lombok.Setter;
 @Setter
 @TableName("conversation_session_user_state")
 public final class ConversationSessionUserStateEntity {
+
+    /** 数据库自增主键，仅用于持久化层内部定位用户会话状态记录。 */
+    @TableId(type = IdType.AUTO)
+    private Long id;
 
     /** 状态所属租户，用于和用户、会话共同形成隔离边界。 */
     private String tenantId;

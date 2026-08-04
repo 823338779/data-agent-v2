@@ -122,6 +122,52 @@ describe('backend agent client', () => {
     expect(mapped).not.toHaveProperty('metricPlatformCredential');
   });
 
+  it('restores a missing process type before rendering a backend snapshot', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...session,
+        messages: [
+          {
+            conversationMessageId: 'message_thinking',
+            role: 'assistant',
+            author: 'assistant',
+            content: '',
+            createdAt: '2026-08-04T01:00:00Z',
+            version: 1,
+            thinkingProcess: [
+              {
+                processItemId: 'thinking_1',
+                sequence: 1,
+                status: 'SUCCEEDED',
+                createdAt: '2026-08-04T01:00:00Z',
+                startedAt: '2026-08-04T01:00:00Z',
+                completedAt: '2026-08-04T01:00:00.012Z',
+                durationMillis: 12,
+                schemaVersion: 1,
+                content: '分析数据范围',
+                contentTruncated: false,
+                originalContentSizeBytes: 18,
+                contentSha256: 'thinking-sha',
+                modelInvocationSequence: 1,
+                modelProvider: 'openai',
+                modelName: 'gpt-test',
+              },
+            ],
+            execution: null,
+          },
+        ],
+      }),
+    });
+
+    const mapped = await createFetchAgentBackendClient({ fetchImpl }).getSession('session_1');
+
+    expect(mapped.messages[0].thinkingProcess[0]).toMatchObject({
+      type: 'THINKING',
+      content: '分析数据范围',
+    });
+  });
+
   it('subscribes to one snapshot and directly reducible incremental event protocol', () => {
     const addEventListener = vi.fn();
     const close = vi.fn();

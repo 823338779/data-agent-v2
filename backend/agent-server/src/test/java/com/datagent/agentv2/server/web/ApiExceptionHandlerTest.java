@@ -18,6 +18,7 @@ import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 
 @WebMvcTest(
         controllers = ApiExceptionHandlerTest.FailureFixtureController.class,
@@ -30,6 +31,13 @@ import org.springframework.web.bind.annotation.RestController;
 class ApiExceptionHandlerTest {
 
     @Autowired private MockMvc mvc;
+
+    @Test
+    void disconnectedAsyncClientDoesNotCreateAnotherHttpResponse() {
+        new ApiExceptionHandler()
+                .handleDisconnectedClient(
+                        new AsyncRequestNotUsableException("client disconnected"));
+    }
 
     @Test
     void unexpectedFailureReturnsRequestIdWithoutStackTrace() throws Exception {

@@ -64,7 +64,7 @@ class SessionUserActivityMigrationTest {
                         .load()
                         .migrate()
                         .migrationsExecuted;
-        assertThat(migrated).isEqualTo(5);
+        assertThat(migrated).isEqualTo(7);
     }
 
     @AfterAll
@@ -74,6 +74,13 @@ class SessionUserActivityMigrationTest {
 
     @Test
     void existingSessionsReceiveDeterministicPerUserOrdering() throws SQLException {
+        assertThat(
+                        row(
+                                """
+                                select count(id), count(distinct id), min(id) > 0
+                                  from conversation_session_user_state
+                                """))
+                .containsExactly("5", "5", "t");
         assertThat(
                         rows(
                                 """

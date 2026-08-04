@@ -5,7 +5,9 @@ import {
   ConversationMessage,
   ConversationSession,
   MessageRole,
+  ModelThinkingProcessItem,
   ThinkingProcessItem,
+  ToolThinkingProcessItem,
 } from '../domain/agentPrototype';
 import { createIdempotencyKey } from './idempotencyKey';
 
@@ -16,6 +18,8 @@ const EXECUTION_UPDATE_EVENT = 'execution_update';
 const MESSAGE_UPDATE_EVENT = 'message_update';
 const STREAM_SNAPSHOT_EVENT = 'stream_snapshot';
 const ASSISTANT_DELTA_EVENT = 'assistant_delta';
+const THINKING_PROCESS_TYPE = 'THINKING';
+const TOOL_PROCESS_TYPE = 'TOOL';
 const SESSION_MISMATCH_ERROR = 'SSE_PROTOCOL_SESSION_MISMATCH';
 const SESSION_EVENT_TYPES = [
   SESSION_SNAPSHOT_EVENT,
@@ -43,10 +47,14 @@ interface BackendMessage {
   author: string;
   content: string;
   version: number;
-  thinkingProcess: ThinkingProcessItem[];
+  thinkingProcess: BackendThinkingProcessItem[];
   createdAt: string;
   execution: BackendAgentExecution | null;
 }
+
+type BackendThinkingProcessItem =
+  | (Omit<ModelThinkingProcessItem, 'type'> & { type?: 'THINKING' })
+  | (Omit<ToolThinkingProcessItem, 'type'> & { type?: 'TOOL' });
 
 interface BackendAgentExecutionEvent {
   executionEventId: string;
@@ -373,9 +381,16 @@ function toMessage(message: BackendMessage): ConversationMessage {
     content: message.content,
     timestamp: message.createdAt,
     version: message.version,
-    thinkingProcess: message.thinkingProcess.map((item) => ({ ...item })),
+    thinkingProcess: message.thinkingProcess.map(toThinkingProcessItem),
     execution: message.execution ? toExecution(message.execution) : null,
   };
+}
+
+/** 兼容缺少 type 的旧快照，并在进入页面状态前恢复过程节点的判别字段。 */
+function toThinkingProcessItem(item: BackendThinkingProcessItem): ThinkingProcessItem {
+  if (item.type) return { ...item } as ThinkingProcessItem;
+  if ('content' in item) return { ...item, type: THINKING_PROCESS_TYPE };
+  return { ...item, type: TOOL_PROCESS_TYPE };
 }
 
 function toSession(session: BackendSession | BackendSessionSummary): ConversationSession {

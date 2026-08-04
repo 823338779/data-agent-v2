@@ -625,8 +625,8 @@ public final class ConversationEventStreamFacade {
                                                 .name(eventName)
                                                 .data(data, MediaType.APPLICATION_JSON));
                             } catch (IOException | IllegalStateException failure) {
-                                // 网络断开或 emitter 已完成时统一关闭 subscription。
-                                closeWithError(this, new IllegalStateException(failure));
+                                // 网络断开或 emitter 已完成属于连接生命周期结束，仅释放本地资源。
+                                remove(this);
                             }
                         });
             } catch (RejectedExecutionException failure) {
