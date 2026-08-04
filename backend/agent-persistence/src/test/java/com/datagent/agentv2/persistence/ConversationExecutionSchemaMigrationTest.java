@@ -80,6 +80,48 @@ class ConversationExecutionSchemaMigrationTest {
                            phase = excluded.phase
                 """);
 
+        // 构造 V7 时代的 internal assistant/tool observation 与公开回答，验证 V13 可逆聚合。
+        execute(
+                """
+                update agent_session set message_sequence = 4 where session_id = 'session_legacy';
+                update agent_message set run_id = 'execution_legacy'
+                 where message_id = 'message_legacy';
+                insert into agent_model_turn(
+                    model_turn_id, tenant_id, run_id, model_turn_sequence, execution_attempt,
+                    input_up_to_message_sequence, status, completed_at)
+                values ('turn_legacy', 'tenant_legacy', 'execution_legacy', 1, 1, 1,
+                        'completed', '2026-08-01T00:00:03Z');
+                insert into agent_message(
+                    message_id, tenant_id, session_id, run_id, role, content, sequence,
+                    tool_calls, visibility)
+                values ('assistant_internal_legacy', 'tenant_legacy', 'session_legacy',
+                        'execution_legacy', 'assistant', '', 2,
+                        '{"version":1,"calls":[{"id":"call_legacy","name":"current_time","arguments":{"zone":"Asia/Shanghai","token":"must-redact"}}]}',
+                        'internal');
+                insert into agent_tool_execution(
+                    tenant_id, tool_execution_id, run_id, model_turn_sequence, execution_attempt,
+                    assistant_message_id, tool_call_id, tool_name, status, execution_count,
+                    started_at)
+                values ('tenant_legacy', 'tool_legacy', 'execution_legacy', 1, 1,
+                        'assistant_internal_legacy', 'call_legacy', 'current_time', 'executing', 1,
+                        '2026-08-01T00:00:01Z');
+                insert into agent_message(
+                    message_id, tenant_id, session_id, run_id, role, content, sequence,
+                    tool_execution_id, tool_call_id, tool_name, visibility)
+                values ('observation_legacy', 'tenant_legacy', 'session_legacy',
+                        'execution_legacy', 'tool',
+                        '{"status":"succeeded","content":{"time":"08:00"}}', 3,
+                        'tool_legacy', 'call_legacy', 'current_time', 'internal');
+                update agent_tool_execution
+                   set status = 'succeeded', observation_message_id = 'observation_legacy',
+                       completed_at = '2026-08-01T00:00:02Z'
+                 where tool_execution_id = 'tool_legacy';
+                insert into agent_message(
+                    message_id, tenant_id, session_id, run_id, role, content, sequence, visibility)
+                values ('assistant_public_legacy', 'tenant_legacy', 'session_legacy',
+                        'execution_legacy', 'assistant', '最终回答', 4, 'user');
+                """);
+
         int migratedToLatest =
                 Flyway.configure()
                         .dataSource(
@@ -90,7 +132,7 @@ class ConversationExecutionSchemaMigrationTest {
                         .load()
                         .migrate()
                         .migrationsExecuted;
-        assertThat(migratedToLatest).isEqualTo(5);
+        assertThat(migratedToLatest).isEqualTo(6);
     }
 
     @AfterAll
@@ -208,6 +250,64 @@ class ConversationExecutionSchemaMigrationTest {
         assertThat(constraintDefinition("ck_agent_execution_phase")).doesNotContain("THINKING");
         assertThat(constraintDefinition("ck_agent_execution_stream_checkpoint_phase"))
                 .doesNotContain("THINKING");
+    }
+
+    @Test
+    void legacyToolMessagesAreBackfilledIntoThePublicAssistantProcessArray()
+            throws SQLException {
+        assertThat(columnNames("conversation_message")).contains("thinking_process");
+        assertThat(columnNames("tool_execution")).contains("tool_process_item_id");
+        assertThat(
+                        row(
+                                """
+                                select data_type, is_nullable, column_default
+                                  from information_schema.columns
+                                 where table_schema = 'public'
+                                   and table_name = 'conversation_message'
+                                   and column_name = 'thinking_process'
+                                """))
+                .containsExactly("jsonb", "NO", "'[]'::jsonb");
+        assertThat(constraintDefinition("ck_conversation_message_thinking_process_array"))
+                .contains("jsonb_typeof(thinking_process) = 'array'");
+        assertThat(
+                        row(
+                                """
+                                select content,
+                                       jsonb_array_length(thinking_process),
+                                       thinking_process #>> '{0,type}',
+                                       thinking_process #>> '{0,status}',
+                                       thinking_process #>> '{0,toolExecutionId}',
+                                       thinking_process #>> '{0,input,value,token}',
+                                       thinking_process #>> '{0,output,value,content,time}',
+                                       thinking_process #>> '{0,durationMillis}'
+                                  from conversation_message
+                                 where conversation_message_id = 'assistant_public_legacy'
+                                """))
+                .containsExactly(
+                        "最终回答",
+                        "1",
+                        "TOOL",
+                        "SUCCEEDED",
+                        "tool_legacy",
+                        "[REDACTED]",
+                        "08:00",
+                        "1000");
+        assertThat(
+                        row(
+                                """
+                                select tool_execution.tool_process_item_id::text,
+                                       conversation_message.thinking_process #>> '{0,processItemId}'
+                                  from tool_execution
+                                  join conversation_message
+                                    on conversation_message.conversation_message_id = tool_execution.assistant_conversation_message_id
+                                 where tool_execution.tool_execution_id = 'tool_legacy'
+                                """))
+                .satisfies(values -> assertThat(values.get(0)).isEqualTo(values.get(1)));
+
+        // V13 是扩展迁移；旧列由停止旧写入的 V14 再统一删除。
+        assertThat(columnNames("conversation_message"))
+                .contains("tool_calls", "visibility", "tool_execution_id");
+        assertThat(columnNames("tool_execution")).contains("observation_conversation_message_id");
     }
 
     private static void execute(String sql) throws SQLException {
