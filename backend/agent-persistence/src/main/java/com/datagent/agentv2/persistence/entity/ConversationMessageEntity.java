@@ -3,6 +3,7 @@ package com.datagent.agentv2.persistence.entity;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
+import com.datagent.agentv2.persistence.typehandler.JsonbStringTypeHandler;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.ibatis.type.JdbcType;
@@ -29,7 +30,7 @@ public final class ConversationMessageEntity extends TenantAuditedEntity {
     private String content;
 
     /** 与消息正文绑定的有序 ProcessItem JSONB 数组。 */
-    @TableField(jdbcType = JdbcType.OTHER)
+    @TableField(jdbcType = JdbcType.OTHER, typeHandler = JsonbStringTypeHandler.class)
     private String thinkingProcess;
 
     /** 消息在所属会话内的单调递增业务序号。 */
@@ -39,7 +40,7 @@ public final class ConversationMessageEntity extends TenantAuditedEntity {
     private String authorUserId;
 
     /** assistant 消息的版本化工具调用文档；其他角色保持为空。 */
-    @TableField(jdbcType = JdbcType.OTHER)
+    @TableField(jdbcType = JdbcType.OTHER, typeHandler = JsonbStringTypeHandler.class)
     private String toolCalls;
 
     /** tool observation 对应的内部工具执行业务标识。 */

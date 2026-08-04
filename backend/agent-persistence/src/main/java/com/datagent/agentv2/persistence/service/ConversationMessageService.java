@@ -14,6 +14,8 @@ public class ConversationMessageService
         extends ServiceImpl<ConversationMessageMapper, ConversationMessageEntity> {
 
     private static final String VISIBILITY_USER = "user";
+    private static final String ROLE_USER = "user";
+    private static final String ROLE_ASSISTANT = "assistant";
 
     private final ConversationPersistenceMapper models;
     private final ConversationProcessDocumentCodec processDocuments;
@@ -62,6 +64,37 @@ public class ConversationMessageService
                         .eq(
                                 ConversationMessageEntity::getConversationSessionId,
                                 conversationSessionId)
+                        .eq(ConversationMessageEntity::getVisibility, VISIBILITY_USER)
+                        .orderByAsc(ConversationMessageEntity::getConversationMessageSequence)
+                        .list());
+    }
+
+    /** 锁定一次执行的 assistant 中心消息，供正文和过程列表串行更新。 */
+    public ConversationMessage lockAssistantByExecutionId(String executionId) {
+        return toModel(baseMapper.selectAssistantByExecutionIdForUpdate(executionId));
+    }
+
+    /** 按会话与序号边界读取真实 user/assistant 消息，用于构造模型上下文。 */
+    public List<ConversationMessage> findByConversationSessionIdUpTo(
+            String conversationSessionId, long sequence) {
+        return toModels(
+                lambdaQuery()
+                        .eq(
+                                ConversationMessageEntity::getConversationSessionId,
+                                conversationSessionId)
+                        .le(ConversationMessageEntity::getConversationMessageSequence, sequence)
+                        .in(ConversationMessageEntity::getRole, ROLE_USER, ROLE_ASSISTANT)
+                        .eq(ConversationMessageEntity::getVisibility, VISIBILITY_USER)
+                        .orderByAsc(ConversationMessageEntity::getConversationMessageSequence)
+                        .list());
+    }
+
+    /** 按执行读取真实 user/assistant 消息，并保持会话内顺序。 */
+    public List<ConversationMessage> findByExecutionId(String executionId) {
+        return toModels(
+                lambdaQuery()
+                        .eq(ConversationMessageEntity::getExecutionId, executionId)
+                        .in(ConversationMessageEntity::getRole, ROLE_USER, ROLE_ASSISTANT)
                         .eq(ConversationMessageEntity::getVisibility, VISIBILITY_USER)
                         .orderByAsc(ConversationMessageEntity::getConversationMessageSequence)
                         .list());

@@ -90,7 +90,7 @@ public class AgentExecutionSubmissionTransactionService {
         }
 
         // 在创建依赖记录前推进由会话持有的消息和事件序号。
-        ConversationSession.AllocatedSequences sequences = session.allocateSubmissionSequences();
+        ConversationSession.AllocatedSequences sequences = session.allocateSubmissionSequences(2);
         if (!sessions.updateById(session)) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT, ERROR_SESSION_CHANGED_CONCURRENTLY);
@@ -103,7 +103,7 @@ public class AgentExecutionSubmissionTransactionService {
                         ids.next(ID_PREFIX_CONVERSATION_MESSAGE),
                         conversationSessionId,
                         content,
-                        sequences.conversationMessage(),
+                        sequences.firstConversationMessage(),
                         operatorUserId,
                         MessageRole.USER.value());
         messages.save(message);
@@ -128,6 +128,15 @@ public class AgentExecutionSubmissionTransactionService {
 
         message.associateExecution(run.getExecutionId());
         messages.updateById(message);
+
+        // 同一事务保存唯一 assistant 中心占位行，后续只在该行更新正文和过程列表。
+        messages.save(
+                ConversationMessage.assistantPlaceholder(
+                        ids.next(ID_PREFIX_CONVERSATION_MESSAGE),
+                        conversationSessionId,
+                        run.getExecutionId(),
+                        sequences.lastConversationMessage(),
+                        MessageRole.ASSISTANT.value()));
 
         // 初始化可重放事件流和模型输出检查点，使执行在提交后可被 worker 接管。
         events.save(

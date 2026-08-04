@@ -1,0 +1,216 @@
+package com.datagent.agentv2.conversation;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.persistence.service.ConversationMessageService;
+import com.datagent.agentv2.platform.context.TenantContext;
+import jakarta.servlet.http.Cookie;
+import java.util.List;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
+import org.testcontainers.utility.DockerImageName;
+import tools.jackson.databind.ObjectMapper;
+
+@SpringBootTest(properties = "data-agent.runtime.scheduling-enabled=false")
+@AutoConfigureMockMvc
+class ContentCenteredMessageIntegrationTest {
+
+    private static final String TENANT_ID = "tenant_local";
+    private static final String SESSION_COOKIE = "DATA_AGENT_SESSION";
+    private static final PostgreSQLContainer POSTGRES =
+            new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
+    private static final GenericContainer<?> REDIS =
+            new GenericContainer<>(DockerImageName.parse("redis:7.4-alpine"))
+                    .withCommand("redis-server", "--requirepass", "redis_test")
+                    .withExposedPorts(6379);
+
+    static {
+        POSTGRES.start();
+        REDIS.start();
+    }
+
+    @DynamicPropertySource
+    static void properties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", POSTGRES::getUsername);
+        registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("spring.data.redis.host", REDIS::getHost);
+        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+        registry.add("spring.data.redis.username", () -> "default");
+        registry.add("spring.data.redis.password", () -> "redis_test");
+    }
+
+    @AfterAll
+    static void stopContainers() {
+        REDIS.stop();
+        POSTGRES.stop();
+    }
+
+    @Autowired private MockMvc mvc;
+    @Autowired private JdbcTemplate jdbc;
+    @Autowired private ObjectMapper json;
+    @Autowired private ConversationMessageService messages;
+    @Autowired private TransactionTemplate transactions;
+
+    @BeforeEach
+    void clearConversationData() {
+        jdbc.update("delete from agent_execution_event");
+        jdbc.update("delete from agent_execution_stream_checkpoint");
+        jdbc.update("update conversation_message set execution_id = null");
+        jdbc.update("delete from agent_execution");
+        jdbc.update("delete from conversation_message");
+        jdbc.update("delete from conversation_session");
+    }
+
+    @Test
+    void retryCreatesOneNewAssistantAndMessageQueriesUseTheCenterRows() throws Exception {
+        Cookie login = login();
+        String conversationSessionId = createSession(login);
+        String originalExecutionId = submit(login, conversationSessionId);
+        cancel(login, conversationSessionId, originalExecutionId);
+
+        String firstRetry = retry(login, conversationSessionId, originalExecutionId, "retry-key");
+        String replayedRetry =
+                retry(login, conversationSessionId, originalExecutionId, "retry-key");
+        String retryExecutionId = json.readTree(firstRetry).path("executionId").asString();
+        assertThat(json.readTree(replayedRetry).path("executionId").asString())
+                .isEqualTo(retryExecutionId);
+
+        // retry 继续引用原 user 消息，只为新 execution 创建一条 assistant 中心行。
+        assertThat(roleCount(conversationSessionId, "user")).isEqualTo(1);
+        assertThat(roleCount(conversationSessionId, "assistant")).isEqualTo(2);
+        assertThat(
+                        jdbc.queryForObject(
+                                """
+                                select count(*) from conversation_message
+                                 where execution_id = ? and role = 'assistant'
+                                   and content = '' and thinking_process = '[]'::jsonb
+                                """,
+                                Integer.class,
+                                retryExecutionId))
+                .isEqualTo(1);
+
+        // 锁查询和有界会话查询都返回相同的真实中心消息，不生成工具辅助消息。
+        ConversationMessage locked =
+                TenantContext.call(
+                        TENANT_ID,
+                        () ->
+                                transactions.execute(
+                                        ignored ->
+                                                messages.lockAssistantByExecutionId(
+                                                        retryExecutionId)));
+        assertThat(locked).isNotNull();
+        assertThat(locked.getExecutionId()).isEqualTo(retryExecutionId);
+        assertThat(locked.getThinkingProcess()).isEmpty();
+
+        List<ConversationMessage> executionMessages =
+                TenantContext.call(TENANT_ID, () -> messages.findByExecutionId(retryExecutionId));
+        assertThat(executionMessages)
+                .extracting(ConversationMessage::getRole)
+                .containsExactly("assistant");
+        List<ConversationMessage> sessionMessages =
+                TenantContext.call(
+                        TENANT_ID,
+                        () ->
+                                messages.findByConversationSessionIdUpTo(
+                                        conversationSessionId, Long.MAX_VALUE));
+        assertThat(sessionMessages)
+                .extracting(ConversationMessage::getRole)
+                .containsExactly("user", "assistant", "assistant");
+    }
+
+    private int roleCount(String conversationSessionId, String role) {
+        return jdbc.queryForObject(
+                "select count(*) from conversation_message where conversation_session_id = ? and role = ?",
+                Integer.class,
+                conversationSessionId,
+                role);
+    }
+
+    private String submit(Cookie login, String conversationSessionId) throws Exception {
+        String body =
+                mvc.perform(
+                                post(
+                                                "/api/v1/agent-sessions/{conversationSessionId}/messages",
+                                                conversationSessionId)
+                                        .cookie(login)
+                                        .header("Idempotency-Key", "submit-key")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"content\":\"hello\"}"))
+                        .andExpect(status().isAccepted())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return json.readTree(body).path("execution").path("executionId").asString();
+    }
+
+    private void cancel(Cookie login, String sessionId, String executionId) throws Exception {
+        mvc.perform(
+                        post(
+                                        "/api/v1/agent-sessions/{conversationSessionId}/executions/{executionId}:cancel",
+                                        sessionId,
+                                        executionId)
+                                .cookie(login))
+                .andExpect(status().isAccepted());
+    }
+
+    private String retry(Cookie login, String sessionId, String executionId, String key)
+            throws Exception {
+        return mvc.perform(
+                        post(
+                                        "/api/v1/agent-sessions/{conversationSessionId}/executions/{executionId}:retry",
+                                        sessionId,
+                                        executionId)
+                                .cookie(login)
+                                .header("Idempotency-Key", key))
+                .andExpect(status().isAccepted())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+    }
+
+    private String createSession(Cookie login) throws Exception {
+        String body =
+                mvc.perform(
+                                post("/api/v1/agent-sessions")
+                                        .cookie(login)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"title\":\"content-centered\"}"))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return json.readTree(body).path("conversationSessionId").asString();
+    }
+
+    private Cookie login() throws Exception {
+        String setCookie =
+                mvc.perform(
+                                post("/api/v1/auth/login")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"username\":\"admin\",\"password\":\"admin\"}"))
+                        .andExpect(status().isNoContent())
+                        .andReturn()
+                        .getResponse()
+                        .getHeader(HttpHeaders.SET_COOKIE);
+        return new Cookie(
+                SESSION_COOKIE,
+                setCookie.substring((SESSION_COOKIE + "=").length(), setCookie.indexOf(';')));
+    }
+}

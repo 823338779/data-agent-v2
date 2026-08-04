@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.servlet.http.Cookie;
+import java.util.List;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
@@ -84,7 +85,8 @@ class AgentExecutionSubmissionIntegrationTest {
         String replay = submit(login, conversationSessionId, "key-serial", "hello");
 
         assertThat(executionId(replay)).isEqualTo(executionId(first));
-        assertCounts(conversationSessionId, 1, 1);
+        assertCounts(conversationSessionId, 2, 1);
+        assertContentCenteredMessages(conversationSessionId, "hello");
         assertThat(json.readTree(first).path("execution").path("status").asString())
                 .isEqualTo("queued");
         assertThat(
@@ -120,7 +122,7 @@ class AgentExecutionSubmissionIntegrationTest {
                                 .content("{\"content\":\"second\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
-        assertCounts(conversationSessionId, 1, 1);
+        assertCounts(conversationSessionId, 2, 1);
     }
 
     @Test
@@ -137,7 +139,7 @@ class AgentExecutionSubmissionIntegrationTest {
 
             assertThat(executionId(first.get())).isEqualTo(executionId(second.get()));
         }
-        assertCounts(conversationSessionId, 1, 1);
+        assertCounts(conversationSessionId, 2, 1);
     }
 
     private String submit(Cookie login, String conversationSessionId, String key, String content)
@@ -204,4 +206,27 @@ class AgentExecutionSubmissionIntegrationTest {
                                 conversationSessionId))
                 .isEqualTo(executions);
     }
+
+    private void assertContentCenteredMessages(String conversationSessionId, String userContent) {
+        List<MessageRow> rows =
+                jdbc.query(
+                        """
+                        select role, content, thinking_process::text
+                          from conversation_message
+                         where conversation_session_id = ?
+                         order by conversation_message_sequence
+                        """,
+                        (resultSet, rowNumber) ->
+                                new MessageRow(
+                                        resultSet.getString("role"),
+                                        resultSet.getString("content"),
+                                        resultSet.getString("thinking_process")),
+                        conversationSessionId);
+        assertThat(rows)
+                .containsExactly(
+                        new MessageRow("user", userContent, "[]"),
+                        new MessageRow("assistant", "", "[]"));
+    }
+
+    private record MessageRow(String role, String content, String thinkingProcess) {}
 }

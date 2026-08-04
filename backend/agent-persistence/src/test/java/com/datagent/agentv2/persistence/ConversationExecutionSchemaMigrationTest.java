@@ -253,8 +253,7 @@ class ConversationExecutionSchemaMigrationTest {
     }
 
     @Test
-    void legacyToolMessagesAreBackfilledIntoThePublicAssistantProcessArray()
-            throws SQLException {
+    void legacyToolMessagesAreBackfilledIntoThePublicAssistantProcessArray() throws SQLException {
         assertThat(columnNames("conversation_message")).contains("thinking_process");
         assertThat(columnNames("tool_execution")).contains("tool_process_item_id");
         assertThat(

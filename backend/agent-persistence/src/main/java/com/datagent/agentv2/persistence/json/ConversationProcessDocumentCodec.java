@@ -86,7 +86,8 @@ public final class ConversationProcessDocumentCodec {
         node.put("toolCallId", tool.toolCallId());
         node.put("modelInvocationSequence", tool.modelInvocationSequence());
         node.set("input", writePayload(tool.input()));
-        writeNullableNode(node, "output", tool.output() == null ? null : writePayload(tool.output()));
+        writeNullableNode(
+                node, "output", tool.output() == null ? null : writePayload(tool.output()));
         writeNullableBoolean(node, "success", tool.success());
         writeNullableText(node, "errorCode", tool.errorCode());
         writeNullableText(node, "errorMessage", tool.errorMessage());
@@ -203,7 +204,8 @@ public final class ConversationProcessDocumentCodec {
 
     private ObjectNode writePayload(BoundedProcessPayload payload) {
         ObjectNode node = json.createObjectNode();
-        writeNullableNode(node, "value", payload.value() == null ? null : json.valueToTree(payload.value()));
+        writeNullableNode(
+                node, "value", payload.value() == null ? null : json.valueToTree(payload.value()));
         writeNullableText(node, "preview", payload.preview());
         node.put("truncated", payload.truncated());
         node.put("originalSizeBytes", payload.originalSizeBytes());

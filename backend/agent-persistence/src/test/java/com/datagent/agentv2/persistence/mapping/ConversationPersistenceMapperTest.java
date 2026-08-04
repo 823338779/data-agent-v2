@@ -57,13 +57,13 @@ class ConversationPersistenceMapperTest {
         entity.setTenantId(TENANT_ID);
         entity.setCreatedAt(createdAt);
 
-        session.allocateSubmissionSequences();
+        session.allocateSubmissionSequences(2);
         mapper.updateEntity(session, entity);
 
         assertThat(entity.getId()).isEqualTo(42L);
         assertThat(entity.getTenantId()).isEqualTo(TENANT_ID);
         assertThat(entity.getCreatedAt()).isEqualTo(createdAt);
-        assertThat(entity.getConversationMessageSequence()).isEqualTo(1L);
+        assertThat(entity.getConversationMessageSequence()).isEqualTo(2L);
         assertThat(entity.getExecutionEventSequence()).isEqualTo(1L);
     }
 

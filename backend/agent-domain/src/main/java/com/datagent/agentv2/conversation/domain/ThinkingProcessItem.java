@@ -66,8 +66,7 @@ public sealed interface ThinkingProcessItem
 
         // 非终态不得携带完成时间或耗时，终态必须携带完成时间。
         boolean terminal =
-                status == ThinkingProcessStatus.SUCCEEDED
-                        || status == ThinkingProcessStatus.FAILED;
+                status == ThinkingProcessStatus.SUCCEEDED || status == ThinkingProcessStatus.FAILED;
         if (!terminal && (completedAt != null || durationMillis != null)) {
             throw new IllegalArgumentException("non-terminal process item cannot be completed");
         }

@@ -6,6 +6,8 @@ import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERR
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_EXECUTION_CANNOT_BE_CANCELLED;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_IDEMPOTENCY_KEY_BLANK;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_ONLY_TERMINAL_EXECUTIONS_RETRY;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_SESSION_CHANGED_CONCURRENTLY;
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_CONVERSATION_MESSAGE;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_EXECUTION;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_EXECUTION_EVENT;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_EXECUTION_STREAM_CHECKPOINT;
@@ -16,6 +18,7 @@ import com.datagent.agentv2.conversation.cluster.AgentExecutionCancellationSigna
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
+import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.domain.ConversationSession;
 import com.datagent.agentv2.conversation.enums.ExecutionAggregateType;
 import com.datagent.agentv2.conversation.enums.ExecutionControlType;
@@ -24,12 +27,14 @@ import com.datagent.agentv2.conversation.enums.ExecutionNotificationType;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import com.datagent.agentv2.conversation.enums.ExecutionRequestType;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
+import com.datagent.agentv2.conversation.enums.MessageRole;
 import com.datagent.agentv2.conversation.exception.IdempotencyKeyReusedException;
 import com.datagent.agentv2.persistence.entity.NotificationOutboxMessageEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionAttemptService;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
+import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
 import com.datagent.agentv2.persistence.service.NotificationOutboxMessageService;
 import com.datagent.agentv2.platform.context.TenantContext;
@@ -57,6 +62,7 @@ public class AgentExecutionControlService {
                     ExecutionStatus.FAILED.value());
 
     private final ConversationSessionService sessions;
+    private final ConversationMessageService messages;
     private final AgentExecutionService agentExecutions;
     private final AgentExecutionEventService events;
     private final AgentExecutionAttemptService attempts;
@@ -67,6 +73,7 @@ public class AgentExecutionControlService {
 
     public AgentExecutionControlService(
             ConversationSessionService sessions,
+            ConversationMessageService messages,
             AgentExecutionService agentExecutions,
             AgentExecutionEventService events,
             AgentExecutionAttemptService attempts,
@@ -75,6 +82,7 @@ public class AgentExecutionControlService {
             IdGenerator ids,
             ObjectMapper json) {
         this.sessions = sessions;
+        this.messages = messages;
         this.agentExecutions = agentExecutions;
         this.events = events;
         this.attempts = attempts;
@@ -161,6 +169,11 @@ public class AgentExecutionControlService {
         }
 
         Instant now = Instant.now();
+        ConversationSession.AllocatedSequences sequences = session.allocateSubmissionSequences(1);
+        if (!sessions.updateById(session)) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, ERROR_SESSION_CHANGED_CONCURRENTLY);
+        }
         AgentExecution retry =
                 AgentExecution.retry(
                         ids.next(ID_PREFIX_EXECUTION),
@@ -174,12 +187,22 @@ public class AgentExecutionControlService {
                         ExecutionPhase.QUEUED.value());
         agentExecutions.save(retry);
 
+        // retry 只复用原 user 消息，并为新 execution 创建一条新的 assistant 中心占位行。
+        ConversationMessage placeholder =
+                ConversationMessage.assistantPlaceholder(
+                        ids.next(ID_PREFIX_CONVERSATION_MESSAGE),
+                        conversationSessionId,
+                        retry.getExecutionId(),
+                        sequences.lastConversationMessage(),
+                        MessageRole.ASSISTANT.value());
+        messages.save(placeholder);
+
         events.save(
                 AgentExecutionEvent.occurred(
                         ids.next(ID_PREFIX_EXECUTION_EVENT),
                         conversationSessionId,
                         retry.getExecutionId(),
-                        sessions.nextExecutionEventSequence(conversationSessionId),
+                        sequences.executionEvent(),
                         ExecutionEventType.QUEUED.value(),
                         null,
                         now));

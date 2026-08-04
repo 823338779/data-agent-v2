@@ -16,18 +16,15 @@ import org.junit.jupiter.api.Test;
 
 class ConversationProcessDocumentCodecTest {
 
-    private static final UUID THINKING_ID =
-            UUID.fromString("00000000-0000-0000-0000-000000000001");
-    private static final UUID TOOL_ID =
-            UUID.fromString("00000000-0000-0000-0000-000000000002");
+    private static final UUID THINKING_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    private static final UUID TOOL_ID = UUID.fromString("00000000-0000-0000-0000-000000000002");
     private static final Instant START = Instant.parse("2026-08-04T01:00:00Z");
     private static final String CONTENT_TYPE_JSON = "application/json";
     private static final String SHA_A = "a".repeat(64);
     private static final String SHA_B = "b".repeat(64);
     private static final String SHA_C = "c".repeat(64);
 
-    private final ConversationProcessDocumentCodec codec =
-            new ConversationProcessDocumentCodec();
+    private final ConversationProcessDocumentCodec codec = new ConversationProcessDocumentCodec();
 
     @Test
     void roundTripsOrderedPolymorphicProcessItems() {
@@ -89,20 +86,14 @@ class ConversationProcessDocumentCodecTest {
 
     @Test
     void rejectsUnknownType() {
-        assertThatThrownBy(
-                        () ->
-                                codec.read(
-                                        "[{\"type\":\"UNKNOWN\",\"schemaVersion\":1}]"))
+        assertThatThrownBy(() -> codec.read("[{\"type\":\"UNKNOWN\",\"schemaVersion\":1}]"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("type");
     }
 
     @Test
     void rejectsUnknownSchemaVersion() {
-        assertThatThrownBy(
-                        () ->
-                                codec.read(
-                                        "[{\"type\":\"THINKING\",\"schemaVersion\":2}]"))
+        assertThatThrownBy(() -> codec.read("[{\"type\":\"THINKING\",\"schemaVersion\":2}]"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("schemaVersion");
     }

@@ -70,6 +70,15 @@ public final class ConversationMessage {
         return message;
     }
 
+    /** 组装与执行绑定的唯一 assistant 中心占位消息。 */
+    public static ConversationMessage assistantPlaceholder(
+            String messageId, String sessionId, String executionId, long sequence, String role) {
+        ConversationMessage message = base(messageId, sessionId, role, "", sequence);
+        message.executionId = executionId;
+        message.thinkingProcess = List.of();
+        return message;
+    }
+
     /** 组装与执行关联的 assistant 消息。 */
     public static ConversationMessage assistant(
             String messageId,

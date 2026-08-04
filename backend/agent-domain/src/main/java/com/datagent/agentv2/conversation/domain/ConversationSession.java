@@ -70,13 +70,19 @@ public final class ConversationSession {
         return session;
     }
 
-    /** 同时推进消息和执行事件序号，返回本次分配的两个序号。 */
-    public AllocatedSequences allocateSubmissionSequences() {
-        conversationMessageSequence++;
+    /** 在会话锁内一次推进指定数量的消息序号和一个执行事件序号。 */
+    public AllocatedSequences allocateSubmissionSequences(int messageCount) {
+        if (messageCount <= 0) {
+            throw new IllegalArgumentException("messageCount must be positive");
+        }
+        long firstConversationMessage = conversationMessageSequence + 1;
+        conversationMessageSequence += messageCount;
         executionEventSequence++;
-        return new AllocatedSequences(conversationMessageSequence, executionEventSequence);
+        return new AllocatedSequences(
+                firstConversationMessage, conversationMessageSequence, executionEventSequence);
     }
 
-    /** 一次消息提交所分配的会话级序号。 */
-    public record AllocatedSequences(long conversationMessage, long executionEvent) {}
+    /** 一次执行创建所分配的连续消息区间和执行事件序号。 */
+    public record AllocatedSequences(
+            long firstConversationMessage, long lastConversationMessage, long executionEvent) {}
 }
