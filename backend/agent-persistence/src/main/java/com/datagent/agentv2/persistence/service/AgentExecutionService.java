@@ -15,6 +15,7 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
 
     private static final String STATUS_QUEUED = "queued";
     private static final String STATUS_RUNNING = "running";
+    private static final String STATUS_CANCELLED = "cancelled";
     private static final String STATUS_WAITING_FOR_USER = "waiting_for_user";
     private static final String STATUS_WAITING_CONFIRMATION = "waiting_confirmation";
 
@@ -121,8 +122,15 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
 
     /** 显式清空未进入 worker 的执行租约字段，并用乐观锁提交直接取消。 */
     public boolean cancelLocked(AgentExecution execution, Instant now) {
-        return baseMapper.cancelLocked(execution.getExecutionId(), execution.getVersion(), now)
-                == 1;
+        boolean cancelled =
+                baseMapper.cancelLocked(execution.getExecutionId(), execution.getVersion(), now)
+                        == 1;
+        if (cancelled) {
+            // 显式 SQL 不会回填 MyBatis 实体；同步内存状态，确保当前事务响应返回取消终态。
+            execution.cancelDirectly(STATUS_CANCELLED, now);
+            execution.setVersion(execution.getVersion() + 1L);
+        }
+        return cancelled;
     }
 
     /** 使用 owner/attempt fencing 把运行中执行转换为通用失败终态。 */

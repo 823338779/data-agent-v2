@@ -303,7 +303,7 @@ class AgentV2ApplicationTest {
                                                         "event:execution_queued"))))
                 .andExpect(request().asyncStarted());
 
-        // 新建 EventSource 显式携带旧游标时只补发增量更新，不再重复完整详情快照。
+        // 即使携带旧游标，重连也必须先返回 PostgreSQL 权威快照，避免低延迟事件丢失。
         mvc.perform(
                         get(
                                         "/api/v1/agent-sessions/{conversationSessionId}/events",
@@ -316,18 +316,18 @@ class AgentV2ApplicationTest {
                         content()
                                 .string(
                                         org.hamcrest.Matchers.containsString(
-                                                "event:execution_update")))
+                                                "event:session_snapshot")))
                 .andExpect(
                         content()
                                 .string(
                                         org.hamcrest.Matchers.not(
                                                 org.hamcrest.Matchers.containsString(
-                                                        "event:session_snapshot"))))
+                                                        "event:execution_update"))))
                 .andExpect(request().asyncStarted());
     }
 
     @Test
-    void eventStreamPublishesEventsPersistedAfterConnectionOpens() throws Exception {
+    void idleEventStreamDoesNotFollowAnExecutionStartedAfterItCloses() throws Exception {
         Cookie session = login();
         String created =
                 mvc.perform(
@@ -342,7 +342,7 @@ class AgentV2ApplicationTest {
         String conversationSessionId =
                 created.replaceAll(".*\\\"conversationSessionId\\\":\\\"([^\\\"]+)\\\".*", "$1");
 
-        // Open the stream before the event exists to verify live delivery rather than replay.
+        // 未处理会话只返回一次权威快照并关闭，不订阅之后才启动的后台执行。
         MvcResult stream =
                 mvc.perform(
                                 get(
@@ -363,7 +363,9 @@ class AgentV2ApplicationTest {
                                 .content("{\"content\":\"stream live\"}"))
                 .andExpect(status().isAccepted());
 
-        assertThat(stream.getResponse().getContentAsString()).contains("event:execution_update");
+        assertThat(stream.getResponse().getContentAsString())
+                .contains("event:session_snapshot")
+                .doesNotContain("event:execution_update");
     }
 
     private Cookie login() throws Exception {
