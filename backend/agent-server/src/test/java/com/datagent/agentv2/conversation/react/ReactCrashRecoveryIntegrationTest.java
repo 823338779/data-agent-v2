@@ -9,6 +9,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.domain.BoundedProcessPayload;
+import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.domain.ThinkingProcessItem;
+import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
+import com.datagent.agentv2.conversation.domain.ToolThinkingProcessItem;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.persistence.entity.ModelInvocationEntity;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
@@ -16,13 +21,19 @@ import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ModelInvocationService;
 import com.datagent.agentv2.persistence.service.ToolExecutionService;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class ReactCrashRecoveryIntegrationTest {
 
     private static final AgentExecutionPort.ClaimedAgentExecution OWNED =
-            new AgentExecutionPort.ClaimedAgentExecution("tenant", "run", "new-owner", 2);
+            new AgentExecutionPort.ClaimedAgentExecution("tenant", "run", "new-owner", 2L);
+    private static final String ASSISTANT_ID = "assistant-center";
+    private static final String PAYLOAD_SHA256 =
+            "0000000000000000000000000000000000000000000000000000000000000000";
 
     private final AgentExecutionService agentExecutions = mock(AgentExecutionService.class);
     private final ModelInvocationService modelInvocations = mock(ModelInvocationService.class);
@@ -34,7 +45,7 @@ class ReactCrashRecoveryIntegrationTest {
     @Test
     void abandonsStreamingTurnAndRetriesFromItsImmutableInputBoundary() {
         stubOwnedExecution();
-        ModelInvocationEntity streaming = modelInvocation("streaming", 1, 4);
+        ModelInvocationEntity streaming = modelInvocation("streaming", 1L, 4L);
         when(modelInvocations.findByExecutionId("run")).thenReturn(List.of(streaming));
         when(modelInvocations.abandonRecovered(
                         eq("run"), eq(1L), eq(1L), eq(0L), eq("new-owner"), eq(2L), any()))
@@ -45,46 +56,42 @@ class ReactCrashRecoveryIntegrationTest {
         assertThat(plan)
                 .isEqualTo(
                         new ReactRecoveryPlanner.RecoveryPlan(
-                                ReactRecoveryPlanner.Action.RETRY_MODEL, 1, 4));
+                                ReactRecoveryPlanner.Action.RETRY_MODEL, 1L, 4L));
         verify(modelInvocations)
                 .abandonRecovered(
                         eq("run"), eq(1L), eq(1L), eq(0L), eq("new-owner"), eq(2L), any());
     }
 
     @Test
-    void resumesPreparedAndLegacyExecutingToolsWithoutStartingAnotherModelFirst() {
+    void resumesPreparedAndExecutingToolsWithoutStartingAnotherModelFirst() {
         stubOwnedExecution();
-        ModelInvocationEntity completed = modelInvocation("completed", 1, 4);
-        when(modelInvocations.findByExecutionId("run")).thenReturn(List.of(completed));
-        when(toolExecutions.findByTurn("run", 1))
-                .thenReturn(List.of(execution("prepared", null), execution("executing", null)));
+        when(modelInvocations.findByExecutionId("run"))
+                .thenReturn(List.of(modelInvocation("completed", 1L, 4L)));
+        when(toolExecutions.findByTurn("run", 1L))
+                .thenReturn(List.of(execution(1L, "prepared"), execution(2L, "executing")));
 
         assertThat(planner.recover(OWNED).action())
                 .isEqualTo(ReactRecoveryPlanner.Action.EXECUTE_TOOLS);
     }
 
     @Test
-    void skipsTerminalExecutionsOnlyWhenTheirUniqueObservationsExist() {
+    void skipsTerminalExecutionsOnlyWhenTheirBoundProcessItemsAreTerminal() {
         stubOwnedExecution();
+        ToolExecutionEntity succeeded = execution(1L, "succeeded");
+        ToolExecutionEntity failed = execution(2L, "failed");
         when(modelInvocations.findByExecutionId("run"))
-                .thenReturn(List.of(modelInvocation("completed", 1, 4)));
-        when(toolExecutions.findByTurn("run", 1))
-                .thenReturn(
-                        List.of(
-                                execution("succeeded", "observation-1"),
-                                execution("failed", "observation-2")));
-        when(messages.findByConversationMessageId("observation-1"))
-                .thenReturn(observation("execution-succeeded"));
-        when(messages.findByConversationMessageId("observation-2"))
-                .thenReturn(observation("execution-failed"));
+                .thenReturn(List.of(modelInvocation("completed", 1L, 4L)));
+        when(toolExecutions.findByTurn("run", 1L)).thenReturn(List.of(succeeded, failed));
+        ConversationMessage assistant = assistant(succeeded, failed);
+        when(messages.findByConversationMessageId(ASSISTANT_ID)).thenReturn(assistant);
 
         assertThat(planner.recover(OWNED).action())
                 .isEqualTo(ReactRecoveryPlanner.Action.CONTINUE_MODEL);
 
-        when(messages.findByConversationMessageId("observation-2")).thenReturn(null);
+        assistant.setThinkingProcess(List.of(terminalItem(succeeded)));
         assertThatThrownBy(() -> planner.recover(OWNED))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Terminal tool execution is missing its observation");
+                .hasMessage("Terminal tool execution is missing its process item result");
     }
 
     private void stubOwnedExecution() {
@@ -108,20 +115,57 @@ class ReactCrashRecoveryIntegrationTest {
         return modelInvocation;
     }
 
-    private static ToolExecutionEntity execution(String status, String observationId) {
+    private static ToolExecutionEntity execution(long index, String status) {
         ToolExecutionEntity execution = new ToolExecutionEntity();
-        execution.setToolExecutionId("execution-" + status);
+        execution.setToolExecutionId("execution-" + index);
+        execution.setToolProcessItemId(new UUID(0L, index));
+        execution.setAssistantConversationMessageId(ASSISTANT_ID);
+        execution.setModelInvocationSequence(1L);
+        execution.setToolCallId("call-" + index);
+        execution.setToolName("tool-" + index);
         execution.setStatus(status);
-        execution.setObservationConversationMessageId(observationId);
         return execution;
     }
 
-    private static com.datagent.agentv2.conversation.domain.ConversationMessage observation(
-            String executionId) {
-        com.datagent.agentv2.conversation.domain.ConversationMessage message =
-                new com.datagent.agentv2.conversation.domain.ConversationMessage();
-        message.setRole("tool");
-        message.setToolExecutionId(executionId);
-        return message;
+    private static ConversationMessage assistant(ToolExecutionEntity... executions) {
+        ConversationMessage assistant = new ConversationMessage();
+        assistant.setConversationMessageId(ASSISTANT_ID);
+        assistant.setRole("assistant");
+        assistant.setContent("");
+        assistant.setThinkingProcess(
+                java.util.Arrays.stream(executions)
+                        .map(ReactCrashRecoveryIntegrationTest::terminalItem)
+                        .map(ThinkingProcessItem.class::cast)
+                        .toList());
+        return assistant;
+    }
+
+    private static ToolThinkingProcessItem terminalItem(ToolExecutionEntity execution) {
+        boolean succeeded = "succeeded".equals(execution.getStatus());
+        Instant startedAt = Instant.parse("2026-08-04T00:00:00Z");
+        return new ToolThinkingProcessItem(
+                execution.getToolProcessItemId(),
+                execution.getToolProcessItemId().getLeastSignificantBits(),
+                succeeded ? ThinkingProcessStatus.SUCCEEDED : ThinkingProcessStatus.FAILED,
+                startedAt,
+                startedAt,
+                startedAt.plusMillis(10L),
+                10L,
+                ThinkingProcessItem.CURRENT_SCHEMA_VERSION,
+                execution.getToolName(),
+                execution.getToolName(),
+                execution.getToolExecutionId(),
+                execution.getToolCallId(),
+                execution.getModelInvocationSequence(),
+                payload(Map.of()),
+                succeeded ? payload(Map.of("ok", true)) : null,
+                succeeded,
+                succeeded ? null : "tool_error",
+                succeeded ? null : "failed");
+    }
+
+    private static BoundedProcessPayload payload(Object value) {
+        return new BoundedProcessPayload(
+                value, null, false, 1L, PAYLOAD_SHA256, "application/json");
     }
 }

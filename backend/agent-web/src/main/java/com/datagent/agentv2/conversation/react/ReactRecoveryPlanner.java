@@ -114,17 +114,22 @@ public class ReactRecoveryPlanner {
         if (assistant == null || execution.getToolProcessItemId() == null) {
             throw new IllegalStateException(ERROR_TERMINAL_PROCESS_ITEM);
         }
-        if (!(assistant.requireProcessItem(execution.getToolProcessItemId())
-                instanceof ToolThinkingProcessItem item)) {
-            throw new IllegalStateException(ERROR_TERMINAL_PROCESS_ITEM);
+        ToolThinkingProcessItem item;
+        try {
+            if (!(assistant.requireProcessItem(execution.getToolProcessItemId())
+                    instanceof ToolThinkingProcessItem toolItem)) {
+                throw new IllegalStateException(ERROR_TERMINAL_PROCESS_ITEM);
+            }
+            item = toolItem;
+        } catch (IllegalStateException failure) {
+            throw new IllegalStateException(ERROR_TERMINAL_PROCESS_ITEM, failure);
         }
-
         // 工具行和中心消息中的终态节点必须描述同一次调用及同一成功/失败结果。
         boolean succeeded = ToolExecutionStatus.SUCCEEDED.matches(execution.getStatus());
         ThinkingProcessStatus expectedStatus =
                 succeeded ? ThinkingProcessStatus.SUCCEEDED : ThinkingProcessStatus.FAILED;
         if (item.status() != expectedStatus
-                || item.output() == null
+                || (succeeded && item.output() == null)
                 || !Boolean.valueOf(succeeded).equals(item.success())
                 || !execution.getToolExecutionId().equals(item.toolExecutionId())
                 || !execution.getToolCallId().equals(item.toolCallId())
