@@ -42,6 +42,7 @@
 - `backend/agent-web/.../process/ThinkingProcessAuditLogger.java`：事务提交后向专用 logger 输出一次完整安全事件。
 - `backend/agent-web/.../process/ConversationMessageChanged.java`：事务提交后触发本机 SSE 消息替换事件。
 - `frontend/src/components/MessageProcessTimeline.tsx`：按 assistant 消息渲染可展开的 thinking/tool 时间线。
+- `frontend/src/App.tsx`：根据处理中会话集合和当前路由按需建立、切换及关闭 activity/detail SSE。
 
 ### Task 1: 定义强类型 ProcessItem 并完成 JSONB 编解码
 
@@ -972,6 +973,7 @@ git commit -m "feat: stream conversation process message updates"
 
 **Interfaces:**
 - Produces: discriminated TypeScript union `ThinkingProcessItem = ModelThinkingProcessItem | ToolThinkingProcessItem`; SSE reducer replaces messages by ID/version; `MessageProcessTimeline` uses `processItemId` as React key.
+- Produces: `isProcessingStatus(AgentExecutionStatus): boolean`; 页面在没有处理中会话时保持零 SSE，最多同时持有一条 activity SSE 和一条当前会话 detail SSE。
 
 - [ ] **Step 1: Write mapper, reducer, and UI tests**
 
@@ -986,6 +988,72 @@ it('renders ordered process items under their assistant message', () => {
 ```
 
 Also test `thinkingProcess: []` renders nothing, failed tools display error code/message, `message_update` with higher version replaces one message, and duplicate/older versions are ignored.
+
+Add connection-lifecycle tests with explicit close spies:
+
+```tsx
+it('opens streams only for processing sessions and closes them after terminal merge', async () => {
+  const closeActivity = vi.fn();
+  const closeDetail = vi.fn();
+  let detailListener: Parameters<AgentBackendClient['subscribeSessionEvents']>[1] | undefined;
+  const queuedSession: ConversationSession = {
+    ...session,
+    execution: {
+      ...completedExecution('execution_1', ''),
+      status: 'queued',
+      progress: 0,
+      streamCheckpoint: null,
+    },
+  };
+  const backend = client({
+    listSessions: vi.fn().mockResolvedValue([session]),
+    submitMessage: vi.fn().mockResolvedValue(queuedSession),
+    subscribeActivity: vi.fn(() => closeActivity),
+    subscribeSessionEvents: vi.fn((_sessionId, listener) => {
+      detailListener = listener;
+      return closeDetail;
+    }),
+  });
+  render(<App client={backend} />);
+
+  expect(backend.subscribeActivity).not.toHaveBeenCalled();
+  expect(backend.subscribeSessionEvents).not.toHaveBeenCalled();
+
+  fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+  fireEvent.change(screen.getByLabelText('输入消息'), {
+    target: { value: '分析订单延迟' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  await waitFor(() => expect(backend.subscribeActivity).toHaveBeenCalledTimes(1));
+  expect(backend.subscribeSessionEvents).toHaveBeenCalledWith(
+    'session_1', expect.any(Function), expect.any(Function));
+
+  act(() => detailListener?.({
+    type: 'execution_update',
+    conversationSessionId: 'session_1',
+    execution: {
+      executionId: 'execution_1', status: 'done', progress: 100,
+      objective: '分析订单延迟', cancellationRequestedAt: null, streamCheckpoint: null,
+    },
+    event: {
+      executionEventId: 'event_done', executionEventSequence: 2,
+      type: 'execution_completed', occurredAt: '2026-08-04T02:00:00Z',
+      title: '执行完成', summary: null,
+    },
+    messages: [{
+      conversationMessageId: 'assistant_1', executionId: 'execution_1',
+      role: 'assistant', author: 'assistant', content: '最终回答',
+      timestamp: '2026-08-04T02:00:00Z', version: 2,
+      thinkingProcess: [], execution: null,
+    }],
+  }));
+  expect(closeDetail).toHaveBeenCalledTimes(1);
+  expect(closeActivity).toHaveBeenCalledTimes(1);
+  expect(screen.getByText('最终回答')).toBeInTheDocument();
+});
+```
+
+Add a second test with two background processing sessions: switching to a terminal history page closes the old detail SSE but keeps exactly one activity SSE; opening another processing session replaces, rather than adds, the detail SSE. Assert `cancelExecution` is never called by connection cleanup.
 
 - [ ] **Step 2: Run frontend tests and verify missing types/component**
 
@@ -1025,6 +1093,23 @@ export type ThinkingProcessItem =
 ```
 
 Render only assistant items; default collapsed once terminal and open while RUNNING. Show status, timestamps, duration, model/tool identity, safe persisted content, and truncation metadata. Never attempt to fetch full output from logs. Keep the existing answer stream panel for in-flight answer text, but bind it to the same placeholder message ID and replace the message in place when final content arrives.
+
+Centralize active-state recognition instead of scattering string comparisons:
+
+```ts
+const PROCESSING_STATUSES = new Set<AgentExecutionStatus>([
+  'queued',
+  'running',
+  'waiting_for_user',
+  'waiting_confirmation',
+]);
+
+export function isProcessingStatus(status: AgentExecutionStatus): boolean {
+  return PROCESSING_STATUSES.has(status);
+}
+```
+
+In `App.tsx`, derive `hasProcessingSession` from `session.execution?.status ?? session.activityStatus ?? 'idle'`. The activity effect returns without subscribing when false. The detail effect returns unless the routed `active` session is processing. Both effects return the unsubscribe callback, so status transition, route switch, backend replacement, and unmount close the old EventSource before another is opened. Apply a terminal `execution_update` (including its final message) to state before the derived status becomes terminal and triggers cleanup. On SSE error, perform one existing REST synchronization; do not create a retry loop when the refreshed state has no processing session.
 
 - [ ] **Step 4: Run frontend tests and production build**
 
@@ -1134,4 +1219,5 @@ Copy the exit code and concise result of each Step 3–5 command into the execut
 - [ ] thinking 不进入模型上下文，工具上下文仅从数据库中的 Tool ProcessItem 重建，终态工具不重复执行。
 - [ ] 完成、失败、取消、deadline 和 recovery exhaustion 后不存在未收敛节点。
 - [ ] REST、SSE 和前端围绕同一 message ID/version 展示 `content + thinkingProcess`，断线后由 PostgreSQL 快照恢复。
+- [ ] 没有处理中会话时页面占用零条 SSE；有后台执行时最多一条 activity SSE，且只有当前查看的处理中会话额外占用一条 detail SSE。
 - [ ] 后端最小测试、全量 `verify`、前端测试和生产构建均通过，或明确记录不可用基础设施造成的唯一未验证项。
