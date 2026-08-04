@@ -5,7 +5,7 @@ import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
 import com.datagent.agentv2.conversation.enums.ExecutionResumeReason;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.exception.ExecutionDeadlineExceededException;
-import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
+import com.datagent.agentv2.conversation.process.AgentExecutionProcessTerminationService;
 import com.datagent.agentv2.persistence.entity.AgentExecutionAttemptEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionAttemptService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
@@ -19,18 +19,24 @@ import org.springframework.transaction.annotation.Transactional;
 public class AgentExecutionLeaseService {
 
     private static final int MAX_INFRASTRUCTURE_RECOVERY_ATTEMPTS = 3;
+    private static final String DEADLINE_MESSAGE = "Execution deadline was exceeded";
+    private static final String RECOVERY_EXHAUSTED_MESSAGE =
+            "Execution recovery attempts were exhausted";
 
     private final AgentExecutionService agentExecutions;
     private final AgentExecutionAttemptService attempts;
     private final AgentExecutionRuntimeProperties properties;
+    private final AgentExecutionProcessTerminationService termination;
 
     public AgentExecutionLeaseService(
             AgentExecutionService agentExecutions,
             AgentExecutionAttemptService attempts,
-            AgentExecutionRuntimeProperties properties) {
+            AgentExecutionRuntimeProperties properties,
+            AgentExecutionProcessTerminationService termination) {
         this.agentExecutions = agentExecutions;
         this.attempts = attempts;
         this.properties = properties;
+        this.termination = termination;
     }
 
     public boolean heartbeat(AgentExecutionPort.ClaimedAgentExecution run) {
@@ -49,17 +55,9 @@ public class AgentExecutionLeaseService {
                 run.executionId(), run.ownerInstanceId(), run.executionAttemptNumber(), now)) {
             return;
         }
-        if (agentExecutions.failOwnedPastDeadline(
-                run.executionId(), run.ownerInstanceId(), run.executionAttemptNumber(), now)) {
-            attempts.finish(
-                    run.executionId(),
-                    run.executionAttemptNumber(),
-                    ExecutionStatus.FAILED.value(),
-                    now,
-                    ExecutionFailureCode.DEADLINE_EXCEEDED.value());
-            throw new ExecutionDeadlineExceededException(run.executionId());
-        }
-        throw new ExecutionOwnershipLostException(run.executionId());
+        termination.failOwned(
+                run, ExecutionFailureCode.DEADLINE_EXCEEDED.value(), DEADLINE_MESSAGE, now);
+        throw new ExecutionDeadlineExceededException(run.executionId());
     }
 
     public boolean cancellationRequested(AgentExecutionPort.ClaimedAgentExecution run) {
@@ -68,18 +66,7 @@ public class AgentExecutionLeaseService {
     }
 
     public boolean cancelIfRequested(AgentExecutionPort.ClaimedAgentExecution run) {
-        Instant now = Instant.now();
-        if (!agentExecutions.cancelOwnedIfRequested(
-                run.executionId(), run.ownerInstanceId(), run.executionAttemptNumber(), now)) {
-            return false;
-        }
-        attempts.finish(
-                run.executionId(),
-                run.executionAttemptNumber(),
-                ExecutionStatus.CANCELLED.value(),
-                now,
-                null);
-        return true;
+        return termination.cancelOwned(run, Instant.now());
     }
 
     @Transactional
@@ -96,28 +83,22 @@ public class AgentExecutionLeaseService {
         long accumulated = accumulatedAt(run, now);
         long budget = run.getExecutionBudgetMs();
         if (run.getRecoveryAttemptCount() >= MAX_INFRASTRUCTURE_RECOVERY_ATTEMPTS) {
-            if (agentExecutions.failExpiredRecovery(run, accumulated, now)) {
-                attempts.finish(
-                        run.getExecutionId(),
-                        run.getExecutionAttemptNumber(),
-                        ExecutionStatus.FAILED.value(),
-                        now,
-                        ExecutionFailureCode.RECOVERY_EXHAUSTED.value());
-                return RecoveryResult.terminal();
-            }
-            return RecoveryResult.none();
+            termination.closeExpiredLocked(
+                    run,
+                    ExecutionFailureCode.RECOVERY_EXHAUSTED.value(),
+                    RECOVERY_EXHAUSTED_MESSAGE,
+                    accumulated,
+                    now);
+            return RecoveryResult.terminal();
         }
         if (accumulated >= budget) {
-            if (agentExecutions.failExpiredBudget(run, accumulated, now)) {
-                attempts.finish(
-                        run.getExecutionId(),
-                        run.getExecutionAttemptNumber(),
-                        ExecutionStatus.FAILED.value(),
-                        now,
-                        ExecutionFailureCode.DEADLINE_EXCEEDED.value());
-                return RecoveryResult.terminal();
-            }
-            return RecoveryResult.none();
+            termination.closeExpiredLocked(
+                    run,
+                    ExecutionFailureCode.DEADLINE_EXCEEDED.value(),
+                    DEADLINE_MESSAGE,
+                    accumulated,
+                    now);
+            return RecoveryResult.terminal();
         }
 
         long nextAttempt = run.getExecutionAttemptNumber() + 1;

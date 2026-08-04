@@ -4,7 +4,8 @@ package com.datagent.agentv2.conversation.enums;
 public enum ExecutionFailureCode {
     DEADLINE_EXCEEDED("EXECUTION_DEADLINE_EXCEEDED"),
     LEASE_EXPIRED("LEASE_EXPIRED"),
-    RECOVERY_EXHAUSTED("RECOVERY_EXHAUSTED");
+    RECOVERY_EXHAUSTED("RECOVERY_EXHAUSTED"),
+    INTERNAL_ERROR("EXECUTION_FAILED");
 
     private final String value;
 

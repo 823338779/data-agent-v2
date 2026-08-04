@@ -144,6 +144,69 @@ public interface AgentExecutionMapper extends BaseMapper<AgentExecutionEntity> {
     @Update(
             """
             update agent_execution
+               set status = 'cancelled', completed_at = #{now},
+                   owner_instance_id = null, active_segment_started_at = null,
+                   heartbeat_at = null, lease_expires_at = null, hard_deadline_at = null,
+                   updated_at = #{now}, version = version + 1
+             where execution_id = #{executionId} and version = #{version}
+               and status in ('queued', 'waiting_for_user', 'waiting_confirmation')
+               and is_deleted = false
+            """)
+    int cancelLocked(
+            @Param("executionId") String executionId,
+            @Param("version") long version,
+            @Param("now") Instant now);
+
+    @Update(
+            """
+            update agent_execution
+               set status = 'failed', phase = 'FAILED', failure_code = #{failureCode},
+                   failure_detail = #{failureDetail}, failed_at = #{now},
+                   active_execution_ms = active_execution_ms + greatest(0,
+                       (extract(epoch from (#{now} - active_segment_started_at)) * 1000)::bigint),
+                   owner_instance_id = null, active_segment_started_at = null,
+                   heartbeat_at = null, lease_expires_at = null, hard_deadline_at = null,
+                   updated_at = #{now}, version = version + 1
+             where execution_id = #{executionId} and status = 'running'
+               and owner_instance_id = #{ownerInstanceId}
+               and execution_attempt_number = #{executionAttemptNumber}
+               and is_deleted = false
+            """)
+    int failOwned(
+            @Param("executionId") String executionId,
+            @Param("ownerInstanceId") String ownerInstanceId,
+            @Param("executionAttemptNumber") long executionAttemptNumber,
+            @Param("failureCode") String failureCode,
+            @Param("failureDetail") String failureDetail,
+            @Param("now") Instant now);
+
+    @Update(
+            """
+            update agent_execution
+               set status = 'failed', phase = 'FAILED', failure_code = #{failureCode},
+                   failure_detail = #{failureDetail}, failed_at = #{now},
+                   active_execution_ms = #{activeExecutionMs},
+                   owner_instance_id = null, active_segment_started_at = null,
+                   heartbeat_at = null, lease_expires_at = null, hard_deadline_at = null,
+                   updated_at = #{now}, version = version + 1
+             where execution_id = #{executionId} and version = #{version}
+               and status = 'running' and owner_instance_id = #{ownerInstanceId}
+               and execution_attempt_number = #{executionAttemptNumber}
+               and is_deleted = false
+            """)
+    int failLocked(
+            @Param("executionId") String executionId,
+            @Param("version") long version,
+            @Param("ownerInstanceId") String ownerInstanceId,
+            @Param("executionAttemptNumber") long executionAttemptNumber,
+            @Param("failureCode") String failureCode,
+            @Param("failureDetail") String failureDetail,
+            @Param("activeExecutionMs") long activeExecutionMs,
+            @Param("now") Instant now);
+
+    @Update(
+            """
+            update agent_execution
                set status = 'failed', phase = 'FAILED', failure_code = 'EXECUTION_DEADLINE_EXCEEDED',
                    failed_at = #{now},
                    active_execution_ms = active_execution_ms + greatest(0,

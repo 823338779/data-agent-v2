@@ -29,6 +29,7 @@ import com.datagent.agentv2.conversation.enums.ExecutionRequestType;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.enums.MessageRole;
 import com.datagent.agentv2.conversation.exception.IdempotencyKeyReusedException;
+import com.datagent.agentv2.conversation.process.AgentExecutionProcessTerminationService;
 import com.datagent.agentv2.persistence.entity.NotificationOutboxMessageEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionAttemptService;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
@@ -68,6 +69,7 @@ public class AgentExecutionControlService {
     private final AgentExecutionAttemptService attempts;
     private final AgentExecutionStreamCheckpointService streamCheckpoints;
     private final NotificationOutboxMessageService outbox;
+    private final AgentExecutionProcessTerminationService termination;
     private final IdGenerator ids;
     private final ObjectMapper json;
 
@@ -79,6 +81,7 @@ public class AgentExecutionControlService {
             AgentExecutionAttemptService attempts,
             AgentExecutionStreamCheckpointService streamCheckpoints,
             NotificationOutboxMessageService outbox,
+            AgentExecutionProcessTerminationService termination,
             IdGenerator ids,
             ObjectMapper json) {
         this.sessions = sessions;
@@ -88,6 +91,7 @@ public class AgentExecutionControlService {
         this.attempts = attempts;
         this.streamCheckpoints = streamCheckpoints;
         this.outbox = outbox;
+        this.termination = termination;
         this.ids = ids;
         this.json = json;
     }
@@ -113,16 +117,7 @@ public class AgentExecutionControlService {
         }
         Instant now = Instant.now();
         if (DIRECT_CANCELLATION_STATUSES.contains(run.getStatus())) {
-            run.cancelDirectly(ExecutionStatus.CANCELLED.value(), now);
-            agentExecutions.updateById(run);
-            if (run.getExecutionAttemptNumber() > 0) {
-                attempts.finish(
-                        run.getExecutionId(),
-                        run.getExecutionAttemptNumber(),
-                        ExecutionStatus.CANCELLED.value(),
-                        now,
-                        null);
-            }
+            termination.cancelLocked(run, now);
             return run;
         }
         if (!ExecutionStatus.RUNNING.value().equals(run.getStatus())) {

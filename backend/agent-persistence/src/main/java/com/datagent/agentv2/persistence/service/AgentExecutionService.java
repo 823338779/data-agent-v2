@@ -119,6 +119,49 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
                 == 1;
     }
 
+    /** 显式清空未进入 worker 的执行租约字段，并用乐观锁提交直接取消。 */
+    public boolean cancelLocked(AgentExecution execution, Instant now) {
+        return baseMapper.cancelLocked(execution.getExecutionId(), execution.getVersion(), now)
+                == 1;
+    }
+
+    /** 使用 owner/attempt fencing 把运行中执行转换为通用失败终态。 */
+    public boolean failOwned(
+            String executionId,
+            String ownerInstanceId,
+            long executionAttemptNumber,
+            String failureCode,
+            String failureDetail,
+            Instant now) {
+        return baseMapper.failOwned(
+                        executionId,
+                        ownerInstanceId,
+                        executionAttemptNumber,
+                        failureCode,
+                        failureDetail,
+                        now)
+                == 1;
+    }
+
+    /** 对已经由恢复调度器加锁的执行，以版本和旧 owner 条件提交失败终态。 */
+    public boolean failLocked(
+            AgentExecution execution,
+            String failureCode,
+            String failureDetail,
+            long activeExecutionMs,
+            Instant now) {
+        return baseMapper.failLocked(
+                        execution.getExecutionId(),
+                        execution.getVersion(),
+                        execution.getOwnerInstanceId(),
+                        execution.getExecutionAttemptNumber(),
+                        failureCode,
+                        failureDetail,
+                        activeExecutionMs,
+                        now)
+                == 1;
+    }
+
     public boolean failOwnedPastDeadline(
             String executionId, String ownerInstanceId, long executionAttemptNumber, Instant now) {
         return baseMapper.failOwnedPastDeadline(

@@ -14,7 +14,7 @@ public interface ConversationMessageMapper extends BaseMapper<ConversationMessag
             """
             select * from conversation_message
              where execution_id = #{executionId}
-               and role = 'assistant' and visibility = 'user' and is_deleted = false
+               and role = 'assistant' and is_deleted = false
              for update
             """)
     ConversationMessageEntity selectAssistantByExecutionIdForUpdate(

@@ -1,9 +1,14 @@
 package com.datagent.agentv2.conversation.runtime;
 
+import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
+import com.datagent.agentv2.conversation.exception.ExecutionDeadlineExceededException;
+import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
+import com.datagent.agentv2.conversation.process.AgentExecutionProcessTerminationService;
 import com.datagent.agentv2.conversation.react.ReactExecutionEngine;
 import com.datagent.agentv2.conversation.react.ReactRecoveryPlanner;
 import com.datagent.agentv2.platform.context.TenantContext;
 import jakarta.annotation.PreDestroy;
+import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
@@ -18,6 +23,7 @@ public final class ReactExecutionAdapter implements AgentExecutionPort {
 
     private final ReactExecutionEngine executor;
     private final ReactRecoveryPlanner recovery;
+    private final AgentExecutionProcessTerminationService termination;
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
     private final ConcurrentMap<String, Future<?>> active = new ConcurrentHashMap<>();
 
@@ -30,6 +36,19 @@ public final class ReactExecutionAdapter implements AgentExecutionPort {
                                 TenantContext.run(
                                         run.tenantId(),
                                         () -> executor.execute(run, recovery.recover(run)));
+                            } catch (ExecutionOwnershipLostException ignored) {
+                                // 接管后的旧 worker 必须静默退出，不能修改新 owner 的中心消息或执行终态。
+                            } catch (ExecutionDeadlineExceededException ignored) {
+                                // 租约服务已经在抛出异常前原子提交了超时终态及过程节点收敛。
+                            } catch (RuntimeException failure) {
+                                TenantContext.run(
+                                        run.tenantId(),
+                                        () ->
+                                                termination.failOwned(
+                                                        run,
+                                                        ExecutionFailureCode.INTERNAL_ERROR.value(),
+                                                        failure.getMessage(),
+                                                        Instant.now()));
                             } finally {
                                 active.remove(run.executionId());
                                 onTerminated.run();
