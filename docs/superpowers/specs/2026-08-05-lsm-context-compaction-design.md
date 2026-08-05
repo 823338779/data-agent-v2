@@ -536,7 +536,7 @@ ROOT：4,096 token
 `agent-context-lsm`。`agent-persistence` 不新增 LSM 类型或映射；插件只调用其已经公开的会话、
 消息、execution 和通用租户服务。
 
-### 11.1 `conversation_context_summary_segment`
+### 11.1 `conversation_context_lsm_segment`
 
 保存不可变 L0～ROOT 节点，至少包含：
 
@@ -565,7 +565,7 @@ createdAt
 
 同一确定性 segment key 唯一。节点创建成功后不修改正文和覆盖范围。
 
-### 11.2 `conversation_context_manifest`
+### 11.2 `conversation_context_lsm_manifest`
 
 每个租户会话只有一个当前 manifest：
 
@@ -586,7 +586,7 @@ version
 `activeSegmentIds` 按覆盖区间排序，层级通过 segment 本身动态解析，不能为 L0～L8 分别建立固定
 字段。ROOT、活动节点、边界和 generation 在同一事务中发布。
 
-### 11.3 `conversation_context_compaction_job`
+### 11.3 `conversation_context_lsm_job`
 
 记录可恢复计划：
 
@@ -615,6 +615,23 @@ PLANNED → GENERATING → READY → PUBLISHED
 ```
 
 plan 只保存区间、节点 ID、层级和 token 估算，不保存正文。
+
+### 11.4 `conversation_context_lsm_execution_policy`
+
+插件为每个使用 LSM 的 execution 固化一份策略快照：
+
+```text
+tenantId
+conversationSessionId
+executionId
+policySnapshot
+createdAt
+```
+
+该记录在 execution 第一次进入 LSM 策略时通过唯一 `(tenant_id, execution_id)` 的幂等写入创建，
+即使当时输入尚未超过 75% 也必须创建。后续 ReAct 调用、retry、崩溃恢复和 lease 接管读取同一
+记录，不重新读取服务配置。该表和映射仍完全位于 `agent-context-lsm`，不得给现有 execution 表
+增加插件字段。
 
 ## 12. 幂等、事务与恢复
 
@@ -785,6 +802,7 @@ agent_context_window_exceeded_total
 - 验证主 Flyway 先完成、插件 Flyway 后执行，且移除插件资源不影响主 Flyway 校验。
 - 验证 LSM Entity、Mapper、Repository 和 migration 不出现在 `agent-persistence`。
 - 验证租户隔离、不可变节点、唯一键和 manifest 乐观锁。
+- 验证 execution 首次使用 LSM 时即固化策略，后续 retry/接管不受服务配置变化影响。
 - 验证旧 owner、旧 attempt 和 CAS 冲突不能发布。
 - 在 job 创建后、部分节点生成后、READY 后、发布前后注入崩溃。
 - 验证新 owner 复用候选节点且不会重复破坏状态。
@@ -812,3 +830,4 @@ Problem Detail 或指标标签中。
 13. `agent-context-lsm` 可从 `agent-server` 依赖中移除，`raw` 策略仍能启动和执行。
 14. LSM 专属持久化代码和 migration 全部位于插件模块，`agent-persistence` 无 LSM 增量。
 15. 新上下文策略可以只实现领域 SPI 并通过配置替换 LSM，而无需修改 ReAct 引擎。
+16. LSM execution 策略快照存放在插件专属表中，首次使用后不被服务配置变化改写。
