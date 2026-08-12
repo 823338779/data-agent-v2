@@ -92,13 +92,15 @@ public class LsmCompactionRecoveryService {
         Map<String, CandidateInput> inputs = new LinkedHashMap<>();
         planned.request().candidateInputs().forEach(input -> inputs.put(input.targetId(), input));
         Map<String, String> resolvedIds = new HashMap<>();
+        Map<String, String> generatedDocuments = new HashMap<>();
         List<LsmSummarySegment> candidates = new ArrayList<>();
         for (LsmCompactionPlan.PlannedOperation operation : planned.plan().operations()) {
             if (operation.targetId() == null) {
                 continue;
             }
             CandidateInput input = inputs.get(operation.targetId());
-            String segmentKey = generator.segmentKey(input.generationRequest());
+            var generationRequest = resolvedGenerationRequest(input, generatedDocuments);
+            String segmentKey = generator.segmentKey(generationRequest);
             LsmSummarySegmentEntity persisted =
                     segments.findBySegmentKey(execution.conversationSessionId(), segmentKey)
                             .orElse(null);
@@ -109,15 +111,22 @@ public class LsmCompactionRecoveryService {
                         resolveSourceIds(input.generationRequest().sourceIds(), resolvedIds);
                 GeneratedSummary generated;
                 try {
-                    generated = generator.generate(input.generationRequest());
+                    generated = generator.generate(generationRequest);
                 } catch (RuntimeException summaryFailure) {
                     failSummary(job, execution);
                     throw new IllegalStateException("unreachable summary failure");
                 }
                 persisted =
-                        persistCandidate(planned, operation, input, resolvedSourceIds, generated);
+                        persistCandidate(
+                                planned,
+                                operation,
+                                input,
+                                generationRequest,
+                                resolvedSourceIds,
+                                generated);
             }
             resolvedIds.put(operation.targetId(), persisted.getSummarySegmentId());
+            generatedDocuments.put(operation.targetId(), persisted.getSummaryDocument());
             candidates.add(toDomain(persisted));
             executions.assertOwnedAndWithinBudget(execution);
             if (executions.cancelIfRequested(execution)) {
@@ -180,6 +189,8 @@ public class LsmCompactionRecoveryService {
             PlannedCompaction planned,
             LsmCompactionPlan.PlannedOperation operation,
             CandidateInput input,
+            com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GenerationRequest
+                    generationRequest,
             List<String> resolvedSourceIds,
             GeneratedSummary generated) {
         LocalDateTime now = LocalDateTime.now();
@@ -199,7 +210,7 @@ public class LsmCompactionRecoveryService {
         entity.setSummaryDocument(generated.serializedJson());
         entity.setEstimatedTokenCount(generated.estimatedTokenCount());
         entity.setSourceSegmentIds(documents.writeStringList(resolvedSourceIds));
-        entity.setSourceContentSha256(sha256(input.generationRequest().sourceDocument()));
+        entity.setSourceContentSha256(sha256(generationRequest.sourceDocument()));
         entity.setSummarySchemaVersion(SUMMARY_SCHEMA_VERSION);
         entity.setPromptVersion(ContextSummaryPrompt.PROMPT_VERSION);
         entity.setModelProvider(generated.provider());
@@ -213,6 +224,38 @@ public class LsmCompactionRecoveryService {
         entity.setDeleted(false);
         entity.setVersion(0L);
         return segments.findOrCreate(entity);
+    }
+
+    private com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GenerationRequest
+            resolvedGenerationRequest(
+                    CandidateInput input, Map<String, String> generatedDocuments) {
+        var original = input.generationRequest();
+        if (input.summarySources().isEmpty()) {
+            return original;
+        }
+        List<String> directDocuments =
+                input.summarySources().stream()
+                        .map(
+                                source -> {
+                                    if (!source.planned()) {
+                                        return source.summaryDocument();
+                                    }
+                                    String generated = generatedDocuments.get(source.sourceId());
+                                    if (generated == null) {
+                                        throw new IllegalStateException(
+                                                "Cascaded summary source has not been generated");
+                                    }
+                                    return generated;
+                                })
+                        .toList();
+        return new com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator
+                .GenerationRequest(
+                original.kind(),
+                original.level(),
+                original.turnCoverage(),
+                original.messageCoverage(),
+                original.sourceIds(),
+                documents.writeSummaryDocuments(directDocuments));
     }
 
     private static List<String> resolveSourceIds(

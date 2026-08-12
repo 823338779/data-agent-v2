@@ -25,3 +25,20 @@
 
 - 全 reactor `spotless:check` 仍被两个 Task 9 之前已存在的 `agent-persistence` 测试格式偏差阻断：`Phase1MigrationTest`、`UuidTypeHandlerTest`。未把这些无关格式改动纳入本任务；Task 9 文件已执行 `spotless:apply`，`git diff --check` 通过。
 - Maven 输出包含 Mockito 动态 agent 与测试容器关闭阶段的既有告警，不影响测试结果。
+
+## Fix round 1（2026-08-12）
+
+### 修复内容
+
+- Higher/ROOT 候选输入改为严格按 `operation.sourceIds` 读取直接子摘要，并编码为按旧到新排列的结构化 JSON 文档数组；L0 仍只消费 raw message。对本计划内尚未持久化的子节点，恢复流程在子摘要生成后再解析父节点输入，避免向上层重放 raw source。
+- Input Frontier 从 Storage Frontier 展开：ROOT 固定在最前，Cold 使用最粗连续覆盖，Warm 复用 `WarmSegmentFrontierSelector` 按预算选择“远粗近细”且无父子重叠的连续覆盖，随后才是尚未汇总的 Warm raw、Hot 与当前轮。选择器同时兼容持久化 L0 携带 raw source ID 的实际数据形态。
+- 硬上限回退改为按当前选择列表中的 turn 消息对象位置删除最老完整 turn，不再依赖 `ContextMessage.equals`，相同文本的历史轮与当前轮不会互相误删。
+- manifest 活动摘要读取增加 exact ID/order/size 与连续 coverage 校验；缺失、重复、乱序或 coverage 断裂统一以稳定内部一致性错误失败。
+- 新增 `provider=codex` 的 `ContextSummaryModelPort` adapter，复用 `CodexAppServerClient`，以空 tools 调用并忽略 delta，只接受 final answer；请求显式携带摘要规则、source document、Task 7 schema 与最大输出 token，provider 异常转换为不泄露正文和 cause 的稳定错误。
+
+### TDD 与验证
+
+- RED：新增 5 组回归覆盖 Higher/ROOT 禁止 raw replay、Warm budget frontier、相同消息内容的 hard fallback、manifest 缺失/不连续、Codex adapter 激活与安全错误；实现前对应断言失败或 adapter 类缺失。
+- GREEN：focused 组合测试通过：`agent-context-lsm` 16/16，`agent-web` 3/3，合计 19/19。
+- GREEN：`mvn -pl agent-context-lsm,agent-web -am test` 完整受影响 reactor 通过：共 176 项测试，0 failure、0 error、2 skipped；退出码 0，总耗时 1 分 7 秒。
+- 格式：受影响模块已执行 `spotless:apply`，无关的 `ConversationEventStreamFacade` 格式改动已恢复；`git diff --check` 通过。全 reactor `spotless:check` 仍只受上文所列两个既有 `agent-persistence` 文件阻断。

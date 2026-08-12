@@ -158,14 +158,43 @@ public final class LsmCompactionCoordinator {
             /** planner operation 的唯一目标标识。 */
             String targetId,
             /** 含权威 turn/message coverage、来源类型、来源 ID 与内存正文的生成请求。 */
-            GenerationRequest generationRequest) {
+            GenerationRequest generationRequest,
+            /** 高层候选按 sourceIds 顺序引用的直接子摘要；本计划子节点的正文在生成后解析。 */
+            List<SummarySource> summarySources) {
 
         public CandidateInput {
             targetId = Objects.requireNonNull(targetId, "targetId");
             generationRequest = Objects.requireNonNull(generationRequest, "generationRequest");
+            summarySources = List.copyOf(Objects.requireNonNull(summarySources, "summarySources"));
             if (targetId.isBlank()) {
                 throw new IllegalArgumentException("targetId must not be blank");
             }
+            if (!summarySources.isEmpty()
+                    && !generationRequest
+                            .sourceIds()
+                            .equals(
+                                    summarySources.stream()
+                                            .map(SummarySource::sourceId)
+                                            .toList())) {
+                throw new IllegalArgumentException(
+                        "summary sources must match generation source IDs exactly");
+            }
+        }
+
+        public CandidateInput(String targetId, GenerationRequest generationRequest) {
+            this(targetId, generationRequest, List.of());
+        }
+    }
+
+    /** 一个高层候选的直接子摘要；planned source 在 recovery 顺序生成后补入正文。 */
+    public record SummarySource(String sourceId, String summaryDocument) {
+
+        public SummarySource {
+            sourceId = Objects.requireNonNull(sourceId, "sourceId");
+        }
+
+        public boolean planned() {
+            return summaryDocument == null;
         }
     }
 

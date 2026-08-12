@@ -18,6 +18,7 @@ public final class LsmDocumentCodec {
     private static final String INVALID_POLICY_SNAPSHOT = "invalid LSM policy snapshot";
     private static final String INVALID_COMPACTION_PLAN = "invalid LSM compaction plan";
     private static final String INVALID_STRING_LIST = "invalid LSM string list";
+    private static final String INVALID_SUMMARY_SOURCES = "invalid LSM summary sources";
 
     private final ObjectMapper json;
 
@@ -90,6 +91,19 @@ public final class LsmDocumentCodec {
                                     .constructCollectionType(List.class, String.class)));
         } catch (RuntimeException failure) {
             throw new IllegalStateException(INVALID_STRING_LIST, failure);
+        }
+    }
+
+    /** 将有序直接子摘要解析为结构化 JSON 数组，避免把 JSON 正文二次转义为普通字符串。 */
+    public String writeSummaryDocuments(List<String> summaryDocuments) {
+        try {
+            var result = json.createArrayNode();
+            for (String document : summaryDocuments) {
+                result.add(json.readTree(document));
+            }
+            return json.writeValueAsString(result);
+        } catch (RuntimeException failure) {
+            throw new IllegalStateException(INVALID_SUMMARY_SOURCES, failure);
         }
     }
 

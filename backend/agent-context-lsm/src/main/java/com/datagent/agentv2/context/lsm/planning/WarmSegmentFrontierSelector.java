@@ -36,28 +36,10 @@ public final class WarmSegmentFrontierSelector {
 
         // 最细 frontier 由目标区间内没有可用直接子节点的叶节点构成。
         Map<String, LsmSummarySegment> byId = indexById(availableSegments);
-        List<LsmSummarySegment> frontier =
-                availableSegments.stream()
-                        .filter(segment -> inside(segment.coverage(), targetCoverage))
-                        .filter(segment -> segment.sourceSegmentIds().isEmpty())
-                        .sorted(CHRONOLOGICAL)
-                        .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
-        validateExactCoverage(frontier, targetCoverage);
+        List<LsmSummarySegment> frontier = initialFrontier(availableSegments, targetCoverage);
 
         // 预算不足时按父覆盖起点从旧到新替换完整子组；同起点优先使用更高层父节点。
-        List<LsmSummarySegment> parents =
-                availableSegments.stream()
-                        .filter(segment -> inside(segment.coverage(), targetCoverage))
-                        .filter(segment -> !segment.sourceSegmentIds().isEmpty())
-                        .sorted(
-                                Comparator.comparingLong(
-                                                (LsmSummarySegment segment) ->
-                                                        segment.coverage().startTurnSequence())
-                                        .thenComparing(
-                                                Comparator.comparingInt(LsmSummarySegment::level)
-                                                        .reversed())
-                                        .thenComparing(LsmSummarySegment::segmentId))
-                        .toList();
+        List<LsmSummarySegment> parents = parents(availableSegments, targetCoverage);
         while (estimatedTokens(frontier) > tokenBudget) {
             LsmSummarySegment replacement = firstUsefulParent(parents, frontier, byId);
             if (replacement == null) {
@@ -68,14 +50,28 @@ public final class WarmSegmentFrontierSelector {
             frontier.sort(CHRONOLOGICAL);
         }
 
-        FrontierSelection selection =
-                new FrontierSelection(
-                        frontier.stream().map(LsmSummarySegment::segmentId).toList(),
-                        frontier.stream().map(LsmSummarySegment::coverage).toList(),
-                        estimatedTokens(frontier));
+        FrontierSelection selection = selection(frontier);
         validator.assertContinuous(selection.coverage());
         validator.assertNoParentChild(selection, availableSegments);
         return selection;
+    }
+
+    /** 返回能够表达目标区间的最粗有效 frontier，供目标水位预算不足但仍需执行硬上限检查时使用。 */
+    public FrontierSelection selectMinimum(
+            List<LsmSummarySegment> availableSegments, LsmSummarySegment.Coverage targetCoverage) {
+        Objects.requireNonNull(availableSegments, "availableSegments");
+        Objects.requireNonNull(targetCoverage, "targetCoverage");
+        Map<String, LsmSummarySegment> byId = indexById(availableSegments);
+        List<LsmSummarySegment> frontier = initialFrontier(availableSegments, targetCoverage);
+        List<LsmSummarySegment> parents = parents(availableSegments, targetCoverage);
+        while (true) {
+            LsmSummarySegment replacement = firstUsefulParent(parents, frontier, byId);
+            if (replacement == null) {
+                return selection(frontier);
+            }
+            replaceDescendants(frontier, replacement);
+            frontier.sort(CHRONOLOGICAL);
+        }
     }
 
     private static LsmSummarySegment firstUsefulParent(
@@ -111,6 +107,54 @@ public final class WarmSegmentFrontierSelector {
             }
         }
         return null;
+    }
+
+    private static List<LsmSummarySegment> initialFrontier(
+            List<LsmSummarySegment> availableSegments, LsmSummarySegment.Coverage targetCoverage) {
+        Set<String> availableIds = availableSegmentIds(availableSegments);
+        List<LsmSummarySegment> frontier =
+                availableSegments.stream()
+                        .filter(segment -> inside(segment.coverage(), targetCoverage))
+                        .filter(segment -> hasNoAvailableChild(segment, availableIds))
+                        .sorted(CHRONOLOGICAL)
+                        .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        validateExactCoverage(frontier, targetCoverage);
+        return frontier;
+    }
+
+    private static List<LsmSummarySegment> parents(
+            List<LsmSummarySegment> availableSegments, LsmSummarySegment.Coverage targetCoverage) {
+        Set<String> availableIds = availableSegmentIds(availableSegments);
+        return availableSegments.stream()
+                .filter(segment -> inside(segment.coverage(), targetCoverage))
+                .filter(segment -> !hasNoAvailableChild(segment, availableIds))
+                .sorted(
+                        Comparator.comparingLong(
+                                        (LsmSummarySegment segment) ->
+                                                segment.coverage().startTurnSequence())
+                                .thenComparing(
+                                        Comparator.comparingInt(LsmSummarySegment::level)
+                                                .reversed())
+                                .thenComparing(LsmSummarySegment::segmentId))
+                .toList();
+    }
+
+    private static Set<String> availableSegmentIds(List<LsmSummarySegment> availableSegments) {
+        return availableSegments.stream()
+                .map(LsmSummarySegment::segmentId)
+                .collect(java.util.stream.Collectors.toSet());
+    }
+
+    private static boolean hasNoAvailableChild(
+            LsmSummarySegment segment, Set<String> availableIds) {
+        return segment.sourceSegmentIds().stream().noneMatch(availableIds::contains);
+    }
+
+    private static FrontierSelection selection(List<LsmSummarySegment> frontier) {
+        return new FrontierSelection(
+                frontier.stream().map(LsmSummarySegment::segmentId).toList(),
+                frontier.stream().map(LsmSummarySegment::coverage).toList(),
+                estimatedTokens(frontier));
     }
 
     private static void collectSelectedDescendants(

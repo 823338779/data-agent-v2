@@ -130,6 +130,37 @@ class LsmConversationContextStrategyTest {
     }
 
     @Test
+    void hardLimitDegradationKeepsCurrentMessageWhenOldTurnHasEqualContent() {
+        ContextExecutionControlPort executionControl = mock(ContextExecutionControlPort.class);
+        LsmConversationContextAssembler assembler = assembler(executionControl);
+        ConversationContextRequest request = hardLimitRequest();
+        ContextMessage oldUser = ContextMessage.user("same-content");
+        ContextMessage oldAssistant = ContextMessage.assistant("a".repeat(100), null);
+        ContextMessage current = ContextMessage.user("same-content");
+        List<LsmConversationContextAssembler.TurnSource> turns =
+                List.of(
+                        new LsmConversationContextAssembler.TurnSource(
+                                new ConversationTurn(1, List.of(oldUser, oldAssistant), true),
+                                1,
+                                2),
+                        new LsmConversationContextAssembler.TurnSource(
+                                new ConversationTurn(2, List.of(current), false), 3, 3));
+        var state =
+                new LsmConversationContextAssembler.ContextState(
+                        request,
+                        turns,
+                        List.of(oldUser, oldAssistant, current),
+                        LsmContextManifest.empty(),
+                        List.of(),
+                        150);
+
+        PreparedConversationContext prepared = assembler.prepareCurrentView(state);
+
+        assertThat(prepared.messages()).containsExactly(current);
+        verify(executionControl, never()).fail(any(), any(), any());
+    }
+
+    @Test
     void failsWithStableCodeWhenCurrentTurnAloneExceedsHardLimit() {
         ContextExecutionControlPort executionControl = mock(ContextExecutionControlPort.class);
         LsmConversationContextAssembler assembler = assembler(executionControl);

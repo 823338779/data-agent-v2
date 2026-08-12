@@ -25,6 +25,7 @@ import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.Compact
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.JobStatus;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.PlannedCompaction;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.ReadyCompaction;
+import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.SummarySource;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryDocumentValidator;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GenerationRequest;
@@ -44,6 +45,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 /** 验证 PLANNED、部分候选、READY、取消和失败的事务外恢复。 */
 class LsmCompactionRecoveryTest {
@@ -91,10 +93,8 @@ class LsmCompactionRecoveryTest {
                             job.setStatus(call.getArgument(3));
                             return true;
                         });
-        when(segments.findBySegmentKey(SESSION_ID, keyOne()))
-                .thenAnswer(call -> Optional.ofNullable(stored.get(keyOne())));
-        when(segments.findBySegmentKey(SESSION_ID, keyTwo()))
-                .thenAnswer(call -> Optional.ofNullable(stored.get(keyTwo())));
+        when(segments.findBySegmentKey(org.mockito.ArgumentMatchers.eq(SESSION_ID), anyString()))
+                .thenAnswer(call -> Optional.ofNullable(stored.get(call.getArgument(1))));
         when(segments.findOrCreate(any()))
                 .thenAnswer(
                         call -> {
@@ -188,6 +188,23 @@ class LsmCompactionRecoveryTest {
         verify(executions, never()).fail(any(), anyString(), anyString());
     }
 
+    @Test
+    void cascadedParentUsesGeneratedChildSummaryInsteadOfChildRawSource() {
+        String childSummary = validSummary(1, 1, 1, 10);
+        String parentSummary = validSummary(1, 1, 1, 10);
+        when(model.summarize(any())).thenReturn(result(childSummary), result(parentSummary));
+        ArgumentCaptor<com.datagent.agentv2.conversation.context.ContextSummaryRequest> requests =
+                ArgumentCaptor.forClass(
+                        com.datagent.agentv2.conversation.context.ContextSummaryRequest.class);
+
+        recovery.resume(cascadedPlanned());
+
+        verify(model, times(2)).summarize(requests.capture());
+        assertThat(requests.getAllValues().get(1).sourceDocument())
+                .contains(childSummary.strip())
+                .doesNotContain(SOURCE_DOCUMENT);
+    }
+
     private PlannedCompaction planned() {
         ContextExecutionRef execution =
                 new ContextExecutionRef(TENANT_ID, SESSION_ID, EXECUTION_ID, OWNER_ID, 1L, 20L);
@@ -198,6 +215,60 @@ class LsmCompactionRecoveryTest {
         when(request.candidateInputs()).thenReturn(List.of(inputOne(), inputTwo()));
         when(request.planningInput()).thenReturn(mock(LsmPlanningInput.class));
         return new PlannedCompaction(JOB_ID, request, plan(), 7L, 3L, JobStatus.PLANNED, false);
+    }
+
+    private PlannedCompaction cascadedPlanned() {
+        ContextExecutionRef execution =
+                new ContextExecutionRef(TENANT_ID, SESSION_ID, EXECUTION_ID, OWNER_ID, 1L, 20L);
+        ContextPolicySnapshot policy = new ContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
+        CompactionRequest request = mock(CompactionRequest.class);
+        when(request.execution()).thenReturn(execution);
+        when(request.policySnapshot()).thenReturn(policy);
+        when(request.candidateInputs()).thenReturn(List.of(inputOne(), parentInput()));
+        when(request.planningInput()).thenReturn(mock(LsmPlanningInput.class));
+        return new PlannedCompaction(
+                JOB_ID, request, cascadedPlan(), 7L, 3L, JobStatus.PLANNED, false);
+    }
+
+    private static LsmCompactionPlan cascadedPlan() {
+        var child = operation(TARGET_ONE, 1, 1);
+        var parent =
+                new LsmCompactionPlan.PlannedOperation(
+                        LsmCompactionPlan.OperationType.PROMOTE,
+                        TARGET_TWO,
+                        List.of(TARGET_ONE),
+                        LsmSummarySegment.SegmentKind.STANDARD,
+                        1,
+                        new LsmSummarySegment.Coverage(1, 1),
+                        false,
+                        10);
+        var projected =
+                new LsmSummarySegment(
+                        TARGET_TWO,
+                        LsmSummarySegment.SegmentKind.STANDARD,
+                        1,
+                        new LsmSummarySegment.Coverage(1, 1),
+                        10,
+                        List.of(TARGET_ONE),
+                        false);
+        return new LsmCompactionPlan(
+                new LsmCompactionPlan.HotBoundary(null, null, 0, null),
+                List.of(child, parent),
+                new LsmContextManifest(null, List.of(TARGET_TWO), null, null, null, null, 8, 3, 2),
+                List.of(projected));
+    }
+
+    private static CandidateInput parentInput() {
+        return new CandidateInput(
+                TARGET_TWO,
+                new GenerationRequest(
+                        LsmSummarySegment.SegmentKind.STANDARD,
+                        1,
+                        new LsmSummarySegment.Coverage(1, 1),
+                        new MessageCoverage(1, 10),
+                        List.of(TARGET_ONE),
+                        "[{\"plannedSummarySegmentId\":\"target-one\"}]"),
+                List.of(new SummarySource(TARGET_ONE, null)));
     }
 
     private static LsmCompactionPlan plan() {

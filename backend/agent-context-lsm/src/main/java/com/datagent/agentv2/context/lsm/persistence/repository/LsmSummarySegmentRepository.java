@@ -13,6 +13,9 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class LsmSummarySegmentRepository {
 
+    private static final String ERROR_MANIFEST_INCONSISTENT =
+            "LSM manifest active segment set is inconsistent";
+
     private final LsmSummarySegmentMapper mapper;
 
     public LsmSummarySegmentRepository(LsmSummarySegmentMapper mapper) {
@@ -35,7 +38,15 @@ public class LsmSummarySegmentRepository {
                 mapper.selectByIds(TenantContext.requiredTenantId(), segmentIds)) {
             byId.put(segment.getSummarySegmentId(), segment);
         }
-        return segmentIds.stream().map(byId::get).filter(java.util.Objects::nonNull).toList();
+        if (byId.size() != segmentIds.size()
+                || segmentIds.stream().distinct().count() != segmentIds.size()) {
+            throw new IllegalStateException(ERROR_MANIFEST_INCONSISTENT);
+        }
+        List<LsmSummarySegmentEntity> ordered = segmentIds.stream().map(byId::get).toList();
+        if (ordered.stream().anyMatch(java.util.Objects::isNull)) {
+            throw new IllegalStateException(ERROR_MANIFEST_INCONSISTENT);
+        }
+        return ordered;
     }
 
     /** 按覆盖顺序读取会话全部不可变段。 */
