@@ -6,9 +6,12 @@ import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -38,6 +41,8 @@ public final class LsmContextMetrics {
     private static final String TAG_TYPE = "type";
     private static final int MIN_LEVEL = 0;
     private static final int MAX_LEVEL = 8;
+    private static final int DEFAULT_MAX_TRACKED_SESSIONS = 4_096;
+    private static final Duration DEFAULT_SESSION_CONTRIBUTION_TTL = Duration.ofMinutes(30);
 
     /** 最近一次估算输入 token 数；不按会话或 execution 拆分。 */
     private final AtomicLong inputEstimatedTokens = new AtomicLong();
@@ -51,8 +56,17 @@ public final class LsmContextMetrics {
     /** 每个有限层级的当前活动节点数。 */
     private final ConcurrentMap<Integer, AtomicLong> activeSegments = new ConcurrentHashMap<>();
 
-    /** 各会话最近一次成功发布视图的贡献，仅用于计算无会话标签的服务级总量。 */
-    private final Map<String, Map<Integer, Integer>> activeSegmentsBySession = new HashMap<>();
+    /** 有界且可过期的会话贡献缓存，仅用于计算无会话标签的近期服务级总量。 */
+    private final LinkedHashMap<String, SessionContribution> activeSegmentsBySession;
+
+    /** 会话贡献缓存的固定容量上限。 */
+    private final int maxTrackedSessions;
+
+    /** 单个会话贡献未刷新后的存活时长。 */
+    private final Duration sessionContributionTtl;
+
+    /** 为生产和测试提供确定的过期时间来源。 */
+    private final Clock clock;
 
     /** 指标注册表，仅用于有限标签组合的按需注册。 */
     private final MeterRegistry registry;
@@ -64,7 +78,30 @@ public final class LsmContextMetrics {
     private final Counter windowExceeded;
 
     public LsmContextMetrics(MeterRegistry registry) {
+        this(
+                registry,
+                DEFAULT_MAX_TRACKED_SESSIONS,
+                DEFAULT_SESSION_CONTRIBUTION_TTL,
+                Clock.systemUTC());
+    }
+
+    LsmContextMetrics(
+            MeterRegistry registry,
+            int maxTrackedSessions,
+            Duration sessionContributionTtl,
+            Clock clock) {
         this.registry = Objects.requireNonNull(registry, "registry");
+        if (maxTrackedSessions <= 0) {
+            throw new IllegalArgumentException("maxTrackedSessions must be positive");
+        }
+        Duration ttl = Objects.requireNonNull(sessionContributionTtl, "sessionContributionTtl");
+        if (ttl.isZero() || ttl.isNegative()) {
+            throw new IllegalArgumentException("sessionContributionTtl must be positive");
+        }
+        this.maxTrackedSessions = maxTrackedSessions;
+        this.sessionContributionTtl = ttl;
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.activeSegmentsBySession = new LinkedHashMap<>(16, 0.75f, true);
 
         // 全局 gauges 只保留最新服务观测值，不绑定任何租户或对话标识。
         registry.gauge(INPUT_ESTIMATED_TOKENS, inputEstimatedTokens);
@@ -101,20 +138,70 @@ public final class LsmContextMetrics {
                                 "active segment count must not be negative");
                     }
                 });
+        expireSessionContributions(clock.instant());
         if (counts.isEmpty()) {
             activeSegmentsBySession.remove(sessionId);
         } else {
-            activeSegmentsBySession.put(sessionId, counts);
+            evictOldestIfFull(sessionId);
+            activeSegmentsBySession.put(
+                    sessionId, new SessionContribution(counts, clock.instant()));
         }
+        refreshActiveSegmentGauges();
+    }
 
+    /** 会话被显式清理时同步移除其贡献，且不创建任何会话维度 meter。 */
+    public synchronized void cleanupActiveSegments(String conversationSessionId) {
+        String sessionId = Objects.requireNonNull(conversationSessionId, "conversationSessionId");
+        if (sessionId.isBlank()) {
+            throw new IllegalArgumentException("conversationSessionId must not be blank");
+        }
+        expireSessionContributions(clock.instant());
+        activeSegmentsBySession.remove(sessionId);
+        refreshActiveSegmentGauges();
+    }
+
+    int trackedSessionCount() {
+        synchronized (this) {
+            expireSessionContributions(clock.instant());
+            refreshActiveSegmentGauges();
+            return activeSegmentsBySession.size();
+        }
+    }
+
+    private void evictOldestIfFull(String incomingSessionId) {
+        if (activeSegmentsBySession.containsKey(incomingSessionId)
+                || activeSegmentsBySession.size() < maxTrackedSessions) {
+            return;
+        }
+        String eldest = activeSegmentsBySession.keySet().iterator().next();
+        activeSegmentsBySession.remove(eldest);
+    }
+
+    private void expireSessionContributions(Instant now) {
+        activeSegmentsBySession
+                .entrySet()
+                .removeIf(
+                        entry ->
+                                !entry.getValue()
+                                        .updatedAt()
+                                        .plus(sessionContributionTtl)
+                                        .isAfter(now));
+    }
+
+    private void refreshActiveSegmentGauges() {
         Map<Integer, Long> totals = new HashMap<>();
         activeSegmentsBySession
                 .values()
                 .forEach(
                         contribution ->
-                                contribution.forEach(
-                                        (level, count) ->
-                                                totals.merge(level, count.longValue(), Long::sum)));
+                                contribution
+                                        .countsByLevel()
+                                        .forEach(
+                                                (level, count) ->
+                                                        totals.merge(
+                                                                level,
+                                                                count.longValue(),
+                                                                Long::sum)));
         Set<Integer> missingLevels = new HashSet<>(activeSegments.keySet());
         missingLevels.removeAll(totals.keySet());
         missingLevels.forEach(level -> activeSegments.get(level).set(0L));
@@ -196,6 +283,15 @@ public final class LsmContextMetrics {
 
     private static String operationTag(OperationType type) {
         return Objects.requireNonNull(type, "type").name().toLowerCase(Locale.ROOT);
+    }
+
+    /** 一次成功发布视图对服务级 gauge 的有限贡献及其最后刷新时间。 */
+    private record SessionContribution(Map<Integer, Integer> countsByLevel, Instant updatedAt) {
+
+        private SessionContribution {
+            countsByLevel = Map.copyOf(countsByLevel);
+            updatedAt = Objects.requireNonNull(updatedAt, "updatedAt");
+        }
     }
 
     /** 压缩协调器可产生的有限低基数结果。 */

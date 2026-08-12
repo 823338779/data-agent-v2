@@ -37,13 +37,16 @@ import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.LocalDateTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import tools.jackson.databind.JsonNode;
@@ -158,13 +161,13 @@ public class LsmConversationContextAssembler {
         List<ContextMessage> rawMessages =
                 turnSources.stream().flatMap(turn -> turn.turn().messages().stream()).toList();
         LsmContextManifestEntity manifestEntity = findOrCreateManifest(request);
-        List<LsmSummarySegmentEntity> persistedSegments =
-                segments.findBySession(request.execution().conversationSessionId());
+        LsmContextManifest manifest = toManifest(manifestEntity);
+        List<LsmSummarySegmentEntity> persistedSegments = loadAuthorizedLineage(manifest);
         return new ContextState(
                 request,
                 turnSources,
                 rawMessages,
-                toManifest(manifestEntity),
+                manifest,
                 persistedSegments,
                 estimator.estimateCompleteInput(request, rawMessages));
     }
@@ -306,13 +309,13 @@ public class LsmConversationContextAssembler {
             return active;
         }
         Map<String, LsmSummarySegmentEntity> entitiesById =
-                state.persistedSegments().stream()
+                authorizedLineage(manifest, state.persistedSegments()).stream()
                         .collect(
                                 java.util.stream.Collectors.toMap(
                                         LsmSummarySegmentEntity::getSummarySegmentId,
                                         segment -> segment));
         List<LsmSummarySegment> available =
-                state.persistedSegments().stream().map(this::toDomainSegment).toList();
+                entitiesById.values().stream().map(this::toDomainSegment).toList();
         List<LsmSummarySegmentEntity> selected = new ArrayList<>();
         long coldStart = active.getFirst().getStartTurnSequence();
 
@@ -335,11 +338,12 @@ public class LsmConversationContextAssembler {
 
         long summarizedWarmEnd =
                 Math.min(manifest.warmEndTurnSequence(), active.getLast().getEndTurnSequence());
-        if (manifest.warmStartTurnSequence() > summarizedWarmEnd) {
+        long warmStart = Math.max(manifest.warmStartTurnSequence(), coldStart);
+        if (warmStart > summarizedWarmEnd) {
             return selected;
         }
         LsmSummarySegment.Coverage warmCoverage =
-                new LsmSummarySegment.Coverage(manifest.warmStartTurnSequence(), summarizedWarmEnd);
+                new LsmSummarySegment.Coverage(warmStart, summarizedWarmEnd);
         List<ContextMessage> reserved = new ArrayList<>();
         reserved.add(ContextMessage.system(MEMORY_WRAPPER));
         selected.forEach(
@@ -360,6 +364,59 @@ public class LsmConversationContextAssembler {
         }
         selected.addAll(resolveFrontier(warm, entitiesById));
         return selected;
+    }
+
+    /** 仅从 manifest 活动节点递归加载其直接来源谱系，不扫描同会话的孤儿候选。 */
+    private List<LsmSummarySegmentEntity> loadAuthorizedLineage(LsmContextManifest manifest) {
+        if (manifest.activeSegmentIds().isEmpty()) {
+            return List.of();
+        }
+        Map<String, LsmSummarySegmentEntity> authorized = new LinkedHashMap<>();
+        List<String> nextIds = manifest.activeSegmentIds();
+        while (!nextIds.isEmpty()) {
+            List<LsmSummarySegmentEntity> loaded = segments.findByIdsInOrder(nextIds);
+            loaded.forEach(segment -> authorized.put(segment.getSummarySegmentId(), segment));
+            Set<String> unseen = new java.util.LinkedHashSet<>();
+            for (LsmSummarySegmentEntity segment : loaded) {
+                if (segment.getLevel() == 0) {
+                    continue;
+                }
+                documents.readStringList(segment.getSourceSegmentIds()).stream()
+                        .filter(sourceId -> !authorized.containsKey(sourceId))
+                        .forEach(unseen::add);
+            }
+            nextIds = List.copyOf(unseen);
+        }
+        return List.copyOf(authorized.values());
+    }
+
+    /** 从已读取快照中重建 manifest 授权谱系，并拒绝缺失的摘要来源。 */
+    private List<LsmSummarySegmentEntity> authorizedLineage(
+            LsmContextManifest manifest, List<LsmSummarySegmentEntity> persisted) {
+        Map<String, LsmSummarySegmentEntity> byId = new HashMap<>();
+        for (LsmSummarySegmentEntity segment : persisted) {
+            if (byId.put(segment.getSummarySegmentId(), segment) != null) {
+                throw new IllegalStateException(ERROR_MANIFEST_INCONSISTENT);
+            }
+        }
+        List<LsmSummarySegmentEntity> authorized = new ArrayList<>();
+        var pending = new ArrayDeque<>(manifest.activeSegmentIds());
+        Set<String> visited = new HashSet<>();
+        while (!pending.isEmpty()) {
+            String segmentId = pending.removeFirst();
+            if (!visited.add(segmentId)) {
+                continue;
+            }
+            LsmSummarySegmentEntity segment = byId.get(segmentId);
+            if (segment == null) {
+                throw new IllegalStateException(ERROR_MANIFEST_INCONSISTENT);
+            }
+            authorized.add(segment);
+            if (segment.getLevel() > 0) {
+                documents.readStringList(segment.getSourceSegmentIds()).forEach(pending::addLast);
+            }
+        }
+        return List.copyOf(authorized);
     }
 
     private static List<LsmSummarySegmentEntity> resolveFrontier(

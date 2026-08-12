@@ -32,6 +32,11 @@ class LsmConversationContextAssemblerTest {
     private static final String WARM_PARENT_DOCUMENT = "{\"warm\":\"parent\"}";
     private static final String WARM_CHILD_ONE_DOCUMENT = "{\"warm\":\"child-1\"}";
     private static final String WARM_CHILD_TWO_DOCUMENT = "{\"warm\":\"child-2\"}";
+    private static final String ROOT_WARM_CHILD_DOCUMENT = "{\"root\":\"warm-child\"}";
+    private static final String READY_ORPHAN_DOCUMENT = "{\"orphan\":\"ready\"}";
+    private static final String CANCELLED_ORPHAN_DOCUMENT = "{\"orphan\":\"cancelled\"}";
+    private static final String SUPERSEDED_ORPHAN_DOCUMENT = "{\"orphan\":\"superseded\"}";
+    private static final String CAS_LOSER_ORPHAN_DOCUMENT = "{\"orphan\":\"cas-loser\"}";
 
     @Test
     void higherLevelCandidateReadsOrderedDirectChildSummariesWithoutRawTurns() {
@@ -157,6 +162,170 @@ class LsmConversationContextAssemblerTest {
                         "hot",
                         "current")
                 .doesNotContain(WARM_CHILD_ONE_DOCUMENT, WARM_CHILD_TWO_DOCUMENT);
+    }
+
+    @Test
+    void rootAndWarmUseOneNonOverlappingAuthorizedFrontier() {
+        LsmSummarySegmentRepository segments = mock(LsmSummarySegmentRepository.class);
+        LsmConversationContextAssembler delegate = assembler(segments);
+        LsmConversationContextAssembler assembler = org.mockito.Mockito.spy(delegate);
+        ConversationContextRequest request = request(new ContextBudget(2_000, 100, 100, 0));
+        LsmContextManifest manifest =
+                new LsmContextManifest(
+                        "root", List.of("root", "warm-parent"), null, null, 21L, 40L, 3, 3, 2);
+        LsmSummarySegmentEntity root =
+                segment(
+                        "root",
+                        "ROOT",
+                        2,
+                        1,
+                        30,
+                        20,
+                        ROOT_DOCUMENT,
+                        "[\"root-cold-child\",\"root-warm-child\"]");
+        LsmSummarySegmentEntity warmParent =
+                segment(
+                        "warm-parent",
+                        "STANDARD",
+                        1,
+                        31,
+                        40,
+                        20,
+                        WARM_PARENT_DOCUMENT,
+                        "[\"warm-child\"]");
+        List<LsmSummarySegmentEntity> active = List.of(root, warmParent);
+        List<LsmSummarySegmentEntity> authorized =
+                List.of(
+                        root,
+                        segment("root-cold-child", "STANDARD", 1, 1, 20, 40, COLD_DOCUMENT, "[]"),
+                        segment(
+                                "root-warm-child",
+                                "STANDARD",
+                                1,
+                                21,
+                                30,
+                                40,
+                                ROOT_WARM_CHILD_DOCUMENT,
+                                "[]"),
+                        warmParent,
+                        segment(
+                                "warm-child",
+                                "STANDARD",
+                                0,
+                                31,
+                                40,
+                                40,
+                                WARM_CHILD_ONE_DOCUMENT,
+                                "[]"));
+        when(segments.findByIdsInOrder(manifest.activeSegmentIds())).thenReturn(active);
+        doReturn(publishedState(request, manifest, authorized))
+                .when(assembler)
+                .loadAndEstimate(request);
+
+        List<String> contents =
+                assembler.preparePublishedView(manifest, request).messages().stream()
+                        .map(ContextMessage::content)
+                        .toList();
+
+        assertThat(contents)
+                .containsSubsequence(
+                        "fixed-system", ROOT_DOCUMENT, WARM_CHILD_ONE_DOCUMENT, "hot", "current")
+                .doesNotContain(ROOT_WARM_CHILD_DOCUMENT, WARM_PARENT_DOCUMENT);
+    }
+
+    @Test
+    void inputFrontierRejectsReadyCancelledSupersededAndCasLoserOrphans() {
+        LsmSummarySegmentRepository segments = mock(LsmSummarySegmentRepository.class);
+        LsmConversationContextAssembler delegate = assembler(segments);
+        LsmConversationContextAssembler assembler = org.mockito.Mockito.spy(delegate);
+        ConversationContextRequest request = request(new ContextBudget(600, 50, 50, 0));
+        LsmContextManifest manifest =
+                new LsmContextManifest(null, List.of("warm-parent"), null, null, 1L, 20L, 3, 3, 2);
+        LsmSummarySegmentEntity warmParent =
+                segment(
+                        "warm-parent",
+                        "STANDARD",
+                        1,
+                        1,
+                        20,
+                        20,
+                        WARM_PARENT_DOCUMENT,
+                        "[\"warm-child-1\",\"warm-child-2\"]");
+        List<LsmSummarySegmentEntity> active = List.of(warmParent);
+        List<LsmSummarySegmentEntity> allPersisted =
+                List.of(
+                        warmParent,
+                        segment(
+                                "warm-child-1",
+                                "STANDARD",
+                                0,
+                                1,
+                                10,
+                                80,
+                                WARM_CHILD_ONE_DOCUMENT,
+                                "[]"),
+                        segment(
+                                "warm-child-2",
+                                "STANDARD",
+                                0,
+                                11,
+                                20,
+                                80,
+                                WARM_CHILD_TWO_DOCUMENT,
+                                "[]"),
+                        segment(
+                                "ready-orphan",
+                                "STANDARD",
+                                5,
+                                1,
+                                20,
+                                1,
+                                READY_ORPHAN_DOCUMENT,
+                                "[\"warm-child-1\",\"warm-child-2\"]"),
+                        segment(
+                                "cancelled-orphan",
+                                "STANDARD",
+                                4,
+                                1,
+                                20,
+                                2,
+                                CANCELLED_ORPHAN_DOCUMENT,
+                                "[\"warm-child-1\",\"warm-child-2\"]"),
+                        segment(
+                                "superseded-orphan",
+                                "STANDARD",
+                                3,
+                                1,
+                                20,
+                                3,
+                                SUPERSEDED_ORPHAN_DOCUMENT,
+                                "[\"warm-child-1\",\"warm-child-2\"]"),
+                        segment(
+                                "cas-loser-orphan",
+                                "STANDARD",
+                                2,
+                                1,
+                                20,
+                                4,
+                                CAS_LOSER_ORPHAN_DOCUMENT,
+                                "[\"warm-child-1\",\"warm-child-2\"]"));
+        when(segments.findByIdsInOrder(manifest.activeSegmentIds())).thenReturn(active);
+        doReturn(publishedState(request, manifest, allPersisted))
+                .when(assembler)
+                .loadAndEstimate(request);
+
+        List<String> contents =
+                assembler.preparePublishedView(manifest, request).messages().stream()
+                        .map(ContextMessage::content)
+                        .toList();
+
+        assertThat(contents)
+                .contains(WARM_PARENT_DOCUMENT)
+                .doesNotContain(
+                        READY_ORPHAN_DOCUMENT,
+                        CANCELLED_ORPHAN_DOCUMENT,
+                        SUPERSEDED_ORPHAN_DOCUMENT,
+                        CAS_LOSER_ORPHAN_DOCUMENT);
     }
 
     @Test

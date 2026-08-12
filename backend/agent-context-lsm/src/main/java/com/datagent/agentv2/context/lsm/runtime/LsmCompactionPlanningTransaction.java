@@ -85,7 +85,8 @@ public class LsmCompactionPlanningTransaction {
         Map<String, String> sourceContentHashes = new LinkedHashMap<>();
         for (CandidateInput candidate : request.candidateInputs()) {
             segmentKeys.put(
-                    candidate.targetId(), generator.segmentKey(candidate.generationRequest()));
+                    candidate.targetId(),
+                    generator.segmentKey(candidate.generationRequest(), request.policySnapshot()));
             sourceContentHashes.put(
                     candidate.targetId(), sha256(candidate.generationRequest().sourceDocument()));
         }

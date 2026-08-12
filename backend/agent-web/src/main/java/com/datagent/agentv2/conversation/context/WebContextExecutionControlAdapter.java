@@ -96,6 +96,11 @@ public class WebContextExecutionControlAdapter implements ContextExecutionContro
                 || execution.executionAttempt() != locked.getExecutionAttemptNumber()) {
             throw new ExecutionOwnershipLostException(execution.executionId());
         }
+        // owner/attempt 尚未被接管也不代表租约仍有效；在同一行锁内先独立执行 lease fence。
+        Instant leaseExpiresAt = locked.getLeaseExpiresAt();
+        if (leaseExpiresAt == null || !leaseExpiresAt.isAfter(Instant.now())) {
+            throw new ExecutionOwnershipLostException(execution.executionId());
+        }
         return locked;
     }
 

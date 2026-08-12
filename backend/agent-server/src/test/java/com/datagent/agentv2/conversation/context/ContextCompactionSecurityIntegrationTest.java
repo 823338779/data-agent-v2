@@ -144,8 +144,16 @@ class ContextCompactionSecurityIntegrationTest {
                         });
         when(segments.findBySegmentKey(anyString(), anyString())).thenReturn(Optional.empty());
         ContextSummaryModelPort model =
-                request -> {
-                    throw new IllegalStateException(PROVIDER_ERROR + request.sourceDocument());
+                new ContextSummaryModelPort() {
+                    @Override
+                    public ContextSummaryModelIdentity identity() {
+                        return new ContextSummaryModelIdentity("security-test", "failure-model");
+                    }
+
+                    @Override
+                    public ContextSummaryResult summarize(ContextSummaryRequest request) {
+                        throw new IllegalStateException(PROVIDER_ERROR + request.sourceDocument());
+                    }
                 };
         ContextSummaryGenerator generator =
                 new ContextSummaryGenerator(

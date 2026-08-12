@@ -1,5 +1,6 @@
 package com.datagent.agentv2.conversation.model;
 
+import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ContextSummaryRequest;
 import com.datagent.agentv2.conversation.context.ContextSummaryResult;
@@ -34,6 +35,11 @@ public final class OllamaContextSummaryModelAdapter implements ContextSummaryMod
     }
 
     /** 一次性取得完整结构化正文，不注册 tools，也不产生用户可见 delta。 */
+    @Override
+    public ContextSummaryModelIdentity identity() {
+        return new ContextSummaryModelIdentity(MODEL_PROVIDER, properties.getModel());
+    }
+
     @Override
     public ContextSummaryResult summarize(ContextSummaryRequest summaryRequest) {
         ContextSummaryRequest request = Objects.requireNonNull(summaryRequest, "summaryRequest");

@@ -31,6 +31,9 @@ import com.datagent.agentv2.context.lsm.summary.LsmSegmentKeyFactory;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
+import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
+import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
+import com.datagent.agentv2.conversation.context.ContextSummaryRequest;
 import com.datagent.agentv2.conversation.context.ContextSummaryResult;
 import com.datagent.agentv2.persistence.MybatisPlusConfiguration;
 import com.datagent.agentv2.platform.context.TenantContext;
@@ -190,9 +193,7 @@ class LsmRepositoryIntegrationTest {
     void taskSevenGeneratedSegmentFitsSchemaAndPersistsIdempotently() {
         ContextSummaryGenerator generator =
                 new ContextSummaryGenerator(
-                        request ->
-                                new ContextSummaryResult(
-                                        VALID_SUMMARY, 100, MODEL_PROVIDER, MODEL_NAME),
+                        summaryModel(),
                         new ContextSummaryDocumentValidator(),
                         new ConversationTokenEstimator(),
                         new LsmSegmentKeyFactory());
@@ -204,7 +205,7 @@ class LsmRepositoryIntegrationTest {
                         new MessageCoverage(1, 2),
                         java.util.List.of(SOURCE_ID),
                         SOURCE_DOCUMENT);
-        GeneratedSummary generated = generator.generate(request);
+        GeneratedSummary generated = generator.generate(request, policy());
         LsmSummarySegmentEntity first = generatedSegment("segment_generated_first", generated);
         LsmSummarySegmentEntity duplicate =
                 generatedSegment("segment_generated_duplicate", generated);
@@ -365,19 +366,36 @@ class LsmRepositoryIntegrationTest {
 
     private static ContextSummaryGenerator integrationGenerator() {
         return new ContextSummaryGenerator(
-                request -> new ContextSummaryResult(VALID_SUMMARY, 100, MODEL_PROVIDER, MODEL_NAME),
+                summaryModel(),
                 new ContextSummaryDocumentValidator(),
                 new ConversationTokenEstimator(),
                 new LsmSegmentKeyFactory());
     }
 
+    private static ContextSummaryModelPort summaryModel() {
+        return new ContextSummaryModelPort() {
+            @Override
+            public ContextSummaryModelIdentity identity() {
+                return new ContextSummaryModelIdentity(MODEL_PROVIDER, MODEL_NAME);
+            }
+
+            @Override
+            public ContextSummaryResult summarize(ContextSummaryRequest request) {
+                return new ContextSummaryResult(VALID_SUMMARY, 100, MODEL_PROVIDER, MODEL_NAME);
+            }
+        };
+    }
+
+    private static ContextPolicySnapshot policy() {
+        return new ContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
+    }
+
     private static PlannedCompaction cascadedCompaction() {
         ContextExecutionRef execution =
                 new ContextExecutionRef(TENANT_A, SESSION_ID, EXECUTION_ID, OWNER_ID, 1L, 2L);
-        ContextPolicySnapshot policy = new ContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
         CompactionRequest request = org.mockito.Mockito.mock(CompactionRequest.class);
         org.mockito.Mockito.when(request.execution()).thenReturn(execution);
-        org.mockito.Mockito.when(request.policySnapshot()).thenReturn(policy);
+        org.mockito.Mockito.when(request.policySnapshot()).thenReturn(policy());
         org.mockito.Mockito.when(request.planningInput())
                 .thenReturn(org.mockito.Mockito.mock(LsmPlanningInput.class));
         org.mockito.Mockito.when(request.candidateInputs())

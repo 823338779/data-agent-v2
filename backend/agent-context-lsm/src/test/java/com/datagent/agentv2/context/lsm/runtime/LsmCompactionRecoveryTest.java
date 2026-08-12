@@ -34,6 +34,7 @@ import com.datagent.agentv2.context.lsm.summary.LsmSegmentKeyFactory;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
+import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ContextSummaryResult;
 import com.datagent.agentv2.platform.id.IdGenerator;
@@ -60,6 +61,10 @@ class LsmCompactionRecoveryTest {
     private static final String SOURCE_DOCUMENT = "{\"messages\":[]}";
     private static final String PROVIDER = "test-provider";
     private static final String MODEL = "test-model";
+    private static final String NEXT_PROVIDER = "next-provider";
+    private static final String NEXT_MODEL = "next-model";
+    private static final ContextPolicySnapshot POLICY =
+            new ContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
 
     private final ContextSummaryModelPort model = mock(ContextSummaryModelPort.class);
     private final LsmSummarySegmentRepository segments = mock(LsmSummarySegmentRepository.class);
@@ -80,6 +85,7 @@ class LsmCompactionRecoveryTest {
 
     @BeforeEach
     void setUp() {
+        when(model.identity()).thenReturn(new ContextSummaryModelIdentity(PROVIDER, MODEL));
         job = job(JobStatus.PLANNED);
         IdGenerator idGenerator = prefix -> prefix + "-" + ids.incrementAndGet();
         recovery =
@@ -146,6 +152,26 @@ class LsmCompactionRecoveryTest {
     }
 
     @Test
+    void differentModelIdentityDoesNotReuseExistingCandidate() {
+        String oldKey = keyOne();
+        stored.put(oldKey, entity(TARGET_ONE, oldKey, 1, 1));
+        when(model.identity())
+                .thenReturn(new ContextSummaryModelIdentity(NEXT_PROVIDER, NEXT_MODEL));
+        when(model.summarize(any()))
+                .thenReturn(
+                        new ContextSummaryResult(
+                                validSummary(1, 1, 1, 10), 100, NEXT_PROVIDER, NEXT_MODEL),
+                        new ContextSummaryResult(
+                                validSummary(2, 2, 11, 20), 100, NEXT_PROVIDER, NEXT_MODEL));
+
+        ReadyCompaction ready = recovery.resume(planned());
+
+        assertThat(ready.candidates()).hasSize(2);
+        assertThat(stored).hasSize(3);
+        verify(model, times(2)).summarize(any());
+    }
+
+    @Test
     void cancellationMarksJobAndDoesNotGenerate() {
         when(executions.cancelIfRequested(any())).thenReturn(true);
 
@@ -208,10 +234,9 @@ class LsmCompactionRecoveryTest {
     private PlannedCompaction planned() {
         ContextExecutionRef execution =
                 new ContextExecutionRef(TENANT_ID, SESSION_ID, EXECUTION_ID, OWNER_ID, 1L, 20L);
-        ContextPolicySnapshot policy = new ContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
         CompactionRequest request = mock(CompactionRequest.class);
         when(request.execution()).thenReturn(execution);
-        when(request.policySnapshot()).thenReturn(policy);
+        when(request.policySnapshot()).thenReturn(POLICY);
         when(request.candidateInputs()).thenReturn(List.of(inputOne(), inputTwo()));
         when(request.planningInput()).thenReturn(mock(LsmPlanningInput.class));
         return new PlannedCompaction(JOB_ID, request, plan(), 7L, 3L, JobStatus.PLANNED, false);
@@ -220,10 +245,9 @@ class LsmCompactionRecoveryTest {
     private PlannedCompaction cascadedPlanned() {
         ContextExecutionRef execution =
                 new ContextExecutionRef(TENANT_ID, SESSION_ID, EXECUTION_ID, OWNER_ID, 1L, 20L);
-        ContextPolicySnapshot policy = new ContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
         CompactionRequest request = mock(CompactionRequest.class);
         when(request.execution()).thenReturn(execution);
-        when(request.policySnapshot()).thenReturn(policy);
+        when(request.policySnapshot()).thenReturn(POLICY);
         when(request.candidateInputs()).thenReturn(List.of(inputOne(), parentInput()));
         when(request.planningInput()).thenReturn(mock(LsmPlanningInput.class));
         return new PlannedCompaction(
@@ -333,11 +357,11 @@ class LsmCompactionRecoveryTest {
     }
 
     private String keyOne() {
-        return generator.segmentKey(inputOne().generationRequest());
+        return generator.segmentKey(inputOne().generationRequest(), POLICY);
     }
 
     private String keyTwo() {
-        return generator.segmentKey(inputTwo().generationRequest());
+        return generator.segmentKey(inputTwo().generationRequest(), POLICY);
     }
 
     private static LsmCompactionJobEntity job(JobStatus status) {
@@ -361,10 +385,38 @@ class LsmCompactionRecoveryTest {
         entity.setLevel(0);
         entity.setStartTurnSequence(startTurn);
         entity.setEndTurnSequence(endTurn);
+        entity.setStartMessageSequence(startTurn == 1L ? 1L : 11L);
+        entity.setEndMessageSequence(endTurn == 1L ? 10L : 20L);
         entity.setEstimatedTokenCount(10);
         entity.setPartialSegment(false);
+        entity.setSummaryDocument(
+                validSummary(
+                        startTurn,
+                        endTurn,
+                        entity.getStartMessageSequence(),
+                        entity.getEndMessageSequence()));
+        entity.setSourceContentSha256(sha256(SOURCE_DOCUMENT));
+        entity.setSummarySchemaVersion(ContextSummaryDocumentValidator.SCHEMA_VERSION);
+        entity.setPromptVersion(
+                com.datagent.agentv2.context.lsm.summary.ContextSummaryPrompt.PROMPT_VERSION);
+        entity.setModelProvider(PROVIDER);
+        entity.setModelName(MODEL);
+        entity.setCreationPolicy(new LsmDocumentCodec().writePolicy(POLICY));
         entity.setCreatedAt(LocalDateTime.now());
         return entity;
+    }
+
+    private static String sha256(String value) {
+        try {
+            return java.util.HexFormat.of()
+                    .formatHex(
+                            java.security.MessageDigest.getInstance("SHA-256")
+                                    .digest(
+                                            value.getBytes(
+                                                    java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException failure) {
+            throw new IllegalStateException(failure);
+        }
     }
 
     private static ContextSummaryResult result(String json) {

@@ -16,10 +16,13 @@ import com.datagent.agentv2.context.lsm.summary.ContextSummaryDocumentValidator.
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GeneratedSummary;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GenerationRequest;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.MessageCoverage;
+import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
+import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ContextSummaryRequest;
 import com.datagent.agentv2.conversation.context.ContextSummaryResult;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,6 +46,8 @@ class ContextSummaryGeneratorTest {
             """;
     private static final String PROVIDER = "test-provider";
     private static final String MODEL = "test-summary-model";
+    private static final ContextPolicySnapshot POLICY =
+            new ContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
 
     @Mock private ContextSummaryModelPort model;
     @Mock private ConversationTokenEstimator estimator;
@@ -61,6 +66,9 @@ class ContextSummaryGeneratorTest {
                         new LsmSegmentKeyFactory(),
                         new LsmContextMetrics(meters));
         lenient().when(estimator.estimateSummaryDocument(any())).thenReturn(1_000);
+        lenient()
+                .when(model.identity())
+                .thenReturn(new ContextSummaryModelIdentity(PROVIDER, MODEL));
     }
 
     @Test
@@ -68,7 +76,7 @@ class ContextSummaryGeneratorTest {
         when(model.summarize(any()))
                 .thenReturn(result("{}", 1), result(validSummaryJson(1, 2, 10, 20), 200));
 
-        GeneratedSummary summary = generator.generate(requestForLevel(1));
+        GeneratedSummary summary = generator.generate(requestForLevel(1), POLICY);
 
         assertThat(summary.document().schemaVersion()).isEqualTo(1);
         assertThat(summary.document().coverage())
@@ -83,7 +91,7 @@ class ContextSummaryGeneratorTest {
                         result(validSummaryJson(1, 3, 10, 20), 100),
                         result(validSummaryJson(1, 2, 9, 20), 100));
 
-        assertThatThrownBy(() -> generator.generate(requestForLevel(1)))
+        assertThatThrownBy(() -> generator.generate(requestForLevel(1), POLICY))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Summary model returned no valid document");
         verify(model, times(2)).summarize(any());
@@ -101,7 +109,7 @@ class ContextSummaryGeneratorTest {
             SegmentKind kind, int level, int expectedMaxOutputTokens) {
         when(model.summarize(any())).thenReturn(result(validSummaryJson(1, 2, 10, 20), 100));
 
-        generator.generate(request(kind, level));
+        generator.generate(request(kind, level), POLICY);
 
         ArgumentCaptor<ContextSummaryRequest> request =
                 ArgumentCaptor.forClass(ContextSummaryRequest.class);
@@ -113,7 +121,7 @@ class ContextSummaryGeneratorTest {
     void carriesRawThinkingAsSourceDataButRequiresReusableStructuredState() {
         when(model.summarize(any())).thenReturn(result(validSummaryJson(1, 2, 10, 20), 100));
 
-        generator.generate(requestForLevel(1));
+        generator.generate(requestForLevel(1), POLICY);
 
         ArgumentCaptor<ContextSummaryRequest> request =
                 ArgumentCaptor.forClass(ContextSummaryRequest.class);
@@ -140,7 +148,8 @@ class ContextSummaryGeneratorTest {
                         new LsmSummarySegment.Coverage(1, 2),
                         new MessageCoverage(10, 20),
                         java.util.List.of(SOURCE_ID),
-                        CONFLICTING_SOURCE_DOCUMENT));
+                        CONFLICTING_SOURCE_DOCUMENT),
+                POLICY);
 
         ArgumentCaptor<ContextSummaryRequest> request =
                 ArgumentCaptor.forClass(ContextSummaryRequest.class);
@@ -174,10 +183,59 @@ class ContextSummaryGeneratorTest {
                         result(validSummaryJson(1, 2, 10, 20), 100),
                         result(validSummaryJson(1, 2, 10, 20), 100));
 
-        String first = generator.generate(requestForLevel(1)).segmentKey();
-        String second = generator.generate(requestForLevel(1)).segmentKey();
+        String first = generator.generate(requestForLevel(1), POLICY).segmentKey();
+        String second = generator.generate(requestForLevel(1), POLICY).segmentKey();
 
         assertThat(first).isEqualTo(second).hasSize(64).matches("[0-9a-f]{64}");
+    }
+
+    @Test
+    void keyChangesAcrossSchemaPolicyProviderAndModelIdentity() {
+        LsmSegmentKeyFactory factory = new LsmSegmentKeyFactory();
+        GenerationRequest request = requestForLevel(1);
+        SummaryGenerationIdentity baseline =
+                new SummaryGenerationIdentity(
+                        1,
+                        ContextSummaryPrompt.PROMPT_VERSION,
+                        POLICY,
+                        new ContextSummaryModelIdentity(PROVIDER, MODEL));
+        String baselineKey = factory.create(request, baseline);
+
+        assertThat(
+                        List.of(
+                                factory.create(
+                                        request,
+                                        new SummaryGenerationIdentity(
+                                                2,
+                                                ContextSummaryPrompt.PROMPT_VERSION,
+                                                POLICY,
+                                                baseline.modelIdentity())),
+                                factory.create(
+                                        request,
+                                        new SummaryGenerationIdentity(
+                                                1,
+                                                ContextSummaryPrompt.PROMPT_VERSION,
+                                                new ContextPolicySnapshot(
+                                                        2, 3, 2, 10, 75, 65, 100, 109, 10),
+                                                baseline.modelIdentity())),
+                                factory.create(
+                                        request,
+                                        new SummaryGenerationIdentity(
+                                                1,
+                                                ContextSummaryPrompt.PROMPT_VERSION,
+                                                POLICY,
+                                                new ContextSummaryModelIdentity(
+                                                        "other-provider", MODEL))),
+                                factory.create(
+                                        request,
+                                        new SummaryGenerationIdentity(
+                                                1,
+                                                ContextSummaryPrompt.PROMPT_VERSION,
+                                                POLICY,
+                                                new ContextSummaryModelIdentity(
+                                                        PROVIDER, "other-model")))))
+                .doesNotContain(baselineKey)
+                .doesNotHaveDuplicates();
     }
 
     @Test
@@ -187,7 +245,7 @@ class ContextSummaryGeneratorTest {
                         result(validSummaryJson(1, 2, 10, 20), 2_049),
                         result(validSummaryJson(1, 2, 10, 20), 2_049));
 
-        assertThatThrownBy(() -> generator.generate(requestForLevel(1)))
+        assertThatThrownBy(() -> generator.generate(requestForLevel(1), POLICY))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Summary model returned no valid document");
     }
@@ -200,7 +258,7 @@ class ContextSummaryGeneratorTest {
                         result(validSummaryJson(1, 2, 10, 20), 100),
                         result(validSummaryJson(1, 2, 10, 20), 100));
 
-        assertThatThrownBy(() -> generator.generate(requestForLevel(1)))
+        assertThatThrownBy(() -> generator.generate(requestForLevel(1), POLICY))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Summary model returned no valid document");
     }
@@ -209,7 +267,7 @@ class ContextSummaryGeneratorTest {
     void persistsTheLargerProviderTokenCountWhenBothEstimatesFitTheCap() {
         when(model.summarize(any())).thenReturn(result(validSummaryJson(1, 2, 10, 20), 1_800));
 
-        GeneratedSummary summary = generator.generate(requestForLevel(1));
+        GeneratedSummary summary = generator.generate(requestForLevel(1), POLICY);
 
         assertThat(summary.estimatedTokenCount()).isEqualTo(1_800);
         verify(estimator, times(2)).estimateSummaryDocument(any());

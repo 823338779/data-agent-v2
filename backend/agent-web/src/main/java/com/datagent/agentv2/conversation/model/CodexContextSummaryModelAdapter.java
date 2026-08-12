@@ -1,5 +1,6 @@
 package com.datagent.agentv2.conversation.model;
 
+import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ContextSummaryRequest;
 import com.datagent.agentv2.conversation.context.ContextSummaryResult;
@@ -48,6 +49,11 @@ public final class CodexContextSummaryModelAdapter implements ContextSummaryMode
     }
 
     /** 只接受完整 final answer；protocol、provider 与序列化错误统一收敛为不含正文的稳定边界。 */
+    @Override
+    public ContextSummaryModelIdentity identity() {
+        return new ContextSummaryModelIdentity(MODEL_PROVIDER, properties.getModel());
+    }
+
     @Override
     public ContextSummaryResult summarize(ContextSummaryRequest summaryRequest) {
         ContextSummaryRequest request = Objects.requireNonNull(summaryRequest, "summaryRequest");

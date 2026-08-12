@@ -17,6 +17,9 @@ import tools.jackson.databind.json.JsonMapper;
 /** 对 provider 摘要执行 JSON Schema、精确覆盖范围和来源范围校验。 */
 public final class ContextSummaryDocumentValidator {
 
+    /** 当前可持久化摘要正文的 schema 版本。 */
+    public static final int SCHEMA_VERSION = 1;
+
     private static final String SCHEMA_RESOURCE = "/schema/context-summary-v1.schema.json";
     private static final String INVALID_DOCUMENT = "Invalid context summary document";
     private static final String MISSING_SCHEMA = "Context summary schema resource is missing";

@@ -232,6 +232,8 @@ class LsmContextCompactionIntegrationTest {
 
     static final class DeterministicSummaryModel implements ContextSummaryModelPort {
 
+        private static final String MODEL_PROVIDER = "fake";
+        private static final String MODEL_NAME = "deterministic";
         private static final Pattern START_TURN = Pattern.compile("startTurnSequence=(\\d+)");
         private static final Pattern END_TURN = Pattern.compile("endTurnSequence=(\\d+)");
         private static final Pattern START_MESSAGE = Pattern.compile("startMessageSequence=(\\d+)");
@@ -244,6 +246,11 @@ class LsmContextCompactionIntegrationTest {
                 new java.util.concurrent.atomic.AtomicInteger();
 
         @Override
+        public ContextSummaryModelIdentity identity() {
+            return new ContextSummaryModelIdentity(MODEL_PROVIDER, MODEL_NAME);
+        }
+
+        @Override
         public ContextSummaryResult summarize(ContextSummaryRequest request) {
             invocations.incrementAndGet();
             String prompt = request.systemPrompt();
@@ -254,8 +261,8 @@ class LsmContextCompactionIntegrationTest {
                             extract(START_MESSAGE, prompt),
                             extract(END_MESSAGE, prompt)),
                     40,
-                    "fake",
-                    "deterministic");
+                    MODEL_PROVIDER,
+                    MODEL_NAME);
         }
 
         private static long extract(Pattern pattern, String prompt) {
@@ -427,9 +434,9 @@ class LsmContextCompactionIntegrationTest {
         // 已有 ROOT 与两个相邻同层尾段由真实 coordinator 滚动为唯一新 ROOT。
         long inputBoundary = replaceWithCompletedHistory(60);
         String oldRoot = "root-old";
-        seedDurableSegment(oldRoot, "ROOT", 3, 1L, 30L, List.of("root-source"));
-        seedDurableSegment("tail-31", "STANDARD", 2, 31L, 40L, List.of("tail-source-31"));
-        seedDurableSegment("tail-41", "STANDARD", 2, 41L, 50L, List.of("tail-source-41"));
+        seedDurableSegment(oldRoot, "ROOT", 3, 1L, 30L, List.of());
+        seedDurableSegment("tail-31", "STANDARD", 2, 31L, 40L, List.of());
+        seedDurableSegment("tail-41", "STANDARD", 2, 41L, 50L, List.of());
         seedManifest(List.of(oldRoot, "tail-31", "tail-41"), oldRoot, 3, 3);
 
         PreparedConversationContext advanced = publishTriggered(inputBoundary, 3, 3);
@@ -458,13 +465,7 @@ class LsmContextCompactionIntegrationTest {
             long start = index * 10L + 1L;
             String childId = "child-" + fanout + "-" + start;
             children.add(childId);
-            seedDurableSegment(
-                    childId,
-                    "STANDARD",
-                    maxLevel - 1,
-                    start,
-                    start + 9L,
-                    List.of("source-" + childId));
+            seedDurableSegment(childId, "STANDARD", maxLevel - 1, start, start + 9L, List.of());
         }
         seedManifest(children, null, fanout, maxLevel);
 

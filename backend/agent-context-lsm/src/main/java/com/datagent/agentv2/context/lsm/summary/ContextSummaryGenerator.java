@@ -5,6 +5,7 @@ import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.SegmentKind;
 import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.planning.ConversationTokenEstimator;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryDocumentValidator.ContextSummaryDocument;
+import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ContextSummaryRequest;
 import com.datagent.agentv2.conversation.context.ContextSummaryResult;
@@ -49,8 +50,10 @@ public final class ContextSummaryGenerator {
     }
 
     /** 调用中立摘要端口，最多两次，并且绝不截断无效或超限 JSON。 */
-    public GeneratedSummary generate(GenerationRequest generationRequest) {
+    public GeneratedSummary generate(
+            GenerationRequest generationRequest, ContextPolicySnapshot policySnapshot) {
         GenerationRequest request = Objects.requireNonNull(generationRequest, "generationRequest");
+        SummaryGenerationIdentity identity = generationIdentity(policySnapshot);
         int maxTokens = maxSummaryTokens(request.kind(), request.level());
         ContextSummaryRequest modelRequest =
                 new ContextSummaryRequest(
@@ -62,7 +65,7 @@ public final class ContextSummaryGenerator {
                         request.sourceDocument(),
                         validator.schemaDocument(),
                         maxTokens);
-        String segmentKey = segmentKey(request);
+        String segmentKey = keyFactory.create(request, identity);
 
         // provider 输出无效时复用完全相同的协议、来源和 key，只允许一次重试。
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -73,6 +76,10 @@ public final class ContextSummaryGenerator {
                 continue;
             }
             try {
+                if (!identity.modelIdentity().provider().equals(result.modelProvider())
+                        || !identity.modelIdentity().model().equals(result.modelName())) {
+                    continue;
+                }
                 ContextSummaryDocument document =
                         validator.validate(
                                 result.content(),
@@ -92,8 +99,8 @@ public final class ContextSummaryGenerator {
                         document,
                         result.content(),
                         persistedEstimate,
-                        result.modelProvider(),
-                        result.modelName(),
+                        identity.modelIdentity().provider(),
+                        identity.modelIdentity().model(),
                         segmentKey);
             } catch (IllegalArgumentException invalidSummary) {
                 // 正文及 schema 错误不得进入日志或异常消息，下一轮只复用安全元数据。
@@ -113,16 +120,17 @@ public final class ContextSummaryGenerator {
     }
 
     /** 在调用模型前计算候选的确定性 key，供 job 持久化和恢复查重。 */
-    public String segmentKey(GenerationRequest request) {
-        return keyFactory.create(
-                request.kind(),
-                request.level(),
-                request.turnCoverage().startTurnSequence(),
-                request.turnCoverage().endTurnSequence(),
-                request.messageCoverage().startMessageSequence(),
-                request.messageCoverage().endMessageSequence(),
-                request.sourceIds(),
-                request.sourceDocument());
+    public String segmentKey(GenerationRequest request, ContextPolicySnapshot policySnapshot) {
+        return keyFactory.create(request, generationIdentity(policySnapshot));
+    }
+
+    /** 返回当前 generator 在调用 provider 前即可审计的完整稳定生成身份。 */
+    public SummaryGenerationIdentity generationIdentity(ContextPolicySnapshot policySnapshot) {
+        return new SummaryGenerationIdentity(
+                ContextSummaryDocumentValidator.SCHEMA_VERSION,
+                ContextSummaryPrompt.PROMPT_VERSION,
+                Objects.requireNonNull(policySnapshot, "policySnapshot"),
+                Objects.requireNonNull(model.identity(), "summary model identity"));
     }
 
     /**

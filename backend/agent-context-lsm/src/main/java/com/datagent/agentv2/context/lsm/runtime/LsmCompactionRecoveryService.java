@@ -12,9 +12,11 @@ import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.Candida
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.JobStatus;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.PlannedCompaction;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.ReadyCompaction;
+import com.datagent.agentv2.context.lsm.summary.ContextSummaryDocumentValidator;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GeneratedSummary;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryPrompt;
+import com.datagent.agentv2.context.lsm.summary.SummaryGenerationIdentity;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.nio.charset.StandardCharsets;
@@ -37,7 +39,8 @@ public class LsmCompactionRecoveryService {
     private static final String RECOVERABLE_STATUSES = "'PLANNED', 'GENERATING'";
     private static final String PLANNED_ID_PREFIX = "planned-";
     private static final String HASH_ALGORITHM = "SHA-256";
-    private static final int SUMMARY_SCHEMA_VERSION = 1;
+    private static final String ERROR_CANDIDATE_IDENTITY_MISMATCH =
+            "LSM summary candidate generation identity is inconsistent";
 
     private final ContextSummaryGenerator generator;
     private final LsmSummarySegmentRepository segments;
@@ -100,7 +103,8 @@ public class LsmCompactionRecoveryService {
             }
             CandidateInput input = inputs.get(operation.targetId());
             var generationRequest = resolvedGenerationRequest(input, generatedDocuments);
-            String segmentKey = generator.segmentKey(generationRequest);
+            String segmentKey =
+                    generator.segmentKey(generationRequest, planned.request().policySnapshot());
             LsmSummarySegmentEntity persisted =
                     segments.findBySegmentKey(execution.conversationSessionId(), segmentKey)
                             .orElse(null);
@@ -111,7 +115,9 @@ public class LsmCompactionRecoveryService {
                         resolveSourceIds(input.generationRequest().sourceIds(), resolvedIds);
                 GeneratedSummary generated;
                 try {
-                    generated = generator.generate(generationRequest);
+                    generated =
+                            generator.generate(
+                                    generationRequest, planned.request().policySnapshot());
                 } catch (RuntimeException summaryFailure) {
                     failSummary(job, execution);
                     throw new IllegalStateException("unreachable summary failure");
@@ -124,6 +130,8 @@ public class LsmCompactionRecoveryService {
                                 generationRequest,
                                 resolvedSourceIds,
                                 generated);
+            } else {
+                validateReusableCandidate(planned, operation, generationRequest, persisted);
             }
             resolvedIds.put(operation.targetId(), persisted.getSummarySegmentId());
             generatedDocuments.put(operation.targetId(), persisted.getSummaryDocument());
@@ -211,7 +219,7 @@ public class LsmCompactionRecoveryService {
         entity.setEstimatedTokenCount(generated.estimatedTokenCount());
         entity.setSourceSegmentIds(documents.writeStringList(resolvedSourceIds));
         entity.setSourceContentSha256(sha256(generationRequest.sourceDocument()));
-        entity.setSummarySchemaVersion(SUMMARY_SCHEMA_VERSION);
+        entity.setSummarySchemaVersion(ContextSummaryDocumentValidator.SCHEMA_VERSION);
         entity.setPromptVersion(ContextSummaryPrompt.PROMPT_VERSION);
         entity.setModelProvider(generated.provider());
         entity.setModelName(generated.model());
@@ -224,6 +232,43 @@ public class LsmCompactionRecoveryService {
         entity.setDeleted(false);
         entity.setVersion(0L);
         return segments.findOrCreate(entity);
+    }
+
+    /** 恢复复用前核对所有生成身份与覆盖元数据，避免仅凭索引命中接受不一致候选。 */
+    private void validateReusableCandidate(
+            PlannedCompaction planned,
+            LsmCompactionPlan.PlannedOperation operation,
+            com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GenerationRequest
+                    generationRequest,
+            LsmSummarySegmentEntity persisted) {
+        SummaryGenerationIdentity identity =
+                generator.generationIdentity(planned.request().policySnapshot());
+        boolean consistent =
+                Objects.equals(persisted.getSummarySchemaVersion(), identity.schemaVersion())
+                        && Objects.equals(persisted.getPromptVersion(), identity.promptVersion())
+                        && identity.modelIdentity().provider().equals(persisted.getModelProvider())
+                        && identity.modelIdentity().model().equals(persisted.getModelName())
+                        && identity.policySnapshot()
+                                .equals(documents.readPolicy(persisted.getCreationPolicy()))
+                        && operation.targetKind().name().equals(persisted.getKind())
+                        && Objects.equals(persisted.getLevel(), operation.targetLevel())
+                        && Objects.equals(
+                                persisted.getStartTurnSequence(),
+                                operation.coverage().startTurnSequence())
+                        && Objects.equals(
+                                persisted.getEndTurnSequence(),
+                                operation.coverage().endTurnSequence())
+                        && Objects.equals(
+                                persisted.getStartMessageSequence(),
+                                generationRequest.messageCoverage().startMessageSequence())
+                        && Objects.equals(
+                                persisted.getEndMessageSequence(),
+                                generationRequest.messageCoverage().endMessageSequence())
+                        && sha256(generationRequest.sourceDocument())
+                                .equals(persisted.getSourceContentSha256());
+        if (!consistent) {
+            throw new IllegalStateException(ERROR_CANDIDATE_IDENTITY_MISMATCH);
+        }
     }
 
     private com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GenerationRequest

@@ -6,7 +6,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan.OperationType;
 import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -20,6 +23,7 @@ class LsmContextMetricsTest {
     private static final String TYPE_SEAL_L0 = "seal_l0";
     private static final String SESSION_A = "session-a";
     private static final String SESSION_B = "session-b";
+    private static final String SESSION_C = "session-c";
 
     @Test
     void recordsApprovedMeasurementsWithLowCardinalityTagsOnly() {
@@ -151,6 +155,69 @@ class LsmContextMetricsTest {
     }
 
     @Test
+    void boundsTrackedSessionsAndRemovesEvictedContributionFromServiceGauge() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        LsmContextMetrics metrics =
+                new LsmContextMetrics(registry, 2, Duration.ofHours(1), Clock.systemUTC());
+        metrics.recordActiveSegments(SESSION_A, Map.of(0, 2));
+        metrics.recordActiveSegments(SESSION_B, Map.of(0, 3));
+
+        metrics.recordActiveSegments(SESSION_C, Map.of(0, 4));
+
+        assertThat(metrics.trackedSessionCount()).isEqualTo(2);
+        assertThat(
+                        registry.get("agent_context_active_segments")
+                                .tag(TAG_LEVEL, "0")
+                                .gauge()
+                                .value())
+                .isEqualTo(7d);
+    }
+
+    @Test
+    void expiresStaleSessionContributionsBeforeUpdatingServiceGauge() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-13T00:00:00Z"));
+        LsmContextMetrics metrics =
+                new LsmContextMetrics(registry, 10, Duration.ofMinutes(5), clock);
+        metrics.recordActiveSegments(SESSION_A, Map.of(0, 2));
+        clock.advance(Duration.ofMinutes(6));
+
+        metrics.recordActiveSegments(SESSION_B, Map.of(0, 3));
+
+        assertThat(metrics.trackedSessionCount()).isEqualTo(1);
+        assertThat(
+                        registry.get("agent_context_active_segments")
+                                .tag(TAG_LEVEL, "0")
+                                .gauge()
+                                .value())
+                .isEqualTo(3d);
+    }
+
+    @Test
+    void explicitCleanupRemovesOnlyTheTargetSessionContribution() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        LsmContextMetrics metrics = new LsmContextMetrics(registry);
+        metrics.recordActiveSegments(SESSION_A, Map.of(0, 2, 1, 1));
+        metrics.recordActiveSegments(SESSION_B, Map.of(0, 3));
+
+        metrics.cleanupActiveSegments(SESSION_A);
+
+        assertThat(metrics.trackedSessionCount()).isEqualTo(1);
+        assertThat(
+                        registry.get("agent_context_active_segments")
+                                .tag(TAG_LEVEL, "0")
+                                .gauge()
+                                .value())
+                .isEqualTo(3d);
+        assertThat(
+                        registry.get("agent_context_active_segments")
+                                .tag(TAG_LEVEL, "1")
+                                .gauge()
+                                .value())
+                .isZero();
+    }
+
+    @Test
     void rejectsLevelsOutsideTheServiceBoundBeforeRegisteringMeters() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         LsmContextMetrics metrics = new LsmContextMetrics(registry);
@@ -166,5 +233,33 @@ class LsmContextMetricsTest {
 
         assertThat(registry.find("agent_context_active_segments").meters()).isEmpty();
         assertThat(registry.find("agent_context_compaction_input_tokens").meters()).isEmpty();
+    }
+
+    private static final class MutableClock extends Clock {
+
+        private Instant instant;
+
+        private MutableClock(Instant instant) {
+            this.instant = instant;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneId.of("UTC");
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return instant;
+        }
+
+        private void advance(Duration duration) {
+            instant = instant.plus(duration);
+        }
     }
 }
