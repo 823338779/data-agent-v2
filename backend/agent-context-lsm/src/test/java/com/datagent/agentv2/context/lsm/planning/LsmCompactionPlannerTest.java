@@ -23,6 +23,9 @@ class LsmCompactionPlannerTest {
     private static final String LEVEL_ID_PREFIX = "l";
     private static final String QUESTION_PREFIX = "question-";
     private static final String ANSWER_PREFIX = "answer-";
+    private static final String FIRST_HIGH_ID = "first-high";
+    private static final String LOWER_LEVEL_ID = "lower-level";
+    private static final String LATER_HIGH_ID = "later-high";
 
     private final LsmCompactionPlanner planner = new LsmCompactionPlanner();
 
@@ -156,6 +159,56 @@ class LsmCompactionPlannerTest {
                                             highTailNodes.get(1).segmentId());
                         });
         assertThat(plan.projectedSegments()).singleElement();
+    }
+
+    @Test
+    void configurationReconciliationConsumesExactlyFanoutSourcesAndRetainsExtraTail() {
+        LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 5, 1, 30, 500, List.of());
+        List<LsmSummarySegment> highTailNodes = shiftedSegments(3, 4, 31);
+
+        LsmCompactionPlan plan = planner.plan(inputWithRoot(oldRoot, highTailNodes, 3, 3));
+
+        assertThat(plan.merges())
+                .singleElement()
+                .satisfies(
+                        operation -> {
+                            assertThat(operation.sourceIds())
+                                    .containsExactly(
+                                            OLD_ROOT_ID,
+                                            highTailNodes.get(0).segmentId(),
+                                            highTailNodes.get(1).segmentId());
+                            assertThat(operation.sourceIds()).hasSize(3);
+                        });
+        assertThat(plan.projectedSegments())
+                .satisfiesExactly(
+                        root -> {
+                            assertThat(root.kind()).isEqualTo(Kind.ROOT);
+                            assertThat(root.coverage())
+                                    .isEqualTo(new LsmSummarySegment.Coverage(1, 50));
+                        },
+                        tail -> assertThat(tail).isEqualTo(highTailNodes.get(2)));
+        LsmInvariantValidator validator = new LsmInvariantValidator();
+        validator.assertContinuous(
+                plan.projectedSegments().stream().map(LsmSummarySegment::coverage).toList());
+        validator.validatePlan(inputWithRoot(oldRoot, highTailNodes, 3, 3), plan);
+    }
+
+    @Test
+    void configurationReconciliationDoesNotSkipAnIneligibleTailNode() {
+        LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 5, 1, 30, 500, List.of());
+        LsmSummarySegment firstHigh =
+                segment(FIRST_HIGH_ID, Kind.STANDARD, 4, 31, 40, 100, List.of());
+        LsmSummarySegment lowerLevel =
+                segment(LOWER_LEVEL_ID, Kind.STANDARD, 2, 41, 50, 100, List.of());
+        LsmSummarySegment laterHigh =
+                segment(LATER_HIGH_ID, Kind.STANDARD, 4, 51, 60, 100, List.of());
+        List<LsmSummarySegment> tail = List.of(firstHigh, lowerLevel, laterHigh);
+
+        LsmCompactionPlan plan = planner.plan(inputWithRoot(oldRoot, tail, 3, 3));
+
+        assertThat(plan.merges()).isEmpty();
+        assertThat(plan.projectedSegments())
+                .containsExactly(oldRoot, firstHigh, lowerLevel, laterHigh);
     }
 
     @Test

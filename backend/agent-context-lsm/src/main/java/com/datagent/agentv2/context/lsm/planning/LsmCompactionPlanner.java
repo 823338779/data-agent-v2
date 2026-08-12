@@ -121,24 +121,26 @@ public final class LsmCompactionPlanner {
         if (root == null || root.level() <= input.policy().maxLevel()) {
             return;
         }
-        List<LsmSummarySegment> tail =
+        List<LsmSummarySegment> chronologicalTail =
                 state.activeSegments.stream()
                         .filter(segment -> segment.kind() == Kind.STANDARD)
                         .filter(
                                 segment ->
                                         segment.coverage().startTurnSequence()
                                                 > root.coverage().endTurnSequence())
-                        .filter(segment -> segment.level() >= input.policy().maxLevel())
                         .sorted(CHRONOLOGICAL)
                         .toList();
-        if (tail.size() + 1 < input.policy().fanout()) {
+        List<LsmSummarySegment> eligibleTail =
+                consecutiveHighLevelPrefix(root, chronologicalTail, input.policy().maxLevel());
+        int requiredTailCount = input.policy().fanout() - 1;
+        if (eligibleTail.size() < requiredTailCount) {
             return;
         }
 
         // maxLevel 降低时旧 ROOT 也计入协调 fanout，避免把两个 tail 单独提前聚合。
         List<LsmSummarySegment> sources = new ArrayList<>();
         sources.add(root);
-        sources.addAll(tail);
+        sources.addAll(eligibleTail.subList(0, requiredTailCount));
         mergeSources(
                 state,
                 sources,
@@ -146,6 +148,23 @@ public final class LsmCompactionPlanner {
                 Kind.ROOT,
                 input.policy().maxLevel(),
                 NORMAL_SUMMARY_RATIO);
+    }
+
+    private static List<LsmSummarySegment> consecutiveHighLevelPrefix(
+            LsmSummarySegment root,
+            List<LsmSummarySegment> chronologicalTail,
+            int configuredMaxLevel) {
+        List<LsmSummarySegment> eligible = new ArrayList<>();
+        long expectedStart = root.coverage().endTurnSequence() + 1L;
+        for (LsmSummarySegment segment : chronologicalTail) {
+            if (segment.coverage().startTurnSequence() != expectedStart
+                    || segment.level() < configuredMaxLevel) {
+                break;
+            }
+            eligible.add(segment);
+            expectedStart = segment.coverage().endTurnSequence() + 1L;
+        }
+        return List.copyOf(eligible);
     }
 
     private static void promoteFullLevels(int fanout, int maxLevel, PlanningState state) {

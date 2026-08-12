@@ -54,16 +54,15 @@ public final class LsmInvariantValidator {
         assertManifestReferencesProjectedSegments(plan, projected);
         assertCoverageReachesHotBoundary(plan, projected);
 
-        // 普通层严格受 fanout-1 限制，配置顶层和历史 ROOT 合计最多只能有一个活动实例。
+        // 普通层（含配置变化遗留高层）严格受 fanout-1 限制，活动 ROOT 始终最多一个。
         int fanout = input.policy().fanout();
-        int maxLevel = input.policy().maxLevel();
-        for (int level = 0; level < maxLevel; level++) {
-            int checkedLevel = level;
-            long count =
-                    projected.stream()
-                            .filter(segment -> segment.kind() == LsmSummarySegment.Kind.STANDARD)
-                            .filter(segment -> segment.level() == checkedLevel)
-                            .count();
+        Map<Integer, Long> ordinaryLevelCounts = new HashMap<>();
+        for (LsmSummarySegment segment : projected) {
+            if (segment.kind() == LsmSummarySegment.Kind.STANDARD) {
+                ordinaryLevelCounts.merge(segment.level(), 1L, Long::sum);
+            }
+        }
+        for (long count : ordinaryLevelCounts.values()) {
             if (count > fanout - 1L) {
                 throw new IllegalStateException("ordinary level exceeds fanout minus one");
             }
@@ -90,16 +89,6 @@ public final class LsmInvariantValidator {
                                         "manifest active ROOT must reference projected ROOT");
                             }
                         });
-        boolean hasStandardAtOrAboveTop =
-                projected.stream()
-                        .anyMatch(
-                                segment ->
-                                        segment.kind() == LsmSummarySegment.Kind.STANDARD
-                                                && segment.level() >= maxLevel);
-        if (hasStandardAtOrAboveTop) {
-            throw new IllegalStateException("configured top level is reserved for ROOT");
-        }
-
         // 历史足够长时，每次成功发布必须把 Warm 收敛到 100～109 轮且保护十轮 Hot。
         long completedTurns = input.turns().stream().filter(turn -> turn.completed()).count();
         if (completedTurns >= MIN_WARM_TURNS + 10L) {
