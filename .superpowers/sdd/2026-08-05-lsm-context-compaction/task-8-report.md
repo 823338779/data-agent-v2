@@ -44,3 +44,25 @@
 
 - Task 9 必须在 `ReplanProvider` 中从最新 manifest 和原始事实源重建完整 `CompactionRequest`；当前 Task 8 刻意不自行读取 web/history。
 - Mockito 的动态 agent 警告来自既有测试基础设施，不影响测试结果。
+
+## Fix Round 1（2026-08-12）
+
+### RED / GREEN
+
+- RED：Task 7 generator 生成的 key 长度为 79，真实 PostgreSQL 插入明确失败：`value too long for type character(64)`；同时单元测试断言实际长度 79 而不是 64。
+- GREEN：segment key 改为裸 SHA-256 的 64 位小写十六进制值；prompt version 仍参与 hash material。真实 PostgreSQL 路径验证 generator 输出可插入，且同 key 重试只保留一行。
+- RED：两层级联经真实 PostgreSQL repository 落库后，父段 lineage 为 `planned-child`，而子段真实 ID 为 `context_summary_segment-1`。
+- GREEN：候选写库前按 planner 顺序把已生成或复用的 target ID 解析为真实 segment ID，并拒绝写入尚未解析的 `planned-*`；父段 lineage、来源数量及两行数据库记录均已验证。
+- RED：restart canonical roundtrip 测试因 codec 不具备 plan 反序列化再 canonical 输出能力而编译失败。
+- GREEN：`segmentKeys` 和 `sourceContentHashes` 使用有序不可变 map；不同插入顺序、重新创建 codec 后反序列化再输出均得到相同 JSON 和 SHA-256，planner list 顺序保持不变。
+
+### 验证
+
+- 聚焦验证：generator、真实 PostgreSQL repository、recovery、codec 共 25 tests，全部通过。
+- 完整验证：`mvn -pl agent-context-lsm -am test` 最终 BUILD SUCCESS；`agent-domain` 4 tests、`agent-persistence` 38 tests、`agent-context-lsm` 69 tests，全部通过。
+- 完整验证首轮遇到既有 `MybatisPlusAuditIntegrationTest` 的 PostgreSQL 微秒精度边界偶发失败；未修改该测试，原样单独重跑通过，随后完整 reactor 重跑通过。
+
+### Task 9 事务约束
+
+- `LsmManifestPublicationTransaction.publish` 已在同一个 `REQUIRES_NEW` 事务内依次调用 execution ownership/budget/cancel 检查、manifest CAS、job 状态迁移与 lifecycle publish。
+- 当前端口契约不扩展。Task 9 的 `ContextExecutionControlPort` 数据库 adapter 必须让 ownership/cancel/fence 的读取或锁定参与上述同一数据库事务，并通过行锁或等价 fence 保持到 manifest CAS 完成；若 adapter 使用独立事务、事务外读取或仅内存检查，检查与 CAS 之间仍存在 TOCTOU 窗口。

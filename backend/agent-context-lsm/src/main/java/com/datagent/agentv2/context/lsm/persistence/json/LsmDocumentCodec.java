@@ -2,8 +2,11 @@ package com.datagent.agentv2.context.lsm.persistence.json;
 
 import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan;
 import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
@@ -52,8 +55,17 @@ public final class LsmDocumentCodec {
             Map<String, String> sourceContentHashes) {
         try {
             return json.writeValueAsString(
-                    new PersistedPlan(
-                            plan, Map.copyOf(segmentKeys), Map.copyOf(sourceContentHashes)));
+                    new PersistedPlan(plan, segmentKeys, sourceContentHashes));
+        } catch (RuntimeException failure) {
+            throw new IllegalStateException(INVALID_COMPACTION_PLAN, failure);
+        }
+    }
+
+    /** 模拟重启恢复时重新读取并输出同一份 canonical planner 文档。 */
+    String canonicalizeCompactionPlan(String document) {
+        try {
+            PersistedPlan persistedPlan = json.readValue(document, PersistedPlan.class);
+            return json.writeValueAsString(persistedPlan);
         } catch (RuntimeException failure) {
             throw new IllegalStateException(INVALID_COMPACTION_PLAN, failure);
         }
@@ -72,5 +84,17 @@ public final class LsmDocumentCodec {
     private record PersistedPlan(
             LsmCompactionPlan plan,
             Map<String, String> segmentKeys,
-            Map<String, String> sourceContentHashes) {}
+            Map<String, String> sourceContentHashes) {
+
+        private PersistedPlan {
+            plan = Objects.requireNonNull(plan, "plan");
+            segmentKeys = canonicalMap(segmentKeys);
+            sourceContentHashes = canonicalMap(sourceContentHashes);
+        }
+
+        private static Map<String, String> canonicalMap(Map<String, String> values) {
+            return Collections.unmodifiableMap(
+                    new TreeMap<>(Objects.requireNonNull(values, "values")));
+        }
+    }
 }

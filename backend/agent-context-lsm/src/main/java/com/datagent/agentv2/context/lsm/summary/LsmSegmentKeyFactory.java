@@ -12,7 +12,6 @@ import java.util.Objects;
 public final class LsmSegmentKeyFactory {
 
     private static final String HASH_ALGORITHM = "SHA-256";
-    private static final String KEY_PREFIX = "lsm-summary-v1-";
     private static final String FIELD_SEPARATOR = "\u001f";
     private static final String ITEM_SEPARATOR = "\u001e";
     private static final String HASH_UNAVAILABLE = "SHA-256 is unavailable";
@@ -46,7 +45,7 @@ public final class LsmSegmentKeyFactory {
             byte[] digest =
                     MessageDigest.getInstance(HASH_ALGORITHM)
                             .digest(material.getBytes(StandardCharsets.UTF_8));
-            return KEY_PREFIX + HexFormat.of().formatHex(digest);
+            return HexFormat.of().formatHex(digest);
         } catch (NoSuchAlgorithmException failure) {
             throw new IllegalStateException(HASH_UNAVAILABLE, failure);
         }

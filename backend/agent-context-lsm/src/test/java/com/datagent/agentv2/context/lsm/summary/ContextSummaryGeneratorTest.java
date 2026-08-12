@@ -172,7 +172,7 @@ class ContextSummaryGeneratorTest {
         String first = generator.generate(requestForLevel(1)).segmentKey();
         String second = generator.generate(requestForLevel(1)).segmentKey();
 
-        assertThat(first).isEqualTo(second).startsWith("lsm-summary-v1-");
+        assertThat(first).isEqualTo(second).hasSize(64).matches("[0-9a-f]{64}");
     }
 
     @Test

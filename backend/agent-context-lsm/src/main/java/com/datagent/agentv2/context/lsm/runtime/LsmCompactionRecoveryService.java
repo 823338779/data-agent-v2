@@ -35,6 +35,7 @@ public class LsmCompactionRecoveryService {
     private static final String SEGMENT_ID_PREFIX = "context_summary_segment";
     private static final String SYSTEM_OPERATOR = "lsm-context";
     private static final String RECOVERABLE_STATUSES = "'PLANNED', 'GENERATING'";
+    private static final String PLANNED_ID_PREFIX = "planned-";
     private static final String HASH_ALGORITHM = "SHA-256";
     private static final int SUMMARY_SCHEMA_VERSION = 1;
 
@@ -102,6 +103,10 @@ public class LsmCompactionRecoveryService {
                     segments.findBySegmentKey(execution.conversationSessionId(), segmentKey)
                             .orElse(null);
             if (persisted == null) {
+                // Resolve cascaded planner placeholders before the candidate crosses the DB
+                // boundary.
+                List<String> resolvedSourceIds =
+                        resolveSourceIds(input.generationRequest().sourceIds(), resolvedIds);
                 GeneratedSummary generated;
                 try {
                     generated = generator.generate(input.generationRequest());
@@ -109,7 +114,8 @@ public class LsmCompactionRecoveryService {
                     failSummary(job, execution);
                     throw new IllegalStateException("unreachable summary failure");
                 }
-                persisted = persistCandidate(planned, operation, input, generated);
+                persisted =
+                        persistCandidate(planned, operation, input, resolvedSourceIds, generated);
             }
             resolvedIds.put(operation.targetId(), persisted.getSummarySegmentId());
             candidates.add(toDomain(persisted));
@@ -174,6 +180,7 @@ public class LsmCompactionRecoveryService {
             PlannedCompaction planned,
             LsmCompactionPlan.PlannedOperation operation,
             CandidateInput input,
+            List<String> resolvedSourceIds,
             GeneratedSummary generated) {
         LocalDateTime now = LocalDateTime.now();
         LsmSummarySegmentEntity entity = new LsmSummarySegmentEntity();
@@ -191,15 +198,14 @@ public class LsmCompactionRecoveryService {
         entity.setPartialSegment(operation.partialSegment());
         entity.setSummaryDocument(generated.serializedJson());
         entity.setEstimatedTokenCount(generated.estimatedTokenCount());
-        entity.setSourceSegmentIds(
-                documents.writeStringList(input.generationRequest().sourceIds()));
+        entity.setSourceSegmentIds(documents.writeStringList(resolvedSourceIds));
         entity.setSourceContentSha256(sha256(input.generationRequest().sourceDocument()));
         entity.setSummarySchemaVersion(SUMMARY_SCHEMA_VERSION);
         entity.setPromptVersion(ContextSummaryPrompt.PROMPT_VERSION);
         entity.setModelProvider(generated.provider());
         entity.setModelName(generated.model());
         entity.setCreationPolicy(documents.writePolicy(planned.request().policySnapshot()));
-        entity.setSourceSegmentCount(input.generationRequest().sourceIds().size());
+        entity.setSourceSegmentCount(resolvedSourceIds.size());
         entity.setCreatedAt(now);
         entity.setCreatedBy(SYSTEM_OPERATOR);
         entity.setUpdatedAt(now);
@@ -207,6 +213,21 @@ public class LsmCompactionRecoveryService {
         entity.setDeleted(false);
         entity.setVersion(0L);
         return segments.findOrCreate(entity);
+    }
+
+    private static List<String> resolveSourceIds(
+            List<String> sourceIds, Map<String, String> resolvedIds) {
+        return sourceIds.stream()
+                .map(
+                        sourceId -> {
+                            String resolvedId = resolvedIds.get(sourceId);
+                            if (resolvedId == null && sourceId.startsWith(PLANNED_ID_PREFIX)) {
+                                throw new IllegalStateException(
+                                        "Cascaded summary source has not been resolved");
+                            }
+                            return resolvedId == null ? sourceId : resolvedId;
+                        })
+                .toList();
     }
 
     private LsmCompactionJobEntity requireJob(PlannedCompaction planned) {
