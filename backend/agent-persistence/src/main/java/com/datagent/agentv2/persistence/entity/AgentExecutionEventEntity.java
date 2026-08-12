@@ -1,10 +1,13 @@
 package com.datagent.agentv2.persistence.entity;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
+import com.datagent.agentv2.persistence.typehandler.JsonbStringTypeHandler;
 import java.time.Instant;
 import lombok.Getter;
 import lombok.Setter;
+import org.apache.ibatis.type.JdbcType;
 
 /** 持久化 Agent 执行时间线中的一个可重放事件。 */
 @Getter
@@ -28,6 +31,7 @@ public final class AgentExecutionEventEntity extends TenantAuditedEntity {
     private String type;
 
     /** 事件类型对应的 JSON 负载。 */
+    @TableField(jdbcType = JdbcType.OTHER, typeHandler = JsonbStringTypeHandler.class)
     private String payload;
 
     /** 业务事件实际发生的时间。 */
