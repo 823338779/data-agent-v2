@@ -1,6 +1,7 @@
 package com.datagent.agentv2.context.lsm.planning;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.datagent.agentv2.context.lsm.domain.ConversationTurn;
 import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan;
@@ -19,6 +20,7 @@ class LsmPlannerStateMachineTest {
     private static final int SIMULATED_TURNS = 10_000;
     private static final String QUESTION_PREFIX = "q-";
     private static final String ANSWER_PREFIX = "a-";
+    private static final String RETRY_SEGMENT_PREFIX = "retry-l0-";
 
     private final LsmCompactionPlanner planner = new LsmCompactionPlanner();
     private final LsmInvariantValidator validator = new LsmInvariantValidator();
@@ -52,12 +54,85 @@ class LsmPlannerStateMachineTest {
 
                     validator.validatePlan(input, plan);
                     assertPublishedInvariants(plan, fanout, maxLevel);
+                    assertCompleteBoundary(plan);
                     manifest = plan.proposedManifest();
                     activeSegments = plan.projectedSegments();
                     nextPublish = sequence + 91 + random.nextInt(29);
                 }
             }
         }
+    }
+
+    @Test
+    void validatorRejectsPublishedStateWithMissingTailCoverage() {
+        List<ConversationTurn> turns = completedTurns(130);
+        LsmPlanningInput input =
+                new LsmPlanningInput(
+                        turns,
+                        LsmContextManifest.empty(),
+                        List.of(),
+                        new LsmPlanningInput.Policy(1, 5, 4),
+                        new LsmPlanningInput.TokenPressure(20_000, 8_000, 16_000),
+                        true);
+        LsmCompactionPlan valid = planner.plan(input);
+        List<LsmSummarySegment> missingTail =
+                valid.projectedSegments().subList(0, valid.projectedSegments().size() - 1);
+        LsmContextManifest validManifest = valid.proposedManifest();
+        LsmContextManifest missingTailManifest =
+                new LsmContextManifest(
+                        validManifest.activeRootSegmentId(),
+                        missingTail.stream().map(LsmSummarySegment::segmentId).toList(),
+                        null,
+                        null,
+                        validManifest.warmStartTurnSequence(),
+                        validManifest.warmEndTurnSequence(),
+                        validManifest.generation(),
+                        validManifest.effectiveFanout(),
+                        validManifest.effectiveMaxLevel());
+        LsmCompactionPlan invalid =
+                new LsmCompactionPlan(
+                        valid.hotBoundary(), valid.operations(), missingTailManifest, missingTail);
+
+        assertThatThrownBy(() -> validator.validatePlan(input, invalid))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Hot boundary");
+    }
+
+    @Test
+    void pendingRawContinuouslyBridgesActiveSegmentsToHotBoundary() {
+        LsmPlanningInput input =
+                new LsmPlanningInput(
+                        completedTurns(117),
+                        LsmContextManifest.empty(),
+                        List.of(),
+                        new LsmPlanningInput.Policy(1, 5, 4),
+                        new LsmPlanningInput.TokenPressure(12_000, 8_000, 16_000),
+                        false);
+
+        LsmCompactionPlan plan = planner.plan(input);
+
+        assertThat(plan.proposedManifest().pendingRawStartTurnSequence()).isEqualTo(101L);
+        assertThat(plan.proposedManifest().pendingRawEndTurnSequence()).isEqualTo(107L);
+        assertCompleteBoundary(plan);
+        validator.validatePlan(input, plan);
+    }
+
+    @Test
+    void retryAndTakeoverReuseFrozenPolicyAndProduceTheSamePlan() {
+        List<LsmSummarySegment> segments = fiveL0Segments();
+        LsmPlanningInput.Policy frozenPolicy = new LsmPlanningInput.Policy(7, 5, 4);
+        LsmPlanningInput initialInput = planningInput(segments, frozenPolicy);
+
+        LsmCompactionPlan initial = planner.plan(initialInput);
+        LsmPlanningInput.Policy changedServicePolicy = new LsmPlanningInput.Policy(8, 3, 3);
+        LsmCompactionPlan servicePolicyPlan =
+                planner.plan(planningInput(segments, changedServicePolicy));
+        LsmCompactionPlan retry = planner.plan(planningInput(segments, frozenPolicy));
+        LsmCompactionPlan takeover = planner.plan(planningInput(segments, frozenPolicy));
+
+        assertThat(servicePolicyPlan).isNotEqualTo(initial);
+        assertThat(retry).isEqualTo(initial);
+        assertThat(takeover).isEqualTo(initial);
     }
 
     private static void assertPublishedInvariants(
@@ -76,6 +151,66 @@ class LsmPlannerStateMachineTest {
                                             && segment.level() == checkedLevel)
                     .hasSizeLessThanOrEqualTo(fanout - 1);
         }
+    }
+
+    private static void assertCompleteBoundary(LsmCompactionPlan plan) {
+        long hotPredecessor = plan.hotBoundary().startTurnSequence() - 1L;
+        long activeEnd =
+                plan.projectedSegments().isEmpty()
+                        ? 0L
+                        : plan.projectedSegments().getLast().coverage().endTurnSequence();
+        LsmContextManifest manifest = plan.proposedManifest();
+        if (manifest.pendingRawStartTurnSequence() == null) {
+            assertThat(activeEnd).isEqualTo(hotPredecessor);
+        } else {
+            assertThat(manifest.pendingRawStartTurnSequence()).isEqualTo(activeEnd + 1L);
+            assertThat(manifest.pendingRawEndTurnSequence()).isEqualTo(hotPredecessor);
+        }
+    }
+
+    private static LsmPlanningInput planningInput(
+            List<LsmSummarySegment> segments, LsmPlanningInput.Policy policy) {
+        return new LsmPlanningInput(
+                List.of(),
+                new LsmContextManifest(
+                        null,
+                        segments.stream().map(LsmSummarySegment::segmentId).toList(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        4,
+                        policy.fanout(),
+                        policy.maxLevel()),
+                segments,
+                policy,
+                new LsmPlanningInput.TokenPressure(7_000, 8_000, 16_000),
+                false);
+    }
+
+    private static List<LsmSummarySegment> fiveL0Segments() {
+        List<LsmSummarySegment> segments = new ArrayList<>();
+        for (int index = 0; index < 5; index++) {
+            long start = index * 10L + 1L;
+            segments.add(
+                    new LsmSummarySegment(
+                            RETRY_SEGMENT_PREFIX + index,
+                            LsmSummarySegment.Kind.STANDARD,
+                            0,
+                            new LsmSummarySegment.Coverage(start, start + 9L),
+                            100,
+                            List.of(),
+                            false));
+        }
+        return List.copyOf(segments);
+    }
+
+    private static List<ConversationTurn> completedTurns(int count) {
+        List<ConversationTurn> turns = new ArrayList<>();
+        for (int sequence = 1; sequence <= count; sequence++) {
+            turns.add(completedTurn(sequence));
+        }
+        return List.copyOf(turns);
     }
 
     private static ConversationTurn completedTurn(int sequence) {

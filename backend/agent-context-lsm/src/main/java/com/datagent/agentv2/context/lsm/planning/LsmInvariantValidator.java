@@ -51,6 +51,8 @@ public final class LsmInvariantValidator {
         if (!projected.isEmpty() && projected.getFirst().coverage().startTurnSequence() != 1L) {
             throw new IllegalStateException("published coverage must start at the first turn");
         }
+        assertManifestReferencesProjectedSegments(plan, projected);
+        assertCoverageReachesHotBoundary(plan, projected);
 
         // 普通层严格受 fanout-1 限制，配置顶层和历史 ROOT 合计最多只能有一个活动实例。
         int fanout = input.policy().fanout();
@@ -110,6 +112,39 @@ public final class LsmInvariantValidator {
         int expectedHot = (int) Math.min(10L, completedTurns);
         if (plan.hotBoundary().completedTurnCount() != expectedHot) {
             throw new IllegalStateException("Hot must protect the last ten completed turns");
+        }
+    }
+
+    private static void assertManifestReferencesProjectedSegments(
+            LsmCompactionPlan plan, List<LsmSummarySegment> projected) {
+        List<String> projectedIds = projected.stream().map(LsmSummarySegment::segmentId).toList();
+        if (!projectedIds.equals(plan.proposedManifest().activeSegmentIds())) {
+            throw new IllegalStateException(
+                    "manifest active segment IDs must match projected Storage Frontier");
+        }
+    }
+
+    private static void assertCoverageReachesHotBoundary(
+            LsmCompactionPlan plan, List<LsmSummarySegment> projected) {
+        Long hotStart = plan.hotBoundary().startTurnSequence();
+        if (hotStart == null) {
+            return;
+        }
+        long expectedHistoryEnd = hotStart - 1L;
+        long activeEnd =
+                projected.isEmpty() ? 0L : projected.getLast().coverage().endTurnSequence();
+        Long pendingStart = plan.proposedManifest().pendingRawStartTurnSequence();
+        Long pendingEnd = plan.proposedManifest().pendingRawEndTurnSequence();
+
+        // 活动摘要和 pending raw 必须无缝覆盖到 Hot 的前一轮，不能静默遗漏尾部历史。
+        if (pendingStart == null) {
+            if (activeEnd != expectedHistoryEnd) {
+                throw new IllegalStateException("published coverage must reach the Hot boundary");
+            }
+            return;
+        }
+        if (pendingStart != activeEnd + 1L || pendingEnd != expectedHistoryEnd) {
+            throw new IllegalStateException("pending raw must continuously reach the Hot boundary");
         }
     }
 

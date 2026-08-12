@@ -128,16 +128,17 @@ public final class LsmCompactionPlanner {
                                 segment ->
                                         segment.coverage().startTurnSequence()
                                                 > root.coverage().endTurnSequence())
+                        .filter(segment -> segment.level() >= input.policy().maxLevel())
                         .sorted(CHRONOLOGICAL)
                         .toList();
-        if (tail.size() < input.policy().fanout()) {
+        if (tail.size() + 1 < input.policy().fanout()) {
             return;
         }
 
-        // maxLevel 降低不能展开旧 ROOT，只能把旧前缀与其后连续 Cold Tail 协调成新顶层 ROOT。
+        // maxLevel 降低时旧 ROOT 也计入协调 fanout，避免把两个 tail 单独提前聚合。
         List<LsmSummarySegment> sources = new ArrayList<>();
         sources.add(root);
-        sources.addAll(tail.subList(0, input.policy().fanout()));
+        sources.addAll(tail);
         mergeSources(
                 state,
                 sources,

@@ -133,13 +133,29 @@ class LsmCompactionPlannerTest {
     }
 
     @Test
-    void configurationReconciliationStillWaitsForConfiguredFanout() {
+    void lowerMaxLevelReconcilesOldRootAndTwoHighTailNodesAsThreeSources() {
         LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 5, 1, 30, 500, List.of());
-        List<LsmSummarySegment> onlyTwoTailNodes = shiftedSegments(2, 2, 31);
+        List<LsmSummarySegment> highTailNodes = shiftedSegments(2, 4, 31);
 
-        LsmCompactionPlan plan = planner.plan(inputWithRoot(oldRoot, onlyTwoTailNodes, 3, 3));
+        LsmCompactionPlan plan = planner.plan(inputWithRoot(oldRoot, highTailNodes, 3, 3));
 
-        assertThat(plan.merges()).isEmpty();
+        assertThat(plan.merges())
+                .singleElement()
+                .satisfies(
+                        operation -> {
+                            assertThat(operation.type())
+                                    .isEqualTo(
+                                            LsmCompactionPlan.OperationType
+                                                    .RECONCILE_CONFIGURATION);
+                            assertThat(operation.targetKind()).isEqualTo(Kind.ROOT);
+                            assertThat(operation.targetLevel()).isEqualTo(3);
+                            assertThat(operation.sourceIds())
+                                    .containsExactly(
+                                            OLD_ROOT_ID,
+                                            highTailNodes.get(0).segmentId(),
+                                            highTailNodes.get(1).segmentId());
+                        });
+        assertThat(plan.projectedSegments()).singleElement();
     }
 
     @Test
