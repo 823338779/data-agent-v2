@@ -54,7 +54,12 @@ public final class ContextSummaryGenerator {
 
         // provider 输出无效时复用完全相同的协议、来源和 key，只允许一次重试。
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-            ContextSummaryResult result = model.summarize(modelRequest);
+            ContextSummaryResult result;
+            try {
+                result = model.summarize(modelRequest);
+            } catch (RuntimeException providerFailure) {
+                continue;
+            }
             try {
                 ContextSummaryDocument document =
                         validator.validate(
@@ -73,7 +78,7 @@ public final class ContextSummaryGenerator {
                         result.modelProvider(),
                         result.modelName(),
                         segmentKey);
-            } catch (IllegalArgumentException invalidDocument) {
+            } catch (IllegalArgumentException invalidSummary) {
                 // 正文及 schema 错误不得进入日志或异常消息，下一轮只复用安全元数据。
             }
         }
@@ -90,7 +95,8 @@ public final class ContextSummaryGenerator {
         return (int) Math.min(levelCap, STANDARD_MAX_OUTPUT_TOKENS);
     }
 
-    private String segmentKey(GenerationRequest request) {
+    /** 在调用模型前计算候选的确定性 key，供 job 持久化和恢复查重。 */
+    public String segmentKey(GenerationRequest request) {
         return keyFactory.create(
                 request.kind(),
                 request.level(),
