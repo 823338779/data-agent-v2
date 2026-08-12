@@ -19,13 +19,31 @@ public class LsmFlywayMigrator {
 
     @Bean(name = "lsmContextFlyway", initMethod = "migrate")
     @DependsOn(PRIMARY_FLYWAY_INITIALIZER)
-    Flyway lsmContextFlyway(DataSource dataSource, LsmContextProperties properties) {
-        return Flyway.configure()
-                .dataSource(dataSource)
-                .locations(MIGRATION_LOCATION)
-                .table(HISTORY_TABLE)
-                .baselineOnMigrate(true)
-                .baselineVersion(INITIAL_BASELINE_VERSION)
-                .load();
+    LsmFlywayMigration lsmContextFlyway(DataSource dataSource, LsmContextProperties properties) {
+        Flyway flyway =
+                Flyway.configure()
+                        .dataSource(dataSource)
+                        .locations(MIGRATION_LOCATION)
+                        .table(HISTORY_TABLE)
+                        .baselineOnMigrate(true)
+                        .baselineVersion(INITIAL_BASELINE_VERSION)
+                        .load();
+        return new LsmFlywayMigration(flyway);
+    }
+
+    /** 包装插件 Flyway，避免其 bean 类型使 Spring Boot 主 Flyway 自动配置提前退避。 */
+    static final class LsmFlywayMigration {
+
+        /** 只包含插件迁移位置和独立历史表的 Flyway 实例。 */
+        private final Flyway flyway;
+
+        private LsmFlywayMigration(Flyway flyway) {
+            this.flyway = flyway;
+        }
+
+        /** 在主 Flyway initializer 完成后执行插件迁移。 */
+        void migrate() {
+            flyway.migrate();
+        }
     }
 }

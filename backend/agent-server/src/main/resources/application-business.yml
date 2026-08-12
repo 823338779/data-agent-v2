@@ -1,4 +1,9 @@
 data-agent:
+  context:
+    strategy: ${DATA_AGENT_CONTEXT_STRATEGY:raw}
+    compaction:
+      fanout: ${DATA_AGENT_CONTEXT_COMPACTION_FANOUT:5}
+      max-level: ${DATA_AGENT_CONTEXT_COMPACTION_MAX_LEVEL:4}
   model:
     provider: ${DATA_AGENT_MODEL_PROVIDER:ollama}
     codex:

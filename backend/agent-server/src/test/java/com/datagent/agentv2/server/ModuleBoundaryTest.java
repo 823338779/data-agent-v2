@@ -21,6 +21,9 @@ class ModuleBoundaryTest {
 
     private static final String LSM_CLASS_PATTERN =
             "classpath*:com/datagent/agentv2/context/lsm/**/*.class";
+    private static final String PERSISTENCE_CLASS_PATTERN =
+            "classpath*:com/datagent/agentv2/persistence/**/*.class";
+    private static final String LSM_PACKAGE_REFERENCE = "com/datagent/agentv2/context/lsm/";
     private static final List<String> LSM_FORBIDDEN_REFERENCES =
             List.of(
                     "com/datagent/agentv2/conversation/react/",
@@ -82,6 +85,27 @@ class ModuleBoundaryTest {
                 if (classBytes.contains(forbiddenReference)) {
                     violations.add(resource.getFilename() + " -> " + forbiddenReference);
                 }
+            }
+        }
+
+        assertThat(resources).isNotEmpty();
+        assertThat(violations).isEmpty();
+    }
+
+    @Test
+    void sharedPersistenceDoesNotReferenceLsmPluginImplementations() throws Exception {
+        var resources =
+                new PathMatchingResourcePatternResolver().getResources(PERSISTENCE_CLASS_PATTERN);
+        List<String> violations = new ArrayList<>();
+
+        // 通用持久化模块不得反向依赖可移除插件，避免 raw 部署仍需加载 LSM 类。
+        for (var resource : resources) {
+            String classBytes;
+            try (InputStream input = resource.getInputStream()) {
+                classBytes = new String(input.readAllBytes(), StandardCharsets.ISO_8859_1);
+            }
+            if (classBytes.contains(LSM_PACKAGE_REFERENCE)) {
+                violations.add(resource.getFilename());
             }
         }
 

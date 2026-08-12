@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.SegmentKind;
+import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.planning.ConversationTokenEstimator;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryDocumentValidator.ContextSummaryDocument;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GeneratedSummary;
@@ -18,6 +19,7 @@ import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.MessageC
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ContextSummaryRequest;
 import com.datagent.agentv2.conversation.context.ContextSummaryResult;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,15 +48,18 @@ class ContextSummaryGeneratorTest {
     @Mock private ConversationTokenEstimator estimator;
 
     private ContextSummaryGenerator generator;
+    private SimpleMeterRegistry meters;
 
     @BeforeEach
     void setUp() {
+        meters = new SimpleMeterRegistry();
         generator =
                 new ContextSummaryGenerator(
                         model,
                         new ContextSummaryDocumentValidator(),
                         estimator,
-                        new LsmSegmentKeyFactory());
+                        new LsmSegmentKeyFactory(),
+                        new LsmContextMetrics(meters));
         lenient().when(estimator.estimateSummaryDocument(any())).thenReturn(1_000);
     }
 
@@ -207,7 +212,19 @@ class ContextSummaryGeneratorTest {
         GeneratedSummary summary = generator.generate(requestForLevel(1));
 
         assertThat(summary.estimatedTokenCount()).isEqualTo(1_800);
-        verify(estimator).estimateSummaryDocument(any());
+        verify(estimator, times(2)).estimateSummaryDocument(any());
+        assertThat(
+                        meters.get("agent_context_compaction_input_tokens")
+                                .tag("level", "1")
+                                .summary()
+                                .totalAmount())
+                .isEqualTo(1_000d);
+        assertThat(
+                        meters.get("agent_context_compaction_output_tokens")
+                                .tag("level", "1")
+                                .summary()
+                                .totalAmount())
+                .isEqualTo(1_800d);
     }
 
     private static GenerationRequest requestForLevel(int level) {

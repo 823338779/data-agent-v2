@@ -1,6 +1,7 @@
 package com.datagent.agentv2.context.lsm.runtime;
 
 import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan;
+import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmCompactionJobEntity;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmContextManifestEntity;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmSummarySegmentEntity;
@@ -35,6 +36,7 @@ public class LsmManifestPublicationTransaction {
     private final ContextExecutionControlPort executions;
     private final LsmInvariantValidator invariants;
     private final LsmDocumentCodec documents;
+    private final LsmContextMetrics metrics;
 
     public LsmManifestPublicationTransaction(
             LsmContextManifestRepository manifests,
@@ -43,12 +45,31 @@ public class LsmManifestPublicationTransaction {
             ContextExecutionControlPort executions,
             LsmInvariantValidator invariants,
             LsmDocumentCodec documents) {
+        this(
+                manifests,
+                segments,
+                jobs,
+                executions,
+                invariants,
+                documents,
+                LsmContextMetrics.isolated());
+    }
+
+    public LsmManifestPublicationTransaction(
+            LsmContextManifestRepository manifests,
+            LsmSummarySegmentRepository segments,
+            LsmCompactionJobRepository jobs,
+            ContextExecutionControlPort executions,
+            LsmInvariantValidator invariants,
+            LsmDocumentCodec documents,
+            LsmContextMetrics metrics) {
         this.manifests = Objects.requireNonNull(manifests, "manifests");
         this.segments = Objects.requireNonNull(segments, "segments");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.executions = Objects.requireNonNull(executions, "executions");
         this.invariants = Objects.requireNonNull(invariants, "invariants");
         this.documents = Objects.requireNonNull(documents, "documents");
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
     }
 
     /** owner/attempt/cancel、source manifest、不变量和 CAS 在同一事务内验证。 */
@@ -118,6 +139,7 @@ public class LsmManifestPublicationTransaction {
                         execution.inputUpToMessageSequence(),
                         replacement);
         if (!published) {
+            metrics.recordManifestCasConflict();
             markSuperseded(job, execution.ownerInstanceId());
             return PublishResult.SUPERSEDED;
         }

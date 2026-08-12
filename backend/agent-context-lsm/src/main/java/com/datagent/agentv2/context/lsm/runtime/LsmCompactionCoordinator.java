@@ -4,9 +4,13 @@ import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
 import com.datagent.agentv2.context.lsm.domain.LsmPlanningInput;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
+import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
+import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics.CompactionResult;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GenerationRequest;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -20,63 +24,115 @@ public final class LsmCompactionCoordinator {
     private final LsmCompactionPlanningTransaction planning;
     private final LsmCompactionRecoveryService recovery;
     private final LsmManifestPublicationTransaction publication;
+    private final LsmContextMetrics metrics;
 
     public LsmCompactionCoordinator(
             LsmCompactionPlanningTransaction planning,
             LsmCompactionRecoveryService recovery,
             LsmManifestPublicationTransaction publication) {
+        this(planning, recovery, publication, LsmContextMetrics.isolated());
+    }
+
+    public LsmCompactionCoordinator(
+            LsmCompactionPlanningTransaction planning,
+            LsmCompactionRecoveryService recovery,
+            LsmManifestPublicationTransaction publication,
+            LsmContextMetrics metrics) {
         this.planning = Objects.requireNonNull(planning, "planning");
         this.recovery = Objects.requireNonNull(recovery, "recovery");
         this.publication = Objects.requireNonNull(publication, "publication");
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
     }
 
     /** 不建立外层事务；CAS 冲突后最多再执行两轮规划。 */
     public CompactionOutcome compactIfRequired(CompactionRequest request) {
         Objects.requireNonNull(request, "request");
+        Instant startedAt = Instant.now();
+        LsmCompactionPlan lastPlan = null;
         CompactionRequest currentRequest = request;
-        for (int replan = 0; replan <= MAX_REPLANS; replan++) {
-            PlannedCompaction planned = planning.begin(currentRequest);
-            if (planned.noop()) {
-                return CompactionOutcome.unchanged(currentManifest(currentRequest));
-            }
-            if (planned.status() == JobStatus.PUBLISHED) {
-                return new CompactionOutcome(
-                        PublishResult.PUBLISHED, planned.plan().proposedManifest());
-            }
-            if (planned.status() == JobStatus.SUPERSEDED) {
-                if (replan == MAX_REPLANS) {
-                    return new CompactionOutcome(
-                            PublishResult.SUPERSEDED, currentManifest(currentRequest));
+        try {
+            for (int replan = 0; replan <= MAX_REPLANS; replan++) {
+                PlannedCompaction planned = planning.begin(currentRequest);
+                if (planned.plan() != null) {
+                    lastPlan = planned.plan();
+                }
+                if (planned.noop()) {
+                    return observed(
+                            CompactionOutcome.unchanged(currentManifest(currentRequest)),
+                            lastPlan,
+                            startedAt);
+                }
+                if (planned.status() == JobStatus.PUBLISHED) {
+                    return observed(
+                            new CompactionOutcome(
+                                    PublishResult.PUBLISHED, planned.plan().proposedManifest()),
+                            lastPlan,
+                            startedAt);
+                }
+                if (planned.status() == JobStatus.SUPERSEDED) {
+                    if (replan == MAX_REPLANS) {
+                        return observed(
+                                new CompactionOutcome(
+                                        PublishResult.SUPERSEDED, currentManifest(currentRequest)),
+                                lastPlan,
+                                startedAt);
+                    }
+                    currentRequest =
+                            Objects.requireNonNull(
+                                    currentRequest.replanProvider().refresh(currentRequest),
+                                    "replanned request");
+                    continue;
+                }
+                if (planned.status() == JobStatus.CANCELLED) {
+                    return observed(
+                            new CompactionOutcome(
+                                    PublishResult.CANCELLED, currentManifest(currentRequest)),
+                            lastPlan,
+                            startedAt);
+                }
+                ReadyCompaction ready = recovery.resume(planned);
+                if (ready.cancelled()) {
+                    return observed(
+                            new CompactionOutcome(
+                                    PublishResult.CANCELLED, currentManifest(currentRequest)),
+                            lastPlan,
+                            startedAt);
+                }
+                PublishResult result = publication.publish(ready);
+                if (result != PublishResult.SUPERSEDED || replan == MAX_REPLANS) {
+                    LsmContextManifest manifest =
+                            result == PublishResult.PUBLISHED
+                                    ? ready.plan().proposedManifest()
+                                    : currentManifest(currentRequest);
+                    return observed(new CompactionOutcome(result, manifest), lastPlan, startedAt);
                 }
                 currentRequest =
                         Objects.requireNonNull(
                                 currentRequest.replanProvider().refresh(currentRequest),
                                 "replanned request");
-                continue;
             }
-            if (planned.status() == JobStatus.CANCELLED) {
-                return new CompactionOutcome(
-                        PublishResult.CANCELLED, currentManifest(currentRequest));
-            }
-            ReadyCompaction ready = recovery.resume(planned);
-            if (ready.cancelled()) {
-                return new CompactionOutcome(
-                        PublishResult.CANCELLED, currentManifest(currentRequest));
-            }
-            PublishResult result = publication.publish(ready);
-            if (result != PublishResult.SUPERSEDED || replan == MAX_REPLANS) {
-                LsmContextManifest manifest =
-                        result == PublishResult.PUBLISHED
-                                ? ready.plan().proposedManifest()
-                                : currentManifest(currentRequest);
-                return new CompactionOutcome(result, manifest);
-            }
-            currentRequest =
-                    Objects.requireNonNull(
-                            currentRequest.replanProvider().refresh(currentRequest),
-                            "replanned request");
+        } catch (RuntimeException failure) {
+            record(lastPlan, CompactionResult.FAILED, startedAt);
+            throw failure;
         }
         throw new IllegalStateException("unreachable compaction outcome");
+    }
+
+    private CompactionOutcome observed(
+            CompactionOutcome outcome, LsmCompactionPlan plan, Instant startedAt) {
+        record(plan, CompactionResult.valueOf(outcome.publishResult().name()), startedAt);
+        return outcome;
+    }
+
+    private void record(LsmCompactionPlan plan, CompactionResult result, Instant startedAt) {
+        if (plan == null) {
+            return;
+        }
+        Duration duration = Duration.between(startedAt, Instant.now());
+        plan.operations().stream()
+                .map(LsmCompactionPlan.PlannedOperation::type)
+                .distinct()
+                .forEach(type -> metrics.recordCompaction(result, type, duration));
     }
 
     private static LsmContextManifest currentManifest(CompactionRequest request) {

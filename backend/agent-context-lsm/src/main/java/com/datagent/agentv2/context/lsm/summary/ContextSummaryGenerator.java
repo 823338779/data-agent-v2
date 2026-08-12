@@ -2,6 +2,7 @@ package com.datagent.agentv2.context.lsm.summary;
 
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.SegmentKind;
+import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.planning.ConversationTokenEstimator;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryDocumentValidator.ContextSummaryDocument;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
@@ -24,16 +25,27 @@ public final class ContextSummaryGenerator {
     private final ContextSummaryDocumentValidator validator;
     private final ConversationTokenEstimator estimator;
     private final LsmSegmentKeyFactory keyFactory;
+    private final LsmContextMetrics metrics;
 
     public ContextSummaryGenerator(
             ContextSummaryModelPort model,
             ContextSummaryDocumentValidator validator,
             ConversationTokenEstimator estimator,
             LsmSegmentKeyFactory keyFactory) {
+        this(model, validator, estimator, keyFactory, LsmContextMetrics.isolated());
+    }
+
+    public ContextSummaryGenerator(
+            ContextSummaryModelPort model,
+            ContextSummaryDocumentValidator validator,
+            ConversationTokenEstimator estimator,
+            LsmSegmentKeyFactory keyFactory,
+            LsmContextMetrics metrics) {
         this.model = Objects.requireNonNull(model, "model");
         this.validator = Objects.requireNonNull(validator, "validator");
         this.estimator = Objects.requireNonNull(estimator, "estimator");
         this.keyFactory = Objects.requireNonNull(keyFactory, "keyFactory");
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
     }
 
     /** 调用中立摘要端口，最多两次，并且绝不截断无效或超限 JSON。 */
@@ -71,6 +83,11 @@ public final class ContextSummaryGenerator {
                     continue;
                 }
                 int persistedEstimate = Math.max(result.estimatedTokenCount(), localEstimate);
+                // 指标只保存层级和数值，不携带来源文档、摘要正文或会话标识。
+                metrics.recordSummary(
+                        request.level(),
+                        estimator.estimateSummaryDocument(request.sourceDocument()),
+                        persistedEstimate);
                 return new GeneratedSummary(
                         document,
                         result.content(),

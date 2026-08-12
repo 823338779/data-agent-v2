@@ -5,6 +5,7 @@ import com.datagent.agentv2.context.lsm.domain.FrontierSelection;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
 import com.datagent.agentv2.context.lsm.domain.LsmPlanningInput;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
+import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmContextManifestEntity;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmSummarySegmentEntity;
 import com.datagent.agentv2.context.lsm.persistence.json.LsmDocumentCodec;
@@ -90,6 +91,7 @@ public class LsmConversationContextAssembler {
     private final ContextExecutionControlPort executionControl;
     private final IdGenerator ids;
     private final ObjectMapper json;
+    private final LsmContextMetrics metrics;
     private final WarmSegmentFrontierSelector warmFrontiers = new WarmSegmentFrontierSelector();
 
     public LsmConversationContextAssembler(
@@ -103,6 +105,32 @@ public class LsmConversationContextAssembler {
             ContextExecutionControlPort executionControl,
             IdGenerator ids,
             ObjectMapper json) {
+        this(
+                executions,
+                messages,
+                toolExecutions,
+                manifests,
+                segments,
+                documents,
+                estimator,
+                executionControl,
+                ids,
+                json,
+                LsmContextMetrics.isolated());
+    }
+
+    public LsmConversationContextAssembler(
+            AgentExecutionService executions,
+            ConversationMessageService messages,
+            ToolExecutionService toolExecutions,
+            LsmContextManifestRepository manifests,
+            LsmSummarySegmentRepository segments,
+            LsmDocumentCodec documents,
+            ConversationTokenEstimator estimator,
+            ContextExecutionControlPort executionControl,
+            IdGenerator ids,
+            ObjectMapper json,
+            LsmContextMetrics metrics) {
         this.executions = executions;
         this.messages = messages;
         this.toolExecutions = toolExecutions;
@@ -113,6 +141,7 @@ public class LsmConversationContextAssembler {
         this.executionControl = executionControl;
         this.ids = ids;
         this.json = json;
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
     }
 
     /** 固定本次原始消息边界、manifest 与摘要段，并估算未压缩完整输入。 */
@@ -226,6 +255,7 @@ public class LsmConversationContextAssembler {
                             .findFirst()
                             .orElse(null);
             if (oldestComplete == null) {
+                metrics.recordWindowExceeded();
                 executionControl.fail(
                         request.execution(),
                         FAILURE_CODE_WINDOW_EXCEEDED,

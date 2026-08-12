@@ -1,5 +1,6 @@
 package com.datagent.agentv2.context.lsm.configuration;
 
+import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.persistence.json.LsmDocumentCodec;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmCompactionJobRepository;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmContextManifestRepository;
@@ -23,6 +24,7 @@ import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import com.datagent.agentv2.platform.id.IdGenerator;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -43,6 +45,11 @@ public class LsmContextAutoConfiguration {
     private static final String LSM_FLYWAY_BEAN_NAME = "lsmContextFlyway";
 
     @Bean
+    LsmContextMetrics lsmContextMetrics(MeterRegistry meterRegistry) {
+        return new LsmContextMetrics(meterRegistry);
+    }
+
+    @Bean
     ConversationTokenEstimator conversationTokenEstimator() {
         return new ConversationTokenEstimator();
     }
@@ -61,8 +68,10 @@ public class LsmContextAutoConfiguration {
     ContextSummaryGenerator contextSummaryGenerator(
             ContextSummaryModelPort model,
             ContextSummaryDocumentValidator validator,
-            ConversationTokenEstimator estimator) {
-        return new ContextSummaryGenerator(model, validator, estimator, new LsmSegmentKeyFactory());
+            ConversationTokenEstimator estimator,
+            LsmContextMetrics metrics) {
+        return new ContextSummaryGenerator(
+                model, validator, estimator, new LsmSegmentKeyFactory(), metrics);
     }
 
     @Bean
@@ -96,17 +105,19 @@ public class LsmContextAutoConfiguration {
             LsmCompactionJobRepository jobs,
             ContextExecutionControlPort executions,
             LsmInvariantValidator invariants,
-            LsmDocumentCodec documents) {
+            LsmDocumentCodec documents,
+            LsmContextMetrics metrics) {
         return new LsmManifestPublicationTransaction(
-                manifests, segments, jobs, executions, invariants, documents);
+                manifests, segments, jobs, executions, invariants, documents, metrics);
     }
 
     @Bean
     LsmCompactionCoordinator lsmCompactionCoordinator(
             LsmCompactionPlanningTransaction planning,
             LsmCompactionRecoveryService recovery,
-            LsmManifestPublicationTransaction publication) {
-        return new LsmCompactionCoordinator(planning, recovery, publication);
+            LsmManifestPublicationTransaction publication,
+            LsmContextMetrics metrics) {
+        return new LsmCompactionCoordinator(planning, recovery, publication, metrics);
     }
 
     @Bean
@@ -120,7 +131,8 @@ public class LsmContextAutoConfiguration {
             ConversationTokenEstimator estimator,
             ContextExecutionControlPort executionControl,
             IdGenerator ids,
-            tools.jackson.databind.ObjectMapper json) {
+            tools.jackson.databind.ObjectMapper json,
+            LsmContextMetrics metrics) {
         return new LsmConversationContextAssembler(
                 executions,
                 messages,
@@ -131,7 +143,8 @@ public class LsmContextAutoConfiguration {
                 estimator,
                 executionControl,
                 ids,
-                json);
+                json,
+                metrics);
     }
 
     @Bean
@@ -139,7 +152,8 @@ public class LsmContextAutoConfiguration {
     LsmConversationContextStrategy lsmConversationContextStrategy(
             LsmExecutionPolicyRepository policies,
             LsmConversationContextAssembler assembler,
-            LsmCompactionCoordinator coordinator) {
-        return new LsmConversationContextStrategy(policies, assembler, coordinator);
+            LsmCompactionCoordinator coordinator,
+            LsmContextMetrics metrics) {
+        return new LsmConversationContextStrategy(policies, assembler, coordinator, metrics);
     }
 }

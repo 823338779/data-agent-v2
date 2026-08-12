@@ -12,6 +12,8 @@ import static org.mockito.Mockito.when;
 
 import com.datagent.agentv2.context.lsm.domain.ConversationTurn;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
+import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
+import com.datagent.agentv2.context.lsm.persistence.entity.LsmSummarySegmentEntity;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmExecutionPolicyRepository;
 import com.datagent.agentv2.context.lsm.planning.ConversationTokenEstimator;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator;
@@ -26,10 +28,69 @@ import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ContextPreparationException;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import com.datagent.agentv2.conversation.context.PreparedConversationContext;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class LsmConversationContextStrategyTest {
+
+    @Test
+    void recordsInputPressureAndActiveSegmentLevelsWithoutConversationLabels() {
+        LsmExecutionPolicyRepository policies = mock(LsmExecutionPolicyRepository.class);
+        LsmConversationContextAssembler assembler = mock(LsmConversationContextAssembler.class);
+        LsmCompactionCoordinator coordinator = mock(LsmCompactionCoordinator.class);
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        LsmContextMetrics metrics = new LsmContextMetrics(registry);
+        ConversationContextRequest request = request(policy(5));
+        LsmSummarySegmentEntity levelZero = new LsmSummarySegmentEntity();
+        levelZero.setSummarySegmentId("active-zero");
+        levelZero.setLevel(0);
+        LsmSummarySegmentEntity levelTwo = new LsmSummarySegmentEntity();
+        levelTwo.setSummarySegmentId("active-two");
+        levelTwo.setLevel(2);
+        LsmSummarySegmentEntity inactiveLevelFour = new LsmSummarySegmentEntity();
+        inactiveLevelFour.setSummarySegmentId("inactive-four");
+        inactiveLevelFour.setLevel(4);
+        LsmContextManifest manifest =
+                new LsmContextManifest(
+                        null,
+                        List.of("active-zero", "active-two"),
+                        null,
+                        null,
+                        null,
+                        null,
+                        1,
+                        5,
+                        4);
+        var state =
+                new LsmConversationContextAssembler.ContextState(
+                        request,
+                        List.of(),
+                        List.of(ContextMessage.user("question")),
+                        manifest,
+                        List.of(levelZero, levelTwo, inactiveLevelFour),
+                        50);
+        when(policies.findOrCreateExecutionPolicy(request.execution(), request.policy()))
+                .thenReturn(request.policy());
+        when(assembler.loadAndEstimate(request)).thenReturn(state);
+        when(assembler.prepareCurrentView(state))
+                .thenReturn(
+                        new PreparedConversationContext(
+                                "lsm", List.of(ContextMessage.user("question")), 50, false, 0));
+
+        new LsmConversationContextStrategy(policies, assembler, coordinator, metrics)
+                .prepare(request);
+
+        assertThat(registry.get("agent_context_input_estimated_tokens").gauge().value())
+                .isEqualTo(50d);
+        assertThat(registry.get("agent_context_utilization_ratio").gauge().value()).isEqualTo(0.5d);
+        assertThat(registry.get("agent_context_active_segments").tag("level", "0").gauge().value())
+                .isEqualTo(1d);
+        assertThat(registry.get("agent_context_active_segments").tag("level", "2").gauge().value())
+                .isEqualTo(1d);
+        assertThat(registry.find("agent_context_active_segments").tag("level", "4").gauge())
+                .isNull();
+    }
 
     @Test
     void freezesPolicyBeforeReturningNoopBelowSoftTrigger() {
@@ -163,7 +224,9 @@ class LsmConversationContextStrategyTest {
     @Test
     void failsWithStableCodeWhenCurrentTurnAloneExceedsHardLimit() {
         ContextExecutionControlPort executionControl = mock(ContextExecutionControlPort.class);
-        LsmConversationContextAssembler assembler = assembler(executionControl);
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        LsmConversationContextAssembler assembler =
+                assembler(executionControl, new LsmContextMetrics(registry));
         ConversationContextRequest request = hardLimitRequest();
         ContextMessage current = ContextMessage.user("x".repeat(140));
         List<LsmConversationContextAssembler.TurnSource> turns =
@@ -187,6 +250,8 @@ class LsmConversationContextStrategyTest {
                         eq(request.execution()),
                         eq("CONTEXT_WINDOW_EXCEEDED"),
                         eq("Context window was exceeded"));
+        assertThat(registry.get("agent_context_window_exceeded_total").counter().count())
+                .isEqualTo(1d);
     }
 
     private static ConversationContextRequest request(ContextPolicySnapshot policy) {
@@ -213,6 +278,11 @@ class LsmConversationContextStrategyTest {
 
     private static LsmConversationContextAssembler assembler(
             ContextExecutionControlPort executionControl) {
+        return assembler(executionControl, LsmContextMetrics.isolated());
+    }
+
+    private static LsmConversationContextAssembler assembler(
+            ContextExecutionControlPort executionControl, LsmContextMetrics metrics) {
         return new LsmConversationContextAssembler(
                 null,
                 null,
@@ -223,6 +293,7 @@ class LsmConversationContextStrategyTest {
                 new ConversationTokenEstimator(),
                 executionControl,
                 null,
-                null);
+                null,
+                metrics);
     }
 }
