@@ -65,7 +65,7 @@ public record LsmCompactionPlan(
             /** 摘要来源段标识，严格按时间顺序排列。 */
             List<String> sourceIds,
             /** 候选目标段种类。 */
-            LsmSummarySegment.Kind targetKind,
+            LsmSummarySegment.SegmentKind targetKind,
             /** 候选目标所在逻辑层。 */
             int targetLevel,
             /** 候选目标覆盖的连续完整问答区间。 */

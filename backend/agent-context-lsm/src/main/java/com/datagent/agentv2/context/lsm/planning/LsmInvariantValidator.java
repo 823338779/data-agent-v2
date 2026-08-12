@@ -58,7 +58,7 @@ public final class LsmInvariantValidator {
         int fanout = input.policy().fanout();
         Map<Integer, Long> ordinaryLevelCounts = new HashMap<>();
         for (LsmSummarySegment segment : projected) {
-            if (segment.kind() == LsmSummarySegment.Kind.STANDARD) {
+            if (segment.kind() == LsmSummarySegment.SegmentKind.STANDARD) {
                 ordinaryLevelCounts.merge(segment.level(), 1L, Long::sum);
             }
         }
@@ -69,13 +69,13 @@ public final class LsmInvariantValidator {
         }
         long rootCount =
                 projected.stream()
-                        .filter(segment -> segment.kind() == LsmSummarySegment.Kind.ROOT)
+                        .filter(segment -> segment.kind() == LsmSummarySegment.SegmentKind.ROOT)
                         .count();
         if (rootCount > 1L) {
             throw new IllegalStateException("published manifest must contain at most one ROOT");
         }
         projected.stream()
-                .filter(segment -> segment.kind() == LsmSummarySegment.Kind.ROOT)
+                .filter(segment -> segment.kind() == LsmSummarySegment.SegmentKind.ROOT)
                 .findFirst()
                 .ifPresent(
                         root -> {

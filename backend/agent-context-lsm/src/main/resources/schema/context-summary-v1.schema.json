@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datagent.local/schema/context-summary-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "coverage",
+    "confirmedFacts",
+    "userPreferences",
+    "workingHypotheses",
+    "decisions",
+    "rejectedApproaches",
+    "toolFindings",
+    "openQuestions",
+    "nextSteps"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "coverage": { "$ref": "#/$defs/coverage" },
+    "confirmedFacts": { "$ref": "#/$defs/entries" },
+    "userPreferences": { "$ref": "#/$defs/entries" },
+    "workingHypotheses": { "$ref": "#/$defs/entries" },
+    "decisions": { "$ref": "#/$defs/entries" },
+    "rejectedApproaches": { "$ref": "#/$defs/entries" },
+    "toolFindings": { "$ref": "#/$defs/entries" },
+    "openQuestions": { "$ref": "#/$defs/entries" },
+    "nextSteps": { "$ref": "#/$defs/entries" }
+  },
+  "$defs": {
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startTurnSequence",
+        "endTurnSequence",
+        "startMessageSequence",
+        "endMessageSequence"
+      ],
+      "properties": {
+        "startTurnSequence": { "type": "integer", "minimum": 1 },
+        "endTurnSequence": { "type": "integer", "minimum": 1 },
+        "startMessageSequence": { "type": "integer", "minimum": 1 },
+        "endMessageSequence": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statement", "sourceRanges"],
+      "properties": {
+        "statement": { "type": "string", "minLength": 1 },
+        "sourceRanges": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/sourceRange" }
+        }
+      }
+    },
+    "sourceRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startMessageSequence", "endMessageSequence"],
+      "properties": {
+        "startMessageSequence": { "type": "integer", "minimum": 1 },
+        "endMessageSequence": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

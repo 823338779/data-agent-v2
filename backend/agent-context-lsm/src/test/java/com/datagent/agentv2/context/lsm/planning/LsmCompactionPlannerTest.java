@@ -7,7 +7,7 @@ import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
 import com.datagent.agentv2.context.lsm.domain.LsmPlanningInput;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
-import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.Kind;
+import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.SegmentKind;
 import com.datagent.agentv2.conversation.context.ContextMessage;
 import java.util.ArrayList;
 import java.util.List;
@@ -63,7 +63,7 @@ class LsmCompactionPlannerTest {
                     .singleElement()
                     .satisfies(
                             operation -> {
-                                assertThat(operation.targetKind()).isEqualTo(Kind.ROOT);
+                                assertThat(operation.targetKind()).isEqualTo(SegmentKind.ROOT);
                                 assertThat(operation.targetLevel()).isEqualTo(maxLevel);
                                 assertThat(operation.sourceIds()).hasSize(3);
                             });
@@ -71,7 +71,7 @@ class LsmCompactionPlannerTest {
             LsmSummarySegment root =
                     segment(
                             ROOT_ID,
-                            Kind.ROOT,
+                            SegmentKind.ROOT,
                             maxLevel,
                             1,
                             30,
@@ -84,7 +84,7 @@ class LsmCompactionPlannerTest {
                     .singleElement()
                     .satisfies(
                             operation -> {
-                                assertThat(operation.targetKind()).isEqualTo(Kind.ROOT);
+                                assertThat(operation.targetKind()).isEqualTo(SegmentKind.ROOT);
                                 assertThat(operation.sourceIds())
                                         .containsExactly(
                                                 ROOT_ID,
@@ -123,7 +123,8 @@ class LsmCompactionPlannerTest {
 
     @Test
     void reconcilesLowerMaxLevelIntoOneRoot() {
-        LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 5, 1, 30, 500, List.of());
+        LsmSummarySegment oldRoot =
+                segment(OLD_ROOT_ID, SegmentKind.ROOT, 5, 1, 30, 500, List.of());
         List<LsmSummarySegment> tail = shiftedSegments(3, 3, 31);
 
         LsmCompactionPlan plan = planner.plan(inputWithRoot(oldRoot, tail, 3, 3));
@@ -132,7 +133,7 @@ class LsmCompactionPlannerTest {
                 .singleElement()
                 .satisfies(
                         operation -> {
-                            assertThat(operation.targetKind()).isEqualTo(Kind.ROOT);
+                            assertThat(operation.targetKind()).isEqualTo(SegmentKind.ROOT);
                             assertThat(operation.targetLevel()).isEqualTo(3);
                             assertThat(operation.sourceIds()).startsWith(OLD_ROOT_ID);
                         });
@@ -140,7 +141,8 @@ class LsmCompactionPlannerTest {
 
     @Test
     void lowerMaxLevelReconcilesOldRootAndTwoHighTailNodesAsThreeSources() {
-        LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 5, 1, 30, 500, List.of());
+        LsmSummarySegment oldRoot =
+                segment(OLD_ROOT_ID, SegmentKind.ROOT, 5, 1, 30, 500, List.of());
         List<LsmSummarySegment> highTailNodes = shiftedSegments(2, 4, 31);
 
         LsmCompactionPlan plan = planner.plan(inputWithRoot(oldRoot, highTailNodes, 3, 3));
@@ -153,7 +155,7 @@ class LsmCompactionPlannerTest {
                                     .isEqualTo(
                                             LsmCompactionPlan.OperationType
                                                     .RECONCILE_CONFIGURATION);
-                            assertThat(operation.targetKind()).isEqualTo(Kind.ROOT);
+                            assertThat(operation.targetKind()).isEqualTo(SegmentKind.ROOT);
                             assertThat(operation.targetLevel()).isEqualTo(3);
                             assertThat(operation.sourceIds())
                                     .containsExactly(
@@ -166,7 +168,8 @@ class LsmCompactionPlannerTest {
 
     @Test
     void configurationReconciliationConsumesExactlyFanoutSourcesAndRetainsExtraTail() {
-        LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 5, 1, 30, 500, List.of());
+        LsmSummarySegment oldRoot =
+                segment(OLD_ROOT_ID, SegmentKind.ROOT, 5, 1, 30, 500, List.of());
         List<LsmSummarySegment> highTailNodes = shiftedSegments(3, 4, 31);
 
         LsmCompactionPlan plan = planner.plan(inputWithRoot(oldRoot, highTailNodes, 3, 3));
@@ -185,7 +188,7 @@ class LsmCompactionPlannerTest {
         assertThat(plan.projectedSegments())
                 .satisfiesExactly(
                         root -> {
-                            assertThat(root.kind()).isEqualTo(Kind.ROOT);
+                            assertThat(root.kind()).isEqualTo(SegmentKind.ROOT);
                             assertThat(root.coverage())
                                     .isEqualTo(new LsmSummarySegment.Coverage(1, 50));
                         },
@@ -198,13 +201,14 @@ class LsmCompactionPlannerTest {
 
     @Test
     void configurationReconciliationDoesNotSkipAnIneligibleTailNode() {
-        LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 5, 1, 30, 500, List.of());
+        LsmSummarySegment oldRoot =
+                segment(OLD_ROOT_ID, SegmentKind.ROOT, 5, 1, 30, 500, List.of());
         LsmSummarySegment firstHigh =
-                segment(FIRST_HIGH_ID, Kind.STANDARD, 4, 31, 40, 100, List.of());
+                segment(FIRST_HIGH_ID, SegmentKind.STANDARD, 4, 31, 40, 100, List.of());
         LsmSummarySegment lowerLevel =
-                segment(LOWER_LEVEL_ID, Kind.STANDARD, 2, 41, 50, 100, List.of());
+                segment(LOWER_LEVEL_ID, SegmentKind.STANDARD, 2, 41, 50, 100, List.of());
         LsmSummarySegment laterHigh =
-                segment(LATER_HIGH_ID, Kind.STANDARD, 4, 51, 60, 100, List.of());
+                segment(LATER_HIGH_ID, SegmentKind.STANDARD, 4, 51, 60, 100, List.of());
         List<LsmSummarySegment> tail = List.of(firstHigh, lowerLevel, laterHigh);
 
         LsmCompactionPlan plan = planner.plan(inputWithRoot(oldRoot, tail, 3, 3));
@@ -216,11 +220,12 @@ class LsmCompactionPlannerTest {
 
     @Test
     void configurationReconciliationRequiresSameLevelTailPrefix() {
-        LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 5, 1, 30, 500, List.of());
+        LsmSummarySegment oldRoot =
+                segment(OLD_ROOT_ID, SegmentKind.ROOT, 5, 1, 30, 500, List.of());
         LsmSummarySegment levelFour =
-                segment(MIXED_LEVEL_FOUR_ID, Kind.STANDARD, 4, 31, 40, 100, List.of());
+                segment(MIXED_LEVEL_FOUR_ID, SegmentKind.STANDARD, 4, 31, 40, 100, List.of());
         LsmSummarySegment levelThree =
-                segment(MIXED_LEVEL_THREE_ID, Kind.STANDARD, 3, 41, 50, 100, List.of());
+                segment(MIXED_LEVEL_THREE_ID, SegmentKind.STANDARD, 3, 41, 50, 100, List.of());
 
         LsmCompactionPlan plan =
                 planner.plan(inputWithRoot(oldRoot, List.of(levelFour, levelThree), 3, 3));
@@ -231,7 +236,8 @@ class LsmCompactionPlannerTest {
 
     @Test
     void configurationReconciliationRepeatsUntilFiveOldFanoutTailNodesAreLegal() {
-        LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 5, 1, 30, 500, List.of());
+        LsmSummarySegment oldRoot =
+                segment(OLD_ROOT_ID, SegmentKind.ROOT, 5, 1, 30, 500, List.of());
         List<LsmSummarySegment> highTailNodes = shiftedSegments(5, 4, 31);
 
         LsmCompactionPlan plan = planner.plan(inputWithRoot(oldRoot, highTailNodes, 3, 3));
@@ -252,7 +258,7 @@ class LsmCompactionPlannerTest {
         assertThat(plan.projectedSegments())
                 .satisfiesExactly(
                         root -> {
-                            assertThat(root.kind()).isEqualTo(Kind.ROOT);
+                            assertThat(root.kind()).isEqualTo(SegmentKind.ROOT);
                             assertThat(root.sourceSegmentIds())
                                     .doesNotContain(highTailNodes.get(4).segmentId());
                         },
@@ -261,7 +267,8 @@ class LsmCompactionPlannerTest {
 
     @Test
     void configurationReconciliationSupportsMultipleDeterministicBatches() {
-        LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 5, 1, 30, 500, List.of());
+        LsmSummarySegment oldRoot =
+                segment(OLD_ROOT_ID, SegmentKind.ROOT, 5, 1, 30, 500, List.of());
         List<LsmSummarySegment> highTailNodes = shiftedSegments(8, 4, 31);
 
         LsmCompactionPlan plan = planner.plan(inputWithRoot(oldRoot, highTailNodes, 3, 3));
@@ -275,13 +282,14 @@ class LsmCompactionPlannerTest {
         }
         assertThat(plan.projectedSegments())
                 .singleElement()
-                .satisfies(root -> assertThat(root.kind()).isEqualTo(Kind.ROOT));
+                .satisfies(root -> assertThat(root.kind()).isEqualTo(SegmentKind.ROOT));
         new LsmInvariantValidator().validatePlan(inputWithRoot(oldRoot, highTailNodes, 3, 3), plan);
     }
 
     @Test
     void configurationReconciliationPromotesBlockedLowerLevelBeforeAbsorbingIntoRoot() {
-        LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 5, 1, 30, 500, List.of());
+        LsmSummarySegment oldRoot =
+                segment(OLD_ROOT_ID, SegmentKind.ROOT, 5, 1, 30, 500, List.of());
         LsmSummarySegment levelFour = shiftedSegments(1, 4, 31).getFirst();
         List<LsmSummarySegment> levelThree = shiftedSegments(5, 3, 41);
         List<LsmSummarySegment> tail = new ArrayList<>();
@@ -316,13 +324,14 @@ class LsmCompactionPlannerTest {
                 .allSatisfy(operation -> assertThat(operation.sourceIds()).hasSize(3));
         assertThat(plan.projectedSegments())
                 .singleElement()
-                .satisfies(root -> assertThat(root.kind()).isEqualTo(Kind.ROOT));
+                .satisfies(root -> assertThat(root.kind()).isEqualTo(SegmentKind.ROOT));
         assertThat(planner.plan(input)).isEqualTo(plan);
     }
 
     @Test
     void configurationReconciliationCarriesAcrossMultipleMixedLevels() {
-        LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 6, 1, 30, 500, List.of());
+        LsmSummarySegment oldRoot =
+                segment(OLD_ROOT_ID, SegmentKind.ROOT, 6, 1, 30, 500, List.of());
         LsmSummarySegment levelFive = shiftedSegments(1, 5, 31).getFirst();
         List<LsmSummarySegment> levelFour = shiftedSegments(2, 4, 41);
         List<LsmSummarySegment> levelThree = shiftedSegments(5, 3, 61);
@@ -346,7 +355,7 @@ class LsmCompactionPlannerTest {
                 .allSatisfy(operation -> assertThat(operation.sourceIds()).hasSize(3));
         assertThat(plan.projectedSegments())
                 .singleElement()
-                .satisfies(root -> assertThat(root.kind()).isEqualTo(Kind.ROOT));
+                .satisfies(root -> assertThat(root.kind()).isEqualTo(SegmentKind.ROOT));
         new LsmInvariantValidator().validatePlan(input, plan);
     }
 
@@ -475,7 +484,7 @@ class LsmCompactionPlannerTest {
                             long segmentStart = start + index * width;
                             return segment(
                                     LEVEL_ID_PREFIX + level + "-" + segmentStart,
-                                    Kind.STANDARD,
+                                    SegmentKind.STANDARD,
                                     level,
                                     segmentStart,
                                     segmentStart + width - 1,
@@ -487,7 +496,7 @@ class LsmCompactionPlannerTest {
 
     private static LsmSummarySegment segment(
             String id,
-            Kind kind,
+            SegmentKind kind,
             int level,
             long start,
             long end,

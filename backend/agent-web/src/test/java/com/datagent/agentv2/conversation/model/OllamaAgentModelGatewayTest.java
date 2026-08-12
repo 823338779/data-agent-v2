@@ -84,7 +84,8 @@ class OllamaAgentModelGatewayTest {
                         ModelOutputDelta.answer("answer", "ollama", MODEL_NAME));
         assertThat(callbackTenants).containsOnly(TENANT_ID);
         assertThat(result).isEqualTo(new ModelInvocationResult.FinalAnswer("answer"));
-        assertThat(request.get()).contains("\"model\":\"test-model\"", "\"num_predict\":512");
+        assertThat(request.get())
+                .contains("\"model\":\"test-model\"", "\"num_ctx\":65536", "\"num_predict\":512");
         assertThat(request.get()).contains("\"think\":true");
     }
 

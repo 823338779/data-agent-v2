@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.datagent.agentv2.context.lsm.domain.FrontierSelection;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
-import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.Kind;
+import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.SegmentKind;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -80,7 +80,7 @@ class WarmSegmentFrontierSelectorTest {
             String id, int level, long start, long end, int tokens, List<String> sources) {
         return new LsmSummarySegment(
                 id,
-                Kind.STANDARD,
+                SegmentKind.STANDARD,
                 level,
                 new LsmSummarySegment.Coverage(start, end),
                 tokens,

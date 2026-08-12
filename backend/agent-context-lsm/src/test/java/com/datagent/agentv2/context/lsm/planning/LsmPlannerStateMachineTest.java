@@ -140,14 +140,14 @@ class LsmPlannerStateMachineTest {
         assertThat(plan.hotBoundary().completedTurnCount()).isEqualTo(10);
         assertThat(plan.proposedManifest().warmTurnCount()).isBetween(100L, 109L);
         assertThat(plan.projectedSegments())
-                .filteredOn(segment -> segment.kind() == LsmSummarySegment.Kind.ROOT)
+                .filteredOn(segment -> segment.kind() == LsmSummarySegment.SegmentKind.ROOT)
                 .hasSizeLessThanOrEqualTo(1);
         for (int level = 0; level < maxLevel; level++) {
             int checkedLevel = level;
             assertThat(plan.projectedSegments())
                     .filteredOn(
                             segment ->
-                                    segment.kind() == LsmSummarySegment.Kind.STANDARD
+                                    segment.kind() == LsmSummarySegment.SegmentKind.STANDARD
                                             && segment.level() == checkedLevel)
                     .hasSizeLessThanOrEqualTo(fanout - 1);
         }
@@ -195,7 +195,7 @@ class LsmPlannerStateMachineTest {
             segments.add(
                     new LsmSummarySegment(
                             RETRY_SEGMENT_PREFIX + index,
-                            LsmSummarySegment.Kind.STANDARD,
+                            LsmSummarySegment.SegmentKind.STANDARD,
                             0,
                             new LsmSummarySegment.Coverage(start, start + 9L),
                             100,

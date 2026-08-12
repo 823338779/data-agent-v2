@@ -9,7 +9,7 @@ import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
 import com.datagent.agentv2.context.lsm.domain.LsmPlanningInput;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.Coverage;
-import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.Kind;
+import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.SegmentKind;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -103,7 +103,7 @@ public final class LsmCompactionPlanner {
                         OperationType.SEAL_L0,
                         targetId,
                         List.of(),
-                        Kind.STANDARD,
+                        SegmentKind.STANDARD,
                         0,
                         coverage,
                         partial,
@@ -111,7 +111,7 @@ public final class LsmCompactionPlanner {
         state.operations.add(operation);
         state.activeSegments.add(
                 new LsmSummarySegment(
-                        targetId, Kind.STANDARD, 0, coverage, tokens, List.of(), partial));
+                        targetId, SegmentKind.STANDARD, 0, coverage, tokens, List.of(), partial));
         state.activeSegments.sort(CHRONOLOGICAL);
     }
 
@@ -132,7 +132,7 @@ public final class LsmCompactionPlanner {
                         state,
                         rootSources,
                         operationType,
-                        Kind.ROOT,
+                        SegmentKind.ROOT,
                         maxLevel,
                         NORMAL_SUMMARY_RATIO);
                 continue;
@@ -154,7 +154,7 @@ public final class LsmCompactionPlanner {
                     state,
                     promotion,
                     createsRoot ? OperationType.ROLL_ROOT : OperationType.PROMOTE,
-                    createsRoot ? Kind.ROOT : Kind.STANDARD,
+                    createsRoot ? SegmentKind.ROOT : SegmentKind.STANDARD,
                     createsRoot ? maxLevel : sourceLevel + 1,
                     NORMAL_SUMMARY_RATIO);
         }
@@ -175,7 +175,7 @@ public final class LsmCompactionPlanner {
         }
         for (int index = 1; index < sources.size(); index++) {
             LsmSummarySegment tail = sources.get(index);
-            if (tail.kind() != Kind.STANDARD || tail.level() != tailLevel) {
+            if (tail.kind() != SegmentKind.STANDARD || tail.level() != tailLevel) {
                 return List.of();
             }
         }
@@ -206,7 +206,7 @@ public final class LsmCompactionPlanner {
                             OperationType.TRIM_WARM,
                             null,
                             List.of(),
-                            Kind.STANDARD,
+                            SegmentKind.STANDARD,
                             0,
                             movedCoverage,
                             false,
@@ -223,7 +223,7 @@ public final class LsmCompactionPlanner {
         long coldEnd = warmRange.present() ? warmRange.start - 1L : Long.MAX_VALUE;
         List<LsmSummarySegment> coldNodes =
                 state.activeSegments.stream()
-                        .filter(segment -> segment.kind() == Kind.STANDARD)
+                        .filter(segment -> segment.kind() == SegmentKind.STANDARD)
                         .filter(segment -> segment.coverage().endTurnSequence() <= coldEnd)
                         .sorted(CHRONOLOGICAL)
                         .toList();
@@ -243,7 +243,7 @@ public final class LsmCompactionPlanner {
         }
         long sourceTokens =
                 sources.stream().mapToLong(LsmSummarySegment::estimatedTokenCount).sum();
-        int projectedTokens = projectedTokens(sources, Kind.ROOT, MAJOR_SUMMARY_RATIO);
+        int projectedTokens = projectedTokens(sources, SegmentKind.ROOT, MAJOR_SUMMARY_RATIO);
         double reduction =
                 sourceTokens == 0L
                         ? 0.0d
@@ -255,7 +255,7 @@ public final class LsmCompactionPlanner {
                 state,
                 sources,
                 OperationType.MAJOR_COMPACTION,
-                Kind.ROOT,
+                SegmentKind.ROOT,
                 input.policy().maxLevel(),
                 MAJOR_SUMMARY_RATIO);
     }
@@ -346,7 +346,7 @@ public final class LsmCompactionPlanner {
             List<LsmSummarySegment> activeSegments, int fanout) {
         List<Integer> levels =
                 activeSegments.stream()
-                        .filter(segment -> segment.kind() == Kind.STANDARD)
+                        .filter(segment -> segment.kind() == SegmentKind.STANDARD)
                         .map(LsmSummarySegment::level)
                         .distinct()
                         .sorted()
@@ -354,7 +354,7 @@ public final class LsmCompactionPlanner {
         for (int level : levels) {
             List<LsmSummarySegment> candidates =
                     activeSegments.stream()
-                            .filter(segment -> segment.kind() == Kind.STANDARD)
+                            .filter(segment -> segment.kind() == SegmentKind.STANDARD)
                             .filter(segment -> segment.level() == level)
                             .sorted(CHRONOLOGICAL)
                             .toList();
@@ -372,7 +372,7 @@ public final class LsmCompactionPlanner {
             PlanningState state,
             List<LsmSummarySegment> sources,
             OperationType type,
-            Kind targetKind,
+            SegmentKind targetKind,
             int targetLevel,
             double summaryRatio) {
         if (sources.isEmpty() || !continuous(sources)) {
@@ -407,11 +407,11 @@ public final class LsmCompactionPlanner {
     }
 
     private static int projectedTokens(
-            List<LsmSummarySegment> sources, Kind targetKind, double ratio) {
+            List<LsmSummarySegment> sources, SegmentKind targetKind, double ratio) {
         long sourceTokens =
                 sources.stream().mapToLong(LsmSummarySegment::estimatedTokenCount).sum();
         long projected = (long) Math.ceil(sourceTokens * ratio);
-        if (targetKind == Kind.ROOT) {
+        if (targetKind == SegmentKind.ROOT) {
             projected = Math.min(projected, ROOT_TOKEN_LIMIT);
         }
         return projected >= Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) projected;
@@ -419,7 +419,7 @@ public final class LsmCompactionPlanner {
 
     private static LsmSummarySegment activeRoot(List<LsmSummarySegment> segments) {
         List<LsmSummarySegment> roots =
-                segments.stream().filter(segment -> segment.kind() == Kind.ROOT).toList();
+                segments.stream().filter(segment -> segment.kind() == SegmentKind.ROOT).toList();
         if (roots.size() > 1) {
             throw new IllegalArgumentException("active manifest contains more than one ROOT");
         }

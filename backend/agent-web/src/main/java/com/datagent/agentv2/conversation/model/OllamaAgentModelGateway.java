@@ -52,6 +52,7 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
                         .tools(toProviderTools(tools))
                         .options(
                                 OllamaChatOptions.builder()
+                                        .numCtx(properties.getContextWindowTokens())
                                         .numPredict(properties.getMaxOutputTokens())
                                         .build())
                         .enableThinking()

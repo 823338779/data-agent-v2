@@ -17,12 +17,29 @@ public class OllamaModelProperties {
     /** 传递给 Ollama num_predict 的最大输出 token 数。 */
     private int maxOutputTokens = 4096;
 
+    /** 传递给 Ollama num_ctx 的完整上下文窗口大小。 */
+    private int contextWindowTokens = 65536;
+
+    /** 从上下文窗口中固定保留、不用于业务输入的安全 token 数。 */
+    private int safetyReserveTokens = 4096;
+
     public OllamaModelProperties() {}
 
     public OllamaModelProperties(String model, Duration timeout, int maxOutputTokens) {
+        this(model, timeout, maxOutputTokens, 65536, 4096);
+    }
+
+    public OllamaModelProperties(
+            String model,
+            Duration timeout,
+            int maxOutputTokens,
+            int contextWindowTokens,
+            int safetyReserveTokens) {
         this.model = model;
         this.timeout = timeout;
         this.maxOutputTokens = maxOutputTokens;
+        this.contextWindowTokens = contextWindowTokens;
+        this.safetyReserveTokens = safetyReserveTokens;
     }
 
     public String getModel() {
@@ -47,5 +64,21 @@ public class OllamaModelProperties {
 
     public void setMaxOutputTokens(int maxOutputTokens) {
         this.maxOutputTokens = maxOutputTokens;
+    }
+
+    public int getContextWindowTokens() {
+        return contextWindowTokens;
+    }
+
+    public void setContextWindowTokens(int contextWindowTokens) {
+        this.contextWindowTokens = contextWindowTokens;
+    }
+
+    public int getSafetyReserveTokens() {
+        return safetyReserveTokens;
+    }
+
+    public void setSafetyReserveTokens(int safetyReserveTokens) {
+        this.safetyReserveTokens = safetyReserveTokens;
     }
 }
