@@ -18,6 +18,8 @@ public interface LsmSummarySegmentMapper extends BaseMapper<LsmSummarySegmentEnt
             "select * from conversation_context_lsm_segment where tenant_id = #{tenantId} and conversation_session_id = #{sessionId} and segment_key = #{segmentKey} and deleted = false";
     String SELECT_BY_IDS =
             "<script>select * from conversation_context_lsm_segment where tenant_id = #{tenantId} and deleted = false and summary_segment_id in <foreach collection='segmentIds' item='segmentId' open='(' separator=',' close=')'>#{segmentId}</foreach></script>";
+    String SELECT_BY_SESSION =
+            "select * from conversation_context_lsm_segment where tenant_id = #{tenantId} and conversation_session_id = #{sessionId} and deleted = false order by start_turn_sequence, end_turn_sequence, level, summary_segment_id";
     String INSERT_IGNORE =
             "insert into conversation_context_lsm_segment (summary_segment_id, tenant_id, conversation_session_id, segment_key, kind, level, start_turn_sequence, end_turn_sequence, start_message_sequence, end_message_sequence, partial_segment, summary_document, estimated_token_count, source_segment_ids, source_content_sha256, summary_schema_version, prompt_version, model_provider, model_name, creation_policy, source_segment_count, created_at, created_by, updated_at, updated_by, deleted, version) values (#{summarySegmentId}, #{tenantId}, #{conversationSessionId}, #{segmentKey}, #{kind}, #{level}, #{startTurnSequence}, #{endTurnSequence}, #{startMessageSequence}, #{endMessageSequence}, #{partialSegment}, #{summaryDocument, typeHandler=com.datagent.agentv2.persistence.typehandler.JsonbStringTypeHandler, jdbcType=OTHER}, #{estimatedTokenCount}, #{sourceSegmentIds, typeHandler=com.datagent.agentv2.persistence.typehandler.JsonbStringTypeHandler, jdbcType=OTHER}, #{sourceContentSha256}, #{summarySchemaVersion}, #{promptVersion}, #{modelProvider}, #{modelName}, #{creationPolicy, typeHandler=com.datagent.agentv2.persistence.typehandler.JsonbStringTypeHandler, jdbcType=OTHER}, #{sourceSegmentCount}, #{createdAt}, #{createdBy}, #{updatedAt}, #{updatedBy}, #{deleted}, #{version}) on conflict (tenant_id, conversation_session_id, segment_key) do nothing";
 
@@ -34,6 +36,12 @@ public interface LsmSummarySegmentMapper extends BaseMapper<LsmSummarySegmentEnt
     @Select(SELECT_BY_IDS)
     List<LsmSummarySegmentEntity> selectByIds(
             @Param("tenantId") String tenantId, @Param("segmentIds") List<String> segmentIds);
+
+    /** 读取会话全部不可变段，供 Input Frontier 展开父子关系。 */
+    @InterceptorIgnore(tenantLine = TENANT_LINE_IGNORED)
+    @Select(SELECT_BY_SESSION)
+    List<LsmSummarySegmentEntity> selectBySession(
+            @Param("tenantId") String tenantId, @Param("sessionId") String sessionId);
 
     /** 利用唯一段键写入，重复规划时保留第一个成功的不可变段。 */
     @InterceptorIgnore(tenantLine = TENANT_LINE_IGNORED)

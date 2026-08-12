@@ -38,6 +38,11 @@ public class LsmSummarySegmentRepository {
         return segmentIds.stream().map(byId::get).filter(java.util.Objects::nonNull).toList();
     }
 
+    /** 按覆盖顺序读取会话全部不可变段。 */
+    public List<LsmSummarySegmentEntity> findBySession(String sessionId) {
+        return List.copyOf(mapper.selectBySession(TenantContext.requiredTenantId(), sessionId));
+    }
+
     /** 写入不存在的确定性摘要段，重复提交返回首个已持久化段。 */
     public LsmSummarySegmentEntity findOrCreate(LsmSummarySegmentEntity candidate) {
         String tenantId = TenantContext.requiredTenantId();

@@ -76,6 +76,9 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
         OllamaApi.Message.Role role = OllamaApi.Message.Role.valueOf(message.role().name());
         OllamaApi.Message.Builder builder =
                 OllamaApi.Message.builder(role).content(message.content());
+        if (message.thinking() != null) {
+            builder.thinking(message.thinking());
+        }
         if (!message.toolCalls().isEmpty()) {
             builder.toolCalls(
                     message.toolCalls().stream()

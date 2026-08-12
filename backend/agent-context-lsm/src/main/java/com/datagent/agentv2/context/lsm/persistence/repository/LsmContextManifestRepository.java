@@ -22,6 +22,15 @@ public class LsmContextManifestRepository {
                 mapper.selectManifest(TenantContext.requiredTenantId(), sessionId));
     }
 
+    /** 幂等创建第零代空视图，并返回并发竞争后的唯一持久化记录。 */
+    public LsmContextManifestEntity findOrCreate(LsmContextManifestEntity candidate) {
+        String tenantId = TenantContext.requiredTenantId();
+        candidate.setTenantId(tenantId);
+        mapper.insertIgnore(candidate);
+        return findManifest(candidate.getConversationSessionId())
+                .orElseThrow(() -> new IllegalStateException("LSM manifest was not persisted"));
+    }
+
     /** 仅当预期版本和 generation 同时匹配时发布 replacement。 */
     public boolean compareAndSetManifest(
             String sessionId,

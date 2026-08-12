@@ -1,5 +1,6 @@
 package com.datagent.agentv2.conversation.runtime;
 
+import com.datagent.agentv2.conversation.context.ContextPreparationException;
 import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
 import com.datagent.agentv2.conversation.exception.ExecutionDeadlineExceededException;
 import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
@@ -40,6 +41,8 @@ public final class ReactExecutionAdapter implements AgentExecutionPort {
                                 // 接管后的旧 worker 必须静默退出，不能修改新 owner 的中心消息或执行终态。
                             } catch (ExecutionDeadlineExceededException ignored) {
                                 // 租约服务已经在抛出异常前原子提交了超时终态及过程节点收敛。
+                            } catch (ContextPreparationException ignored) {
+                                // 上下文策略已经通过 execution control 端口提交稳定失败终态。
                             } catch (RuntimeException failure) {
                                 TenantContext.run(
                                         run.tenantId(),

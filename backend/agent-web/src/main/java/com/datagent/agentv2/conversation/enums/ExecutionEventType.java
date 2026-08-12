@@ -13,7 +13,10 @@ public enum ExecutionEventType {
     FAILED("execution_failed"),
     CANCELLED("execution_cancelled"),
     WAITING("execution_waiting"),
-    PHASE_CHANGED("execution_phase_changed");
+    PHASE_CHANGED("execution_phase_changed"),
+    CONTEXT_COMPACTION_STARTED("context_compaction_started"),
+    CONTEXT_COMPACTION_COMPLETED("context_compaction_completed"),
+    CONTEXT_COMPACTION_FAILED("context_compaction_failed");
 
     private final String value;
 

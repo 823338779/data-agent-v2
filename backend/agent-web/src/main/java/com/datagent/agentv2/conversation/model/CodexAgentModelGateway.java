@@ -24,6 +24,7 @@ public final class CodexAgentModelGateway implements AgentModelGateway {
     private static final String KEY_MESSAGES = "messages";
     private static final String KEY_ROLE = "role";
     private static final String KEY_CONTENT = "content";
+    private static final String KEY_HISTORICAL_REASONING = "historicalReasoning";
     private static final String KEY_TOOL_CALLS = "toolCalls";
     private static final String KEY_TOOL_CALL_ID = "toolCallId";
     private static final String KEY_TOOL_NAME = "toolName";
@@ -64,6 +65,10 @@ public final class CodexAgentModelGateway implements AgentModelGateway {
             ObjectNode serialized = serializedMessages.addObject();
             serialized.put(KEY_ROLE, message.role().value());
             serialized.put(KEY_CONTENT, message.content());
+            if (message.thinking() != null) {
+                // Codex App Server 没有历史 thinking 入参，固定投影为普通数据字段而非 system 指令。
+                serialized.put(KEY_HISTORICAL_REASONING, message.thinking());
+            }
             if (!message.toolCalls().isEmpty()) {
                 ArrayNode toolCalls = serialized.putArray(KEY_TOOL_CALLS);
                 for (ModelToolCall call : message.toolCalls()) {

@@ -80,6 +80,19 @@ public final class LsmDocumentCodec {
         }
     }
 
+    /** 从 JSONB 数组恢复稳定有序的字符串列表。 */
+    public List<String> readStringList(String document) {
+        try {
+            return List.copyOf(
+                    json.readValue(
+                            document,
+                            json.getTypeFactory()
+                                    .constructCollectionType(List.class, String.class)));
+        } catch (RuntimeException failure) {
+            throw new IllegalStateException(INVALID_STRING_LIST, failure);
+        }
+    }
+
     /** job 中只允许出现 planner 元数据和 target 到 segment key 的映射。 */
     private record PersistedPlan(
             LsmCompactionPlan plan,

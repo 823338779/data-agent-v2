@@ -3,6 +3,7 @@ package com.datagent.agentv2.conversation.react;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.BoundedProcessPayload;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.domain.ModelThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
 import com.datagent.agentv2.conversation.domain.ToolThinkingProcessItem;
@@ -74,9 +75,7 @@ public class ConversationContextLoader {
         // 模型上下文会跨越多轮 assistant 消息，因此工具索引必须覆盖这些消息各自所属的 execution。
         List<String> contextExecutionIds =
                 messages.stream()
-                        .filter(
-                                message ->
-                                        MessageRole.ASSISTANT.value().equals(message.getRole()))
+                        .filter(message -> MessageRole.ASSISTANT.value().equals(message.getRole()))
                         .map(ConversationMessage::getExecutionId)
                         .filter(java.util.Objects::nonNull)
                         .distinct()
@@ -97,6 +96,17 @@ public class ConversationContextLoader {
             Map<UUID, ToolExecutionEntity> executionsByProcessItem,
             List<ModelInputMessage> result) {
         Map<Long, List<ToolThinkingProcessItem>> toolsByInvocation = new TreeMap<>();
+        Map<Long, String> thinkingByInvocation = new TreeMap<>();
+        assistant.getThinkingProcess().stream()
+                .sorted(Comparator.comparingLong(ThinkingProcessItem::sequence))
+                .filter(ModelThinkingProcessItem.class::isInstance)
+                .map(ModelThinkingProcessItem.class::cast)
+                .forEach(
+                        item ->
+                                thinkingByInvocation.merge(
+                                        item.modelInvocationSequence(),
+                                        item.content(),
+                                        (left, right) -> left + right));
         assistant.getThinkingProcess().stream()
                 .sorted(Comparator.comparingLong(ThinkingProcessItem::sequence))
                 .filter(ToolThinkingProcessItem.class::isInstance)
@@ -119,19 +129,23 @@ public class ConversationContextLoader {
                         new ModelToolCall(
                                 item.toolCallId(), item.toolName(), inputNode(item.input())));
             }
-            result.add(ModelInputMessage.assistantToolCalls(calls));
+            long invocationSequence = toolItems.getFirst().modelInvocationSequence();
+            result.add(
+                    ModelInputMessage.assistantToolCalls(
+                            calls, thinkingByInvocation.remove(invocationSequence)));
             for (ToolThinkingProcessItem item : toolItems) {
                 if (isTerminal(item.status())) {
                     result.add(
                             ModelInputMessage.tool(
-                                    outputContent(item),
-                                    item.toolCallId(),
-                                    item.toolName()));
+                                    outputContent(item), item.toolCallId(), item.toolName()));
                 }
             }
         }
         if (!assistant.getContent().isBlank()) {
-            result.add(ModelInputMessage.plain(assistant.getRole(), assistant.getContent()));
+            result.add(
+                    ModelInputMessage.assistant(
+                            assistant.getContent(),
+                            String.join("", thinkingByInvocation.values())));
         }
     }
 

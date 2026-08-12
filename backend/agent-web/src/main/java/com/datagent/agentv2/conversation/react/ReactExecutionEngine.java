@@ -1,9 +1,15 @@
 package com.datagent.agentv2.conversation.react;
 
+import com.datagent.agentv2.conversation.context.ContextModelMessageMapper;
+import com.datagent.agentv2.conversation.context.ConversationContextRequest;
+import com.datagent.agentv2.conversation.context.ConversationContextRequestFactory;
+import com.datagent.agentv2.conversation.context.ConversationContextStrategyResolver;
+import com.datagent.agentv2.conversation.context.PreparedConversationContext;
 import com.datagent.agentv2.conversation.exception.ModelStreamInterruptedException;
 import com.datagent.agentv2.conversation.exception.ReactLimitExceededException;
 import com.datagent.agentv2.conversation.model.AgentModelGateway;
 import com.datagent.agentv2.conversation.model.ModelInvocationResult;
+import com.datagent.agentv2.conversation.model.ModelToolDefinition;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.tool.AgentToolRegistry;
@@ -27,8 +33,14 @@ public final class ReactExecutionEngine {
     /** 负责供应商模型调用并回调回答增量。 */
     private final AgentModelGateway model;
 
-    /** 按持久化输入边界装载模型上下文。 */
-    private final ConversationContextLoader contexts;
+    /** 按服务配置调用唯一上下文策略。 */
+    private final ConversationContextStrategyResolver contexts;
+
+    /** 将 invocation 边界、模型预算和当轮工具集冻结为策略请求。 */
+    private final ConversationContextRequestFactory contextRequests;
+
+    /** 在中立上下文消息和现有模型协议消息之间执行无损映射。 */
+    private final ContextModelMessageMapper contextMessages;
 
     /** 建立、推进并完成模型调用的事务协调器。 */
     private final ModelInvocationCoordinator modelInvocationCoordinator;
@@ -100,11 +112,12 @@ public final class ReactExecutionEngine {
                                     run, recoveredInputBoundary);
             recoveredInputBoundary = null;
 
-            // 上下文加载严格受持久化消息序号约束，确保重试输入确定。
-            List<ModelInputMessage> input =
-                    contexts.load(
-                            run.executionId(),
-                            modelInvocation.inputUpToConversationMessageSequence());
+            // 每轮固定同一份工具定义，并把持久化消息上界和模型预算交给选中策略。
+            List<ModelToolDefinition> modelTools = registry.modelDefinitions();
+            ConversationContextRequest contextRequest =
+                    contextRequests.create(run, modelInvocation, modelTools);
+            PreparedConversationContext prepared = contexts.prepare(contextRequest);
+            List<ModelInputMessage> input = contextMessages.toModelMessages(prepared.messages());
 
             // 调用前后都执行 fencing；流式片段在回调中同步形成 checkpoint 和通知。
             leases.assertOwnedAndWithinBudget(run);
@@ -113,7 +126,7 @@ public final class ReactExecutionEngine {
                 result =
                         model.complete(
                                 input,
-                                registry.modelDefinitions(),
+                                modelTools,
                                 delta ->
                                         modelInvocationCoordinator.checkpoint(
                                                 run, modelInvocation, delta));

@@ -7,6 +7,7 @@ import java.util.Objects;
 public record ModelInputMessage(
         Role role,
         String content,
+        String thinking,
         List<ModelToolCall> toolCalls,
         String toolCallId,
         String toolName) {
@@ -18,15 +19,24 @@ public record ModelInputMessage(
     }
 
     public static ModelInputMessage plain(String role, String content) {
-        return new ModelInputMessage(Role.fromValue(role), content, List.of(), null, null);
+        return new ModelInputMessage(Role.fromValue(role), content, null, List.of(), null, null);
+    }
+
+    public static ModelInputMessage assistant(String content, String thinking) {
+        return new ModelInputMessage(Role.ASSISTANT, content, thinking, List.of(), null, null);
     }
 
     public static ModelInputMessage assistantToolCalls(List<ModelToolCall> toolCalls) {
-        return new ModelInputMessage(Role.ASSISTANT, "", toolCalls, null, null);
+        return assistantToolCalls(toolCalls, null);
+    }
+
+    public static ModelInputMessage assistantToolCalls(
+            List<ModelToolCall> toolCalls, String thinking) {
+        return new ModelInputMessage(Role.ASSISTANT, "", thinking, toolCalls, null, null);
     }
 
     public static ModelInputMessage tool(String content, String toolCallId, String toolName) {
-        return new ModelInputMessage(Role.TOOL, content, List.of(), toolCallId, toolName);
+        return new ModelInputMessage(Role.TOOL, content, null, List.of(), toolCallId, toolName);
     }
 
     /** 模型供应商协议允许 TOOL；该角色不会持久化为 conversation_message。 */
