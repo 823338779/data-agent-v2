@@ -1,0 +1,145 @@
+package com.datagent.agentv2.context.lsm.planning;
+
+import com.datagent.agentv2.context.lsm.domain.FrontierSelection;
+import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan;
+import com.datagent.agentv2.context.lsm.domain.LsmPlanningInput;
+import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+/** 集中校验成功发布和 Input Frontier 必须保持的结构不变量。 */
+public final class LsmInvariantValidator {
+
+    private static final int MIN_WARM_TURNS = 100;
+    private static final int MAX_WARM_TURNS = 109;
+
+    /** 断言区间按时间连续、无重叠且无缺口。 */
+    public void assertContinuous(List<LsmSummarySegment.Coverage> coverage) {
+        Objects.requireNonNull(coverage, "coverage");
+        for (int index = 1; index < coverage.size(); index++) {
+            LsmSummarySegment.Coverage previous = coverage.get(index - 1);
+            LsmSummarySegment.Coverage current = coverage.get(index);
+            if (previous.endTurnSequence() + 1L != current.startTurnSequence()) {
+                throw new IllegalStateException("coverage must be continuous and non-overlapping");
+            }
+        }
+    }
+
+    /** 断言所选 Input Frontier 不同时包含任意父节点和后代节点。 */
+    public void assertNoParentChild(
+            FrontierSelection selection, List<LsmSummarySegment> availableSegments) {
+        Objects.requireNonNull(selection, "selection");
+        Map<String, LsmSummarySegment> byId = indexById(availableSegments);
+        Set<String> selected = Set.copyOf(selection.segmentIds());
+        for (String segmentId : selection.segmentIds()) {
+            assertNoSelectedDescendant(segmentId, selected, byId, new HashSet<>());
+        }
+    }
+
+    /** 校验 planner 输出可直接作为一次原子发布的候选状态。 */
+    public void validatePlan(LsmPlanningInput input, LsmCompactionPlan plan) {
+        Objects.requireNonNull(input, "input");
+        Objects.requireNonNull(plan, "plan");
+        List<LsmSummarySegment> projected = plan.projectedSegments();
+        List<LsmSummarySegment.Coverage> orderedCoverage =
+                projected.stream().map(LsmSummarySegment::coverage).toList();
+        assertContinuous(orderedCoverage);
+        if (!projected.isEmpty() && projected.getFirst().coverage().startTurnSequence() != 1L) {
+            throw new IllegalStateException("published coverage must start at the first turn");
+        }
+
+        // 普通层严格受 fanout-1 限制，配置顶层和历史 ROOT 合计最多只能有一个活动实例。
+        int fanout = input.policy().fanout();
+        int maxLevel = input.policy().maxLevel();
+        for (int level = 0; level < maxLevel; level++) {
+            int checkedLevel = level;
+            long count =
+                    projected.stream()
+                            .filter(segment -> segment.kind() == LsmSummarySegment.Kind.STANDARD)
+                            .filter(segment -> segment.level() == checkedLevel)
+                            .count();
+            if (count > fanout - 1L) {
+                throw new IllegalStateException("ordinary level exceeds fanout minus one");
+            }
+        }
+        long rootCount =
+                projected.stream()
+                        .filter(segment -> segment.kind() == LsmSummarySegment.Kind.ROOT)
+                        .count();
+        if (rootCount > 1L) {
+            throw new IllegalStateException("published manifest must contain at most one ROOT");
+        }
+        projected.stream()
+                .filter(segment -> segment.kind() == LsmSummarySegment.Kind.ROOT)
+                .findFirst()
+                .ifPresent(
+                        root -> {
+                            if (root.coverage().startTurnSequence() != 1L) {
+                                throw new IllegalStateException(
+                                        "active ROOT must cover the conversation prefix");
+                            }
+                            if (!root.segmentId()
+                                    .equals(plan.proposedManifest().activeRootSegmentId())) {
+                                throw new IllegalStateException(
+                                        "manifest active ROOT must reference projected ROOT");
+                            }
+                        });
+        boolean hasStandardAtOrAboveTop =
+                projected.stream()
+                        .anyMatch(
+                                segment ->
+                                        segment.kind() == LsmSummarySegment.Kind.STANDARD
+                                                && segment.level() >= maxLevel);
+        if (hasStandardAtOrAboveTop) {
+            throw new IllegalStateException("configured top level is reserved for ROOT");
+        }
+
+        // 历史足够长时，每次成功发布必须把 Warm 收敛到 100～109 轮且保护十轮 Hot。
+        long completedTurns = input.turns().stream().filter(turn -> turn.completed()).count();
+        if (completedTurns >= MIN_WARM_TURNS + 10L) {
+            long warmTurns = plan.proposedManifest().warmTurnCount();
+            if (warmTurns < MIN_WARM_TURNS || warmTurns > MAX_WARM_TURNS) {
+                throw new IllegalStateException(
+                        "published Warm range must contain 100 to 109 turns");
+            }
+        }
+        int expectedHot = (int) Math.min(10L, completedTurns);
+        if (plan.hotBoundary().completedTurnCount() != expectedHot) {
+            throw new IllegalStateException("Hot must protect the last ten completed turns");
+        }
+    }
+
+    private static Map<String, LsmSummarySegment> indexById(List<LsmSummarySegment> segments) {
+        Objects.requireNonNull(segments, "segments");
+        Map<String, LsmSummarySegment> byId = new HashMap<>();
+        for (LsmSummarySegment segment : segments) {
+            LsmSummarySegment previous = byId.put(segment.segmentId(), segment);
+            if (previous != null) {
+                throw new IllegalArgumentException("duplicate segmentId: " + segment.segmentId());
+            }
+        }
+        return byId;
+    }
+
+    private static void assertNoSelectedDescendant(
+            String segmentId,
+            Set<String> selected,
+            Map<String, LsmSummarySegment> byId,
+            Set<String> visiting) {
+        LsmSummarySegment segment = byId.get(segmentId);
+        if (segment == null || !visiting.add(segmentId)) {
+            return;
+        }
+        for (String sourceId : segment.sourceSegmentIds()) {
+            if (selected.contains(sourceId)) {
+                throw new IllegalStateException("frontier must not contain a parent and child");
+            }
+            assertNoSelectedDescendant(sourceId, selected, byId, visiting);
+        }
+        visiting.remove(segmentId);
+    }
+}
