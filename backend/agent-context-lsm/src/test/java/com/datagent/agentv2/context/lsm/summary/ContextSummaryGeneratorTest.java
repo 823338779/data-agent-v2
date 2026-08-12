@@ -94,7 +94,7 @@ class ContextSummaryGeneratorTest {
         "STANDARD,0,1536",
         "STANDARD,1,2048",
         "STANDARD,4,3584",
-        "STANDARD,9,3584",
+        "STANDARD,8,3584",
         "ROOT,5,4096"
     })
     void appliesTheFixedLayerSpecificOutputCaps(
