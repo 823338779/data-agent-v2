@@ -194,6 +194,21 @@ class LsmContextMetricsTest {
     }
 
     @Test
+    void expiresStaleSessionContributionsWhenGaugeIsScraped() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        MutableClock clock = new MutableClock(Instant.parse("2026-08-13T00:00:00Z"));
+        LsmContextMetrics metrics =
+                new LsmContextMetrics(registry, 10, Duration.ofMinutes(5), clock);
+        metrics.recordActiveSegments(SESSION_A, Map.of(0, 2));
+        clock.advance(Duration.ofMinutes(6));
+
+        double scraped =
+                registry.get("agent_context_active_segments").tag(TAG_LEVEL, "0").gauge().value();
+
+        assertThat(scraped).isZero();
+    }
+
+    @Test
     void explicitCleanupRemovesOnlyTheTargetSessionContribution() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         LsmContextMetrics metrics = new LsmContextMetrics(registry);

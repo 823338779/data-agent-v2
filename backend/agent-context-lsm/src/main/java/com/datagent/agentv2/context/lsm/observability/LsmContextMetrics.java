@@ -9,13 +9,10 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -53,8 +50,8 @@ public final class LsmContextMetrics {
     /** 最近一次估算误差比率。 */
     private final AtomicReference<Double> estimationErrorRatio = new AtomicReference<>(0d);
 
-    /** 每个有限层级的当前活动节点数。 */
-    private final ConcurrentMap<Integer, AtomicLong> activeSegments = new ConcurrentHashMap<>();
+    /** 已注册的有限层级 gauge，防止并发写入重复注册同一 meter。 */
+    private final ConcurrentMap<Integer, Boolean> activeSegmentGauges = new ConcurrentHashMap<>();
 
     /** 有界且可过期的会话贡献缓存，仅用于计算无会话标签的近期服务级总量。 */
     private final LinkedHashMap<String, SessionContribution> activeSegmentsBySession;
@@ -146,7 +143,7 @@ public final class LsmContextMetrics {
             activeSegmentsBySession.put(
                     sessionId, new SessionContribution(counts, clock.instant()));
         }
-        refreshActiveSegmentGauges();
+        counts.keySet().forEach(this::registerActiveSegmentsGaugeIfAbsent);
     }
 
     /** 会话被显式清理时同步移除其贡献，且不创建任何会话维度 meter。 */
@@ -157,13 +154,11 @@ public final class LsmContextMetrics {
         }
         expireSessionContributions(clock.instant());
         activeSegmentsBySession.remove(sessionId);
-        refreshActiveSegmentGauges();
     }
 
     int trackedSessionCount() {
         synchronized (this) {
             expireSessionContributions(clock.instant());
-            refreshActiveSegmentGauges();
             return activeSegmentsBySession.size();
         }
     }
@@ -188,28 +183,8 @@ public final class LsmContextMetrics {
                                         .isAfter(now));
     }
 
-    private void refreshActiveSegmentGauges() {
-        Map<Integer, Long> totals = new HashMap<>();
-        activeSegmentsBySession
-                .values()
-                .forEach(
-                        contribution ->
-                                contribution
-                                        .countsByLevel()
-                                        .forEach(
-                                                (level, count) ->
-                                                        totals.merge(
-                                                                level,
-                                                                count.longValue(),
-                                                                Long::sum)));
-        Set<Integer> missingLevels = new HashSet<>(activeSegments.keySet());
-        missingLevels.removeAll(totals.keySet());
-        missingLevels.forEach(level -> activeSegments.get(level).set(0L));
-        totals.forEach(
-                (level, count) ->
-                        activeSegments
-                                .computeIfAbsent(level, this::registerActiveSegmentsGauge)
-                                .set(count));
+    private void registerActiveSegmentsGaugeIfAbsent(int level) {
+        activeSegmentGauges.computeIfAbsent(level, this::registerActiveSegmentsGauge);
     }
 
     /** 记录一次有限结果、有限操作类型及总耗时。 */
@@ -249,14 +224,22 @@ public final class LsmContextMetrics {
         windowExceeded.increment();
     }
 
-    private AtomicLong registerActiveSegmentsGauge(int level) {
-        AtomicLong value = new AtomicLong();
+    private Boolean registerActiveSegmentsGauge(int level) {
         registry.gauge(
                 ACTIVE_SEGMENTS,
                 java.util.List.of(
                         io.micrometer.core.instrument.Tag.of(TAG_LEVEL, Integer.toString(level))),
-                value);
-        return value;
+                this,
+                metrics -> metrics.activeSegmentsValue(level));
+        return Boolean.TRUE;
+    }
+
+    /** scrape 时在同一同步区内清理过期贡献并计算指定层级，避免返回空闲期陈旧值。 */
+    private synchronized double activeSegmentsValue(int level) {
+        expireSessionContributions(clock.instant());
+        return activeSegmentsBySession.values().stream()
+                .mapToLong(contribution -> contribution.countsByLevel().getOrDefault(level, 0))
+                .sum();
     }
 
     private DistributionSummary summary(String name, String level) {
