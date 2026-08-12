@@ -121,33 +121,38 @@ public final class LsmCompactionPlanner {
         if (root == null || root.level() <= input.policy().maxLevel()) {
             return;
         }
-        List<LsmSummarySegment> chronologicalTail =
-                state.activeSegments.stream()
-                        .filter(segment -> segment.kind() == Kind.STANDARD)
-                        .filter(
-                                segment ->
-                                        segment.coverage().startTurnSequence()
-                                                > root.coverage().endTurnSequence())
-                        .sorted(CHRONOLOGICAL)
-                        .toList();
-        List<LsmSummarySegment> eligibleTail =
-                consecutiveHighLevelPrefix(root, chronologicalTail, input.policy().maxLevel());
         int requiredTailCount = input.policy().fanout() - 1;
-        if (eligibleTail.size() < requiredTailCount) {
-            return;
-        }
+        while (true) {
+            LsmSummarySegment currentRoot = root;
+            List<LsmSummarySegment> chronologicalTail =
+                    state.activeSegments.stream()
+                            .filter(segment -> segment.kind() == Kind.STANDARD)
+                            .filter(
+                                    segment ->
+                                            segment.coverage().startTurnSequence()
+                                                    > currentRoot.coverage().endTurnSequence())
+                            .sorted(CHRONOLOGICAL)
+                            .toList();
+            List<LsmSummarySegment> eligibleTail =
+                    consecutiveHighLevelPrefix(
+                            currentRoot, chronologicalTail, input.policy().maxLevel());
+            if (eligibleTail.size() < requiredTailCount) {
+                return;
+            }
 
-        // maxLevel 降低时旧 ROOT 也计入协调 fanout，避免把两个 tail 单独提前聚合。
-        List<LsmSummarySegment> sources = new ArrayList<>();
-        sources.add(root);
-        sources.addAll(eligibleTail.subList(0, requiredTailCount));
-        mergeSources(
-                state,
-                sources,
-                OperationType.RECONCILE_CONFIGURATION,
-                Kind.ROOT,
-                input.policy().maxLevel(),
-                NORMAL_SUMMARY_RATIO);
+            // 旧 ROOT 计入 fanout，每轮只吸收同层连续的 fanout-1 个 tail，再引用候选 ROOT 继续协调。
+            List<LsmSummarySegment> sources = new ArrayList<>();
+            sources.add(currentRoot);
+            sources.addAll(eligibleTail.subList(0, requiredTailCount));
+            mergeSources(
+                    state,
+                    sources,
+                    OperationType.RECONCILE_CONFIGURATION,
+                    Kind.ROOT,
+                    input.policy().maxLevel(),
+                    NORMAL_SUMMARY_RATIO);
+            root = activeRoot(state.activeSegments);
+        }
     }
 
     private static List<LsmSummarySegment> consecutiveHighLevelPrefix(
@@ -156,11 +161,14 @@ public final class LsmCompactionPlanner {
             int configuredMaxLevel) {
         List<LsmSummarySegment> eligible = new ArrayList<>();
         long expectedStart = root.coverage().endTurnSequence() + 1L;
+        Integer eligibleLevel = null;
         for (LsmSummarySegment segment : chronologicalTail) {
             if (segment.coverage().startTurnSequence() != expectedStart
-                    || segment.level() < configuredMaxLevel) {
+                    || segment.level() < configuredMaxLevel
+                    || (eligibleLevel != null && segment.level() != eligibleLevel)) {
                 break;
             }
+            eligibleLevel = segment.level();
             eligible.add(segment);
             expectedStart = segment.coverage().endTurnSequence() + 1L;
         }
