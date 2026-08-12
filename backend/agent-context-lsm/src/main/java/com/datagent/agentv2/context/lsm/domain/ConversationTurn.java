@@ -6,7 +6,12 @@ import java.util.Objects;
 
 /** 按触发用户消息聚合的有序问答单元，供 LSM 仅压缩完整历史时使用。 */
 public record ConversationTurn(
-        long turnSequence, List<ContextMessage> messages, boolean completed) {
+        /** 问答在会话内从一开始递增的连续序号，用于摘要区间覆盖计算。 */
+        long turnSequence,
+        /** 保持原有时序且不可变的模型协议消息，包含工具调用及其 observation。 */
+        List<ContextMessage> messages,
+        /** 仅当该问答末尾已经形成最终 assistant 回答时为 true。 */
+        boolean completed) {
 
     public ConversationTurn {
         if (turnSequence <= 0L) {

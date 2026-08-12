@@ -12,6 +12,7 @@ import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class ConversationTokenEstimatorTest {
@@ -27,6 +28,10 @@ class ConversationTokenEstimatorTest {
     private static final String TOOL_RESULT = "sunny";
     private static final String THINKING = "tool required";
     private static final String APPENDED_CONTENT = "x";
+    private static final String FINAL_ANSWER = "answer";
+    private static final String CHARACTER_VALUE = "x";
+    private static final String UUID_VALUE = "0a1b2c3d-4e5f-6789-8abc-def012345678";
+    private static final String JSON_VALUE_KEY = "value";
     private static final String TENANT_ID = "tenant";
     private static final String SESSION_ID = "session";
     private static final String EXECUTION_ID = "execution";
@@ -62,7 +67,7 @@ class ConversationTokenEstimatorTest {
                                                 TOOL_NAME,
                                                 Map.of(TOOL_NAME, TOOL_ARGUMENT)))),
                         ContextMessage.tool(TOOL_RESULT, TOOL_CALL_ID, TOOL_NAME),
-                        ContextMessage.assistant("answer", THINKING));
+                        ContextMessage.assistant(FINAL_ANSWER, THINKING));
 
         int expected =
                 request.budget().fixedInputTokens()
@@ -94,6 +99,18 @@ class ConversationTokenEstimatorTest {
         }
     }
 
+    @Test
+    void estimatesJsonStringLikeCharacterEnumAndUuidWithStringBoundaries() {
+        UUID uuid = UUID.fromString(UUID_VALUE);
+
+        // JSON 序列化会把这些类型写成字符串，估算必须保留对应引号边界。
+        assertThat(estimateToolParameter(Character.valueOf(CHARACTER_VALUE.charAt(0))))
+                .isEqualTo(estimateToolParameter(CHARACTER_VALUE));
+        assertThat(estimateToolParameter(ContextMessage.Role.USER))
+                .isEqualTo(estimateToolParameter(ContextMessage.Role.USER.name()));
+        assertThat(estimateToolParameter(uuid)).isEqualTo(estimateToolParameter(uuid.toString()));
+    }
+
     private static ContextMessage randomMessage(Random random, int index) {
         String content = random.nextBoolean() ? CJK_TEXT : LATIN_TEXT;
         if (random.nextBoolean()) {
@@ -103,6 +120,13 @@ class ConversationTokenEstimatorTest {
             return ContextMessage.tool(content, TOOL_CALL_ID + index, TOOL_NAME);
         }
         return ContextMessage.user(content + index);
+    }
+
+    private int estimateToolParameter(Object value) {
+        return estimator.estimateTools(
+                List.of(
+                        new ContextToolDefinition(
+                                TOOL_NAME, TOOL_DESCRIPTION, Map.of(JSON_VALUE_KEY, value))));
     }
 
     private static ConversationContextRequest request() {

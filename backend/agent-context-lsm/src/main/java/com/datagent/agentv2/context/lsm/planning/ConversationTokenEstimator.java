@@ -8,6 +8,7 @@ import java.lang.reflect.Array;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 /** 在没有稳定 provider tokenizer 时，按协议结构保守估算模型输入 token。 */
 public final class ConversationTokenEstimator {
@@ -109,6 +110,10 @@ public final class ConversationTokenEstimator {
         }
         if (value instanceof CharSequence text) {
             return add(JSON_STRING_BOUNDARY_TOKENS, estimateText(text.toString()));
+        }
+        if (value instanceof Character || value instanceof Enum<?> || value instanceof UUID) {
+            // Jackson 会把字符、枚举和 UUID 写成 JSON string，必须计入引号边界。
+            return add(JSON_STRING_BOUNDARY_TOKENS, estimateText(String.valueOf(value)));
         }
         if (value instanceof Map<?, ?> object) {
             int estimate = JSON_OBJECT_BOUNDARY_TOKENS;

@@ -40,13 +40,15 @@ public final class ConversationTurnGrouper {
     }
 
     private static ConversationTurn toTurn(long turnSequence, List<ContextMessage> messages) {
-        boolean completed =
-                messages.stream()
-                        .anyMatch(
-                                message ->
-                                        message.role() == Role.ASSISTANT
-                                                && !message.content().isBlank()
-                                                && message.toolCalls().isEmpty());
+        boolean completed = isCompleted(messages);
         return new ConversationTurn(turnSequence, messages, completed);
+    }
+
+    private static boolean isCompleted(List<ContextMessage> messages) {
+        // 只接受当前问答末尾的最终回答；旧 attempt 的 partial 输出不能完成后续 retry。
+        ContextMessage lastMessage = messages.getLast();
+        return lastMessage.role() == Role.ASSISTANT
+                && !lastMessage.content().isBlank()
+                && lastMessage.toolCalls().isEmpty();
     }
 }
