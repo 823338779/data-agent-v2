@@ -89,9 +89,10 @@ class LsmCompactionPlannerTest {
                                         .containsExactly(
                                                 ROOT_ID,
                                                 nextChildren.get(0).segmentId(),
-                                                nextChildren.get(1).segmentId(),
-                                                nextChildren.get(2).segmentId());
+                                                nextChildren.get(1).segmentId());
                             });
+            assertThat(rolled.projectedSegments()).hasSize(2);
+            assertThat(rolled.projectedSegments().getLast()).isEqualTo(nextChildren.get(2));
         }
     }
 
@@ -279,6 +280,77 @@ class LsmCompactionPlannerTest {
     }
 
     @Test
+    void configurationReconciliationPromotesBlockedLowerLevelBeforeAbsorbingIntoRoot() {
+        LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 5, 1, 30, 500, List.of());
+        LsmSummarySegment levelFour = shiftedSegments(1, 4, 31).getFirst();
+        List<LsmSummarySegment> levelThree = shiftedSegments(5, 3, 41);
+        List<LsmSummarySegment> tail = new ArrayList<>();
+        tail.add(levelFour);
+        tail.addAll(levelThree);
+
+        LsmPlanningInput input = inputWithPriorPolicy(oldRoot, tail, 10, 5, 3, 3);
+        LsmCompactionPlan plan = planner.plan(input);
+
+        // 后续过量 L3 必须先按正常 fanout 晋升，补齐 ROOT 后连续的 L4 前缀。
+        assertThat(plan.merges()).hasSize(3);
+        assertThat(plan.merges().getFirst().type())
+                .isEqualTo(LsmCompactionPlan.OperationType.PROMOTE);
+        assertThat(plan.merges().getFirst().sourceIds())
+                .containsExactlyElementsOf(
+                        levelThree.subList(0, 3).stream()
+                                .map(LsmSummarySegment::segmentId)
+                                .toList());
+        assertThat(plan.merges().get(1).type())
+                .isEqualTo(LsmCompactionPlan.OperationType.RECONCILE_CONFIGURATION);
+        assertThat(plan.merges().get(1).sourceIds())
+                .containsExactly(
+                        OLD_ROOT_ID, levelFour.segmentId(), plan.merges().getFirst().targetId());
+        assertThat(plan.merges().get(2).type())
+                .isEqualTo(LsmCompactionPlan.OperationType.RECONCILE_CONFIGURATION);
+        assertThat(plan.merges().get(2).sourceIds())
+                .containsExactly(
+                        plan.merges().get(1).targetId(),
+                        levelThree.get(3).segmentId(),
+                        levelThree.get(4).segmentId());
+        assertThat(plan.merges())
+                .allSatisfy(operation -> assertThat(operation.sourceIds()).hasSize(3));
+        assertThat(plan.projectedSegments())
+                .singleElement()
+                .satisfies(root -> assertThat(root.kind()).isEqualTo(Kind.ROOT));
+        assertThat(planner.plan(input)).isEqualTo(plan);
+    }
+
+    @Test
+    void configurationReconciliationCarriesAcrossMultipleMixedLevels() {
+        LsmSummarySegment oldRoot = segment(OLD_ROOT_ID, Kind.ROOT, 6, 1, 30, 500, List.of());
+        LsmSummarySegment levelFive = shiftedSegments(1, 5, 31).getFirst();
+        List<LsmSummarySegment> levelFour = shiftedSegments(2, 4, 41);
+        List<LsmSummarySegment> levelThree = shiftedSegments(5, 3, 61);
+        List<LsmSummarySegment> tail = new ArrayList<>();
+        tail.add(levelFive);
+        tail.addAll(levelFour);
+        tail.addAll(levelThree);
+
+        LsmPlanningInput input = inputWithPriorPolicy(oldRoot, tail, 10, 6, 3, 3);
+        LsmCompactionPlan plan = planner.plan(input);
+
+        // L3 -> L4 -> L5 的连续 carry 最终补齐 ROOT 前缀，全程不得产生小批聚合。
+        assertThat(plan.merges())
+                .extracting(LsmCompactionPlan.PlannedOperation::type)
+                .containsExactly(
+                        LsmCompactionPlan.OperationType.PROMOTE,
+                        LsmCompactionPlan.OperationType.PROMOTE,
+                        LsmCompactionPlan.OperationType.RECONCILE_CONFIGURATION,
+                        LsmCompactionPlan.OperationType.RECONCILE_CONFIGURATION);
+        assertThat(plan.merges())
+                .allSatisfy(operation -> assertThat(operation.sourceIds()).hasSize(3));
+        assertThat(plan.projectedSegments())
+                .singleElement()
+                .satisfies(root -> assertThat(root.kind()).isEqualTo(Kind.ROOT));
+        new LsmInvariantValidator().validatePlan(input, plan);
+    }
+
+    @Test
     void warmMovesOnlyInTenTurnBatchesAndStaysBetweenOneHundredAndOneHundredNine() {
         LsmPlanningInput input =
                 new LsmPlanningInput(
@@ -360,6 +432,16 @@ class LsmCompactionPlannerTest {
 
     private static LsmPlanningInput inputWithRoot(
             LsmSummarySegment root, List<LsmSummarySegment> tail, int fanout, int maxLevel) {
+        return inputWithPriorPolicy(root, tail, fanout, root.level(), fanout, maxLevel);
+    }
+
+    private static LsmPlanningInput inputWithPriorPolicy(
+            LsmSummarySegment root,
+            List<LsmSummarySegment> tail,
+            int previousFanout,
+            int previousMaxLevel,
+            int fanout,
+            int maxLevel) {
         List<LsmSummarySegment> all = new ArrayList<>();
         all.add(root);
         all.addAll(tail);
@@ -373,8 +455,8 @@ class LsmCompactionPlannerTest {
                         null,
                         null,
                         0,
-                        fanout,
-                        root.level()),
+                        previousFanout,
+                        previousMaxLevel),
                 all,
                 new LsmPlanningInput.Policy(2, fanout, maxLevel),
                 new LsmPlanningInput.TokenPressure(7_000, 8_000, 16_000),

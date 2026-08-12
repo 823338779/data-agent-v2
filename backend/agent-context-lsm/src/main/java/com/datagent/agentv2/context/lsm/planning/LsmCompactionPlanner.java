@@ -51,8 +51,7 @@ public final class LsmCompactionPlanner {
 
         // 规划顺序属于持久化恢复契约：先封 L0，再协调层级，最后移动边界和按压力合并 Cold。
         sealFullL0Batches(input, hot, state);
-        reconcileLowerMaxLevel(input, state);
-        promoteFullLevels(input.policy().fanout(), input.policy().maxLevel(), state);
+        coordinateHierarchy(input.policy().fanout(), input.policy().maxLevel(), state);
         WarmRange warmRange = trimWarmToRange(input, hot, state);
         planMajorCompactionWhenUseful(input, warmRange, state);
 
@@ -116,103 +115,71 @@ public final class LsmCompactionPlanner {
         state.activeSegments.sort(CHRONOLOGICAL);
     }
 
-    private static void reconcileLowerMaxLevel(LsmPlanningInput input, PlanningState state) {
-        LsmSummarySegment root = activeRoot(state.activeSegments);
-        if (root == null || root.level() <= input.policy().maxLevel()) {
-            return;
-        }
-        int requiredTailCount = input.policy().fanout() - 1;
+    private static void coordinateHierarchy(int fanout, int maxLevel, PlanningState state) {
         while (true) {
-            LsmSummarySegment currentRoot = root;
-            List<LsmSummarySegment> chronologicalTail =
-                    state.activeSegments.stream()
-                            .filter(segment -> segment.kind() == Kind.STANDARD)
-                            .filter(
-                                    segment ->
-                                            segment.coverage().startTurnSequence()
-                                                    > currentRoot.coverage().endTurnSequence())
-                            .sorted(CHRONOLOGICAL)
-                            .toList();
-            List<LsmSummarySegment> eligibleTail =
-                    consecutiveHighLevelPrefix(
-                            currentRoot, chronologicalTail, input.policy().maxLevel());
-            if (eligibleTail.size() < requiredTailCount) {
+            LsmSummarySegment root = activeRoot(state.activeSegments);
+
+            // ROOT 仅吸收时间前缀中的 fanout-1 个同层节点，优先吸收可避免把完整前缀错误地普通晋升。
+            List<LsmSummarySegment> rootSources =
+                    rootAbsorptionSources(state.activeSegments, root, fanout, maxLevel);
+            if (!rootSources.isEmpty()) {
+                int tailLevel = rootSources.get(1).level();
+                OperationType operationType =
+                        tailLevel == maxLevel - 1 && root.level() == maxLevel
+                                ? OperationType.ROLL_ROOT
+                                : OperationType.RECONCILE_CONFIGURATION;
+                mergeSources(
+                        state,
+                        rootSources,
+                        operationType,
+                        Kind.ROOT,
+                        maxLevel,
+                        NORMAL_SUMMARY_RATIO);
+                continue;
+            }
+
+            // 前缀不足时从最低可 carry 层推进一批，逐层补齐 ROOT 前的高层前缀后重新协调。
+            List<LsmSummarySegment> promotion = firstPromotionBatch(state.activeSegments, fanout);
+            if (promotion.isEmpty()) {
                 return;
             }
+            int sourceLevel = promotion.getFirst().level();
+            boolean createsRoot =
+                    root == null
+                            && promotion.getFirst().coverage().startTurnSequence() == 1L
+                            && sourceLevel + 1 >= maxLevel;
 
-            // 旧 ROOT 计入 fanout，每轮只吸收同层连续的 fanout-1 个 tail，再引用候选 ROOT 继续协调。
-            List<LsmSummarySegment> sources = new ArrayList<>();
-            sources.add(currentRoot);
-            sources.addAll(eligibleTail.subList(0, requiredTailCount));
+            // 普通 carry 始终使用恰好 fanout 个连续同层节点；只有覆盖前缀到达配置顶层时才首次形成 ROOT。
             mergeSources(
                     state,
-                    sources,
-                    OperationType.RECONCILE_CONFIGURATION,
-                    Kind.ROOT,
-                    input.policy().maxLevel(),
+                    promotion,
+                    createsRoot ? OperationType.ROLL_ROOT : OperationType.PROMOTE,
+                    createsRoot ? Kind.ROOT : Kind.STANDARD,
+                    createsRoot ? maxLevel : sourceLevel + 1,
                     NORMAL_SUMMARY_RATIO);
-            root = activeRoot(state.activeSegments);
         }
     }
 
-    private static List<LsmSummarySegment> consecutiveHighLevelPrefix(
+    private static List<LsmSummarySegment> rootAbsorptionSources(
+            List<LsmSummarySegment> activeSegments,
             LsmSummarySegment root,
-            List<LsmSummarySegment> chronologicalTail,
-            int configuredMaxLevel) {
-        List<LsmSummarySegment> eligible = new ArrayList<>();
-        long expectedStart = root.coverage().endTurnSequence() + 1L;
-        Integer eligibleLevel = null;
-        for (LsmSummarySegment segment : chronologicalTail) {
-            if (segment.coverage().startTurnSequence() != expectedStart
-                    || segment.level() < configuredMaxLevel
-                    || (eligibleLevel != null && segment.level() != eligibleLevel)) {
-                break;
-            }
-            eligibleLevel = segment.level();
-            eligible.add(segment);
-            expectedStart = segment.coverage().endTurnSequence() + 1L;
+            int fanout,
+            int maxLevel) {
+        if (root == null || activeSegments.getFirst() != root || activeSegments.size() < fanout) {
+            return List.of();
         }
-        return List.copyOf(eligible);
-    }
-
-    private static void promoteFullLevels(int fanout, int maxLevel, PlanningState state) {
-        for (int level = 0; level < maxLevel; level++) {
-            while (true) {
-                List<LsmSummarySegment> batch =
-                        firstAdjacentBatch(state.activeSegments, level, fanout);
-                if (batch.isEmpty()) {
-                    break;
-                }
-                int targetLevel = level + 1;
-                if (targetLevel == maxLevel) {
-                    LsmSummarySegment root = activeRoot(state.activeSegments);
-                    List<LsmSummarySegment> sources = new ArrayList<>();
-                    if (root != null) {
-                        if (root.coverage().endTurnSequence() + 1L
-                                != batch.getFirst().coverage().startTurnSequence()) {
-                            break;
-                        }
-                        sources.add(root);
-                    }
-                    sources.addAll(batch);
-                    mergeSources(
-                            state,
-                            sources,
-                            OperationType.ROLL_ROOT,
-                            Kind.ROOT,
-                            targetLevel,
-                            NORMAL_SUMMARY_RATIO);
-                } else {
-                    mergeSources(
-                            state,
-                            batch,
-                            OperationType.PROMOTE,
-                            Kind.STANDARD,
-                            targetLevel,
-                            NORMAL_SUMMARY_RATIO);
-                }
+        List<LsmSummarySegment> sources = List.copyOf(activeSegments.subList(0, fanout));
+        int tailLevel = sources.get(1).level();
+        if (tailLevel < maxLevel - 1) {
+            return List.of();
+        }
+        for (int index = 1; index < sources.size(); index++) {
+            LsmSummarySegment tail = sources.get(index);
+            if (tail.kind() != Kind.STANDARD || tail.level() != tailLevel) {
+                return List.of();
             }
         }
+        return continuous(sources) ? sources : List.of();
     }
 
     private static WarmRange trimWarmToRange(
@@ -375,18 +342,27 @@ public final class LsmCompactionPlanner {
                 .reduce(0, LsmCompactionPlanner::saturatedAdd);
     }
 
-    private static List<LsmSummarySegment> firstAdjacentBatch(
-            List<LsmSummarySegment> activeSegments, int level, int fanout) {
-        List<LsmSummarySegment> candidates =
+    private static List<LsmSummarySegment> firstPromotionBatch(
+            List<LsmSummarySegment> activeSegments, int fanout) {
+        List<Integer> levels =
                 activeSegments.stream()
                         .filter(segment -> segment.kind() == Kind.STANDARD)
-                        .filter(segment -> segment.level() == level)
-                        .sorted(CHRONOLOGICAL)
+                        .map(LsmSummarySegment::level)
+                        .distinct()
+                        .sorted()
                         .toList();
-        for (int start = 0; start + fanout <= candidates.size(); start++) {
-            List<LsmSummarySegment> batch = candidates.subList(start, start + fanout);
-            if (continuous(batch)) {
-                return List.copyOf(batch);
+        for (int level : levels) {
+            List<LsmSummarySegment> candidates =
+                    activeSegments.stream()
+                            .filter(segment -> segment.kind() == Kind.STANDARD)
+                            .filter(segment -> segment.level() == level)
+                            .sorted(CHRONOLOGICAL)
+                            .toList();
+            for (int start = 0; start + fanout <= candidates.size(); start++) {
+                List<LsmSummarySegment> batch = candidates.subList(start, start + fanout);
+                if (continuous(batch)) {
+                    return List.copyOf(batch);
+                }
             }
         }
         return List.of();
