@@ -1,6 +1,7 @@
 package com.datagent.agentv2.conversation.model;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.datagent.agentv2.conversation.context.ContextSummaryRequest;
 import com.datagent.agentv2.conversation.context.ContextSummaryResult;
@@ -23,8 +24,12 @@ class OllamaContextSummaryModelAdapterTest {
             """
             {"model":"summary-model","created_at":"2026-08-01T00:00:00Z","message":{"role":"assistant","content":"{\\"schemaVersion\\":1}"},"done":true,"done_reason":"stop","eval_count":37}
             """;
+    private static final String SECRET_MARKER = "marker-secret-response-body";
 
     private final AtomicReference<String> requestBody = new AtomicReference<>();
+    private final AtomicReference<String> responseBody = new AtomicReference<>(RESPONSE);
+    private final java.util.concurrent.atomic.AtomicInteger responseStatus =
+            new java.util.concurrent.atomic.AtomicInteger(200);
     private HttpServer server;
     private OllamaContextSummaryModelAdapter adapter;
 
@@ -75,12 +80,31 @@ class OllamaContextSummaryModelAdapterTest {
                 .doesNotContain("\"tools\"");
     }
 
+    @Test
+    void removesUntrustedProviderCauseAndBodyFromTheStableFailure() {
+        responseStatus.set(500);
+        responseBody.set(SECRET_MARKER);
+
+        assertThatThrownBy(
+                        () ->
+                                adapter.summarize(
+                                        new ContextSummaryRequest(
+                                                "summary system prompt",
+                                                "source data",
+                                                "{\"type\":\"object\"}",
+                                                2_048)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Ollama context summary request failed")
+                .hasNoCause()
+                .satisfies(failure -> assertThat(failure.toString()).doesNotContain(SECRET_MARKER));
+    }
+
     private void respond(HttpExchange exchange) throws IOException {
         requestBody.set(
                 new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-        byte[] body = RESPONSE.getBytes(StandardCharsets.UTF_8);
+        byte[] body = responseBody.get().getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "application/json");
-        exchange.sendResponseHeaders(200, body.length);
+        exchange.sendResponseHeaders(responseStatus.get(), body.length);
         exchange.getResponseBody().write(body);
         exchange.close();
     }

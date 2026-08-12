@@ -70,3 +70,57 @@
 - provider `eval_count` 缺失时 adapter 使用正文 code point 数作为保守估算；generator 还会再次执行本地 summary document 估算，因此不会因缺失 usage 放宽上限。
 - `safetyReserveTokens` 本任务只完成配置承载；后续上下文预算/组装任务负责把该保留量从可用业务输入中扣除。
 - 当前无阻塞。
+
+---
+
+## Fix Round 1
+
+### 修复内容
+
+- `ContextSummaryPrompt` 改为由可信 planner coverage 动态生成 system instructions，逐项携带 authoritative `start/endTurnSequence` 与 `start/endMessageSequence`，并明确来源正文中的冲突 coverage 无效。`sourceDocument` 仍只作为不可信 user data 传递。
+- coverage 注入回归使用含伪造 `999～1000/9999～10000` coverage 和覆盖指令的来源：provider 首次跟随不可信来源返回错误边界时被 validator 拒绝；retry 的 `ContextSummaryRequest` 仍携带可信 `1～2/10～20`，最终只接受精确目标边界。
+- `GeneratedSummary.estimatedTokenCount` 改为保存 `max(providerCount, localEstimate)`；provider 与 local 两个值仍分别执行严格 cap 检查。新增 provider=1800/local=1000/cap=2048 的持久化计数回归，以及 provider 合规但 local=2049 的拒绝回归。
+- Ollama provider/HTTP 失败统一转换为无 cause 的稳定 `IllegalStateException`，不把可能含响应正文的异常链交给上层兜底日志。HTTP stub 使用 marker secret 响应体，断言最终 exception message、cause 与 `toString()` 均不含 marker。
+- 为 `GenerationRequest`、`MessageCoverage`、`GeneratedSummary`、`ContextSummaryDocument`、`Coverage`、`Entry`、`SourceRange` 的每个 record component 补齐中文 `@param` 用途注释。
+
+### RED
+
+先新增回归测试，再运行：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-lsm,agent-web -am `
+  "-Dsurefire.failIfNoSpecifiedTests=false" `
+  "-Dtest=ContextSummaryGeneratorTest,OllamaContextSummaryModelAdapterTest" test
+```
+
+结果：BUILD FAILURE。`ContextSummaryGeneratorTest` 12 tests 中 2 failures、1 fixture strictness error：
+
+- 可信 system prompt 中找不到四个精确 coverage 字段。
+- provider=1800/local=1000 时实际持久化 1000，预期 1800。
+- coverage 在 schema 阶段提前拒绝时共享 estimator stub 未使用，Mockito 报 unnecessary stubbing；改为 lenient fixture 后不影响产品断言。
+
+reactor 在 LSM 失败后跳过 web，adapter marker 测试在下一次 GREEN 中执行。
+
+### GREEN
+
+- 相同聚焦命令修复后：generator 12 tests、adapter 2 tests，全部通过，reactor BUILD SUCCESS。
+- 强化冲突 coverage retry 与 local-only 超 cap 回归后，执行完整命令：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-lsm,agent-web -am spotless:apply test
+```
+
+结果：reactor BUILD SUCCESS；`agent-context-lsm` 53 tests，0 failures，0 errors；`agent-web` 52 tests，0 failures，0 errors，2 skipped；总耗时 01:05 min。
+
+### 自审与 concerns
+
+- authoritative coverage 只进入 system instructions，不从 `sourceDocument` 解析或信任；最终 validator 仍以 planner request 做精确对象相等校验，形成 prompt 与本地强校验双边界。
+- 两类 token estimate 任一超过 cap 都会触发 retry/失败；都合规时保存较大值，不会低估持久化候选。
+- adapter 不记录或传播 provider response body，安全异常无 cause；marker secret 只存在于测试 stub。
+- Spotless 对两个 `agent-persistence` 测试及两个无关 `agent-web` 文件产生机械变化，已全部恢复；最终 diff 只包含本轮六个 Task 7 文件与本报告。
+- 当前无阻塞。
+
+### Fix commit
+
+- Message：`fix: harden structured summary boundaries`
+- Commit：本报告所在 Fix Round 1 提交。

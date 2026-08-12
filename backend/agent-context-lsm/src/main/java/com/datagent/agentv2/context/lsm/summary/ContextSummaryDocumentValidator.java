@@ -103,7 +103,20 @@ public final class ContextSummaryDocumentValidator {
         }
     }
 
-    /** 可持久化的不可变 summary schema v1 文档。 */
+    /**
+     * 可持久化的不可变 summary schema v1 文档。
+     *
+     * @param schemaVersion 固定摘要 schema 版本
+     * @param coverage 文档声明的完整 turn/message 覆盖范围
+     * @param confirmedFacts 已确认且仍可复用的事实
+     * @param userPreferences 用户明确表达的偏好与限制
+     * @param workingHypotheses 仍待验证、不能当作事实的假设
+     * @param decisions 已选择的方案与有效决策
+     * @param rejectedApproaches 已排除的路线及其结论
+     * @param toolFindings 工具调用产生的关键发现或失败状态
+     * @param openQuestions 尚未解决的问题与歧义
+     * @param nextSteps 后续需要执行的具体步骤
+     */
     public record ContextSummaryDocument(
             int schemaVersion,
             Coverage coverage,
@@ -143,14 +156,26 @@ public final class ContextSummaryDocumentValidator {
                     .toList();
         }
 
-        /** 摘要正文声明的完整 turn/message 闭区间。 */
+        /**
+         * 摘要正文声明的完整 turn/message 闭区间。
+         *
+         * @param startTurnSequence 覆盖的首个完整问答序号
+         * @param endTurnSequence 覆盖的最后一个完整问答序号
+         * @param startMessageSequence 覆盖的首个消息序号
+         * @param endMessageSequence 覆盖的最后一个消息序号
+         */
         public record Coverage(
                 long startTurnSequence,
                 long endTurnSequence,
                 long startMessageSequence,
                 long endMessageSequence) {}
 
-        /** 一条可复用状态及其审计来源范围。 */
+        /**
+         * 一条可复用状态及其审计来源范围。
+         *
+         * @param statement 可供后续模型复用的结构化状态陈述
+         * @param sourceRanges 支撑该陈述的一个或多个消息范围
+         */
         public record Entry(String statement, List<SourceRange> sourceRanges) {
             public Entry {
                 statement = Objects.requireNonNull(statement, "statement");
@@ -158,7 +183,12 @@ public final class ContextSummaryDocumentValidator {
             }
         }
 
-        /** 条目来源消息的闭区间。 */
+        /**
+         * 条目来源消息的闭区间。
+         *
+         * @param startMessageSequence 来源范围的首个消息序号
+         * @param endMessageSequence 来源范围的最后一个消息序号
+         */
         public record SourceRange(long startMessageSequence, long endMessageSequence) {}
     }
 }

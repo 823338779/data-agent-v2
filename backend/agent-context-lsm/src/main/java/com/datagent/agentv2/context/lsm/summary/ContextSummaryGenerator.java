@@ -42,7 +42,11 @@ public final class ContextSummaryGenerator {
         int maxTokens = maxSummaryTokens(request.kind(), request.level());
         ContextSummaryRequest modelRequest =
                 new ContextSummaryRequest(
-                        ContextSummaryPrompt.systemPrompt(),
+                        ContextSummaryPrompt.systemPrompt(
+                                request.turnCoverage().startTurnSequence(),
+                                request.turnCoverage().endTurnSequence(),
+                                request.messageCoverage().startMessageSequence(),
+                                request.messageCoverage().endMessageSequence()),
                         request.sourceDocument(),
                         validator.schemaDocument(),
                         maxTokens);
@@ -61,10 +65,11 @@ public final class ContextSummaryGenerator {
                 if (result.estimatedTokenCount() > maxTokens || localEstimate > maxTokens) {
                     continue;
                 }
+                int persistedEstimate = Math.max(result.estimatedTokenCount(), localEstimate);
                 return new GeneratedSummary(
                         document,
                         result.content(),
-                        localEstimate,
+                        persistedEstimate,
                         result.modelProvider(),
                         result.modelName(),
                         segmentKey);
@@ -97,7 +102,16 @@ public final class ContextSummaryGenerator {
                 request.sourceDocument());
     }
 
-    /** 一次候选生成的全部业务来源，不接受 fixed system/tool 内容参数。 */
+    /**
+     * 一次候选生成的全部业务来源，不接受 fixed system/tool 内容参数。
+     *
+     * @param kind 候选摘要段种类
+     * @param level 候选摘要段逻辑层级
+     * @param turnCoverage 可信规划器给出的精确问答覆盖范围
+     * @param messageCoverage 可信规划器给出的精确消息覆盖范围
+     * @param sourceIds 按时间顺序排列的直接来源段标识
+     * @param sourceDocument 作为不可信数据发送给摘要模型的来源正文
+     */
     public record GenerationRequest(
             SegmentKind kind,
             int level,
@@ -121,7 +135,12 @@ public final class ContextSummaryGenerator {
         }
     }
 
-    /** 摘要候选必须精确覆盖的消息闭区间。 */
+    /**
+     * 摘要候选必须精确覆盖的消息闭区间。
+     *
+     * @param startMessageSequence 覆盖的首个消息序号
+     * @param endMessageSequence 覆盖的最后一个消息序号
+     */
     public record MessageCoverage(long startMessageSequence, long endMessageSequence) {
         public MessageCoverage {
             if (startMessageSequence <= 0L || endMessageSequence < startMessageSequence) {
@@ -130,7 +149,16 @@ public final class ContextSummaryGenerator {
         }
     }
 
-    /** 校验完成且可安全持久化的不可变摘要候选。 */
+    /**
+     * 校验完成且可安全持久化的不可变摘要候选。
+     *
+     * @param document 已通过 schema 和覆盖范围校验的结构化文档
+     * @param serializedJson 可持久化的原始 JSON 文本
+     * @param estimatedTokenCount provider 与本地估算中的较大值
+     * @param provider 生成摘要的模型供应商
+     * @param model 生成摘要的模型名称
+     * @param segmentKey 可跨重试复用的确定性 segment key
+     */
     public record GeneratedSummary(
             ContextSummaryDocument document,
             String serializedJson,
