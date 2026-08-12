@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
@@ -35,6 +36,8 @@ public final class LsmContextMetrics {
     private static final String TAG_LEVEL = "level";
     private static final String TAG_RESULT = "result";
     private static final String TAG_TYPE = "type";
+    private static final int MIN_LEVEL = 0;
+    private static final int MAX_LEVEL = 8;
 
     /** 最近一次估算输入 token 数；不按会话或 execution 拆分。 */
     private final AtomicLong inputEstimatedTokens = new AtomicLong();
@@ -47,6 +50,9 @@ public final class LsmContextMetrics {
 
     /** 每个有限层级的当前活动节点数。 */
     private final ConcurrentMap<Integer, AtomicLong> activeSegments = new ConcurrentHashMap<>();
+
+    /** 各会话最近一次成功发布视图的贡献，仅用于计算无会话标签的服务级总量。 */
+    private final Map<String, Map<Integer, Integer>> activeSegmentsBySession = new HashMap<>();
 
     /** 指标注册表，仅用于有限标签组合的按需注册。 */
     private final MeterRegistry registry;
@@ -79,22 +85,44 @@ public final class LsmContextMetrics {
         utilizationRatio.set(nonNegativeFinite(utilization));
     }
 
-    /** 更新 manifest 各层活动节点数，并把本次消失的旧层级归零。 */
-    public void recordActiveSegments(Map<Integer, Integer> countsByLevel) {
+    /** 原子替换一个会话的贡献，并把所有会话聚合为不携带会话标签的服务级 gauge。 */
+    public synchronized void recordActiveSegments(
+            String conversationSessionId, Map<Integer, Integer> countsByLevel) {
+        String sessionId = Objects.requireNonNull(conversationSessionId, "conversationSessionId");
+        if (sessionId.isBlank()) {
+            throw new IllegalArgumentException("conversationSessionId must not be blank");
+        }
         Map<Integer, Integer> counts = Map.copyOf(countsByLevel);
-        Set<Integer> missingLevels = new HashSet<>(activeSegments.keySet());
-        missingLevels.removeAll(counts.keySet());
-        missingLevels.forEach(level -> activeSegments.get(level).set(0L));
         counts.forEach(
                 (level, count) -> {
-                    if (level < 0 || count < 0) {
+                    validateLevel(level);
+                    if (count < 0) {
                         throw new IllegalArgumentException(
-                                "metric level and active count must not be negative");
+                                "active segment count must not be negative");
                     }
-                    activeSegments
-                            .computeIfAbsent(level, this::registerActiveSegmentsGauge)
-                            .set(count);
                 });
+        if (counts.isEmpty()) {
+            activeSegmentsBySession.remove(sessionId);
+        } else {
+            activeSegmentsBySession.put(sessionId, counts);
+        }
+
+        Map<Integer, Long> totals = new HashMap<>();
+        activeSegmentsBySession
+                .values()
+                .forEach(
+                        contribution ->
+                                contribution.forEach(
+                                        (level, count) ->
+                                                totals.merge(level, count.longValue(), Long::sum)));
+        Set<Integer> missingLevels = new HashSet<>(activeSegments.keySet());
+        missingLevels.removeAll(totals.keySet());
+        missingLevels.forEach(level -> activeSegments.get(level).set(0L));
+        totals.forEach(
+                (level, count) ->
+                        activeSegments
+                                .computeIfAbsent(level, this::registerActiveSegmentsGauge)
+                                .set(count));
     }
 
     /** 记录一次有限结果、有限操作类型及总耗时。 */
@@ -110,7 +138,8 @@ public final class LsmContextMetrics {
 
     /** 记录单个摘要层级的输入、输出 token 和压缩比。 */
     public void recordSummary(int level, long inputTokens, long outputTokens) {
-        if (level < 0 || inputTokens < 0L || outputTokens < 0L) {
+        validateLevel(level);
+        if (inputTokens < 0L || outputTokens < 0L) {
             throw new IllegalArgumentException("summary metric values must not be negative");
         }
         String levelTag = Integer.toString(level);
@@ -145,6 +174,12 @@ public final class LsmContextMetrics {
 
     private DistributionSummary summary(String name, String level) {
         return DistributionSummary.builder(name).tag(TAG_LEVEL, level).register(registry);
+    }
+
+    private static void validateLevel(int level) {
+        if (level < MIN_LEVEL || level > MAX_LEVEL) {
+            throw new IllegalArgumentException("metric level must be between 0 and 8");
+        }
     }
 
     private static Duration nonNegative(Duration duration) {

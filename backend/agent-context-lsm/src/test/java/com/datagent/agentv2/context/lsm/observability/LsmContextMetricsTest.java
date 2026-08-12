@@ -1,6 +1,7 @@
 package com.datagent.agentv2.context.lsm.observability;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan.OperationType;
 import io.micrometer.core.instrument.Meter;
@@ -17,6 +18,8 @@ class LsmContextMetricsTest {
     private static final String TAG_TYPE = "type";
     private static final String RESULT_PUBLISHED = "published";
     private static final String TYPE_SEAL_L0 = "seal_l0";
+    private static final String SESSION_A = "session-a";
+    private static final String SESSION_B = "session-b";
 
     @Test
     void recordsApprovedMeasurementsWithLowCardinalityTagsOnly() {
@@ -25,7 +28,7 @@ class LsmContextMetricsTest {
 
         // 一次完整观测覆盖输入压力、活动层级、压缩结果、候选压缩率和冲突计数。
         metrics.recordInput(48_000, 0.75d);
-        metrics.recordActiveSegments(Map.of(0, 4, 2, 1));
+        metrics.recordActiveSegments(SESSION_A, Map.of(0, 4, 2, 1));
         metrics.recordCompaction(
                 LsmContextMetrics.CompactionResult.PUBLISHED,
                 OperationType.SEAL_L0,
@@ -100,9 +103,9 @@ class LsmContextMetricsTest {
     void resetsLevelsThatDisappearFromTheLatestManifest() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         LsmContextMetrics metrics = new LsmContextMetrics(registry);
-        metrics.recordActiveSegments(Map.of(0, 3, 1, 2));
+        metrics.recordActiveSegments(SESSION_A, Map.of(0, 3, 1, 2));
 
-        metrics.recordActiveSegments(Map.of(1, 1));
+        metrics.recordActiveSegments(SESSION_A, Map.of(1, 1));
 
         assertThat(
                         registry.get("agent_context_active_segments")
@@ -116,5 +119,52 @@ class LsmContextMetricsTest {
                                 .gauge()
                                 .value())
                 .isEqualTo(1d);
+    }
+
+    @Test
+    void aggregatesSessionContributionsAndRemovesOnlyTheUpdatedSessionsOldLevels() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        LsmContextMetrics metrics = new LsmContextMetrics(registry);
+        metrics.recordActiveSegments(SESSION_A, Map.of(0, 2, 1, 1));
+        metrics.recordActiveSegments(SESSION_B, Map.of(0, 3, 2, 1));
+
+        metrics.recordActiveSegments(SESSION_A, Map.of(2, 2));
+
+        assertThat(
+                        registry.get("agent_context_active_segments")
+                                .tag(TAG_LEVEL, "0")
+                                .gauge()
+                                .value())
+                .isEqualTo(3d);
+        assertThat(
+                        registry.get("agent_context_active_segments")
+                                .tag(TAG_LEVEL, "1")
+                                .gauge()
+                                .value())
+                .isZero();
+        assertThat(
+                        registry.get("agent_context_active_segments")
+                                .tag(TAG_LEVEL, "2")
+                                .gauge()
+                                .value())
+                .isEqualTo(3d);
+    }
+
+    @Test
+    void rejectsLevelsOutsideTheServiceBoundBeforeRegisteringMeters() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        LsmContextMetrics metrics = new LsmContextMetrics(registry);
+
+        assertThatThrownBy(() -> metrics.recordActiveSegments(SESSION_A, Map.of(-1, 1)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> metrics.recordActiveSegments(SESSION_A, Map.of(9, 1)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> metrics.recordSummary(-1, 100, 50))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> metrics.recordSummary(9, 100, 50))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(registry.find("agent_context_active_segments").meters()).isEmpty();
+        assertThat(registry.find("agent_context_compaction_input_tokens").meters()).isEmpty();
     }
 }

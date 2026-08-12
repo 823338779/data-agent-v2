@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.classic.spi.ThrowableProxyUtil;
 import ch.qos.logback.core.read.ListAppender;
 import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
@@ -51,6 +52,7 @@ class ContextCompactionSecurityIntegrationTest {
     private static final String JOB_ID = "job-safe";
     private static final String TARGET_ID = "target-safe";
     private static final String PROVIDER_ERROR = "provider failed: ";
+    private static final String NESTED_CAUSE_CAPTURE_SENTINEL = "nested-cause-capture-sentinel";
     private static final List<String> MARKERS =
             List.of(MESSAGE_MARKER, THINKING_MARKER, TOOL_MARKER);
 
@@ -79,6 +81,11 @@ class ContextCompactionSecurityIntegrationTest {
                     .isInstanceOf(LsmCompactionException.class)
                     .hasMessage("Context compaction failed")
                     .hasNoCause();
+            root.warn(
+                    "Throwable rendering probe",
+                    new IllegalStateException(
+                            "outer-safe",
+                            new IllegalArgumentException(NESTED_CAUSE_CAPTURE_SENTINEL)));
         } finally {
             root.detachAppender(appender);
             appender.stop();
@@ -89,7 +96,10 @@ class ContextCompactionSecurityIntegrationTest {
                         .map(
                                 event ->
                                         event.getFormattedMessage()
-                                                + String.valueOf(event.getThrowableProxy()))
+                                                + (event.getThrowableProxy() == null
+                                                        ? ""
+                                                        : ThrowableProxyUtil.asString(
+                                                                event.getThrowableProxy())))
                         .reduce("", String::concat);
         String events = String.join("|", executions.safeEvents);
         String meters =
@@ -101,6 +111,7 @@ class ContextCompactionSecurityIntegrationTest {
             assertThat(events).doesNotContain(marker);
             assertThat(meters).doesNotContain(marker);
         }
+        assertThat(logs).contains(NESTED_CAUSE_CAPTURE_SENTINEL);
         assertThat(events)
                 .contains(LsmCompactionException.FAILURE_CODE)
                 .contains("Context compaction failed");

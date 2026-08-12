@@ -1,5 +1,6 @@
 package com.datagent.agentv2.context.lsm.strategy;
 
+import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
 import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmExecutionPolicyRepository;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator;
@@ -8,11 +9,7 @@ import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import com.datagent.agentv2.conversation.context.ConversationContextStrategy;
 import com.datagent.agentv2.conversation.context.PreparedConversationContext;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 /** LSM 插件的唯一策略入口，负责先冻结 execution policy 再执行预算决策。 */
 public class LsmConversationContextStrategy implements ConversationContextStrategy {
@@ -55,29 +52,30 @@ public class LsmConversationContextStrategy implements ConversationContextStrate
         ConversationContextRequest frozenRequest = request.withPolicy(frozen);
         LsmConversationContextAssembler.ContextState state =
                 assembler.loadAndEstimate(frozenRequest);
-        recordInputState(state);
+        recordInputPressure(state);
         if (state.estimatedTokens() <= request.budget().softTriggerTokens()) {
-            return assembler.prepareCurrentView(state);
+            PreparedConversationContext prepared = assembler.prepareCurrentView(state);
+            recordActiveSegments(frozenRequest, state.manifest());
+            return prepared;
         }
         LsmCompactionCoordinator.CompactionOutcome outcome =
                 coordinator.compactIfRequired(assembler.toCompactionRequest(state));
-        return assembler.preparePublishedView(outcome.manifest(), frozenRequest);
+        PreparedConversationContext prepared =
+                assembler.preparePublishedView(outcome.manifest(), frozenRequest);
+        recordActiveSegments(frozenRequest, outcome.manifest());
+        return prepared;
     }
 
-    private void recordInputState(LsmConversationContextAssembler.ContextState state) {
+    private void recordInputPressure(LsmConversationContextAssembler.ContextState state) {
         double utilization =
                 (double) state.estimatedTokens() / state.request().budget().contextWindowTokens();
         metrics.recordInput(state.estimatedTokens(), utilization);
+    }
 
-        // 当前 manifest 的层级分布只聚合活动节点，不统计已经退出发布视图的历史段。
-        Set<String> activeSegmentIds = new HashSet<>(state.manifest().activeSegmentIds());
-        if (state.manifest().activeRootSegmentId() != null) {
-            activeSegmentIds.add(state.manifest().activeRootSegmentId());
-        }
-        Map<Integer, Integer> countsByLevel = new HashMap<>();
-        state.persistedSegments().stream()
-                .filter(segment -> activeSegmentIds.contains(segment.getSummarySegmentId()))
-                .forEach(segment -> countsByLevel.merge(segment.getLevel(), 1, Integer::sum));
-        metrics.recordActiveSegments(countsByLevel);
+    private void recordActiveSegments(
+            ConversationContextRequest request, LsmContextManifest finalManifest) {
+        metrics.recordActiveSegments(
+                request.execution().conversationSessionId(),
+                assembler.activeSegmentCounts(finalManifest));
     }
 }

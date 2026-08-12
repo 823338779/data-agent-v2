@@ -208,6 +208,16 @@ public class LsmConversationContextAssembler {
                 request, dynamic, !active.isEmpty(), manifest.generation(), refreshed.turns());
     }
 
+    /** 读取并校验最终 manifest 的活动段，返回有限层级计数供服务级指标聚合。 */
+    public Map<Integer, Integer> activeSegmentCounts(LsmContextManifest manifest) {
+        List<LsmSummarySegmentEntity> active =
+                segments.findByIdsInOrder(manifest.activeSegmentIds());
+        validateActiveSegments(manifest, active);
+        Map<Integer, Integer> countsByLevel = new HashMap<>();
+        active.forEach(segment -> countsByLevel.merge(segment.getLevel(), 1, Integer::sum));
+        return Map.copyOf(countsByLevel);
+    }
+
     /** 将状态转换为 coordinator 的完整不可变规划与候选来源。 */
     public CompactionRequest toCompactionRequest(ContextState state) {
         LsmPlanningInput planningInput = planningInput(state);

@@ -73,6 +73,7 @@ class LsmConversationContextStrategyTest {
         when(policies.findOrCreateExecutionPolicy(request.execution(), request.policy()))
                 .thenReturn(request.policy());
         when(assembler.loadAndEstimate(request)).thenReturn(state);
+        when(assembler.activeSegmentCounts(manifest)).thenReturn(java.util.Map.of(0, 1, 2, 1));
         when(assembler.prepareCurrentView(state))
                 .thenReturn(
                         new PreparedConversationContext(
@@ -131,12 +132,24 @@ class LsmConversationContextStrategyTest {
         LsmConversationContextAssembler assembler = mock(LsmConversationContextAssembler.class);
         LsmCompactionCoordinator coordinator = mock(LsmCompactionCoordinator.class);
         ConversationContextRequest request = request(policy(5));
+        LsmSummarySegmentEntity oldLevelZero = new LsmSummarySegmentEntity();
+        oldLevelZero.setSummarySegmentId("old-zero");
+        oldLevelZero.setLevel(0);
+        LsmContextManifest previous =
+                new LsmContextManifest(null, List.of("old-zero"), null, null, null, null, 3, 5, 4);
         LsmConversationContextAssembler.ContextState state =
-                LsmConversationContextAssembler.ContextState.forTest(
-                        request, List.of(ContextMessage.user("question")), 76);
+                new LsmConversationContextAssembler.ContextState(
+                        request,
+                        List.of(),
+                        List.of(ContextMessage.user("question")),
+                        previous,
+                        List.of(oldLevelZero),
+                        76);
         CompactionRequest compactionRequest = mock(CompactionRequest.class);
         LsmContextManifest published =
-                new LsmContextManifest(null, List.of(), null, null, null, null, 4, 5, 4);
+                new LsmContextManifest(null, List.of("new-two"), null, null, null, null, 4, 5, 4);
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        LsmContextMetrics metrics = new LsmContextMetrics(registry);
         PreparedConversationContext expected =
                 new PreparedConversationContext(
                         "lsm", List.of(ContextMessage.user("question")), 60, true, 4);
@@ -147,14 +160,22 @@ class LsmConversationContextStrategyTest {
         when(coordinator.compactIfRequired(compactionRequest))
                 .thenReturn(CompactionOutcome.unchanged(published));
         when(assembler.preparePublishedView(published, request)).thenReturn(expected);
+        when(assembler.activeSegmentCounts(published)).thenReturn(java.util.Map.of(2, 1));
 
         PreparedConversationContext prepared =
-                new LsmConversationContextStrategy(policies, assembler, coordinator)
+                new LsmConversationContextStrategy(policies, assembler, coordinator, metrics)
                         .prepare(request);
 
         assertThat(prepared).isSameAs(expected);
         verify(coordinator).compactIfRequired(compactionRequest);
         verify(assembler).preparePublishedView(published, request);
+        var observationOrder = inOrder(assembler);
+        observationOrder.verify(assembler).preparePublishedView(published, request);
+        observationOrder.verify(assembler).activeSegmentCounts(published);
+        assertThat(registry.find("agent_context_active_segments").tag("level", "0").gauge())
+                .isNull();
+        assertThat(registry.get("agent_context_active_segments").tag("level", "2").gauge().value())
+                .isEqualTo(1d);
     }
 
     @Test
