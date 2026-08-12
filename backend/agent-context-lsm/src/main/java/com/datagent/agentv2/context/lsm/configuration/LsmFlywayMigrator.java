@@ -13,6 +13,7 @@ public class LsmFlywayMigrator {
     static final String MIGRATION_LOCATION = "classpath:db/agent-context-lsm/migration";
     static final String HISTORY_TABLE = "flyway_agent_context_lsm_schema_history";
     static final String PRIMARY_FLYWAY_INITIALIZER = "flywayInitializer";
+    static final String INITIAL_BASELINE_VERSION = "0";
 
     @Bean(name = "lsmContextFlyway", initMethod = "migrate")
     @DependsOn(PRIMARY_FLYWAY_INITIALIZER)
@@ -21,6 +22,8 @@ public class LsmFlywayMigrator {
                 .dataSource(dataSource)
                 .locations(MIGRATION_LOCATION)
                 .table(HISTORY_TABLE)
+                .baselineOnMigrate(true)
+                .baselineVersion(INITIAL_BASELINE_VERSION)
                 .load();
     }
 }

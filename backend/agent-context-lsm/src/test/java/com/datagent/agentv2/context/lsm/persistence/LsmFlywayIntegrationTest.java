@@ -19,6 +19,7 @@ class LsmFlywayIntegrationTest {
 
     private static final String PRIMARY_HISTORY = "flyway_schema_history";
     private static final String LSM_HISTORY = "flyway_agent_context_lsm_schema_history";
+    private static final String INITIAL_BASELINE_VERSION = "0";
     private static final List<String> LSM_TABLES =
             List.of(
                     "conversation_context_lsm_execution_policy",
@@ -54,6 +55,14 @@ class LsmFlywayIntegrationTest {
         for (String table : LSM_TABLES) {
             assertThat(undocumentedColumns(table)).as("column comments for %s", table).isEmpty();
         }
+        assertThat(columnComment("conversation_context_lsm_segment", "segment_key"))
+                .contains("确定性", "幂等键");
+        assertThat(columnComment("conversation_context_lsm_manifest", "generation"))
+                .contains("单调递增", "代次");
+        assertThat(columnComment("conversation_context_lsm_job", "policy_snapshot"))
+                .contains("冻结", "策略快照");
+        assertThat(columnComment("conversation_context_lsm_execution_policy", "policy_snapshot"))
+                .contains("首次进入", "不可变策略快照");
     }
 
     @Test
@@ -70,6 +79,8 @@ class LsmFlywayIntegrationTest {
                 .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
                 .locations(location)
                 .table(historyTable)
+                .baselineOnMigrate(true)
+                .baselineVersion(INITIAL_BASELINE_VERSION)
                 .load();
     }
 
@@ -102,6 +113,15 @@ class LsmFlywayIntegrationTest {
                         "select pg_get_constraintdef(oid) from pg_constraint where conrelid = ?::regclass and conname = ?",
                         table,
                         constraint)
+                .getFirst();
+    }
+
+    private static String columnComment(String table, String column) throws SQLException {
+        return query(
+                        "select col_description(?::regclass, a.attnum) from pg_attribute a where a.attrelid = ?::regclass and a.attname = ?",
+                        table,
+                        table,
+                        column)
                 .getFirst();
     }
 

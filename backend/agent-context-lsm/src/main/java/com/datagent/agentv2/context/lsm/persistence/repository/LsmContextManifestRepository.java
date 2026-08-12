@@ -8,7 +8,7 @@ import org.springframework.stereotype.Repository;
 
 /** 封装每个会话唯一 manifest 的读取和版本加代次 CAS 发布。 */
 @Repository
-public final class LsmContextManifestRepository {
+public class LsmContextManifestRepository {
 
     private final LsmContextManifestMapper mapper;
 

@@ -8,7 +8,7 @@ import org.springframework.stereotype.Repository;
 
 /** 封装可恢复 LSM 压缩作业的插件私有查询。 */
 @Repository
-public final class LsmCompactionJobRepository {
+public class LsmCompactionJobRepository {
 
     private final LsmCompactionJobMapper mapper;
 

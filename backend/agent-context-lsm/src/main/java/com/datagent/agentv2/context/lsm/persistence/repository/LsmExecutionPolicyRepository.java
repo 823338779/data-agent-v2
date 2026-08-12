@@ -7,13 +7,12 @@ import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
-import com.datagent.agentv2.platform.id.PrefixedUuidIdGenerator;
 import java.time.LocalDateTime;
 import org.springframework.stereotype.Repository;
 
 /** 封装执行策略快照的一次创建、多次读取语义。 */
 @Repository
-public final class LsmExecutionPolicyRepository {
+public class LsmExecutionPolicyRepository {
 
     private static final String ID_PREFIX_EXECUTION_POLICY = "context_execution_policy";
     private static final String SYSTEM_OPERATOR = "lsm-context";
@@ -30,11 +29,6 @@ public final class LsmExecutionPolicyRepository {
         this.mapper = mapper;
         this.documents = documents;
         this.ids = ids;
-    }
-
-    /** 为轻量 Mapper 测试提供与运行时一致的默认 JSON 和 ID 依赖。 */
-    public LsmExecutionPolicyRepository(LsmExecutionPolicyMapper mapper) {
-        this(mapper, new LsmDocumentCodec(), new PrefixedUuidIdGenerator());
     }
 
     /** 返回已冻结策略；缺失时以唯一键幂等写入本次 execution 的配置快照。 */

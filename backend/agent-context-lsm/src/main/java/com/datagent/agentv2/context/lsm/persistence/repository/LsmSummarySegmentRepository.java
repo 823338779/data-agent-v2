@@ -11,7 +11,7 @@ import org.springframework.stereotype.Repository;
 
 /** 封装不可变摘要段的插件私有 Mapper 访问和租户边界。 */
 @Repository
-public final class LsmSummarySegmentRepository {
+public class LsmSummarySegmentRepository {
 
     private final LsmSummarySegmentMapper mapper;
 
