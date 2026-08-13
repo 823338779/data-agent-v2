@@ -23,6 +23,7 @@ import com.datagent.agentv2.context.hierarchical.summary.SummaryGenerationIdenti
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,7 +64,7 @@ public class HierarchicalCandidateGenerationService {
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public ReadyCompaction generate(PlannedCompaction plannedCompaction) {
         PlannedCompaction planned = Objects.requireNonNull(plannedCompaction, "plannedCompaction");
-        ContextExecutionRef execution = planned.request().execution();
+        ContextExecutionRef execution = planned.execution();
         String jobId = planned.job().jobId();
         if (!jobs.transitionJob(
                 jobId,
@@ -77,12 +78,24 @@ public class HierarchicalCandidateGenerationService {
         try {
             // 即使全部候选已 durable，也先执行 execution ownership/cancellation 门禁。
             assertExecution(execution);
-            GenerationSources generationSources = loadSources(planned);
-            Map<String, HierarchicalSummaryNode> available = loadAndValidateNodes(planned);
-            for (PlannedCandidate candidate : planned.candidates()) {
+            List<PlannedCandidate> requiredCandidates = requiredCandidates(planned);
+            Map<String, HierarchicalSummaryNode> available =
+                    loadAndValidateNodes(planned, requiredCandidates);
+            HierarchicalColdCandidate durableCold = loadAndValidateCold(planned);
+            boolean missingNode =
+                    requiredCandidates.stream()
+                            .anyMatch(candidate -> !available.containsKey(candidate.nodeId()));
+            boolean missingCold = planned.coldCandidate() != null && durableCold == null;
+
+            // 仅在确实需要模型生成时重载短生命周期正文；全 durable 恢复不依赖临时 source。
+            GenerationSources generationSources =
+                    missingNode || missingCold ? loadSources(planned) : null;
+            List<ConversationTurn> turns =
+                    generationSources == null ? List.of() : generationSources.turns();
+            for (PlannedCandidate candidate : requiredCandidates) {
                 if (!available.containsKey(candidate.nodeId())) {
                     HierarchicalSummaryNode generated =
-                            generateNode(planned, candidate, available, generationSources.turns());
+                            generateNode(planned, candidate, available, turns);
                     HierarchicalSummaryNode persisted = nodes.insertOrSelect(generated);
                     validateNode(planned, candidate, persisted);
                     available.put(candidate.nodeId(), persisted);
@@ -91,9 +104,11 @@ public class HierarchicalCandidateGenerationService {
 
             // Cold 正文持久化在 job 私有 JSONB 中；重复恢复时复验完整 envelope 后复用。
             if (planned.coldCandidate() != null) {
-                ensureColdCandidate(planned, available, generationSources.checkpoint());
+                HierarchicalCheckpoint checkpoint =
+                        generationSources == null ? null : generationSources.checkpoint();
+                ensureColdCandidate(planned, available, durableCold, checkpoint);
             }
-            assertComplete(planned, available);
+            assertComplete(planned, requiredCandidates, available);
 
             // READY 是新的 durable visibility fence，转换前再次检查 owner/budget/cancellation。
             assertExecution(execution);
@@ -133,7 +148,7 @@ public class HierarchicalCandidateGenerationService {
                 Objects.requireNonNull(
                         sources.load(
                                 new GenerationSourceKey(
-                                        planned.request().execution(),
+                                        planned.execution(),
                                         job.baseCheckpointVersion(),
                                         job.baseStrategyGeneration())),
                         "generation sources");
@@ -151,19 +166,67 @@ public class HierarchicalCandidateGenerationService {
         return loaded;
     }
 
-    private Map<String, HierarchicalSummaryNode> loadAndValidateNodes(PlannedCompaction planned) {
+    private List<PlannedCandidate> requiredCandidates(PlannedCompaction planned) {
+        Map<String, PlannedCandidate> descriptors = new LinkedHashMap<>();
+        for (PlannedCandidate candidate : planned.candidates()) {
+            PlannedCandidate duplicate = descriptors.put(candidate.nodeId(), candidate);
+            if (duplicate != null
+                    || candidate.sourceKind() == SourceKind.COLD
+                    || !planned.generationSettings().matches(candidate)) {
+                throw new IllegalStateException(INCOMPLETE_CANDIDATES);
+            }
+        }
+        for (int index = 0; index < planned.plan().frontier().nodeIds().size(); index++) {
+            String nodeId = planned.plan().frontier().nodeIds().get(index);
+            SummaryRange range = planned.plan().frontier().ranges().get(index);
+            PlannedCandidate descriptor = descriptors.get(nodeId);
+            if (descriptor == null || !descriptor.range().equals(generationRange(range))) {
+                throw new IllegalStateException(INCOMPLETE_CANDIDATES);
+            }
+        }
+        List<SummaryRange> referencedRanges = new ArrayList<>();
+        referencedRanges.addAll(planned.plan().coldPromotionRanges());
+        referencedRanges.addAll(planned.plan().frontier().missingRanges());
+        referencedRanges.addAll(planned.plan().hotDegradationRanges());
+        for (SummaryRange range : referencedRanges) {
+            GenerationRange expected = generationRange(range);
+            if (descriptors.values().stream()
+                    .noneMatch(candidate -> candidate.range().equals(expected))) {
+                throw new IllegalStateException(INCOMPLETE_CANDIDATES);
+            }
+        }
+        return List.copyOf(descriptors.values());
+    }
+
+    private Map<String, HierarchicalSummaryNode> loadAndValidateNodes(
+            PlannedCompaction planned, List<PlannedCandidate> requiredCandidates) {
         List<String> plannedIds =
-                planned.candidates().stream().map(PlannedCandidate::nodeId).toList();
+                requiredCandidates.stream().map(PlannedCandidate::nodeId).toList();
         Map<String, HierarchicalSummaryNode> available = new LinkedHashMap<>();
         nodes.findByIds(planned.job().conversationSessionId(), plannedIds)
                 .forEach(node -> available.put(node.nodeId(), node));
-        for (PlannedCandidate candidate : planned.candidates()) {
+        for (PlannedCandidate candidate : requiredCandidates) {
             HierarchicalSummaryNode node = available.get(candidate.nodeId());
             if (node != null) {
                 validateNode(planned, candidate, node);
             }
         }
         return available;
+    }
+
+    private HierarchicalColdCandidate loadAndValidateCold(PlannedCompaction planned) {
+        if (planned.coldCandidate() == null) {
+            return null;
+        }
+        if (!planned.generationSettings().matches(planned.coldCandidate())
+                || planned.coldCandidate().sourceKind() != SourceKind.COLD) {
+            throw new IllegalStateException(INCOMPLETE_CANDIDATES);
+        }
+        HierarchicalColdCandidate cold = jobs.findColdCandidate(planned.job().jobId());
+        if (cold != null) {
+            validateCold(planned, cold);
+        }
+        return cold;
     }
 
     private HierarchicalSummaryNode generateNode(
@@ -173,7 +236,7 @@ public class HierarchicalCandidateGenerationService {
             List<ConversationTurn> turns) {
         GenerationRequest request = generationRequest(planned, candidate, available, turns);
         GeneratedSummary generated =
-                generator.generate(request, () -> assertExecution(planned.request().execution()));
+                generator.generate(request, () -> assertExecution(planned.execution()));
         if (!candidate.nodeId().equals(generated.nodeKey())
                 || !identity(planned, candidate).equals(generated.identity())) {
             throw new IllegalStateException(INCOMPLETE_CANDIDATES);
@@ -213,8 +276,8 @@ public class HierarchicalCandidateGenerationService {
                     planned.job().conversationSessionId(),
                     candidate.range(),
                     sourceTurns,
-                    planned.request().policySnapshot(),
-                    planned.request().maxSummaryTokens());
+                    planned.generationSettings().policySnapshot(),
+                    planned.generationSettings().maxSummaryTokens());
         }
         HierarchicalSummaryNode left = requiredNode(candidate.leftChildNodeId(), available);
         HierarchicalSummaryNode right = requiredNode(candidate.rightChildNodeId(), available);
@@ -223,19 +286,19 @@ public class HierarchicalCandidateGenerationService {
                 candidate.range(),
                 left,
                 right,
-                planned.request().policySnapshot(),
-                planned.request().maxSummaryTokens());
+                planned.generationSettings().policySnapshot(),
+                planned.generationSettings().maxSummaryTokens());
     }
 
     private void ensureColdCandidate(
             PlannedCompaction planned,
             Map<String, HierarchicalSummaryNode> available,
+            HierarchicalColdCandidate existing,
             HierarchicalCheckpoint checkpoint) {
-        HierarchicalColdCandidate existing = jobs.findColdCandidate(planned.job().jobId());
         if (existing != null) {
-            validateCold(planned, existing);
             return;
         }
+        Objects.requireNonNull(checkpoint, "generation checkpoint");
         List<HierarchicalSummaryNode> promoted =
                 planned.plan().coldPromotionRanges().stream()
                         .map(range -> nodeFor(planned, generationRange(range), available))
@@ -246,17 +309,16 @@ public class HierarchicalCandidateGenerationService {
                         planned.coldCandidate().range(),
                         oldCold(checkpoint, planned),
                         promoted,
-                        planned.request().policySnapshot(),
-                        planned.request().maxSummaryTokens());
+                        planned.generationSettings().policySnapshot(),
+                        planned.generationSettings().maxSummaryTokens());
         GeneratedSummary generated =
-                generator.generate(request, () -> assertExecution(planned.request().execution()));
+                generator.generate(request, () -> assertExecution(planned.execution()));
         if (!planned.coldCandidate().nodeId().equals(generated.nodeKey())
                 || !identity(planned, planned.coldCandidate()).equals(generated.identity())) {
             throw new IllegalStateException(INCOMPLETE_CANDIDATES);
         }
         HierarchicalColdCandidate candidate = coldCandidate(generated);
-        if (!jobs.storeColdCandidate(
-                planned.job().jobId(), planned.request().execution(), candidate)) {
+        if (!jobs.storeColdCandidate(planned.job().jobId(), planned.execution(), candidate)) {
             throw new IllegalStateException(INCOMPLETE_CANDIDATES);
         }
         HierarchicalColdCandidate persisted = jobs.findColdCandidate(planned.job().jobId());
@@ -292,7 +354,7 @@ public class HierarchicalCandidateGenerationService {
                 node,
                 descriptor.range(),
                 identity(planned, descriptor),
-                planned.request().maxSummaryTokens());
+                planned.generationSettings().maxSummaryTokens());
     }
 
     private void validateCold(PlannedCompaction planned, HierarchicalColdCandidate cold) {
@@ -307,7 +369,8 @@ public class HierarchicalCandidateGenerationService {
                         && descriptor.promptVersion() == cold.summaryPromptVersion()
                         && descriptor.modelProvider().equals(cold.modelProvider())
                         && descriptor.modelName().equals(cold.modelName())
-                        && cold.estimatedTokenCount() <= planned.request().maxSummaryTokens();
+                        && cold.estimatedTokenCount()
+                                <= planned.generationSettings().maxSummaryTokens();
         if (!metadataMatches) {
             throw new IllegalStateException(INCOMPLETE_CANDIDATES);
         }
@@ -315,7 +378,7 @@ public class HierarchicalCandidateGenerationService {
                 cold,
                 descriptor.range(),
                 identity(planned, descriptor),
-                planned.request().maxSummaryTokens());
+                planned.generationSettings().maxSummaryTokens());
     }
 
     private static ColdSummary oldCold(
@@ -362,8 +425,10 @@ public class HierarchicalCandidateGenerationService {
     }
 
     private void assertComplete(
-            PlannedCompaction planned, Map<String, HierarchicalSummaryNode> available) {
-        for (PlannedCandidate candidate : planned.candidates()) {
+            PlannedCompaction planned,
+            List<PlannedCandidate> requiredCandidates,
+            Map<String, HierarchicalSummaryNode> available) {
+        for (PlannedCandidate candidate : requiredCandidates) {
             HierarchicalSummaryNode node = available.get(candidate.nodeId());
             if (node == null) {
                 throw new IllegalStateException(INCOMPLETE_CANDIDATES);
@@ -404,9 +469,11 @@ public class HierarchicalCandidateGenerationService {
             PlannedCompaction planned, PlannedCandidate candidate) {
         return new SummaryGenerationIdentity(
                 planned.job().conversationSessionId(),
-                candidate.schemaVersion(),
-                candidate.promptVersion(),
-                new ContextSummaryModelIdentity(candidate.modelProvider(), candidate.modelName()));
+                planned.generationSettings().schemaVersion(),
+                planned.generationSettings().promptVersion(),
+                new ContextSummaryModelIdentity(
+                        planned.generationSettings().modelProvider(),
+                        planned.generationSettings().modelName()));
     }
 
     private void failJob(PlannedCompaction planned, RuntimeException failure) {
@@ -415,9 +482,9 @@ public class HierarchicalCandidateGenerationService {
                 planned.job().jobId(),
                 HierarchicalCompactionJob.Status.GENERATING,
                 HierarchicalCompactionJob.Status.FAILED,
-                planned.request().execution(),
+                planned.execution(),
                 failureCode);
-        executions.fail(planned.request().execution(), failureCode, SAFE_FAILURE_MESSAGE);
+        executions.fail(planned.execution(), failureCode, SAFE_FAILURE_MESSAGE);
     }
 
     private static ReadyCompaction ready(PlannedCompaction planned, boolean cancelled) {

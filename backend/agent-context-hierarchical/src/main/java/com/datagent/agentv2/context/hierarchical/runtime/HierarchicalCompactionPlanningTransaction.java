@@ -70,6 +70,9 @@ public class HierarchicalCompactionPlanningTransaction {
         SummaryGenerationIdentity identity =
                 generator.generationIdentity(
                         checked.execution().conversationSessionId(), checked.policySnapshot());
+        GenerationSettings transientSettings =
+                GenerationSettings.from(
+                        checked.policySnapshot(), checked.maxSummaryTokens(), identity);
         List<PlannedCandidate> transientCandidates =
                 plannedCandidates(checked, input, transientPlan, identity);
         PlannedCandidate transientCold =
@@ -82,7 +85,7 @@ public class HierarchicalCompactionPlanningTransaction {
                         checkpoint.strategyGeneration(),
                         checked.execution().inputUpToMessageSequence(),
                         checked.policySnapshot().targetInputTokens(input.budget()),
-                        checked.maxSummaryTokens(),
+                        transientSettings,
                         transientPlan,
                         transientCandidates,
                         transientCold);
@@ -122,7 +125,12 @@ public class HierarchicalCompactionPlanningTransaction {
                                     persisted.inputUpToMessageSequence())));
         }
         return new PlannedCompaction(
-                persisted, checked, durable.plan(), durable.candidates(), durable.coldCandidate());
+                persisted,
+                checked.execution(),
+                durable.generationSettings(),
+                durable.plan(),
+                durable.candidates(),
+                durable.coldCandidate());
     }
 
     private List<PlannedCandidate> plannedCandidates(
@@ -133,6 +141,7 @@ public class HierarchicalCompactionPlanningTransaction {
         Map<RangeKey, PlannedCandidate> ordered = new LinkedHashMap<>();
         List<SummaryRange> targets = new ArrayList<>();
         targets.addAll(plan.coldPromotionRanges());
+        targets.addAll(plan.frontier().ranges());
         targets.addAll(plan.frontier().missingRanges());
         targets.addAll(plan.hotDegradationRanges());
         for (SummaryRange target : targets) {
@@ -272,10 +281,52 @@ public class HierarchicalCompactionPlanningTransaction {
         if (document.baseCheckpointVersion() != job.baseCheckpointVersion()
                 || document.baseStrategyGeneration() != job.baseStrategyGeneration()
                 || document.inputUpToMessageSequence() != job.inputUpToMessageSequence()
-                || document.targetInputTokens() < 0
-                || document.maxSummaryTokens() <= 0) {
+                || document.targetInputTokens() < 0) {
             throw new IllegalStateException(INVALID_PLAN_DOCUMENT);
         }
+        validatePlanReferences(document);
+    }
+
+    private static void validatePlanReferences(DurablePlanDocument document) {
+        GenerationSettings settings = document.generationSettings();
+        for (PlannedCandidate candidate : document.candidates()) {
+            if (!settings.matches(candidate) || candidate.sourceKind() == SourceKind.COLD) {
+                throw new IllegalStateException(INVALID_PLAN_DOCUMENT);
+            }
+        }
+        boolean coldRequired = !document.plan().coldPromotionRanges().isEmpty();
+        if (coldRequired != (document.coldCandidate() != null)
+                || document.coldCandidate() != null
+                        && (!settings.matches(document.coldCandidate())
+                                || document.coldCandidate().sourceKind() != SourceKind.COLD)) {
+            throw new IllegalStateException(INVALID_PLAN_DOCUMENT);
+        }
+        for (int index = 0; index < document.plan().frontier().nodeIds().size(); index++) {
+            String nodeId = document.plan().frontier().nodeIds().get(index);
+            SummaryRange range = document.plan().frontier().ranges().get(index);
+            if (!containsDescriptor(document.candidates(), nodeId, range)) {
+                throw new IllegalStateException(INVALID_PLAN_DOCUMENT);
+            }
+        }
+        List<SummaryRange> referencedRanges = new ArrayList<>();
+        referencedRanges.addAll(document.plan().coldPromotionRanges());
+        referencedRanges.addAll(document.plan().frontier().missingRanges());
+        referencedRanges.addAll(document.plan().hotDegradationRanges());
+        for (SummaryRange range : referencedRanges) {
+            if (!containsDescriptor(document.candidates(), null, range)) {
+                throw new IllegalStateException(INVALID_PLAN_DOCUMENT);
+            }
+        }
+    }
+
+    private static boolean containsDescriptor(
+            List<PlannedCandidate> candidates, String nodeId, SummaryRange range) {
+        GenerationRange expectedRange = generationRange(range);
+        return candidates.stream()
+                .anyMatch(
+                        candidate ->
+                                (nodeId == null || nodeId.equals(candidate.nodeId()))
+                                        && expectedRange.equals(candidate.range()));
     }
 
     private static HierarchicalSummaryNode existingNode(
@@ -327,19 +378,64 @@ public class HierarchicalCompactionPlanningTransaction {
         }
     }
 
-    /** 生成阶段 carrier 仅保留 durable job、范围和生成身份元数据。 */
+    /** 生成阶段 carrier 仅保留 durable job、execution fence、冻结设置和范围元数据。 */
     record PlannedCompaction(
             HierarchicalCompactionJob job,
-            CompactionRequest request,
+            ContextExecutionRef execution,
+            GenerationSettings generationSettings,
             HierarchicalCompactionPlan plan,
             List<PlannedCandidate> candidates,
             PlannedCandidate coldCandidate) {
 
         PlannedCompaction {
             Objects.requireNonNull(job, "job");
-            Objects.requireNonNull(request, "request");
+            Objects.requireNonNull(execution, "execution");
+            Objects.requireNonNull(generationSettings, "generationSettings");
             Objects.requireNonNull(plan, "plan");
             candidates = List.copyOf(Objects.requireNonNull(candidates, "candidates"));
+        }
+    }
+
+    /** durable plan 冻结模型调用使用的完整策略、token 上限和生成身份。 */
+    record GenerationSettings(
+            HierarchicalContextPolicySnapshot policySnapshot,
+            int maxSummaryTokens,
+            int schemaVersion,
+            int promptVersion,
+            String modelProvider,
+            String modelName) {
+
+        GenerationSettings {
+            policySnapshot = Objects.requireNonNull(policySnapshot, "policySnapshot");
+            Objects.requireNonNull(modelProvider, "modelProvider");
+            Objects.requireNonNull(modelName, "modelName");
+            if (maxSummaryTokens <= 0
+                    || schemaVersion != policySnapshot.summarySchemaVersion()
+                    || promptVersion != policySnapshot.summaryPromptVersion()
+                    || modelProvider.isBlank()
+                    || modelName.isBlank()) {
+                throw new IllegalArgumentException("Invalid hierarchical generation settings");
+            }
+        }
+
+        private static GenerationSettings from(
+                HierarchicalContextPolicySnapshot policySnapshot,
+                int maxSummaryTokens,
+                SummaryGenerationIdentity identity) {
+            return new GenerationSettings(
+                    policySnapshot,
+                    maxSummaryTokens,
+                    identity.schemaVersion(),
+                    identity.promptVersion(),
+                    identity.modelIdentity().provider(),
+                    identity.modelIdentity().model());
+        }
+
+        boolean matches(PlannedCandidate candidate) {
+            return schemaVersion == candidate.schemaVersion()
+                    && promptVersion == candidate.promptVersion()
+                    && modelProvider.equals(candidate.modelProvider())
+                    && modelName.equals(candidate.modelName());
         }
     }
 
@@ -386,12 +482,13 @@ public class HierarchicalCompactionPlanningTransaction {
             long baseStrategyGeneration,
             long inputUpToMessageSequence,
             int targetInputTokens,
-            int maxSummaryTokens,
+            GenerationSettings generationSettings,
             HierarchicalCompactionPlan plan,
             List<PlannedCandidate> candidates,
             PlannedCandidate coldCandidate) {
 
         private DurablePlanDocument {
+            Objects.requireNonNull(generationSettings, "generationSettings");
             Objects.requireNonNull(plan, "plan");
             candidates = List.copyOf(Objects.requireNonNull(candidates, "candidates"));
         }

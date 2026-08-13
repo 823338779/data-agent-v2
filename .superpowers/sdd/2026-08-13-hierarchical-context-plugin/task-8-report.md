@@ -130,3 +130,41 @@ git diff --check
 ```
 
 结果：`Tests run: 123, Failures: 0, Errors: 0, Skipped: 0`。
+
+## Fix round 2/5
+
+### RED
+
+本轮新增回归首先稳定复现四个缺口：
+
+- 同一自然边界冲突时，已持久化旧 plan 虽被采用，但返回 carrier 仍携带本次调用的新 policy 与 token cap。
+- planner 选中的既有正式 frontier node 没有进入 body-free descriptor 集合。
+- durable plan 缠漏 frontier descriptor 时，generation 会跳过该节点校验并错误进入 READY。
+- 所有 node/Cold 都已 durable 时仍无条件调用临时 source provider，导致恢复依赖已不存在的正文来源。
+
+### 修复
+
+- 在 `plan_document` 内新增 durable `GenerationSettings`，冻结完整 policy snapshot、最大摘要 token、schema、prompt、provider 和 model；`PlannedCompaction` 不再携带当前 `CompactionRequest`，generation 仅使用从 persisted plan 解码的设置。
+- body-free descriptors 现在覆盖 Cold promotion、正式 frontier、frontier missing ranges 与 Hot emergency ranges；计划解码和 generation 两侧都校验所有 plan 引用都有匹配 descriptor。
+- generation 以完整 required descriptor 集合加载、复验 durable nodes，并新增同 ID frontier 的 range、identity、children、body 与 token 回归保护。
+- 先读取并验证 durable node/Cold，再判断是否存在缺失工作；仅当确实需要模型生成时才加载 ephemeral sources。全 durable 路径仍执行 entry/READY 两次 ownership/cancellation guard。
+
+### GREEN
+
+定向验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am `
+  '-Dtest=HierarchicalCompactionPlanningTransactionTest,HierarchicalCandidateGenerationServiceTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+结果：`Tests run: 19, Failures: 0, Errors: 0, Skipped: 0`。
+
+完整模块验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical test
+```
+
+结果：`Tests run: 127, Failures: 0, Errors: 0, Skipped: 0`。

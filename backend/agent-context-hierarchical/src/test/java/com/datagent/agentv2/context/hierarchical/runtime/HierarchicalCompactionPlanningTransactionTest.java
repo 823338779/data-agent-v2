@@ -57,6 +57,8 @@ class HierarchicalCompactionPlanningTransactionTest {
     private static final String SECRET_BODY = "must-not-be-persisted";
     private static final HierarchicalContextPolicySnapshot POLICY =
             new HierarchicalContextPolicySnapshot(1, 0.75d, 0.70d, 10, 100, 1, 1);
+    private static final HierarchicalContextPolicySnapshot CHANGED_POLICY =
+            new HierarchicalContextPolicySnapshot(1, 0.65d, 0.60d, 8, 80, 1, 1);
     private static final ContextBudget BUDGET = new ContextBudget(1_000, 100, 100, 0);
     private static final ContextExecutionRef EXECUTION =
             new ContextExecutionRef("tenant-1", SESSION_ID, "execution-1", "owner-1", 2L, 20L);
@@ -190,6 +192,70 @@ class HierarchicalCompactionPlanningTransactionTest {
     }
 
     @Test
+    void selectedExistingFrontierIsPersistedAsAValidatedBodyFreeDescriptor() {
+        BinarySummaryTreePlanner planner = mock(BinarySummaryTreePlanner.class);
+        HierarchicalSummaryGenerator generator = mock(HierarchicalSummaryGenerator.class);
+        HierarchicalCompactionJobRepository jobs = mock(HierarchicalCompactionJobRepository.class);
+        IdGenerator ids = mock(IdGenerator.class);
+        ContextExecutionControlPort executions = mock(ContextExecutionControlPort.class);
+        SummaryRange parentRange = new SummaryRange(1, 2, 10, 30, 1);
+        com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode parent =
+                new com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode(
+                        "frontier-parent",
+                        SESSION_ID,
+                        1,
+                        2,
+                        10,
+                        30,
+                        "left",
+                        "right",
+                        "{\"schemaVersion\":1}",
+                        20,
+                        1,
+                        1,
+                        "provider",
+                        "model");
+        PlanningInput input = twoTurnPlanningInput(List.of(parent));
+        HierarchicalCompactionPlan selectedFrontier =
+                new HierarchicalCompactionPlan(
+                        2,
+                        Optional.empty(),
+                        TurnRange.EMPTY,
+                        new TurnRange(1, 2),
+                        TurnRange.EMPTY,
+                        List.of(),
+                        List.of(parentRange),
+                        new FrontierSelection(
+                                List.of("frontier-parent"),
+                                List.of(parentRange),
+                                List.of(),
+                                20,
+                                true,
+                                true),
+                        List.of());
+        stubGeneratorIdentity(generator);
+        when(planner.plan(input)).thenReturn(selectedFrontier);
+        when(ids.next("hierarchical_compaction_job")).thenReturn(JOB_ID);
+        when(jobs.insertOrSelect(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        HierarchicalCompactionPlanningTransaction transaction =
+                new HierarchicalCompactionPlanningTransaction(
+                        planner, generator, jobs, ids, executions, JsonMapper.builder().build());
+
+        HierarchicalCompactionPlanningTransaction.PlannedCompaction planned =
+                transaction.plan(compactionRequest(), input);
+
+        assertThat(planned.candidates())
+                .singleElement()
+                .satisfies(
+                        descriptor -> {
+                            assertThat(descriptor.nodeId()).isEqualTo("frontier-parent");
+                            assertThat(descriptor.range()).isEqualTo(generationRange(parentRange));
+                            assertThat(descriptor.leftChildNodeId()).isEqualTo("left");
+                            assertThat(descriptor.rightChildNodeId()).isEqualTo("right");
+                        });
+    }
+
+    @Test
     void boundaryConflictReturnsTheExistingJobWithoutPublishingDuplicateStarted() {
         BinarySummaryTreePlanner planner = mock(BinarySummaryTreePlanner.class);
         HierarchicalSummaryGenerator generator = mock(HierarchicalSummaryGenerator.class);
@@ -254,7 +320,7 @@ class HierarchicalCompactionPlanningTransactionTest {
                         org.mockito.ArgumentMatchers.eq(SESSION_ID),
                         any(GenerationRange.class),
                         any(SourceKind.class),
-                        org.mockito.ArgumentMatchers.eq(POLICY)))
+                        any(HierarchicalContextPolicySnapshot.class)))
                 .thenAnswer(
                         invocation ->
                                 invocation.<SourceKind>getArgument(2).name().toLowerCase()
@@ -271,17 +337,23 @@ class HierarchicalCompactionPlanningTransactionTest {
                             return persisted.get();
                         });
         when(planner.plan(input)).thenReturn(oldPlan, recomputed);
+        when(generator.generationIdentity(SESSION_ID, CHANGED_POLICY)).thenReturn(IDENTITY);
         HierarchicalCompactionPlanningTransaction transaction =
                 new HierarchicalCompactionPlanningTransaction(
                         planner, generator, jobs, ids, executions, JsonMapper.builder().build());
 
         HierarchicalCompactionPlanningTransaction.PlannedCompaction first =
                 transaction.plan(compactionRequest(), input);
+        HierarchicalCompactionPlanningTransaction.CompactionRequest changedRequest =
+                new HierarchicalCompactionPlanningTransaction.CompactionRequest(
+                        EXECUTION, CHANGED_POLICY, 128);
         HierarchicalCompactionPlanningTransaction.PlannedCompaction conflicted =
-                transaction.plan(compactionRequest(), input);
+                transaction.plan(changedRequest, input);
 
         assertThat(first.candidates()).isEqualTo(conflicted.candidates());
         assertThat(conflicted.plan()).isEqualTo(oldPlan);
+        assertThat(conflicted.generationSettings().policySnapshot()).isEqualTo(POLICY);
+        assertThat(conflicted.generationSettings().maxSummaryTokens()).isEqualTo(256);
         assertThat(conflicted.candidates())
                 .extracting(candidate -> candidate.range())
                 .containsExactly(generationRange(LEAF_RANGE));

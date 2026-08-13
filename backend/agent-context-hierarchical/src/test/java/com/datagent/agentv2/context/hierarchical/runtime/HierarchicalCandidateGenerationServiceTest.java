@@ -23,8 +23,7 @@ import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
 import com.datagent.agentv2.context.hierarchical.domain.SummaryRange;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCompactionJobRepository;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalSummaryNodeRepository;
-import com.datagent.agentv2.context.hierarchical.planning.BinarySummaryTreePlanner.PlanningInput;
-import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction.CompactionRequest;
+import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction.GenerationSettings;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction.PlannedCandidate;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction.PlannedCompaction;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator;
@@ -34,7 +33,6 @@ import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGene
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.ParentSource;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.SourceKind;
 import com.datagent.agentv2.context.hierarchical.summary.SummaryGenerationIdentity;
-import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
@@ -229,6 +227,98 @@ class HierarchicalCandidateGenerationServiceTest {
     }
 
     @Test
+    void fullyDurableRecoveryValidatesAndBecomesReadyWithoutEphemeralSources() {
+        when(nodes.findByIds(eq(SESSION_ID), any()))
+                .thenReturn(
+                        List.of(
+                                node("left", LEFT, null, null),
+                                node("right", RIGHT, null, null),
+                                node("parent", PARENT, "left", "right")));
+        coldCandidate.set(
+                new HierarchicalColdCandidate(
+                        "cold",
+                        1,
+                        2,
+                        1,
+                        20,
+                        "{\"schemaVersion\":1}",
+                        20,
+                        1,
+                        1,
+                        "provider",
+                        "model"));
+        when(sources.load(any()))
+                .thenThrow(new AssertionError("fully durable recovery must not load sources"));
+
+        HierarchicalCandidateGenerationService.ReadyCompaction ready = service.generate(planned());
+
+        assertThat(ready.cancelled()).isFalse();
+        verify(sources, never()).load(any());
+        verify(generator, never()).generate(any(), any());
+        verify(executions, times(2)).assertOwnedAndWithinBudget(EXECUTION);
+        verify(executions, times(2)).cancelIfRequested(EXECUTION);
+    }
+
+    @Test
+    void rejectsMalformedExistingFrontierWhenItsDescriptorIsMissingFromDurablePlan() {
+        HierarchicalSummaryNode malformed =
+                new HierarchicalSummaryNode(
+                        "frontier-parent",
+                        "other-session",
+                        1,
+                        2,
+                        1,
+                        20,
+                        "right",
+                        "left",
+                        "{\"schemaVersion\":1}",
+                        20,
+                        1,
+                        1,
+                        "provider",
+                        "model");
+        when(nodes.findByIds(eq(SESSION_ID), any())).thenReturn(List.of(malformed));
+
+        assertThatThrownBy(() -> service.generate(frontierWithoutDescriptor()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Hierarchical candidates are incomplete");
+        verify(jobs, never())
+                .transitionJob(
+                        "job-1",
+                        HierarchicalCompactionJob.Status.GENERATING,
+                        HierarchicalCompactionJob.Status.READY_TO_PUBLISH,
+                        EXECUTION,
+                        null);
+        verify(sources, never()).load(any());
+    }
+
+    @Test
+    void rejectsMalformedSameIdExistingFrontierAgainstItsDurableDescriptor() {
+        HierarchicalSummaryNode malformed =
+                new HierarchicalSummaryNode(
+                        "frontier-parent",
+                        SESSION_ID,
+                        1,
+                        2,
+                        1,
+                        20,
+                        "right",
+                        "left",
+                        "{\"schemaVersion\":1}",
+                        20,
+                        1,
+                        1,
+                        "provider",
+                        "model");
+        when(nodes.findByIds(eq(SESSION_ID), any())).thenReturn(List.of(malformed));
+
+        assertThatThrownBy(() -> service.generate(frontierWithDescriptor()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Hierarchical candidates are incomplete");
+        verify(sources, never()).load(any());
+    }
+
+    @Test
     void rejectsSameIdDurableNodeWithMalformedRangeIdentityOrChildren() {
         HierarchicalSummaryNode malformed =
                 new HierarchicalSummaryNode(
@@ -355,15 +445,6 @@ class HierarchicalCandidateGenerationServiceTest {
     }
 
     private static PlannedCompaction planned() {
-        PlanningInput input =
-                new PlanningInput(
-                        List.of(turn(1, 1, 10), turn(2, 11, 20)),
-                        checkpoint(),
-                        List.of(),
-                        new ContextBudget(1_000, 100, 100, 0),
-                        100,
-                        900);
-        CompactionRequest request = new CompactionRequest(EXECUTION, POLICY, 256);
         HierarchicalCompactionPlan plan =
                 new HierarchicalCompactionPlan(
                         2,
@@ -391,7 +472,8 @@ class HierarchicalCandidateGenerationServiceTest {
                         0);
         return new PlannedCompaction(
                 job,
-                request,
+                EXECUTION,
+                generationSettings(),
                 plan,
                 List.of(
                         plannedCandidate("left", LEFT, SourceKind.LEAF, null, null),
@@ -401,7 +483,6 @@ class HierarchicalCandidateGenerationServiceTest {
     }
 
     private static PlannedCompaction leafOnlyPlanned() {
-        CompactionRequest request = new CompactionRequest(EXECUTION, POLICY, 256);
         HierarchicalCompactionPlan plan =
                 new HierarchicalCompactionPlan(
                         1,
@@ -429,10 +510,61 @@ class HierarchicalCandidateGenerationServiceTest {
                         0);
         return new PlannedCompaction(
                 job,
-                request,
+                EXECUTION,
+                generationSettings(),
                 plan,
                 List.of(plannedCandidate("left", LEFT, SourceKind.LEAF, null, null)),
                 null);
+    }
+
+    private static PlannedCompaction frontierWithoutDescriptor() {
+        return frontierPlanned(List.of());
+    }
+
+    private static PlannedCompaction frontierWithDescriptor() {
+        return frontierPlanned(
+                List.of(
+                        plannedCandidate(
+                                "frontier-parent", PARENT, SourceKind.PARENT, "left", "right")));
+    }
+
+    private static PlannedCompaction frontierPlanned(List<PlannedCandidate> candidates) {
+        HierarchicalCompactionPlan plan =
+                new HierarchicalCompactionPlan(
+                        2,
+                        Optional.empty(),
+                        TurnRange.EMPTY,
+                        new TurnRange(1, 2),
+                        TurnRange.EMPTY,
+                        List.of(),
+                        List.of(PARENT),
+                        new FrontierSelection(
+                                List.of("frontier-parent"),
+                                List.of(PARENT),
+                                List.of(),
+                                20,
+                                true,
+                                true),
+                        List.of());
+        HierarchicalCompactionJob job =
+                new HierarchicalCompactionJob(
+                        "job-1",
+                        SESSION_ID,
+                        EXECUTION.executionId(),
+                        EXECUTION.executionAttempt(),
+                        EXECUTION.ownerInstanceId(),
+                        EXECUTION.inputUpToMessageSequence(),
+                        checkpoint().version(),
+                        checkpoint().strategyGeneration(),
+                        "{\"schemaVersion\":1}",
+                        HierarchicalCompactionJob.Status.PLANNED,
+                        null,
+                        0);
+        return new PlannedCompaction(job, EXECUTION, generationSettings(), plan, candidates, null);
+    }
+
+    private static GenerationSettings generationSettings() {
+        return new GenerationSettings(POLICY, 256, 1, 1, "provider", "model");
     }
 
     private static PlannedCandidate plannedCandidate(
