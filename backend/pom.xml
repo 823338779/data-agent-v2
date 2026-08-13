@@ -20,6 +20,7 @@
         <module>agent-domain</module>
         <module>agent-persistence</module>
         <module>agent-context-lsm</module>
+        <module>agent-context-hierarchical</module>
         <module>agent-auth</module>
         <module>agent-web</module>
         <module>agent-server</module>
