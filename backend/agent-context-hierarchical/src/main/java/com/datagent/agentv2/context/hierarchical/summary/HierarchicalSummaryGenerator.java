@@ -1,6 +1,7 @@
 package com.datagent.agentv2.context.hierarchical.summary;
 
 import com.datagent.agentv2.context.hierarchical.domain.ConversationTurn;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalColdCandidate;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
 import com.datagent.agentv2.context.hierarchical.summary.ContextSummaryDocumentValidator.ValidationResult;
@@ -134,7 +135,8 @@ public final class HierarchicalSummaryGenerator {
         return keyFactory.create(conversationSessionId, sourceKind, range, identity);
     }
 
-    private SummaryGenerationIdentity generationIdentity(
+    /** 规划阶段冻结与实际模型调用完全相同的 schema、prompt 和模型身份。 */
+    public SummaryGenerationIdentity generationIdentity(
             String conversationSessionId, HierarchicalContextPolicySnapshot policySnapshot) {
         HierarchicalContextPolicySnapshot policy =
                 Objects.requireNonNull(policySnapshot, "policySnapshot");
@@ -147,6 +149,51 @@ public final class HierarchicalSummaryGenerator {
                 policy.summarySchemaVersion(),
                 policy.summaryPromptVersion(),
                 Objects.requireNonNull(model.identity(), "summary model identity"));
+    }
+
+    /** READY 前使用可信范围和冻结身份复验 durable binary node 正文与 token。 */
+    public void validateDurableNode(
+            HierarchicalSummaryNode node,
+            GenerationRange range,
+            SummaryGenerationIdentity identity,
+            int maxSummaryTokens) {
+        HierarchicalSummaryNode checked = Objects.requireNonNull(node, "node");
+        GenerationRange checkedRange = Objects.requireNonNull(range, "range");
+        SummaryGenerationIdentity checkedIdentity = Objects.requireNonNull(identity, "identity");
+        validateNodeIdentity(checked, checkedIdentity);
+        ValidationResult validation =
+                validator.validate(checked.summaryDocument(), maxSummaryTokens, checkedRange);
+        if (checked.estimatedTokenCount() < validation.estimatedTokenCount()
+                || checked.estimatedTokenCount() > maxSummaryTokens) {
+            throw new IllegalArgumentException(INVALID_PROVIDER_TOKEN_COUNT);
+        }
+    }
+
+    /** READY 前复验 durable Cold envelope 的完整 coverage、身份、正文和 token。 */
+    public void validateDurableCold(
+            HierarchicalColdCandidate cold,
+            GenerationRange range,
+            SummaryGenerationIdentity identity,
+            int maxSummaryTokens) {
+        HierarchicalColdCandidate checked = Objects.requireNonNull(cold, "cold");
+        GenerationRange checkedRange = Objects.requireNonNull(range, "range");
+        SummaryGenerationIdentity checkedIdentity = Objects.requireNonNull(identity, "identity");
+        if (checked.summarySchemaVersion() != checkedIdentity.schemaVersion()
+                || checked.summaryPromptVersion() != checkedIdentity.promptVersion()
+                || !checked.modelProvider().equals(checkedIdentity.modelIdentity().provider())
+                || !checked.modelName().equals(checkedIdentity.modelIdentity().model())
+                || checked.startTurn() != checkedRange.startTurn()
+                || checked.endTurn() != checkedRange.endTurn()
+                || checked.startMessageSequence() != checkedRange.startMessageSequence()
+                || checked.endMessageSequence() != checkedRange.endMessageSequence()) {
+            throw new IllegalArgumentException(INVALID_SOURCE);
+        }
+        ValidationResult validation =
+                validator.validate(checked.summaryDocument(), maxSummaryTokens, checkedRange);
+        if (checked.estimatedTokenCount() < validation.estimatedTokenCount()
+                || checked.estimatedTokenCount() > maxSummaryTokens) {
+            throw new IllegalArgumentException(INVALID_PROVIDER_TOKEN_COUNT);
+        }
     }
 
     private ContextSummaryRequest toModelRequest(

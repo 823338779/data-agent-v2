@@ -90,3 +90,43 @@ git diff --check
 - 未修改 `HierarchicalConversationContextAssembler`，因此未触碰其 deferred mojibake 注释；按任务说明留待 final wave。
 - 未创建 checkpoint publication transaction、recovery service 或 coordinator。
 - 未更新根仓库子模块指针。
+
+## Fix round 1/5
+
+### RED
+
+针对首轮审查逐项先补回归测试，并分别观察到预期失败：
+
+- Spring CGLIB 无法代理 `final` planning service，无法证明真实 `REQUIRES_NEW` 语义。
+- 唯一边界冲突仍返回本次重算的瞬态 plan，而不是已持久化 job 内的旧 plan。
+- 全部节点复用时不会在生成入口执行 ownership/cancellation guard。
+- 同 node ID 或 Cold ID 的异常 durable metadata 可以越过仅 ID 校验。
+- 生成入口缺少真实 Spring proxy 的 `NOT_SUPPORTED` 事务挂起证明。
+
+### 修复
+
+- 使 planning/generation service 可被 CGLIB 代理，并用真实 Spring transaction proxy 验证：planning 内层事务与外层事务不同，发布失败仅回滚内层，恢复后外层继续提交；generation 会挂起 ambient transaction，方法返回后再恢复。
+- `plan_document` 持久化完整 body-free plan、候选树关系和冻结 schema/prompt/provider/model identity；插入冲突后解码并返回持久化 plan，同时拒绝 session、execution、attempt、owner 或 input boundary 不兼容的 job。
+- 在生成入口及 `READY_TO_PUBLISH` 前各执行一次 ownership/budget/cancellation guard，包括全部候选复用路径。
+- READY 前对每个 durable node 复验 ID、session、level、message range、turn coverage、children、schema/prompt/provider/model、summary body coverage 和 token；对 Cold 复验对应 envelope、正文和 token。
+- `CompactionRequest` 与 `PlannedCompaction` 不再携带 raw turns 或 Cold 正文；新增以 execution/checkpoint fence 为 key 的短生命周期 `HierarchicalGenerationSourceProvider`。
+
+### GREEN
+
+定向验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am `
+  '-Dtest=HierarchicalCompactionPlanningTransactionTest,HierarchicalCandidateGenerationServiceTest,HierarchicalSummaryGeneratorTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+结果：`Tests run: 41, Failures: 0, Errors: 0, Skipped: 0`。
+
+完整模块验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical test
+```
+
+结果：`Tests run: 123, Failures: 0, Errors: 0, Skipped: 0`。

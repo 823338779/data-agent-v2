@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -28,6 +29,7 @@ import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionP
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction.PlannedCompaction;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.GeneratedSummary;
+import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.GenerationRange;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.GenerationRequest;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.ParentSource;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.SourceKind;
@@ -44,7 +46,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 class HierarchicalCandidateGenerationServiceTest {
 
@@ -62,6 +68,7 @@ class HierarchicalCandidateGenerationServiceTest {
     private HierarchicalSummaryNodeRepository nodes;
     private HierarchicalCompactionJobRepository jobs;
     private ContextExecutionControlPort executions;
+    private HierarchicalGenerationSourceProvider sources;
     private HierarchicalCandidateGenerationService service;
     private AtomicReference<HierarchicalColdCandidate> coldCandidate;
 
@@ -71,8 +78,15 @@ class HierarchicalCandidateGenerationServiceTest {
         nodes = mock(HierarchicalSummaryNodeRepository.class);
         jobs = mock(HierarchicalCompactionJobRepository.class);
         executions = mock(ContextExecutionControlPort.class);
+        sources = mock(HierarchicalGenerationSourceProvider.class);
         coldCandidate = new AtomicReference<>();
-        service = new HierarchicalCandidateGenerationService(generator, nodes, jobs, executions);
+        service =
+                new HierarchicalCandidateGenerationService(
+                        generator, nodes, jobs, executions, sources);
+        when(sources.load(any()))
+                .thenReturn(
+                        new HierarchicalGenerationSourceProvider.GenerationSources(
+                                List.of(turn(1, 1, 10), turn(2, 11, 20)), checkpoint()));
         when(nodes.findByIds(eq(SESSION_ID), any())).thenReturn(List.of());
         when(nodes.insertOrSelect(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(jobs.transitionJob(any(), any(), any(), eq(EXECUTION), any())).thenReturn(true);
@@ -113,8 +127,8 @@ class HierarchicalCandidateGenerationServiceTest {
         ParentSource parent = (ParentSource) requests.get(2).source();
         assertThat(parent.left().nodeId()).isEqualTo("left");
         assertThat(parent.right().nodeId()).isEqualTo("right");
-        verify(executions, times(4)).assertOwnedAndWithinBudget(EXECUTION);
-        verify(executions, times(4)).cancelIfRequested(EXECUTION);
+        verify(executions, times(6)).assertOwnedAndWithinBudget(EXECUTION);
+        verify(executions, times(6)).cancelIfRequested(EXECUTION);
         InOrder transitions = inOrder(jobs);
         transitions
                 .verify(jobs)
@@ -164,7 +178,7 @@ class HierarchicalCandidateGenerationServiceTest {
         HierarchicalCandidateGenerationService.ReadyCompaction ready = service.generate(planned());
 
         assertThat(ready.cancelled()).isTrue();
-        verify(generator).generate(any(), any());
+        verify(generator, never()).generate(any(), any());
         verify(jobs)
                 .transitionJob(
                         "job-1",
@@ -191,6 +205,155 @@ class HierarchicalCandidateGenerationServiceTest {
         verify(executions).fail(EXECUTION, FAILURE_CODE, "Hierarchical context compaction failed");
     }
 
+    @Test
+    void allReusedCandidatesStillCheckCancellationAtEntryAndNeverBecomeReady() {
+        when(nodes.findByIds(eq(SESSION_ID), any()))
+                .thenReturn(
+                        List.of(
+                                node("left", LEFT, null, null),
+                                node("right", RIGHT, null, null),
+                                node("parent", PARENT, "left", "right")));
+        when(executions.cancelIfRequested(EXECUTION)).thenReturn(true);
+
+        HierarchicalCandidateGenerationService.ReadyCompaction ready = service.generate(planned());
+
+        assertThat(ready.cancelled()).isTrue();
+        verify(generator, never()).generate(any(), any());
+        verify(jobs, never())
+                .transitionJob(
+                        "job-1",
+                        HierarchicalCompactionJob.Status.GENERATING,
+                        HierarchicalCompactionJob.Status.READY_TO_PUBLISH,
+                        EXECUTION,
+                        null);
+    }
+
+    @Test
+    void rejectsSameIdDurableNodeWithMalformedRangeIdentityOrChildren() {
+        HierarchicalSummaryNode malformed =
+                new HierarchicalSummaryNode(
+                        "parent",
+                        "other-session",
+                        1,
+                        2,
+                        1,
+                        20,
+                        "right",
+                        "left",
+                        "{\"schemaVersion\":1}",
+                        20,
+                        1,
+                        1,
+                        "provider",
+                        "model");
+        when(nodes.findByIds(eq(SESSION_ID), any()))
+                .thenReturn(
+                        List.of(
+                                node("left", LEFT, null, null),
+                                node("right", RIGHT, null, null),
+                                malformed));
+
+        assertThatThrownBy(() -> service.generate(planned()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Hierarchical candidates are incomplete");
+        verify(jobs, never())
+                .transitionJob(
+                        "job-1",
+                        HierarchicalCompactionJob.Status.GENERATING,
+                        HierarchicalCompactionJob.Status.READY_TO_PUBLISH,
+                        EXECUTION,
+                        null);
+    }
+
+    @Test
+    void rejectsSameIdColdCandidateWithMalformedEnvelopeBeforeReady() {
+        coldCandidate.set(
+                new HierarchicalColdCandidate(
+                        "cold",
+                        1,
+                        1,
+                        1,
+                        10,
+                        "{\"schemaVersion\":1}",
+                        20,
+                        1,
+                        1,
+                        "provider",
+                        "model"));
+        when(nodes.findByIds(eq(SESSION_ID), any()))
+                .thenReturn(
+                        List.of(
+                                node("left", LEFT, null, null),
+                                node("right", RIGHT, null, null),
+                                node("parent", PARENT, "left", "right")));
+
+        assertThatThrownBy(() -> service.generate(planned()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Hierarchical candidates are incomplete");
+        verify(jobs, never())
+                .transitionJob(
+                        "job-1",
+                        HierarchicalCompactionJob.Status.GENERATING,
+                        HierarchicalCompactionJob.Status.READY_TO_PUBLISH,
+                        EXECUTION,
+                        null);
+    }
+
+    @Test
+    void springProxySuspendsAmbientTransactionForGenerationAndModelCallback() {
+        HierarchicalCompactionPlanningTransaction.PlannedCompaction noCold = leafOnlyPlanned();
+        when(generator.generate(any(), any()))
+                .thenAnswer(
+                        invocation -> {
+                            assertThat(
+                                            TransactionSynchronizationManager
+                                                    .isActualTransactionActive())
+                                    .isFalse();
+                            assertThat(
+                                            HierarchicalCompactionPlanningTransactionTest
+                                                    .RecordingTransactionManager.currentId())
+                                    .isNull();
+                            invocation.<Runnable>getArgument(1).run();
+                            return generated(invocation.getArgument(0));
+                        });
+
+        try (AnnotationConfigApplicationContext context =
+                new AnnotationConfigApplicationContext()) {
+            context.register(GenerationTransactionTestConfiguration.class);
+            context.registerBean(HierarchicalSummaryGenerator.class, () -> generator);
+            context.registerBean(HierarchicalSummaryNodeRepository.class, () -> nodes);
+            context.registerBean(HierarchicalCompactionJobRepository.class, () -> jobs);
+            context.registerBean(ContextExecutionControlPort.class, () -> executions);
+            context.registerBean(HierarchicalGenerationSourceProvider.class, () -> sources);
+            context.registerBean(
+                    HierarchicalCandidateGenerationService.class,
+                    () ->
+                            new HierarchicalCandidateGenerationService(
+                                    generator, nodes, jobs, executions, sources));
+            context.refresh();
+            HierarchicalCompactionPlanningTransactionTest.RecordingTransactionManager transactions =
+                    context.getBean(
+                            HierarchicalCompactionPlanningTransactionTest
+                                    .RecordingTransactionManager.class);
+            HierarchicalCandidateGenerationService proxy =
+                    context.getBean(HierarchicalCandidateGenerationService.class);
+            AtomicReference<String> outer = new AtomicReference<>();
+
+            new TransactionTemplate(transactions)
+                    .executeWithoutResult(
+                            ignored -> {
+                                outer.set(
+                                        HierarchicalCompactionPlanningTransactionTest
+                                                .RecordingTransactionManager.currentId());
+                                proxy.generate(noCold);
+                                assertThat(
+                                                HierarchicalCompactionPlanningTransactionTest
+                                                        .RecordingTransactionManager.currentId())
+                                        .isEqualTo(outer.get());
+                            });
+        }
+    }
+
     private static PlannedCompaction planned() {
         PlanningInput input =
                 new PlanningInput(
@@ -200,7 +363,7 @@ class HierarchicalCandidateGenerationServiceTest {
                         new ContextBudget(1_000, 100, 100, 0),
                         100,
                         900);
-        CompactionRequest request = new CompactionRequest(EXECUTION, input, POLICY, 256);
+        CompactionRequest request = new CompactionRequest(EXECUTION, POLICY, 256);
         HierarchicalCompactionPlan plan =
                 new HierarchicalCompactionPlan(
                         2,
@@ -231,10 +394,68 @@ class HierarchicalCandidateGenerationServiceTest {
                 request,
                 plan,
                 List.of(
-                        new PlannedCandidate("left", LEFT, SourceKind.LEAF),
-                        new PlannedCandidate("right", RIGHT, SourceKind.LEAF),
-                        new PlannedCandidate("parent", PARENT, SourceKind.PARENT)),
-                new PlannedCandidate("cold", PARENT, SourceKind.COLD));
+                        plannedCandidate("left", LEFT, SourceKind.LEAF, null, null),
+                        plannedCandidate("right", RIGHT, SourceKind.LEAF, null, null),
+                        plannedCandidate("parent", PARENT, SourceKind.PARENT, "left", "right")),
+                plannedCandidate("cold", PARENT, SourceKind.COLD, null, null));
+    }
+
+    private static PlannedCompaction leafOnlyPlanned() {
+        CompactionRequest request = new CompactionRequest(EXECUTION, POLICY, 256);
+        HierarchicalCompactionPlan plan =
+                new HierarchicalCompactionPlan(
+                        1,
+                        Optional.empty(),
+                        TurnRange.EMPTY,
+                        new TurnRange(1, 1),
+                        TurnRange.EMPTY,
+                        List.of(),
+                        List.of(LEFT),
+                        new FrontierSelection(List.of(), List.of(), List.of(LEFT), 0, false, true),
+                        List.of());
+        HierarchicalCompactionJob job =
+                new HierarchicalCompactionJob(
+                        "job-1",
+                        SESSION_ID,
+                        EXECUTION.executionId(),
+                        EXECUTION.executionAttempt(),
+                        EXECUTION.ownerInstanceId(),
+                        EXECUTION.inputUpToMessageSequence(),
+                        checkpoint().version(),
+                        checkpoint().strategyGeneration(),
+                        "{\"schemaVersion\":1}",
+                        HierarchicalCompactionJob.Status.PLANNED,
+                        null,
+                        0);
+        return new PlannedCompaction(
+                job,
+                request,
+                plan,
+                List.of(plannedCandidate("left", LEFT, SourceKind.LEAF, null, null)),
+                null);
+    }
+
+    private static PlannedCandidate plannedCandidate(
+            String nodeId,
+            SummaryRange range,
+            SourceKind sourceKind,
+            String leftChildNodeId,
+            String rightChildNodeId) {
+        return new PlannedCandidate(
+                nodeId,
+                new GenerationRange(
+                        range.startTurn(),
+                        range.endTurn(),
+                        range.startMessageSequence(),
+                        range.endMessageSequence(),
+                        range.level()),
+                sourceKind,
+                leftChildNodeId,
+                rightChildNodeId,
+                POLICY.summarySchemaVersion(),
+                POLICY.summaryPromptVersion(),
+                "provider",
+                "model");
     }
 
     private static GeneratedSummary generated(GenerationRequest request) {
@@ -290,5 +511,16 @@ class HierarchicalCandidateGenerationServiceTest {
                 "{\"schemaVersion\":1,\"nodeIds\":[]}",
                 5,
                 7);
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @EnableTransactionManagement(proxyTargetClass = true)
+    static class GenerationTransactionTestConfiguration {
+
+        @org.springframework.context.annotation.Bean
+        HierarchicalCompactionPlanningTransactionTest.RecordingTransactionManager
+                transactionManager() {
+            return new HierarchicalCompactionPlanningTransactionTest.RecordingTransactionManager();
+        }
     }
 }

@@ -1,10 +1,10 @@
 package com.datagent.agentv2.context.hierarchical.runtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -23,19 +23,30 @@ import com.datagent.agentv2.context.hierarchical.planning.BinarySummaryTreePlann
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.GenerationRange;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.SourceKind;
+import com.datagent.agentv2.context.hierarchical.summary.SummaryGenerationIdentity;
 import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort.ContextLifecycleEvent;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
+import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 class HierarchicalCompactionPlanningTransactionTest {
@@ -49,7 +60,12 @@ class HierarchicalCompactionPlanningTransactionTest {
     private static final ContextBudget BUDGET = new ContextBudget(1_000, 100, 100, 0);
     private static final ContextExecutionRef EXECUTION =
             new ContextExecutionRef("tenant-1", SESSION_ID, "execution-1", "owner-1", 2L, 20L);
+    private static final ContextExecutionRef INCOMPATIBLE_EXECUTION =
+            new ContextExecutionRef("tenant-1", SESSION_ID, "execution-1", "owner-2", 2L, 20L);
     private static final SummaryRange LEAF_RANGE = new SummaryRange(1, 1, 10, 20, 0);
+    private static final SummaryGenerationIdentity IDENTITY =
+            new SummaryGenerationIdentity(
+                    SESSION_ID, 1, 1, new ContextSummaryModelIdentity("provider", "model"));
 
     @Test
     void plansInRequiresNewTransactionAndPublishesStartedAfterPersistingBodyFreeJob() {
@@ -59,6 +75,7 @@ class HierarchicalCompactionPlanningTransactionTest {
         IdGenerator ids = mock(IdGenerator.class);
         ContextExecutionControlPort executions = mock(ContextExecutionControlPort.class);
         PlanningInput input = planningInput();
+        stubGeneratorIdentity(generator);
         HierarchicalCompactionPlan plan = plan();
         when(planner.plan(input)).thenReturn(plan);
         when(ids.next("hierarchical_compaction_job")).thenReturn(JOB_ID);
@@ -70,9 +87,7 @@ class HierarchicalCompactionPlanningTransactionTest {
                         planner, generator, jobs, ids, executions, JsonMapper.builder().build());
 
         HierarchicalCompactionPlanningTransaction.PlannedCompaction planned =
-                transaction.plan(
-                        new HierarchicalCompactionPlanningTransaction.CompactionRequest(
-                                EXECUTION, input, POLICY, 256));
+                transaction.plan(compactionRequest(), input);
 
         ArgumentCaptor<HierarchicalCompactionJob> job =
                 ArgumentCaptor.forClass(HierarchicalCompactionJob.class);
@@ -108,7 +123,8 @@ class HierarchicalCompactionPlanningTransactionTest {
                 HierarchicalCompactionPlanningTransaction.class
                         .getMethod(
                                 "plan",
-                                HierarchicalCompactionPlanningTransaction.CompactionRequest.class)
+                                HierarchicalCompactionPlanningTransaction.CompactionRequest.class,
+                                PlanningInput.class)
                         .getAnnotation(Transactional.class);
 
         assertThat(annotation).isNotNull();
@@ -123,6 +139,7 @@ class HierarchicalCompactionPlanningTransactionTest {
         IdGenerator ids = mock(IdGenerator.class);
         ContextExecutionControlPort executions = mock(ContextExecutionControlPort.class);
         SummaryRange parentRange = new SummaryRange(1, 2, 10, 30, 1);
+        stubGeneratorIdentity(generator);
         com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode parent =
                 new com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode(
                         "existing-parent",
@@ -162,14 +179,13 @@ class HierarchicalCompactionPlanningTransactionTest {
                         planner, generator, jobs, ids, executions, JsonMapper.builder().build());
 
         HierarchicalCompactionPlanningTransaction.PlannedCompaction planned =
-                transaction.plan(
-                        new HierarchicalCompactionPlanningTransaction.CompactionRequest(
-                                EXECUTION, input, POLICY, 256));
+                transaction.plan(compactionRequest(), input);
 
         assertThat(planned.candidates())
                 .extracting(candidate -> candidate.nodeId())
                 .containsExactly("existing-parent");
         verify(generator).nodeKey(SESSION_ID, coldRange, SourceKind.COLD, POLICY);
+        verify(generator).generationIdentity(SESSION_ID, POLICY);
         verifyNoMoreInteractions(generator);
     }
 
@@ -181,36 +197,208 @@ class HierarchicalCompactionPlanningTransactionTest {
         IdGenerator ids = mock(IdGenerator.class);
         ContextExecutionControlPort executions = mock(ContextExecutionControlPort.class);
         PlanningInput input = planningInput();
+        stubGeneratorIdentity(generator);
         when(planner.plan(input)).thenReturn(plan());
-        when(ids.next("hierarchical_compaction_job")).thenReturn("new-job");
+        when(ids.next("hierarchical_compaction_job")).thenReturn("existing-job", "new-job");
         when(generator.nodeKey(SESSION_ID, generationRange(LEAF_RANGE), SourceKind.LEAF, POLICY))
                 .thenReturn(LEAF_NODE_ID);
-        HierarchicalCompactionJob existing =
-                new HierarchicalCompactionJob(
-                        "existing-job",
-                        SESSION_ID,
-                        EXECUTION.executionId(),
-                        EXECUTION.executionAttempt(),
-                        EXECUTION.ownerInstanceId(),
-                        EXECUTION.inputUpToMessageSequence(),
-                        7,
-                        5,
-                        "{\"schemaVersion\":1}",
-                        HierarchicalCompactionJob.Status.PLANNED,
-                        null,
-                        0);
-        when(jobs.insertOrSelect(any())).thenReturn(existing);
+        AtomicReference<HierarchicalCompactionJob> existing = new AtomicReference<>();
+        when(jobs.insertOrSelect(any()))
+                .thenAnswer(
+                        invocation -> {
+                            if (existing.get() == null) {
+                                existing.set(invocation.getArgument(0));
+                            }
+                            return existing.get();
+                        });
         HierarchicalCompactionPlanningTransaction transaction =
                 new HierarchicalCompactionPlanningTransaction(
                         planner, generator, jobs, ids, executions, JsonMapper.builder().build());
 
-        HierarchicalCompactionPlanningTransaction.PlannedCompaction planned =
-                transaction.plan(
-                        new HierarchicalCompactionPlanningTransaction.CompactionRequest(
-                                EXECUTION, input, POLICY, 256));
+        HierarchicalCompactionPlanningTransaction.PlannedCompaction first =
+                transaction.plan(compactionRequest(), input);
+        HierarchicalCompactionPlanningTransaction.PlannedCompaction repeated =
+                transaction.plan(compactionRequest(), input);
 
-        assertThat(planned.job()).isEqualTo(existing);
-        verify(executions, never()).publish(any(), any());
+        assertThat(repeated.job()).isEqualTo(first.job());
+        verify(executions).publish(any(), any());
+    }
+
+    @Test
+    void conflictUsesPersistedDurablePlanInsteadOfTheNewlyRecomputedPlan() {
+        BinarySummaryTreePlanner planner = mock(BinarySummaryTreePlanner.class);
+        HierarchicalSummaryGenerator generator = mock(HierarchicalSummaryGenerator.class);
+        HierarchicalCompactionJobRepository jobs = mock(HierarchicalCompactionJobRepository.class);
+        IdGenerator ids = mock(IdGenerator.class);
+        ContextExecutionControlPort executions = mock(ContextExecutionControlPort.class);
+        PlanningInput input = twoTurnPlanningInput(List.of());
+        stubGeneratorIdentity(generator);
+        HierarchicalCompactionPlan oldPlan = plan();
+        SummaryRange newerRange = new SummaryRange(1, 2, 10, 30, 1);
+        HierarchicalCompactionPlan recomputed =
+                new HierarchicalCompactionPlan(
+                        2,
+                        Optional.empty(),
+                        TurnRange.EMPTY,
+                        new TurnRange(1, 2),
+                        TurnRange.EMPTY,
+                        List.of(),
+                        List.of(newerRange),
+                        new FrontierSelection(
+                                List.of(), List.of(), List.of(newerRange), 0, false, true),
+                        List.of());
+        when(ids.next("hierarchical_compaction_job")).thenReturn("old-job", "new-job");
+        when(generator.nodeKey(SESSION_ID, generationRange(LEAF_RANGE), SourceKind.LEAF, POLICY))
+                .thenReturn(LEAF_NODE_ID);
+        when(generator.nodeKey(
+                        org.mockito.ArgumentMatchers.eq(SESSION_ID),
+                        any(GenerationRange.class),
+                        any(SourceKind.class),
+                        org.mockito.ArgumentMatchers.eq(POLICY)))
+                .thenAnswer(
+                        invocation ->
+                                invocation.<SourceKind>getArgument(2).name().toLowerCase()
+                                        + "-"
+                                        + invocation.<GenerationRange>getArgument(1).level());
+        AtomicReference<HierarchicalCompactionJob> persisted = new AtomicReference<>();
+        when(jobs.insertOrSelect(any()))
+                .thenAnswer(
+                        invocation -> {
+                            HierarchicalCompactionJob candidate = invocation.getArgument(0);
+                            if (persisted.get() == null) {
+                                persisted.set(candidate);
+                            }
+                            return persisted.get();
+                        });
+        when(planner.plan(input)).thenReturn(oldPlan, recomputed);
+        HierarchicalCompactionPlanningTransaction transaction =
+                new HierarchicalCompactionPlanningTransaction(
+                        planner, generator, jobs, ids, executions, JsonMapper.builder().build());
+
+        HierarchicalCompactionPlanningTransaction.PlannedCompaction first =
+                transaction.plan(compactionRequest(), input);
+        HierarchicalCompactionPlanningTransaction.PlannedCompaction conflicted =
+                transaction.plan(compactionRequest(), input);
+
+        assertThat(first.candidates()).isEqualTo(conflicted.candidates());
+        assertThat(conflicted.plan()).isEqualTo(oldPlan);
+        assertThat(conflicted.candidates())
+                .extracting(candidate -> candidate.range())
+                .containsExactly(generationRange(LEAF_RANGE));
+    }
+
+    @Test
+    void conflictRejectsPersistedJobOwnedByADifferentExecutionBoundary() {
+        BinarySummaryTreePlanner planner = mock(BinarySummaryTreePlanner.class);
+        HierarchicalSummaryGenerator generator = mock(HierarchicalSummaryGenerator.class);
+        HierarchicalCompactionJobRepository jobs = mock(HierarchicalCompactionJobRepository.class);
+        IdGenerator ids = mock(IdGenerator.class);
+        ContextExecutionControlPort executions = mock(ContextExecutionControlPort.class);
+        PlanningInput input = planningInput();
+        stubGeneratorIdentity(generator);
+        when(planner.plan(input)).thenReturn(plan());
+        when(ids.next("hierarchical_compaction_job")).thenReturn("existing-job", "conflicting-job");
+        when(generator.nodeKey(SESSION_ID, generationRange(LEAF_RANGE), SourceKind.LEAF, POLICY))
+                .thenReturn(LEAF_NODE_ID);
+        AtomicReference<HierarchicalCompactionJob> persisted = new AtomicReference<>();
+        when(jobs.insertOrSelect(any()))
+                .thenAnswer(
+                        invocation -> {
+                            if (persisted.get() == null) {
+                                persisted.set(invocation.getArgument(0));
+                            }
+                            return persisted.get();
+                        });
+        HierarchicalCompactionPlanningTransaction transaction =
+                new HierarchicalCompactionPlanningTransaction(
+                        planner, generator, jobs, ids, executions, JsonMapper.builder().build());
+        transaction.plan(compactionRequest(), input);
+        HierarchicalCompactionPlanningTransaction.CompactionRequest incompatible =
+                new HierarchicalCompactionPlanningTransaction.CompactionRequest(
+                        INCOMPATIBLE_EXECUTION, POLICY, 256);
+
+        assertThatThrownBy(() -> transaction.plan(incompatible, input))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("incompatible");
+    }
+
+    @Test
+    void springProxySuspendsOuterTransactionAndRollsBackOnlyFailingPlanningTransaction() {
+        BinarySummaryTreePlanner planner = mock(BinarySummaryTreePlanner.class);
+        HierarchicalSummaryGenerator generator = mock(HierarchicalSummaryGenerator.class);
+        HierarchicalCompactionJobRepository jobs = mock(HierarchicalCompactionJobRepository.class);
+        IdGenerator ids = mock(IdGenerator.class);
+        ContextExecutionControlPort executions = mock(ContextExecutionControlPort.class);
+        PlanningInput input = planningInput();
+        stubGeneratorIdentity(generator);
+        when(planner.plan(input)).thenReturn(plan());
+        when(ids.next("hierarchical_compaction_job")).thenReturn(JOB_ID);
+        when(generator.nodeKey(SESSION_ID, generationRange(LEAF_RANGE), SourceKind.LEAF, POLICY))
+                .thenReturn(LEAF_NODE_ID);
+        AtomicReference<String> innerTransaction = new AtomicReference<>();
+        when(jobs.insertOrSelect(any()))
+                .thenAnswer(
+                        invocation -> {
+                            assertThat(
+                                            TransactionSynchronizationManager
+                                                    .isActualTransactionActive())
+                                    .isTrue();
+                            innerTransaction.set(RecordingTransactionManager.currentId());
+                            return invocation.getArgument(0);
+                        });
+        org.mockito.Mockito.doThrow(new IllegalStateException("publish failed"))
+                .when(executions)
+                .publish(any(), any());
+
+        try (AnnotationConfigApplicationContext context =
+                new AnnotationConfigApplicationContext()) {
+            context.register(TransactionTestConfiguration.class);
+            context.registerBean(BinarySummaryTreePlanner.class, () -> planner);
+            context.registerBean(HierarchicalSummaryGenerator.class, () -> generator);
+            context.registerBean(HierarchicalCompactionJobRepository.class, () -> jobs);
+            context.registerBean(IdGenerator.class, () -> ids);
+            context.registerBean(ContextExecutionControlPort.class, () -> executions);
+            context.registerBean(
+                    HierarchicalCompactionPlanningTransaction.class,
+                    () ->
+                            new HierarchicalCompactionPlanningTransaction(
+                                    planner,
+                                    generator,
+                                    jobs,
+                                    ids,
+                                    executions,
+                                    JsonMapper.builder().build()));
+            context.refresh();
+            RecordingTransactionManager transactions =
+                    context.getBean(RecordingTransactionManager.class);
+            HierarchicalCompactionPlanningTransaction proxy =
+                    context.getBean(HierarchicalCompactionPlanningTransaction.class);
+            AtomicReference<String> outerTransaction = new AtomicReference<>();
+
+            new TransactionTemplate(transactions)
+                    .executeWithoutResult(
+                            ignored -> {
+                                outerTransaction.set(RecordingTransactionManager.currentId());
+                                assertThatThrownBy(() -> proxy.plan(compactionRequest(), input))
+                                        .isInstanceOf(IllegalStateException.class)
+                                        .hasMessage("publish failed");
+                                assertThat(RecordingTransactionManager.currentId())
+                                        .isEqualTo(outerTransaction.get());
+                            });
+
+            assertThat(innerTransaction.get()).isNotEqualTo(outerTransaction.get());
+            assertThat(transactions.committedIds()).containsExactly(outerTransaction.get());
+            assertThat(transactions.rolledBackIds()).containsExactly(innerTransaction.get());
+        }
+    }
+
+    private static HierarchicalCompactionPlanningTransaction.CompactionRequest compactionRequest() {
+        return new HierarchicalCompactionPlanningTransaction.CompactionRequest(
+                EXECUTION, POLICY, 256);
+    }
+
+    private static void stubGeneratorIdentity(HierarchicalSummaryGenerator generator) {
+        when(generator.generationIdentity(SESSION_ID, POLICY)).thenReturn(IDENTITY);
     }
 
     private static PlanningInput planningInput() {
@@ -281,4 +469,79 @@ class HierarchicalCompactionPlanningTransactionTest {
                 range.endMessageSequence(),
                 range.level());
     }
+
+    @Configuration(proxyBeanMethods = false)
+    @EnableTransactionManagement(proxyTargetClass = true)
+    static class TransactionTestConfiguration {
+
+        @org.springframework.context.annotation.Bean
+        RecordingTransactionManager transactionManager() {
+            return new RecordingTransactionManager();
+        }
+    }
+
+    static final class RecordingTransactionManager extends AbstractPlatformTransactionManager {
+
+        private static final ThreadLocal<String> CURRENT = new ThreadLocal<>();
+        private final java.util.concurrent.atomic.AtomicInteger sequence =
+                new java.util.concurrent.atomic.AtomicInteger();
+        private final List<String> committed = new java.util.ArrayList<>();
+        private final List<String> rolledBack = new java.util.ArrayList<>();
+
+        static String currentId() {
+            return CURRENT.get();
+        }
+
+        List<String> committedIds() {
+            return List.copyOf(committed);
+        }
+
+        List<String> rolledBackIds() {
+            return List.copyOf(rolledBack);
+        }
+
+        @Override
+        protected Object doGetTransaction() {
+            return new RecordingTransaction(CURRENT.get());
+        }
+
+        @Override
+        protected boolean isExistingTransaction(Object transaction) {
+            return ((RecordingTransaction) transaction).existingId() != null;
+        }
+
+        @Override
+        protected void doBegin(Object transaction, TransactionDefinition definition) {
+            CURRENT.set("tx-" + sequence.incrementAndGet());
+        }
+
+        @Override
+        protected Object doSuspend(Object transaction) {
+            String suspended = CURRENT.get();
+            CURRENT.remove();
+            return suspended;
+        }
+
+        @Override
+        protected void doResume(Object transaction, Object suspendedResources) {
+            CURRENT.set((String) suspendedResources);
+        }
+
+        @Override
+        protected void doCommit(DefaultTransactionStatus status) {
+            committed.add(CURRENT.get());
+        }
+
+        @Override
+        protected void doRollback(DefaultTransactionStatus status) {
+            rolledBack.add(CURRENT.get());
+        }
+
+        @Override
+        protected void doCleanupAfterCompletion(Object transaction) {
+            CURRENT.remove();
+        }
+    }
+
+    private record RecordingTransaction(String existingId) {}
 }

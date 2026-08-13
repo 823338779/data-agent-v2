@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.datagent.agentv2.context.hierarchical.domain.ConversationTurn;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalColdCandidate;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
 import com.datagent.agentv2.context.hierarchical.planning.ConversationTokenEstimator;
@@ -484,6 +485,68 @@ class HierarchicalSummaryGeneratorTest {
         verify(model, times(2)).summarize(any());
     }
 
+    @Test
+    void validatesDurableNodeBodyCoverageAndConservativeTokenCount() {
+        GenerationRange range = new GenerationRange(1, 2, 10, 20, 1);
+        SummaryGenerationIdentity identity = generator.generationIdentity(SESSION_ID, POLICY);
+        HierarchicalSummaryNode valid = node("parent", 1, 10, 20, summary("parent", 1, 2, 10, 20));
+        HierarchicalSummaryNode wrongCoverage =
+                node("wrong-coverage", 1, 10, 20, summary("parent", 1, 1, 10, 20));
+        HierarchicalSummaryNode understatedTokens =
+                new HierarchicalSummaryNode(
+                        "understated",
+                        SESSION_ID,
+                        1,
+                        2,
+                        10,
+                        20,
+                        "left",
+                        "right",
+                        summary("parent", 1, 2, 10, 20),
+                        SOURCE_SUMMARY_TOKENS - 1,
+                        1,
+                        1,
+                        PROVIDER,
+                        MODEL);
+
+        generator.validateDurableNode(valid, range, identity, MAX_SUMMARY_TOKENS);
+        assertThatThrownBy(
+                        () ->
+                                generator.validateDurableNode(
+                                        wrongCoverage, range, identity, MAX_SUMMARY_TOKENS))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(
+                        () ->
+                                generator.validateDurableNode(
+                                        understatedTokens, range, identity, MAX_SUMMARY_TOKENS))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void validatesDurableColdBodyCoverageAndFrozenIdentity() {
+        GenerationRange range = new GenerationRange(1, 2, 10, 20, 0);
+        SummaryGenerationIdentity identity = generator.generationIdentity(SESSION_ID, POLICY);
+        HierarchicalColdCandidate valid =
+                coldCandidate("cold", range, summary("cold", 1, 2, 10, 20), PROVIDER);
+        HierarchicalColdCandidate wrongCoverage =
+                coldCandidate("wrong-coverage", range, summary("cold", 1, 1, 10, 20), PROVIDER);
+        HierarchicalColdCandidate wrongProvider =
+                coldCandidate(
+                        "wrong-provider", range, summary("cold", 1, 2, 10, 20), "other-provider");
+
+        generator.validateDurableCold(valid, range, identity, MAX_SUMMARY_TOKENS);
+        assertThatThrownBy(
+                        () ->
+                                generator.validateDurableCold(
+                                        wrongCoverage, range, identity, MAX_SUMMARY_TOKENS))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(
+                        () ->
+                                generator.validateDurableCold(
+                                        wrongProvider, range, identity, MAX_SUMMARY_TOKENS))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     private void assertRejectedBeforeModel(GenerationRequest request) {
         assertThatThrownBy(() -> generator.generate(request))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -604,6 +667,22 @@ class HierarchicalSummaryGeneratorTest {
 
     private static ContextSummaryResult result(String content, int tokenCount) {
         return new ContextSummaryResult(content, tokenCount, PROVIDER, MODEL);
+    }
+
+    private static HierarchicalColdCandidate coldCandidate(
+            String candidateId, GenerationRange range, String document, String provider) {
+        return new HierarchicalColdCandidate(
+                candidateId,
+                range.startTurn(),
+                range.endTurn(),
+                range.startMessageSequence(),
+                range.endMessageSequence(),
+                document,
+                SOURCE_SUMMARY_TOKENS,
+                1,
+                1,
+                provider,
+                MODEL);
     }
 
     private static String invalidSourceDocument(String mutation, String valid) {
