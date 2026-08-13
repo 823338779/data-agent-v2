@@ -13,6 +13,7 @@ import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCheckpoint;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextState;
 import com.datagent.agentv2.context.hierarchical.observability.HierarchicalContextMetrics;
+import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCheckpointRepository;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalExecutionPolicyRepository;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionCoordinator;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionCoordinator.CompactionOutcome;
@@ -21,8 +22,11 @@ import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalConversatio
 import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
+import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
+import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import com.datagent.agentv2.conversation.context.PreparedConversationContext;
+import com.datagent.agentv2.platform.id.IdGenerator;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,25 +41,41 @@ class HierarchicalConversationContextStrategyTest {
             new HierarchicalContextPolicySnapshot(1, 0.80d, 0.72d, 8, 80, 1, 1);
 
     private HierarchicalExecutionPolicyRepository policies;
+    private HierarchicalCheckpointRepository checkpoints;
     private HierarchicalConversationContextAssembler assembler;
     private HierarchicalCompactionCoordinator coordinator;
     private HierarchicalContextMetrics metrics;
+    private ContextSummaryModelPort summaryModel;
+    private IdGenerator ids;
     private ConversationContextRequest request;
     private HierarchicalConversationContextStrategy strategy;
 
     @BeforeEach
     void setUp() {
         policies = mock(HierarchicalExecutionPolicyRepository.class);
+        checkpoints = mock(HierarchicalCheckpointRepository.class);
         assembler = mock(HierarchicalConversationContextAssembler.class);
         coordinator = mock(HierarchicalCompactionCoordinator.class);
         metrics = mock(HierarchicalContextMetrics.class);
+        summaryModel = mock(ContextSummaryModelPort.class);
+        ids = mock(IdGenerator.class);
         request = request();
         HierarchicalContextProperties properties = properties();
         strategy =
                 new HierarchicalConversationContextStrategy(
-                        policies, assembler, coordinator, metrics, properties);
+                        policies,
+                        checkpoints,
+                        assembler,
+                        coordinator,
+                        metrics,
+                        summaryModel,
+                        ids,
+                        properties);
         when(policies.findOrCreate(request.execution(), CONFIGURED_POLICY))
                 .thenReturn(FROZEN_POLICY);
+        when(summaryModel.identity())
+                .thenReturn(new ContextSummaryModelIdentity("provider", "model"));
+        when(ids.next("hierarchical_checkpoint")).thenReturn("checkpoint");
     }
 
     @Test
@@ -70,8 +90,24 @@ class HierarchicalConversationContextStrategyTest {
         PreparedConversationContext prepared = strategy.prepare(request);
 
         // Policy persistence is the first observable side effect and fixes every later decision.
-        InOrder order = inOrder(policies, assembler);
+        InOrder order = inOrder(policies, checkpoints, assembler);
         order.verify(policies).findOrCreate(request.execution(), CONFIGURED_POLICY);
+        order.verify(checkpoints)
+                .create(
+                        new HierarchicalCheckpoint(
+                                "checkpoint",
+                                "session",
+                                "{\"schemaVersion\":1}",
+                                0L,
+                                0L,
+                                0,
+                                1,
+                                1,
+                                "provider",
+                                "model",
+                                "{\"schemaVersion\":1,\"nodes\":[]}",
+                                0L,
+                                0L));
         order.verify(assembler).loadAndEstimate(request, FROZEN_POLICY);
         verify(coordinator, never()).compactIfRequired(state);
         assertThat(prepared).isSameAs(expected);

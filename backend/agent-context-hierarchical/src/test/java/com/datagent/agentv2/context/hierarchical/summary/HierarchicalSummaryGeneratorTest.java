@@ -18,6 +18,7 @@ import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGene
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.GeneratedSummary;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.GenerationRange;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.GenerationRequest;
+import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.SourceKind;
 import com.datagent.agentv2.conversation.context.ContextMessage;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
@@ -41,6 +42,8 @@ import tools.jackson.databind.json.JsonMapper;
 @ExtendWith(MockitoExtension.class)
 class HierarchicalSummaryGeneratorTest {
 
+    private static final String TENANT_A = "tenant-a";
+    private static final String TENANT_B = "tenant-b";
     private static final String SESSION_ID = "session-1";
     private static final String PROVIDER = "test-provider";
     private static final String MODEL = "summary-model";
@@ -187,6 +190,7 @@ class HierarchicalSummaryGeneratorTest {
 
         assertRejectedBeforeModel(
                 GenerationRequest.parent(
+                        TENANT_A,
                         SESSION_ID,
                         new GenerationRange(1, 2, 10, 20, 1),
                         invalidLeft,
@@ -420,7 +424,11 @@ class HierarchicalSummaryGeneratorTest {
         GenerationRequest baselineRequest = leafRequest();
         SummaryGenerationIdentity baseline =
                 new SummaryGenerationIdentity(
-                        SESSION_ID, 1, 1, new ContextSummaryModelIdentity(PROVIDER, MODEL));
+                        TENANT_A,
+                        SESSION_ID,
+                        1,
+                        1,
+                        new ContextSummaryModelIdentity(PROVIDER, MODEL));
         String baselineKey = factory.create(baselineRequest, baseline);
 
         assertThat(factory.create(baselineRequest, baseline)).isEqualTo(baselineKey);
@@ -433,14 +441,23 @@ class HierarchicalSummaryGeneratorTest {
                                 factory.create(
                                         baselineRequest,
                                         new SummaryGenerationIdentity(
-                                                SESSION_ID, 2, 1, baseline.modelIdentity())),
+                                                TENANT_A,
+                                                SESSION_ID,
+                                                2,
+                                                1,
+                                                baseline.modelIdentity())),
                                 factory.create(
                                         baselineRequest,
                                         new SummaryGenerationIdentity(
-                                                SESSION_ID, 1, 2, baseline.modelIdentity())),
+                                                TENANT_A,
+                                                SESSION_ID,
+                                                1,
+                                                2,
+                                                baseline.modelIdentity())),
                                 factory.create(
                                         baselineRequest,
                                         new SummaryGenerationIdentity(
+                                                TENANT_A,
                                                 SESSION_ID,
                                                 1,
                                                 1,
@@ -451,17 +468,58 @@ class HierarchicalSummaryGeneratorTest {
     }
 
     @Test
+    void nodeKeyChangesAcrossTenantsForOtherwiseIdenticalGenerationIdentity() {
+        HierarchicalNodeKeyFactory factory = new HierarchicalNodeKeyFactory();
+        GenerationRange range = new GenerationRange(1, 2, 10, 20, 1);
+        ContextSummaryModelIdentity modelIdentity =
+                new ContextSummaryModelIdentity(PROVIDER, MODEL);
+        SummaryGenerationIdentity tenantA =
+                new SummaryGenerationIdentity(TENANT_A, SESSION_ID, 1, 1, modelIdentity);
+        SummaryGenerationIdentity tenantB =
+                new SummaryGenerationIdentity(TENANT_B, SESSION_ID, 1, 1, modelIdentity);
+
+        assertThat(factory.create(SESSION_ID, SourceKind.PARENT, range, tenantA))
+                .isNotEqualTo(factory.create(SESSION_ID, SourceKind.PARENT, range, tenantB));
+    }
+
+    @Test
+    void nodeKeyRejectsRequestAndIdentityFromDifferentTenants() {
+        HierarchicalNodeKeyFactory factory = new HierarchicalNodeKeyFactory();
+        GenerationRequest tenantARequest = leafRequest();
+        GenerationRequest tenantBRequest =
+                new GenerationRequest(
+                        TENANT_B,
+                        tenantARequest.conversationSessionId(),
+                        tenantARequest.range(),
+                        tenantARequest.source(),
+                        tenantARequest.policySnapshot(),
+                        tenantARequest.maxSummaryTokens());
+        SummaryGenerationIdentity tenantAIdentity =
+                new SummaryGenerationIdentity(
+                        TENANT_A,
+                        SESSION_ID,
+                        1,
+                        1,
+                        new ContextSummaryModelIdentity(PROVIDER, MODEL));
+
+        assertThatThrownBy(() -> factory.create(tenantBRequest, tenantAIdentity))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void lengthPrefixesPreventDelimiterCollisionsAcrossIdentityFields() {
         String separator = "\u001f";
         HierarchicalNodeKeyFactory factory = new HierarchicalNodeKeyFactory();
         SummaryGenerationIdentity first =
                 new SummaryGenerationIdentity(
+                        TENANT_A,
                         SESSION_ID,
                         1,
                         1,
                         new ContextSummaryModelIdentity("provider" + separator + "model", "tail"));
         SummaryGenerationIdentity second =
                 new SummaryGenerationIdentity(
+                        TENANT_A,
                         SESSION_ID,
                         1,
                         1,
@@ -488,7 +546,8 @@ class HierarchicalSummaryGeneratorTest {
     @Test
     void validatesDurableNodeBodyCoverageAndConservativeTokenCount() {
         GenerationRange range = new GenerationRange(1, 2, 10, 20, 1);
-        SummaryGenerationIdentity identity = generator.generationIdentity(SESSION_ID, POLICY);
+        SummaryGenerationIdentity identity =
+                generator.generationIdentity(TENANT_A, SESSION_ID, POLICY);
         HierarchicalSummaryNode valid = node("parent", 1, 10, 20, summary("parent", 1, 2, 10, 20));
         HierarchicalSummaryNode wrongCoverage =
                 node("wrong-coverage", 1, 10, 20, summary("parent", 1, 1, 10, 20));
@@ -525,7 +584,8 @@ class HierarchicalSummaryGeneratorTest {
     @Test
     void validatesDurableColdBodyCoverageAndFrozenIdentity() {
         GenerationRange range = new GenerationRange(1, 2, 10, 20, 0);
-        SummaryGenerationIdentity identity = generator.generationIdentity(SESSION_ID, POLICY);
+        SummaryGenerationIdentity identity =
+                generator.generationIdentity(TENANT_A, SESSION_ID, POLICY);
         HierarchicalColdCandidate valid =
                 coldCandidate("cold", range, summary("cold", 1, 2, 10, 20), PROVIDER);
         HierarchicalColdCandidate wrongCoverage =
@@ -573,6 +633,7 @@ class HierarchicalSummaryGeneratorTest {
                                 ContextMessage.tool("timeout", "call-1", "metric_query"),
                                 ContextMessage.assistant("final", null)));
         return GenerationRequest.leaf(
+                TENANT_A,
                 SESSION_ID,
                 new GenerationRange(1, 2, 10, 20, 1),
                 List.of(first, second),
@@ -589,7 +650,8 @@ class HierarchicalSummaryGeneratorTest {
 
     private static GenerationRequest parentRequest(
             HierarchicalSummaryNode left, HierarchicalSummaryNode right, GenerationRange range) {
-        return GenerationRequest.parent(SESSION_ID, range, left, right, POLICY, MAX_SUMMARY_TOKENS);
+        return GenerationRequest.parent(
+                TENANT_A, SESSION_ID, range, left, right, POLICY, MAX_SUMMARY_TOKENS);
     }
 
     private static GenerationRequest validColdRequest() {
@@ -605,7 +667,8 @@ class HierarchicalSummaryGeneratorTest {
 
     private static GenerationRequest coldRequest(
             ColdSummary old, List<HierarchicalSummaryNode> promoted, GenerationRange range) {
-        return GenerationRequest.cold(SESSION_ID, range, old, promoted, POLICY, MAX_SUMMARY_TOKENS);
+        return GenerationRequest.cold(
+                TENANT_A, SESSION_ID, range, old, promoted, POLICY, MAX_SUMMARY_TOKENS);
     }
 
     private static ColdSummary coldSummary(GenerationRange range, String document) {

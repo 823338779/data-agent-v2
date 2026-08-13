@@ -16,16 +16,20 @@ public final class HierarchicalNodeKeyFactory {
     private static final String HASH_ALGORITHM = "SHA-256";
     private static final String HASH_UNAVAILABLE = "SHA-256 is unavailable";
     private static final String IDENTITY_MISMATCH =
-            "Generation request and identity belong to different sessions";
+            "Generation request and identity belong to different tenant or session scopes";
 
-    /** 相同会话、来源种类、范围、协议与模型身份总是生成同一 key。 */
+    /** 相同租户、会话、来源种类、范围、协议与模型身份总是生成同一 key。 */
     public String create(GenerationRequest request, SummaryGenerationIdentity identity) {
         GenerationRequest checkedRequest = Objects.requireNonNull(request, "request");
+        SummaryGenerationIdentity checkedIdentity = Objects.requireNonNull(identity, "identity");
+        if (!checkedRequest.tenantId().equals(checkedIdentity.tenantId())) {
+            throw new IllegalArgumentException(IDENTITY_MISMATCH);
+        }
         return create(
                 checkedRequest.conversationSessionId(),
                 checkedRequest.source().kind(),
                 checkedRequest.range(),
-                identity);
+                checkedIdentity);
     }
 
     /** 在不构造或复制摘要正文的规划阶段，根据纯元数据生成相同的确定性 key。 */
@@ -46,6 +50,7 @@ public final class HierarchicalNodeKeyFactory {
         // 节点 key 与数据库不可变 identity 对齐；固定宽度数字和长度前缀文本不存在分隔符歧义。
         try {
             MessageDigest digest = MessageDigest.getInstance(HASH_ALGORITHM);
+            updateText(digest, checkedIdentity.tenantId());
             updateText(digest, checkedIdentity.conversationSessionId());
             updateText(digest, checkedSourceKind.name());
             updateInt(digest, checkedRange.level());

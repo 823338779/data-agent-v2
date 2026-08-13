@@ -113,6 +113,7 @@ public final class HierarchicalSummaryGenerator {
             throw new IllegalArgumentException(INVALID_POLICY_VERSION);
         }
         return new SummaryGenerationIdentity(
+                checked.tenantId(),
                 checked.conversationSessionId(),
                 policy.summarySchemaVersion(),
                 policy.summaryPromptVersion(),
@@ -126,18 +127,21 @@ public final class HierarchicalSummaryGenerator {
 
     /** 规划阶段只使用范围、来源类别和冻结身份计算 key，不构造正文来源。 */
     public String nodeKey(
+            String tenantId,
             String conversationSessionId,
             GenerationRange range,
             SourceKind sourceKind,
             HierarchicalContextPolicySnapshot policySnapshot) {
         SummaryGenerationIdentity identity =
-                generationIdentity(conversationSessionId, policySnapshot);
+                generationIdentity(tenantId, conversationSessionId, policySnapshot);
         return keyFactory.create(conversationSessionId, sourceKind, range, identity);
     }
 
     /** 规划阶段冻结与实际模型调用完全相同的 schema、prompt 和模型身份。 */
     public SummaryGenerationIdentity generationIdentity(
-            String conversationSessionId, HierarchicalContextPolicySnapshot policySnapshot) {
+            String tenantId,
+            String conversationSessionId,
+            HierarchicalContextPolicySnapshot policySnapshot) {
         HierarchicalContextPolicySnapshot policy =
                 Objects.requireNonNull(policySnapshot, "policySnapshot");
         if (policy.summarySchemaVersion() != ContextSummaryDocumentValidator.SCHEMA_VERSION
@@ -145,6 +149,7 @@ public final class HierarchicalSummaryGenerator {
             throw new IllegalArgumentException(INVALID_POLICY_VERSION);
         }
         return new SummaryGenerationIdentity(
+                Objects.requireNonNull(tenantId, "tenantId"),
                 Objects.requireNonNull(conversationSessionId, "conversationSessionId"),
                 policy.summarySchemaVersion(),
                 policy.summaryPromptVersion(),
@@ -506,6 +511,8 @@ public final class HierarchicalSummaryGenerator {
 
     /** 一次摘要调用的可信范围、冻结策略、来源和输出上限。 */
     public record GenerationRequest(
+            /** 候选所属租户。 */
+            String tenantId,
             /** 候选所属会话。 */
             String conversationSessionId,
             /** 可信规划器给出的覆盖范围。 */
@@ -518,24 +525,27 @@ public final class HierarchicalSummaryGenerator {
             int maxSummaryTokens) {
 
         public GenerationRequest {
+            tenantId = Objects.requireNonNull(tenantId, "tenantId");
             conversationSessionId =
                     Objects.requireNonNull(conversationSessionId, "conversationSessionId");
             range = Objects.requireNonNull(range, "range");
             source = Objects.requireNonNull(source, "source");
             policySnapshot = Objects.requireNonNull(policySnapshot, "policySnapshot");
-            if (conversationSessionId.isBlank() || maxSummaryTokens <= 0) {
+            if (tenantId.isBlank() || conversationSessionId.isBlank() || maxSummaryTokens <= 0) {
                 throw new IllegalArgumentException("Invalid summary generation request");
             }
         }
 
         /** 构造携带完整 turn 历史的叶节点请求。 */
         public static GenerationRequest leaf(
+                String tenantId,
                 String conversationSessionId,
                 GenerationRange range,
                 List<ConversationTurn> turns,
                 HierarchicalContextPolicySnapshot policySnapshot,
                 int maxSummaryTokens) {
             return new GenerationRequest(
+                    tenantId,
                     conversationSessionId,
                     range,
                     new LeafSource(turns),
@@ -545,6 +555,7 @@ public final class HierarchicalSummaryGenerator {
 
         /** 构造固定左、右摘要顺序的父节点请求。 */
         public static GenerationRequest parent(
+                String tenantId,
                 String conversationSessionId,
                 GenerationRange range,
                 HierarchicalSummaryNode left,
@@ -552,6 +563,7 @@ public final class HierarchicalSummaryGenerator {
                 HierarchicalContextPolicySnapshot policySnapshot,
                 int maxSummaryTokens) {
             return new GenerationRequest(
+                    tenantId,
                     conversationSessionId,
                     range,
                     new ParentSource(left, right),
@@ -561,6 +573,7 @@ public final class HierarchicalSummaryGenerator {
 
         /** 构造旧 Cold 在前、迁移节点随后排序的滚动摘要请求。 */
         public static GenerationRequest cold(
+                String tenantId,
                 String conversationSessionId,
                 GenerationRange range,
                 ColdSummary oldColdSummary,
@@ -568,6 +581,7 @@ public final class HierarchicalSummaryGenerator {
                 HierarchicalContextPolicySnapshot policySnapshot,
                 int maxSummaryTokens) {
             return new GenerationRequest(
+                    tenantId,
                     conversationSessionId,
                     range,
                     new ColdSource(oldColdSummary, promotedNodes),
@@ -578,7 +592,12 @@ public final class HierarchicalSummaryGenerator {
         /** 仅用于基于另一可信规划范围派生同类请求。 */
         public GenerationRequest withRange(GenerationRange replacement) {
             return new GenerationRequest(
-                    conversationSessionId, replacement, source, policySnapshot, maxSummaryTokens);
+                    tenantId,
+                    conversationSessionId,
+                    replacement,
+                    source,
+                    policySnapshot,
+                    maxSummaryTokens);
         }
 
         private void validateLeaf(LeafSource leaf) {

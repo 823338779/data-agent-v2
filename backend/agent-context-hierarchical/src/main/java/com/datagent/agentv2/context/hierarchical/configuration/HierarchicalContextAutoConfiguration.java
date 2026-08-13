@@ -17,6 +17,7 @@ import com.datagent.agentv2.context.hierarchical.planning.HierarchicalConversati
 import com.datagent.agentv2.context.hierarchical.planning.HierarchicalInvariantValidator;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCandidateGenerationService;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCheckpointPublicationTransaction;
+import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionBoundaryHook;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionClaimTransaction;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionCoordinator;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction;
@@ -36,6 +37,7 @@ import com.datagent.agentv2.platform.id.IdGenerator;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration;
@@ -63,6 +65,13 @@ public class HierarchicalContextAutoConfiguration {
     @Bean
     HierarchicalContextMetrics hierarchicalContextMetrics(MeterRegistry meterRegistry) {
         return new HierarchicalContextMetrics(meterRegistry);
+    }
+
+    /** 默认不干预 durable 生命周期；测试或宿主诊断可替换为只读观察实现。 */
+    @Bean
+    @ConditionalOnMissingBean
+    HierarchicalCompactionBoundaryHook hierarchicalCompactionBoundaryHook() {
+        return HierarchicalCompactionBoundaryHook.NO_OP;
     }
 
     @Bean
@@ -186,9 +195,10 @@ public class HierarchicalContextAutoConfiguration {
             HierarchicalCompactionJobRepository jobs,
             ContextExecutionControlPort executions,
             HierarchicalGenerationSourceProvider sources,
-            HierarchicalContextMetrics metrics) {
+            HierarchicalContextMetrics metrics,
+            HierarchicalCompactionBoundaryHook boundaryHook) {
         return new HierarchicalCandidateGenerationService(
-                generator, nodes, jobs, executions, sources, metrics);
+                generator, nodes, jobs, executions, sources, metrics, boundaryHook);
     }
 
     @Bean
@@ -230,7 +240,8 @@ public class HierarchicalContextAutoConfiguration {
             HierarchicalCheckpointPublicationTransaction publication,
             HierarchicalConversationContextAssembler assembler,
             HierarchicalCheckpointRepository checkpoints,
-            ContextExecutionControlPort executions) {
+            ContextExecutionControlPort executions,
+            HierarchicalCompactionBoundaryHook boundaryHook) {
         return new HierarchicalCompactionCoordinator(
                 planning,
                 generation,
@@ -239,7 +250,8 @@ public class HierarchicalContextAutoConfiguration {
                 assembler,
                 checkpoints,
                 executions,
-                DEFAULT_MAX_SUMMARY_TOKENS);
+                DEFAULT_MAX_SUMMARY_TOKENS,
+                boundaryHook);
     }
 
     /** 只有插件私有迁移成功初始化后才允许共享策略解析器看到 hierarchical。 */
@@ -247,11 +259,21 @@ public class HierarchicalContextAutoConfiguration {
     @DependsOn(HIERARCHICAL_FLYWAY_BEAN_NAME)
     HierarchicalConversationContextStrategy hierarchicalConversationContextStrategy(
             HierarchicalExecutionPolicyRepository policies,
+            HierarchicalCheckpointRepository checkpoints,
             HierarchicalConversationContextAssembler assembler,
             HierarchicalCompactionCoordinator coordinator,
             HierarchicalContextMetrics metrics,
+            ContextSummaryModelPort summaryModel,
+            IdGenerator ids,
             HierarchicalContextProperties properties) {
         return new HierarchicalConversationContextStrategy(
-                policies, assembler, coordinator, metrics, properties);
+                policies,
+                checkpoints,
+                assembler,
+                coordinator,
+                metrics,
+                summaryModel,
+                ids,
+                properties);
     }
 }

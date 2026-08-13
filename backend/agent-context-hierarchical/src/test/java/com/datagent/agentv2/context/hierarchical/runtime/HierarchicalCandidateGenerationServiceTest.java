@@ -793,7 +793,11 @@ class HierarchicalCandidateGenerationServiceTest {
                 "{\"schemaVersion\":1}",
                 20,
                 new SummaryGenerationIdentity(
-                        SESSION_ID, 1, 1, new ContextSummaryModelIdentity("provider", "model")),
+                        EXECUTION.tenantId(),
+                        SESSION_ID,
+                        1,
+                        1,
+                        new ContextSummaryModelIdentity("provider", "model")),
                 request.range());
     }
 

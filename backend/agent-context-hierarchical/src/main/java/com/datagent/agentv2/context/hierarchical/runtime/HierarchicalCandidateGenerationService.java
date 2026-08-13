@@ -10,6 +10,7 @@ import com.datagent.agentv2.context.hierarchical.domain.SummaryRange;
 import com.datagent.agentv2.context.hierarchical.observability.HierarchicalContextMetrics;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCompactionJobRepository;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalSummaryNodeRepository;
+import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionBoundaryHook.Boundary;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction.PlannedCandidate;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction.PlannedCompaction;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalGenerationSourceProvider.GenerationSourceKey;
@@ -53,6 +54,7 @@ public class HierarchicalCandidateGenerationService {
 
     private final HierarchicalDurablePlanValidator planValidator =
             new HierarchicalDurablePlanValidator();
+    private final HierarchicalCompactionBoundaryHook boundaryHook;
 
     /** 固定纯生成器、不可变节点仓储、job 仓储、execution control 和临时来源 provider。 */
     public HierarchicalCandidateGenerationService(
@@ -72,12 +74,32 @@ public class HierarchicalCandidateGenerationService {
             ContextExecutionControlPort executions,
             HierarchicalGenerationSourceProvider sources,
             HierarchicalContextMetrics metrics) {
+        this(
+                generator,
+                nodes,
+                jobs,
+                executions,
+                sources,
+                metrics,
+                HierarchicalCompactionBoundaryHook.NO_OP);
+    }
+
+    /** 运行时构造器注入默认空的 durable 候选边界观察点。 */
+    public HierarchicalCandidateGenerationService(
+            HierarchicalSummaryGenerator generator,
+            HierarchicalSummaryNodeRepository nodes,
+            HierarchicalCompactionJobRepository jobs,
+            ContextExecutionControlPort executions,
+            HierarchicalGenerationSourceProvider sources,
+            HierarchicalContextMetrics metrics,
+            HierarchicalCompactionBoundaryHook boundaryHook) {
         this.generator = Objects.requireNonNull(generator, "generator");
         this.nodes = Objects.requireNonNull(nodes, "nodes");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.executions = Objects.requireNonNull(executions, "executions");
         this.sources = Objects.requireNonNull(sources, "sources");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
+        this.boundaryHook = Objects.requireNonNull(boundaryHook, "boundaryHook");
     }
 
     /** Spring 代理显式挂起调用方事务，确保模型调用和整个生成阶段均无数据库事务。 */
@@ -126,6 +148,7 @@ public class HierarchicalCandidateGenerationService {
                     missingNode || missingCold ? loadSources(planned) : null;
             List<ConversationTurn> turns =
                     generationSources == null ? List.of() : generationSources.turns();
+            int durableCandidateCount = available.size();
             for (PlannedCandidate candidate : requiredCandidates) {
                 if (!available.containsKey(candidate.nodeId())) {
                     HierarchicalSummaryNode generated =
@@ -135,6 +158,8 @@ public class HierarchicalCandidateGenerationService {
                     validateNode(planned, candidate, persisted);
                     metrics.recordGeneratedNodes(persisted.level(), 1L);
                     available.put(candidate.nodeId(), persisted);
+                    durableCandidateCount++;
+                    boundaryHook.reached(Boundary.GENERATING, durableCandidateCount);
                 }
             }
 
@@ -300,6 +325,7 @@ public class HierarchicalCandidateGenerationService {
                                                             <= candidate.range().endTurn())
                             .toList();
             return GenerationRequest.leaf(
+                    planned.execution().tenantId(),
                     planned.job().conversationSessionId(),
                     candidate.range(),
                     sourceTurns,
@@ -309,6 +335,7 @@ public class HierarchicalCandidateGenerationService {
         HierarchicalSummaryNode left = requiredNode(candidate.leftChildNodeId(), available);
         HierarchicalSummaryNode right = requiredNode(candidate.rightChildNodeId(), available);
         return GenerationRequest.parent(
+                planned.execution().tenantId(),
                 planned.job().conversationSessionId(),
                 candidate.range(),
                 left,
@@ -332,6 +359,7 @@ public class HierarchicalCandidateGenerationService {
                         .toList();
         GenerationRequest request =
                 GenerationRequest.cold(
+                        planned.execution().tenantId(),
                         planned.job().conversationSessionId(),
                         planned.coldCandidate().range(),
                         oldCold(checkpoint, planned),
@@ -495,6 +523,7 @@ public class HierarchicalCandidateGenerationService {
     private static SummaryGenerationIdentity identity(
             PlannedCompaction planned, PlannedCandidate candidate) {
         return new SummaryGenerationIdentity(
+                planned.execution().tenantId(),
                 planned.job().conversationSessionId(),
                 planned.generationSettings().schemaVersion(),
                 planned.generationSettings().promptVersion(),

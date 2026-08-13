@@ -8,6 +8,8 @@ import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCompactionJobRepository;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalExecutionPolicyRepository;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalSummaryNodeRepository;
+import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalConversationContextAssembler;
+import com.datagent.agentv2.context.hierarchical.strategy.HierarchicalConversationContextStrategy;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -35,6 +37,9 @@ class HierarchicalContextCompactionMultiTenantIntegrationTest
     private static final String SHARED_SESSION_ID = "shared_hierarchical_session";
     private static final String EXECUTION_A = "execution_hierarchical_a";
     private static final String EXECUTION_B = "execution_hierarchical_b";
+    private static final String OWNER_A = "owner_hierarchical_a";
+    private static final String OWNER_B = "owner_hierarchical_b";
+    private static final int REAL_COMPACTION_TURNS = 24;
     private static final String NODE_A = "hierarchical-node-a";
     private static final String NODE_B = "hierarchical-node-b";
     private static final String JOB_A = "hierarchical-job-a";
@@ -44,6 +49,8 @@ class HierarchicalContextCompactionMultiTenantIntegrationTest
     @Autowired private HierarchicalExecutionPolicyRepository policies;
     @Autowired private HierarchicalSummaryNodeRepository nodes;
     @Autowired private HierarchicalCompactionJobRepository jobs;
+    @Autowired private HierarchicalConversationContextStrategy strategy;
+    @Autowired private HierarchicalConversationContextAssembler assembler;
 
     @BeforeEach
     void seedTwoTenantsWithTheSameSessionId() {
@@ -155,6 +162,99 @@ class HierarchicalContextCompactionMultiTenantIntegrationTest
                                         .contains(
                                                 "FOREIGN KEY (tenant_id, conversation_session_id)",
                                                 "REFERENCES conversation_session(tenant_id, conversation_session_id)"));
+    }
+
+    @Test
+    void identicalSessionRangeAndModelCompressToTenantScopedNodeIds() {
+        resetDatabase();
+        seedTenantSession(TENANT_A, USER_A, SHARED_SESSION_ID);
+        seedTenantSession(TENANT_B, USER_B, SHARED_SESSION_ID);
+        seedCompletedHistory(
+                TENANT_A, USER_A, SHARED_SESSION_ID, REAL_COMPACTION_TURNS, true, "tenant-a-");
+        seedCompletedHistory(
+                TENANT_B, USER_B, SHARED_SESSION_ID, REAL_COMPACTION_TURNS, true, "tenant-b-");
+        long boundary = completedBoundary(REAL_COMPACTION_TURNS) + 1L;
+        seedRunningExecution(
+                TENANT_A,
+                USER_A,
+                SHARED_SESSION_ID,
+                EXECUTION_A,
+                OWNER_A,
+                1L,
+                boundary,
+                "tenant-a-current-question-message");
+        seedRunningExecution(
+                TENANT_B,
+                USER_B,
+                SHARED_SESSION_ID,
+                EXECUTION_B,
+                OWNER_B,
+                1L,
+                boundary,
+                "tenant-b-current-question-message");
+
+        PreparedConversationContext preparedA = compactTenant(TENANT_A, EXECUTION_A, OWNER_A);
+        PreparedConversationContext preparedB = compactTenant(TENANT_B, EXECUTION_B, OWNER_B);
+
+        assertThat(preparedA.strategyGeneration()).isEqualTo(1L);
+        assertThat(preparedB.strategyGeneration()).isEqualTo(1L);
+        List<String> tenantANodes = nodeIds(TENANT_A);
+        List<String> tenantBNodes = nodeIds(TENANT_B);
+        assertThat(tenantANodes).isNotEmpty();
+        assertThat(tenantBNodes)
+                .hasSameSizeAs(tenantANodes)
+                .doesNotContainAnyElementsOf(tenantANodes);
+        assertThat(nodeRanges(TENANT_A)).containsExactlyElementsOf(nodeRanges(TENANT_B));
+    }
+
+    private PreparedConversationContext compactTenant(
+            String tenantId, String executionId, String ownerId) {
+        long boundary = completedBoundary(REAL_COMPACTION_TURNS) + 1L;
+        ConversationContextRequest unlimited =
+                request(
+                        tenantId,
+                        SHARED_SESSION_ID,
+                        executionId,
+                        ownerId,
+                        1L,
+                        boundary,
+                        new ContextBudget(1_000_000, 1, 1, 0),
+                        List.of(),
+                        List.of());
+        TenantContext.call(tenantId, () -> strategy.prepare(unlimited));
+        int actual =
+                TenantContext.call(
+                                tenantId,
+                                () -> assembler.loadAndEstimate(unlimited, DEFAULT_POLICY))
+                        .estimatedTokens();
+        ConversationContextRequest trigger =
+                request(
+                        tenantId,
+                        SHARED_SESSION_ID,
+                        executionId,
+                        ownerId,
+                        1L,
+                        boundary,
+                        budgetWithTrigger(actual - 1),
+                        List.of(),
+                        List.of());
+        return TenantContext.call(tenantId, () -> strategy.prepare(trigger));
+    }
+
+    private List<String> nodeIds(String tenantId) {
+        return jdbc.queryForList(
+                "select hierarchical_summary_node_id from conversation_context_hierarchical_summary_node where tenant_id = ? and conversation_session_id = ? order by start_conversation_message_sequence, level",
+                String.class,
+                tenantId,
+                SHARED_SESSION_ID);
+    }
+
+    private List<String> nodeRanges(String tenantId) {
+        return jdbc.queryForList(
+                "select level::text || ':' || start_conversation_message_sequence::text || ':' || end_conversation_message_sequence::text from conversation_context_hierarchical_summary_node where tenant_id = ? and conversation_session_id = ? order by start_conversation_message_sequence, level",
+                String.class,
+                tenantId,
+                SHARED_SESSION_ID);
     }
 
     private static ContextExecutionRef execution(String tenantId, String executionId) {

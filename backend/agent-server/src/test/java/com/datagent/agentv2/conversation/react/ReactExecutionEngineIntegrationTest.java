@@ -2,7 +2,6 @@ package com.datagent.agentv2.conversation.react;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -13,9 +12,12 @@ import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
 import com.datagent.agentv2.conversation.context.ContextModelMessageMapper;
+import com.datagent.agentv2.conversation.context.ContextStrategyProperties;
+import com.datagent.agentv2.conversation.context.ContextToolCall;
 import com.datagent.agentv2.conversation.context.ContextToolDefinition;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import com.datagent.agentv2.conversation.context.ConversationContextRequestFactory;
+import com.datagent.agentv2.conversation.context.ConversationContextStrategy;
 import com.datagent.agentv2.conversation.context.ConversationContextStrategyResolver;
 import com.datagent.agentv2.conversation.context.PreparedConversationContext;
 import com.datagent.agentv2.conversation.model.AgentModelGateway;
@@ -31,17 +33,19 @@ import com.datagent.agentv2.conversation.tool.builtin.WebSearchTool;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.json.JsonMapper;
 
 class ReactExecutionEngineIntegrationTest {
 
+    private static final String FIXED_FRAMEWORK = "fixed framework instructions";
+
     @Test
     void runsRegisteredBuiltInToolsAcrossThreeModelInvocationsAndCompletesFinalAnswer() {
         JsonMapper json = JsonMapper.builder().build();
         AgentModelGateway model = mock(AgentModelGateway.class);
-        ConversationContextStrategyResolver contexts =
-                mock(ConversationContextStrategyResolver.class);
+        ConversationContextStrategyResolver contexts = contextResolver();
         ConversationContextRequestFactory contextRequests =
                 mock(ConversationContextRequestFactory.class);
         ContextModelMessageMapper contextMessages = new ContextModelMessageMapper(json);
@@ -80,17 +84,6 @@ class ReactExecutionEngineIntegrationTest {
                                                                 .ModelInvocationBoundary.class)
                                                 .inputUpToConversationMessageSequence(),
                                         registry.modelDefinitions()));
-        when(contexts.prepare(any()))
-                .thenAnswer(
-                        invocationCall -> {
-                            ConversationContextRequest request = invocationCall.getArgument(0);
-                            return new PreparedConversationContext(
-                                    "test",
-                                    List.of(ContextMessage.user("question")),
-                                    request.budget().fixedInputTokens(),
-                                    false,
-                                    0L);
-                        });
         when(model.complete(any(), any(), any()))
                 .thenAnswer(
                         ignored ->
@@ -127,7 +120,40 @@ class ReactExecutionEngineIntegrationTest {
                 .execute(run);
 
         assertThat(invocation).hasValue(3);
-        verify(model, times(3)).complete(any(), eq(registry.modelDefinitions()), any());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ModelInputMessage>> modelMessages = ArgumentCaptor.forClass(List.class);
+        verify(model, times(3))
+                .complete(modelMessages.capture(), eq(registry.modelDefinitions()), any());
+        assertThat(modelMessages.getAllValues().getFirst())
+                .containsExactly(
+                        new ModelInputMessage(
+                                ModelInputMessage.Role.SYSTEM,
+                                FIXED_FRAMEWORK,
+                                null,
+                                List.of(),
+                                null,
+                                null),
+                        new ModelInputMessage(
+                                ModelInputMessage.Role.USER,
+                                "question",
+                                null,
+                                List.of(),
+                                null,
+                                null),
+                        new ModelInputMessage(
+                                ModelInputMessage.Role.ASSISTANT,
+                                "",
+                                "thinking-state",
+                                List.of(call("history-call", "system_timezone", "{}")),
+                                null,
+                                null),
+                        new ModelInputMessage(
+                                ModelInputMessage.Role.TOOL,
+                                "UTC+08:00",
+                                null,
+                                List.of(),
+                                "history-call",
+                                "system_timezone"));
         verify(modelInvocations)
                 .archiveToolCalls(
                         run,
@@ -145,14 +171,47 @@ class ReactExecutionEngineIntegrationTest {
                         "final answer");
         verify(leases, times(9)).assertOwnedAndWithinBudget(run);
         verify(leases, times(3)).cancelIfRequested(run);
-        verify(contexts, times(3))
-                .prepare(
-                        argThat(
-                                request ->
-                                        request.execution().inputUpToMessageSequence() > 0
-                                                && request.toolDefinitions().size() == 3
-                                                && request.budget().contextWindowTokens()
-                                                        == 65_536));
+    }
+
+    private static ConversationContextStrategyResolver contextResolver() {
+        ContextStrategyProperties properties = new ContextStrategyProperties();
+        properties.setStrategy("test");
+        ConversationContextStrategy strategy =
+                new ConversationContextStrategy() {
+                    @Override
+                    public String strategyId() {
+                        return "test";
+                    }
+
+                    @Override
+                    public PreparedConversationContext prepare(ConversationContextRequest request) {
+                        assertThat(request.fixedSystemMessages())
+                                .containsExactly(ContextMessage.system(FIXED_FRAMEWORK));
+                        assertThat(request.toolDefinitions()).hasSize(3);
+                        return new PreparedConversationContext(
+                                "test",
+                                List.of(
+                                        ContextMessage.system(FIXED_FRAMEWORK),
+                                        ContextMessage.user("question"),
+                                        new ContextMessage(
+                                                ContextMessage.Role.ASSISTANT,
+                                                "",
+                                                "thinking-state",
+                                                List.of(
+                                                        new ContextToolCall(
+                                                                "history-call",
+                                                                "system_timezone",
+                                                                java.util.Map.of())),
+                                                null,
+                                                null),
+                                        ContextMessage.tool(
+                                                "UTC+08:00", "history-call", "system_timezone")),
+                                request.budget().fixedInputTokens(),
+                                false,
+                                0L);
+                    }
+                };
+        return new ConversationContextStrategyResolver(List.of(strategy), properties);
     }
 
     private static ModelToolCall call(String id, String name, String arguments) {
@@ -172,7 +231,7 @@ class ReactExecutionEngineIntegrationTest {
                         run.executionAttemptNumber(),
                         inputBoundary),
                 new ContextBudget(65_536, 4_096, 4_096, 128),
-                List.of(),
+                List.of(ContextMessage.system(FIXED_FRAMEWORK)),
                 tools.stream()
                         .map(
                                 tool ->

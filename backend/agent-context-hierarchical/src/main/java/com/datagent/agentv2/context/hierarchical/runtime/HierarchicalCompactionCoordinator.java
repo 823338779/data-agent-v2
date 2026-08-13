@@ -6,6 +6,7 @@ import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextState
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCheckpointRepository;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCandidateGenerationService.ReadyCompaction;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCheckpointPublicationTransaction.PublishResult;
+import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionBoundaryHook.Boundary;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction.CompactionRequest;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction.PlannedCompaction;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionRecoveryService.RecoveryAction;
@@ -30,6 +31,7 @@ public final class HierarchicalCompactionCoordinator {
     private final HierarchicalCheckpointRepository checkpoints;
     private final ContextExecutionControlPort executions;
     private final int maxSummaryTokens;
+    private final HierarchicalCompactionBoundaryHook boundaryHook;
 
     /** 固定恢复、生成、发布、重建和 execution 门禁依赖。 */
     public HierarchicalCompactionCoordinator(
@@ -41,6 +43,29 @@ public final class HierarchicalCompactionCoordinator {
             HierarchicalCheckpointRepository checkpoints,
             ContextExecutionControlPort executions,
             int maxSummaryTokens) {
+        this(
+                planning,
+                generation,
+                recovery,
+                publication,
+                assembler,
+                checkpoints,
+                executions,
+                maxSummaryTokens,
+                HierarchicalCompactionBoundaryHook.NO_OP);
+    }
+
+    /** 运行时构造器注入默认空的 durable 边界观察点。 */
+    public HierarchicalCompactionCoordinator(
+            HierarchicalCompactionPlanningTransaction planning,
+            HierarchicalCandidateGenerationService generation,
+            HierarchicalCompactionRecoveryService recovery,
+            HierarchicalCheckpointPublicationTransaction publication,
+            HierarchicalConversationContextAssembler assembler,
+            HierarchicalCheckpointRepository checkpoints,
+            ContextExecutionControlPort executions,
+            int maxSummaryTokens,
+            HierarchicalCompactionBoundaryHook boundaryHook) {
         this.planning = Objects.requireNonNull(planning, "planning");
         this.generation = Objects.requireNonNull(generation, "generation");
         this.recovery = Objects.requireNonNull(recovery, "recovery");
@@ -48,6 +73,7 @@ public final class HierarchicalCompactionCoordinator {
         this.assembler = Objects.requireNonNull(assembler, "assembler");
         this.checkpoints = Objects.requireNonNull(checkpoints, "checkpoints");
         this.executions = Objects.requireNonNull(executions, "executions");
+        this.boundaryHook = Objects.requireNonNull(boundaryHook, "boundaryHook");
         if (maxSummaryTokens <= 0) {
             throw new IllegalArgumentException("maxSummaryTokens must be positive");
         }
@@ -99,7 +125,9 @@ public final class HierarchicalCompactionCoordinator {
                                         current.policy(),
                                         maxSummaryTokens),
                                 input.planningInput());
+                boundaryHook.reached(Boundary.PLANNED, 0);
                 ready = generation.generate(planned);
+                boundaryHook.reached(Boundary.READY_TO_PUBLISH, planned.candidates().size());
                 if (ready.cancelled()) {
                     return currentOutcome(current);
                 }

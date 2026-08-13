@@ -78,7 +78,9 @@ public class HierarchicalCompactionPlanningTransaction {
         HierarchicalCompactionPlan transientPlan = planner.plan(input);
         SummaryGenerationIdentity identity =
                 generator.generationIdentity(
-                        checked.execution().conversationSessionId(), checked.policySnapshot());
+                        checked.execution().tenantId(),
+                        checked.execution().conversationSessionId(),
+                        checked.policySnapshot());
         GenerationSettings transientSettings =
                 GenerationSettings.from(
                         checked.policySnapshot(), checked.maxSummaryTokens(), identity);
@@ -227,6 +229,7 @@ public class HierarchicalCompactionPlanningTransaction {
         SourceKind kind = range.level() == 0 ? SourceKind.LEAF : SourceKind.PARENT;
         String nodeId =
                 generator.nodeKey(
+                        request.execution().tenantId(),
                         request.execution().conversationSessionId(),
                         generationRange,
                         kind,
@@ -261,6 +264,7 @@ public class HierarchicalCompactionPlanningTransaction {
                         0);
         String nodeId =
                 generator.nodeKey(
+                        request.execution().tenantId(),
                         request.execution().conversationSessionId(),
                         range,
                         SourceKind.COLD,

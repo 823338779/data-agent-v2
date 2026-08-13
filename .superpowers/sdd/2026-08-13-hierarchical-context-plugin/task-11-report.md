@@ -90,3 +90,31 @@ git diff --check
 - 未修改 OpenAPI、前端或外部产品仓库。
 - 未删除或重写既有测试；新增回归均通过真实宿主/数据库边界。
 - 未修改本任务 ledger `progress.md`，未更新根工作区子模块指针。
+
+## 审查修复轮次 1
+
+本轮针对 Task 11 验收审查补齐以下生产行为和回归证据：
+
+- `HierarchicalConversationContextStrategy` 在冻结 execution policy 后，通过生产仓储幂等创建 generation/version 均为 0 的初始 checkpoint；主链路和恢复测试不再手工预置基线。仓储并发测试让两个不同 checkpoint ID 同时竞争同一租户会话，双方最终读取同一记录且数据库中只有一行，证明唯一约束与 `insert-ignore + select` 能收敛首次并发调用。
+- 摘要 generation identity 和确定性 node key 纳入 `tenantId`。新增真实双租户压缩场景：两个租户使用相同 session、消息范围、内容和模型配置生成结构相同但 ID 完全不相交的节点，避免全局 node ID 唯一键冲突。
+- 新增默认无副作用的 `HierarchicalCompactionBoundaryHook`，恢复验收可在 `PLANNED`、首个候选已持久化的 `GENERATING`、全部候选已持久化的 `READY_TO_PUBLISH` 三个自然边界模拟崩溃。测试保留自然 `STARTED` 事件，验证 lease takeover、旧 owner fencing、候选复用、精确模型调用次数、唯一 generation 和无 `FAILED` 事件，不再通过 SQL 回拨伪造状态。
+- 主链路精确断言有序的最近 10 轮 Hot 问答、thinking 内容、tool-call/tool-observation 协议以及唯一的 `STARTED/COMPLETED` 事件。`ReactExecutionEngineIntegrationTest` 改走真实 strategy resolver、context request、message mapper 和 tool registry，并在 `AgentModelGateway` 边界捕获最终模型输入，验证固定 system framework 与工具定义保持在压缩之外。
+- README 明确默认总近期窗口为 100 轮，即 10 轮 Hot 加 90 轮 Warm；只有硬输入预算无法容纳时，才允许从最旧 Hot 开始紧急降级。
+
+### 修复验证
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical test
+```
+
+结果：`Tests run: 183, Failures: 0, Errors: 0, Skipped: 0`，`BUILD SUCCESS`。
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am `
+  '-Dsurefire.failIfNoSpecifiedTests=false' `
+  '-Dtest=ContextStrategyIsolationIntegrationTest,HierarchicalContextCompactionIntegrationTest,HierarchicalContextCompactionRecoveryIntegrationTest,HierarchicalContextCompactionMultiTenantIntegrationTest,LsmContextCompactionIntegrationTest,LsmContextCompactionRecoveryIntegrationTest,LsmContextCompactionMultiTenantIntegrationTest,ReactExecutionEngineIntegrationTest' test
+```
+
+结果：`Tests run: 18, Failures: 0, Errors: 0, Skipped: 0`，8 个 reactor 模块全部成功，`BUILD SUCCESS`。
+
+本轮还执行了两个受影响模块的 Spotless apply 与 `git diff --check`。`agent-server` 全模块格式化曾触及 5 个与本轮无关的既有测试文件，已逐项还原；提交中仅保留本轮 Task 11 修复文件。此前 unrestricted `-am` 完整回归曾两次命中既有 `MybatisPlusAuditIntegrationTest` 的 PostgreSQL 微秒与 Java 纳秒时间精度波动；上述定向 reactor 验收未命中该无关测试并完整通过。

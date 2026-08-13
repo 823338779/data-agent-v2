@@ -22,6 +22,10 @@ import com.datagent.agentv2.platform.id.IdGenerator;
 import com.datagent.agentv2.platform.id.PrefixedUuidIdGenerator;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -76,6 +80,8 @@ class HierarchicalRepositoryIntegrationTest {
             "insert into conversation_context_hierarchical_compaction_job (hierarchical_compaction_job_id, tenant_id, conversation_session_id, execution_id, execution_attempt, owner_instance_id, input_up_to_message_sequence, base_checkpoint_version, base_strategy_generation, plan_document, status, created_at, created_by, updated_at, updated_by, deleted, version) values (?, ?, ?, ?, ?, ?, ?, 0, 1, ?::jsonb, ?, ?, ?, ?, ?, false, 0)";
     private static final String COUNT_NODES_SQL =
             "select count(*) from conversation_context_hierarchical_summary_node where tenant_id = ? and conversation_session_id = ?";
+    private static final String COUNT_CHECKPOINTS_SQL =
+            "select count(*) from conversation_context_hierarchical_checkpoint where tenant_id = ? and conversation_session_id = ?";
     private static final String COUNT_JOBS_SQL =
             "select count(*) from conversation_context_hierarchical_compaction_job where tenant_id = ? and execution_id = ? and execution_attempt = ? and input_up_to_message_sequence = ?";
     private static final String ADVANCE_JOB_BASE_SQL =
@@ -163,6 +169,55 @@ class HierarchicalRepositoryIntegrationTest {
                                 TenantContext.call(
                                         TENANT_B, () -> policies.findOrCreate(execution(), first)))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void concurrentInitialCheckpointCreationConvergesOnOneGenerationZeroRow() throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        // 两个首次请求携带不同业务 ID，同时竞争同一租户会话的唯一 checkpoint。
+        Future<HierarchicalCheckpoint> first =
+                executor.submit(
+                        () -> {
+                            ready.countDown();
+                            start.await();
+                            return TenantContext.call(
+                                    TENANT_A,
+                                    () ->
+                                            checkpoints.create(
+                                                    checkpoint("checkpoint_race_a", 0L, 0L)));
+                        });
+        Future<HierarchicalCheckpoint> second =
+                executor.submit(
+                        () -> {
+                            ready.countDown();
+                            start.await();
+                            return TenantContext.call(
+                                    TENANT_A,
+                                    () ->
+                                            checkpoints.create(
+                                                    checkpoint("checkpoint_race_b", 0L, 0L)));
+                        });
+
+        try {
+            ready.await();
+            start.countDown();
+            HierarchicalCheckpoint firstPersisted = first.get();
+            HierarchicalCheckpoint secondPersisted = second.get();
+
+            // insert-ignore 与数据库唯一键必须让双方读取同一条 generation-0 基线。
+            assertThat(firstPersisted).isEqualTo(secondPersisted);
+            assertThat(firstPersisted.strategyGeneration()).isZero();
+            assertThat(firstPersisted.version()).isZero();
+            assertThat(
+                            jdbc.queryForObject(
+                                    COUNT_CHECKPOINTS_SQL, Integer.class, TENANT_A, SESSION_ID))
+                    .isEqualTo(1);
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test
@@ -655,8 +710,13 @@ class HierarchicalRepositoryIntegrationTest {
     }
 
     private static HierarchicalCheckpoint checkpoint(long pointer, long generation) {
+        return checkpoint("checkpoint_current", pointer, generation);
+    }
+
+    private static HierarchicalCheckpoint checkpoint(
+            String checkpointId, long pointer, long generation) {
         return new HierarchicalCheckpoint(
-                "checkpoint_current",
+                checkpointId,
                 SESSION_ID,
                 SUMMARY_DOCUMENT,
                 pointer,

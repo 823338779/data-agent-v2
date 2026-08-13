@@ -93,7 +93,11 @@ class HierarchicalCompactionPlanningTransactionTest {
     private static final SummaryRange LEAF_RANGE = new SummaryRange(1, 1, 10, 20, 0);
     private static final SummaryGenerationIdentity IDENTITY =
             new SummaryGenerationIdentity(
-                    SESSION_ID, 1, 1, new ContextSummaryModelIdentity("provider", "model"));
+                    EXECUTION.tenantId(),
+                    SESSION_ID,
+                    1,
+                    1,
+                    new ContextSummaryModelIdentity("provider", "model"));
 
     @Test
     void plansInRequiresNewTransactionAndPublishesStartedAfterPersistingBodyFreeJob() {
@@ -107,7 +111,12 @@ class HierarchicalCompactionPlanningTransactionTest {
         HierarchicalCompactionPlan plan = plan();
         when(planner.plan(input)).thenReturn(plan);
         when(ids.next("hierarchical_compaction_job")).thenReturn(JOB_ID);
-        when(generator.nodeKey(SESSION_ID, generationRange(LEAF_RANGE), SourceKind.LEAF, POLICY))
+        when(generator.nodeKey(
+                        EXECUTION.tenantId(),
+                        SESSION_ID,
+                        generationRange(LEAF_RANGE),
+                        SourceKind.LEAF,
+                        POLICY))
                 .thenReturn(LEAF_NODE_ID);
         when(jobs.insertOrSelect(any())).thenAnswer(invocation -> invocation.getArgument(0));
         HierarchicalCompactionPlanningTransaction transaction =
@@ -224,7 +233,8 @@ class HierarchicalCompactionPlanningTransactionTest {
         when(planner.plan(input)).thenReturn(plan);
         when(ids.next("hierarchical_compaction_job")).thenReturn(JOB_ID);
         GenerationRange coldRange = new GenerationRange(1, 2, 10, 30, 0);
-        when(generator.nodeKey(SESSION_ID, coldRange, SourceKind.COLD, POLICY))
+        when(generator.nodeKey(
+                        EXECUTION.tenantId(), SESSION_ID, coldRange, SourceKind.COLD, POLICY))
                 .thenReturn("cold-node");
         when(jobs.insertOrSelect(any())).thenAnswer(invocation -> invocation.getArgument(0));
         HierarchicalCompactionPlanningTransaction transaction =
@@ -237,8 +247,9 @@ class HierarchicalCompactionPlanningTransactionTest {
         assertThat(planned.candidates())
                 .extracting(candidate -> candidate.nodeId())
                 .containsExactly("existing-parent");
-        verify(generator).nodeKey(SESSION_ID, coldRange, SourceKind.COLD, POLICY);
-        verify(generator).generationIdentity(SESSION_ID, POLICY);
+        verify(generator)
+                .nodeKey(EXECUTION.tenantId(), SESSION_ID, coldRange, SourceKind.COLD, POLICY);
+        verify(generator).generationIdentity(EXECUTION.tenantId(), SESSION_ID, POLICY);
         verifyNoMoreInteractions(generator);
     }
 
@@ -317,7 +328,12 @@ class HierarchicalCompactionPlanningTransactionTest {
         stubGeneratorIdentity(generator);
         when(planner.plan(input)).thenReturn(plan());
         when(ids.next("hierarchical_compaction_job")).thenReturn("existing-job", "new-job");
-        when(generator.nodeKey(SESSION_ID, generationRange(LEAF_RANGE), SourceKind.LEAF, POLICY))
+        when(generator.nodeKey(
+                        EXECUTION.tenantId(),
+                        SESSION_ID,
+                        generationRange(LEAF_RANGE),
+                        SourceKind.LEAF,
+                        POLICY))
                 .thenReturn(LEAF_NODE_ID);
         AtomicReference<HierarchicalCompactionJob> existing = new AtomicReference<>();
         when(jobs.insertOrSelect(any()))
@@ -365,18 +381,24 @@ class HierarchicalCompactionPlanningTransactionTest {
                                 List.of(), List.of(), List.of(newerRange), 0, false, true),
                         List.of());
         when(ids.next("hierarchical_compaction_job")).thenReturn("old-job", "new-job");
-        when(generator.nodeKey(SESSION_ID, generationRange(LEAF_RANGE), SourceKind.LEAF, POLICY))
+        when(generator.nodeKey(
+                        EXECUTION.tenantId(),
+                        SESSION_ID,
+                        generationRange(LEAF_RANGE),
+                        SourceKind.LEAF,
+                        POLICY))
                 .thenReturn(LEAF_NODE_ID);
         when(generator.nodeKey(
+                        org.mockito.ArgumentMatchers.eq(EXECUTION.tenantId()),
                         org.mockito.ArgumentMatchers.eq(SESSION_ID),
                         any(GenerationRange.class),
                         any(SourceKind.class),
                         any(HierarchicalContextPolicySnapshot.class)))
                 .thenAnswer(
                         invocation ->
-                                invocation.<SourceKind>getArgument(2).name().toLowerCase()
+                                invocation.<SourceKind>getArgument(3).name().toLowerCase()
                                         + "-"
-                                        + invocation.<GenerationRange>getArgument(1).level());
+                                        + invocation.<GenerationRange>getArgument(2).level());
         AtomicReference<HierarchicalCompactionJob> persisted = new AtomicReference<>();
         when(jobs.insertOrSelect(any()))
                 .thenAnswer(
@@ -388,7 +410,8 @@ class HierarchicalCompactionPlanningTransactionTest {
                             return persisted.get();
                         });
         when(planner.plan(input)).thenReturn(oldPlan, recomputed);
-        when(generator.generationIdentity(SESSION_ID, CHANGED_POLICY)).thenReturn(IDENTITY);
+        when(generator.generationIdentity(EXECUTION.tenantId(), SESSION_ID, CHANGED_POLICY))
+                .thenReturn(IDENTITY);
         HierarchicalCompactionPlanningTransaction transaction =
                 new HierarchicalCompactionPlanningTransaction(
                         planner, generator, jobs, ids, executions, JsonMapper.builder().build());
@@ -421,7 +444,12 @@ class HierarchicalCompactionPlanningTransactionTest {
         stubGeneratorIdentity(generator);
         when(planner.plan(input)).thenReturn(plan());
         when(ids.next("hierarchical_compaction_job")).thenReturn("existing-job", "conflicting-job");
-        when(generator.nodeKey(SESSION_ID, generationRange(LEAF_RANGE), SourceKind.LEAF, POLICY))
+        when(generator.nodeKey(
+                        EXECUTION.tenantId(),
+                        SESSION_ID,
+                        generationRange(LEAF_RANGE),
+                        SourceKind.LEAF,
+                        POLICY))
                 .thenReturn(LEAF_NODE_ID);
         AtomicReference<HierarchicalCompactionJob> persisted = new AtomicReference<>();
         when(jobs.insertOrSelect(any()))
@@ -456,7 +484,12 @@ class HierarchicalCompactionPlanningTransactionTest {
         stubGeneratorIdentity(generator);
         when(planner.plan(input)).thenReturn(plan());
         when(ids.next("hierarchical_compaction_job")).thenReturn(JOB_ID);
-        when(generator.nodeKey(SESSION_ID, generationRange(LEAF_RANGE), SourceKind.LEAF, POLICY))
+        when(generator.nodeKey(
+                        EXECUTION.tenantId(),
+                        SESSION_ID,
+                        generationRange(LEAF_RANGE),
+                        SourceKind.LEAF,
+                        POLICY))
                 .thenReturn(LEAF_NODE_ID);
         AtomicReference<String> innerTransaction = new AtomicReference<>();
         when(jobs.insertOrSelect(any()))
@@ -530,7 +563,12 @@ class HierarchicalCompactionPlanningTransactionTest {
         stubGeneratorIdentity(generator);
         when(planner.plan(input)).thenReturn(plan());
         when(ids.next("hierarchical_compaction_job")).thenReturn(JOB_ID);
-        when(generator.nodeKey(SESSION_ID, generationRange(LEAF_RANGE), SourceKind.LEAF, POLICY))
+        when(generator.nodeKey(
+                        EXECUTION.tenantId(),
+                        SESSION_ID,
+                        generationRange(LEAF_RANGE),
+                        SourceKind.LEAF,
+                        POLICY))
                 .thenReturn(LEAF_NODE_ID);
         when(jobs.insertOrSelect(any()))
                 .thenReturn(
@@ -557,7 +595,8 @@ class HierarchicalCompactionPlanningTransactionTest {
     }
 
     private static void stubGeneratorIdentity(HierarchicalSummaryGenerator generator) {
-        when(generator.generationIdentity(SESSION_ID, POLICY)).thenReturn(IDENTITY);
+        when(generator.generationIdentity(EXECUTION.tenantId(), SESSION_ID, POLICY))
+                .thenReturn(IDENTITY);
     }
 
     private static PlanningInput planningInput() {

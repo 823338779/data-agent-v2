@@ -8,7 +8,6 @@ import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolic
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextState;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCheckpointRepository;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalConversationContextAssembler;
-import com.datagent.agentv2.context.hierarchical.strategy.HierarchicalConversationContextStrategy;
 import com.datagent.agentv2.conversation.cluster.RedisExecutionCancellationListener;
 import com.datagent.agentv2.conversation.domain.BoundedProcessPayload;
 import com.datagent.agentv2.conversation.domain.ModelThinkingProcessItem;
@@ -24,6 +23,7 @@ import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -62,7 +62,7 @@ class HierarchicalContextCompactionIntegrationTest extends HierarchicalContextIn
                     "Query a governed metric without changing its definition.",
                     Map.of("type", "object", "required", List.of("metricId")));
 
-    @Autowired private HierarchicalConversationContextStrategy strategy;
+    @Autowired private ConversationContextStrategyResolver contexts;
     @Autowired private HierarchicalConversationContextAssembler assembler;
     @Autowired private DeterministicSummaryModel summaryModel;
 
@@ -79,7 +79,6 @@ class HierarchicalContextCompactionIntegrationTest extends HierarchicalContextIn
                 OWNER_ID,
                 1L,
                 completedBoundary(COMPLETED_TURNS) + 1L);
-        seedInitialCheckpoint(TENANT_ID, SESSION_ID);
         summaryModel.reset();
     }
 
@@ -97,6 +96,7 @@ class HierarchicalContextCompactionIntegrationTest extends HierarchicalContextIn
                         new ContextBudget(1_000_000, 1, 1, 0),
                         List.of(ContextMessage.system(FIXED_SYSTEM)),
                         List.of(FIXED_TOOL));
+        TenantContext.call(TENANT_ID, () -> contexts.prepare(measurement));
         HierarchicalContextState measured =
                 TenantContext.call(
                         TENANT_ID, () -> assembler.loadAndEstimate(measurement, DEFAULT_POLICY));
@@ -115,17 +115,17 @@ class HierarchicalContextCompactionIntegrationTest extends HierarchicalContextIn
         int messageCountBefore = messageCount(TENANT_ID, SESSION_ID);
 
         PreparedConversationContext prepared =
-                TenantContext.call(TENANT_ID, () -> strategy.prepare(trigger));
+                TenantContext.call(TENANT_ID, () -> contexts.prepare(trigger));
         PreparedConversationContext replayed =
-                TenantContext.call(TENANT_ID, () -> strategy.prepare(trigger));
+                TenantContext.call(TENANT_ID, () -> contexts.prepare(trigger));
 
         // 75%+1 必须触发且只产生一对 body-free 生命周期事件；重放不得重复发布。
         assertThat(measured.estimatedTokens())
                 .isEqualTo(DEFAULT_POLICY.softTriggerTokens(trigger.budget()) + 1);
         assertThat(prepared.compacted()).isTrue();
         assertThat(replayed.strategyGeneration()).isEqualTo(prepared.strategyGeneration());
-        assertThat(eventCount("context_compaction_started")).isEqualTo(1);
-        assertThat(eventCount("context_compaction_completed")).isEqualTo(1);
+        assertThat(compactionEventTypes())
+                .containsExactly("context_compaction_started", "context_compaction_completed");
         assertThat(eventPayloads()).containsOnly("{}");
 
         // 本场景压缩后必须达到 70% 目标水位，并完整保留固定 framework、工具定义与十轮 Hot。
@@ -133,20 +133,28 @@ class HierarchicalContextCompactionIntegrationTest extends HierarchicalContextIn
                 .isLessThanOrEqualTo(DEFAULT_POLICY.targetInputTokens(trigger.budget()));
         assertThat(prepared.messages().getFirst()).isEqualTo(ContextMessage.system(FIXED_SYSTEM));
         assertThat(trigger.toolDefinitions()).containsExactly(FIXED_TOOL);
-        assertThat(prepared.messages())
-                .extracting(ContextMessage::content)
-                .contains(
-                        question(COMPLETED_TURNS - 9),
-                        answer(COMPLETED_TURNS - 9),
-                        question(COMPLETED_TURNS),
-                        answer(COMPLETED_TURNS),
-                        CURRENT_QUESTION)
-                .doesNotContain(question(COMPLETED_TURNS - 10));
+        List<String> expectedHot =
+                IntStream.rangeClosed(COMPLETED_TURNS - 9, COMPLETED_TURNS)
+                        .boxed()
+                        .flatMap(turn -> java.util.stream.Stream.of(question(turn), answer(turn)))
+                        .toList();
+        assertThat(
+                        prepared.messages().stream()
+                                .filter(
+                                        message ->
+                                                message.content().startsWith("中文问题")
+                                                        || message.content().startsWith("中文回答"))
+                                .map(ContextMessage::content))
+                .containsExactlyElementsOf(expectedHot);
+        assertThat(prepared.messages().getLast()).isEqualTo(ContextMessage.user(CURRENT_QUESTION));
         assertThat(
                         prepared.messages().stream()
                                 .map(ContextMessage::thinking)
                                 .filter(java.util.Objects::nonNull))
-                .contains(thinking(COMPLETED_TURNS - 9), thinking(COMPLETED_TURNS));
+                .containsExactlyElementsOf(
+                        IntStream.rangeClosed(COMPLETED_TURNS - 9, COMPLETED_TURNS)
+                                .mapToObj(HierarchicalContextIntegrationSupport::thinking)
+                                .toList());
 
         // Warm frontier 必须无缝、无重叠覆盖 Cold 之后至 Hot 之前；超过 100 轮后 Cold 指针前进。
         Map<String, Object> checkpoint = checkpointRow(TENANT_ID, SESSION_ID);
@@ -169,16 +177,18 @@ class HierarchicalContextCompactionIntegrationTest extends HierarchicalContextIn
         assertThat(summaryModel.sourceDocuments())
                 .anyMatch(document -> document.contains("thinking"))
                 .anyMatch(document -> document.contains("中文问题"))
-                .anyMatch(document -> document.contains("metric_query"));
+                .anyMatch(
+                        document ->
+                                document.contains("metric_query")
+                                        && document.contains(toolCallId(TOOL_HISTORY_TURN))
+                                        && document.contains("revenue")
+                                        && document.contains("42"));
     }
 
-    private int eventCount(String type) {
-        return jdbc.queryForObject(
-                "select count(*) from agent_execution_event where tenant_id = ? and execution_id = ? and type = ?",
-                Integer.class,
-                TENANT_ID,
-                EXECUTION_ID,
-                type);
+    private List<String> compactionEventTypes() {
+        return jdbc.queryForList(
+                "select type from agent_execution_event where tenant_id = ? and execution_id = ? and type like 'context_compaction_%' order by execution_event_sequence",
+                String.class, TENANT_ID, EXECUTION_ID);
     }
 
     private List<String> eventPayloads() {
@@ -356,12 +366,23 @@ abstract class HierarchicalContextIntegrationSupport {
             String sessionId,
             int completedTurns,
             boolean withThinking) {
+        seedCompletedHistory(tenantId, userId, sessionId, completedTurns, withThinking, "");
+    }
+
+    /** 可选 ID 命名空间用于同业务 session/range 的跨租户真实历史夹具。 */
+    protected void seedCompletedHistory(
+            String tenantId,
+            String userId,
+            String sessionId,
+            int completedTurns,
+            boolean withThinking,
+            String idNamespace) {
         for (int turn = 1; turn <= completedTurns; turn++) {
-            String executionId = "history-execution-" + turn;
+            String executionId = idNamespace + "history-execution-" + turn;
             long questionSequence = turn * 2L - 1L;
             long answerSequence = turn * 2L;
-            String questionId = "question-message-" + turn;
-            String answerId = "answer-message-" + turn;
+            String questionId = idNamespace + "question-message-" + turn;
+            String answerId = idNamespace + "answer-message-" + turn;
             insertMessage(
                     tenantId,
                     userId,
@@ -399,7 +420,7 @@ abstract class HierarchicalContextIntegrationSupport {
                 tenantId,
                 userId,
                 sessionId,
-                "current-question-message",
+                idNamespace + "current-question-message",
                 null,
                 "user",
                 CURRENT_QUESTION,
@@ -415,12 +436,34 @@ abstract class HierarchicalContextIntegrationSupport {
             String ownerId,
             long attempt,
             long inputBoundary) {
+        seedRunningExecution(
+                tenantId,
+                userId,
+                sessionId,
+                executionId,
+                ownerId,
+                attempt,
+                inputBoundary,
+                "current-question-message");
+    }
+
+    /** 允许跨租户夹具使用全局唯一消息业务 ID，同时保持相同 session/range。 */
+    protected void seedRunningExecution(
+            String tenantId,
+            String userId,
+            String sessionId,
+            String executionId,
+            String ownerId,
+            long attempt,
+            long inputBoundary,
+            String triggeringMessageId) {
         Instant now = Instant.now();
         jdbc.update(
-                "insert into agent_execution (execution_id, tenant_id, conversation_session_id, triggering_conversation_message_id, status, phase, execution_attempt_number, owner_user_id, owner_instance_id, request_id, queued_at, started_at, heartbeat_at, lease_expires_at, active_segment_started_at, hard_deadline_at, execution_budget_ms, active_execution_ms, recovery_attempt_count) values (?, ?, ?, 'current-question-message', 'running', 'PREPARING_CONTEXT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 600000, 0, 0)",
+                "insert into agent_execution (execution_id, tenant_id, conversation_session_id, triggering_conversation_message_id, status, phase, execution_attempt_number, owner_user_id, owner_instance_id, request_id, queued_at, started_at, heartbeat_at, lease_expires_at, active_segment_started_at, hard_deadline_at, execution_budget_ms, active_execution_ms, recovery_attempt_count) values (?, ?, ?, ?, 'running', 'PREPARING_CONTEXT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 600000, 0, 0)",
                 executionId,
                 tenantId,
                 sessionId,
+                triggeringMessageId,
                 attempt,
                 userId,
                 ownerId,
@@ -708,11 +751,11 @@ abstract class HierarchicalContextIntegrationSupport {
         return new UUID(1L, turn);
     }
 
-    private static String toolExecutionId(int turn) {
+    protected static String toolExecutionId(int turn) {
         return "tool-execution-" + turn;
     }
 
-    private static String toolCallId(int turn) {
+    protected static String toolCallId(int turn) {
         return "tool-call-" + turn;
     }
 }
