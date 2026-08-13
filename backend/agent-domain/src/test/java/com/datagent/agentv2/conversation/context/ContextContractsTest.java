@@ -9,6 +9,16 @@ import org.junit.jupiter.api.Test;
 
 class ContextContractsTest {
 
+    @Test
+    void summaryRequestCarriesAnExplicitPositiveInputHardBudget() {
+        ContextSummaryRequest request =
+                new ContextSummaryRequest("system", "source", "schema", 128, 2_048);
+
+        assertThat(request.inputHardTokenBudget()).isEqualTo(2_048);
+        assertThatThrownBy(() -> new ContextSummaryRequest("system", "source", "schema", 128, 0))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     private static final String STRATEGY_RAW = "raw";
 
     @Test

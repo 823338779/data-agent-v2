@@ -439,6 +439,17 @@ class HierarchicalCheckpointPublicationIntegrationTest {
 
         assertThat(resolved.nodeIds()).containsExactly(HOT_OLDEST_NODE_ID, HOT_NEWEST_NODE_ID);
         assertThat(resolved.ranges()).containsExactly(oldest, newest);
+        FrontierSelection minimumPrefix =
+                HierarchicalCheckpointPublicationTransaction.resolvedFrontier(
+                        planned(plan, candidates),
+                        Map.of(
+                                HOT_NEWEST_NODE_ID,
+                                node(HOT_NEWEST_NODE_ID, newest),
+                                HOT_OLDEST_NODE_ID,
+                                node(HOT_OLDEST_NODE_ID, oldest)),
+                        1);
+        assertThat(minimumPrefix.nodeIds()).containsExactly(HOT_OLDEST_NODE_ID);
+        assertThat(minimumPrefix.ranges()).containsExactly(oldest);
     }
 
     private ReadyCompaction seedReadyCompaction() {

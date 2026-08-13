@@ -34,7 +34,18 @@ public final class BinarySummaryTreePlanner {
 
     /** 一次完成边界、Cold、Warm frontier 和紧急 Hot 候选的纯规划。 */
     public HierarchicalCompactionPlan plan(PlanningInput input) {
+        return plan(input, snapshot);
+    }
+
+    /** Plans with the execution-frozen snapshot instead of the process-start snapshot. */
+    public HierarchicalCompactionPlan plan(
+            PlanningInput input, HierarchicalContextPolicySnapshot policySnapshot) {
         PlanningInput checked = Objects.requireNonNull(input, "input");
+        HierarchicalContextPolicySnapshot frozen =
+                Objects.requireNonNull(policySnapshot, "policySnapshot");
+        if (!frozen.equals(snapshot)) {
+            return new BinarySummaryTreePlanner(frozen).plan(checked);
+        }
         HierarchicalCompactionPlan boundaries =
                 plan(
                         checked.turns(),

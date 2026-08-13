@@ -9,6 +9,7 @@ import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ContextSummaryRequest;
 import com.datagent.agentv2.conversation.context.ContextSummaryResult;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -33,6 +34,9 @@ public final class HierarchicalSummaryGenerator {
     private static final String INVALID_POLICY_VERSION =
             "Frozen summary versions are not supported by this generator";
     private static final String INVALID_SOURCE = "Invalid hierarchical summary source";
+    private static final String ATOMIC_SOURCE_EXCEEDS_INPUT_BUDGET =
+            "A complete hierarchical summary source atom exceeds the input hard budget";
+    private static final int SUMMARY_PROTOCOL_INPUT_OVERHEAD = 16;
 
     private static final Comparator<HierarchicalSummaryNode> NODE_ORDER =
             Comparator.comparingLong(HierarchicalSummaryNode::startConversationMessageSequence);
@@ -78,6 +82,9 @@ public final class HierarchicalSummaryGenerator {
         SummaryGenerationIdentity identity = generationIdentity(request);
         String sourceDocument = sourceDocument(request, identity);
         String nodeKey = keyFactory.create(request, identity);
+        if (!fits(request, sourceDocument, request.range())) {
+            return generateBounded(request, identity, nodeKey, checkedBeforeModelCall);
+        }
         RuntimeException lastFailure = null;
 
         // 每次尝试只处理内存候选；不记录 prompt、来源或模型正文，也不执行持久化操作。
@@ -102,6 +109,149 @@ public final class HierarchicalSummaryGenerator {
             }
         }
         throw new IllegalStateException(FAILURE_CONTEXT_COMPACTION, lastFailure);
+    }
+
+    private GeneratedSummary generateBounded(
+            GenerationRequest request,
+            SummaryGenerationIdentity identity,
+            String nodeKey,
+            Runnable beforeModelCall) {
+        List<GeneratedPiece> pieces = new ArrayList<>();
+        if (request.source() instanceof LeafSource leaf) {
+            for (ConversationTurn turn : leaf.turns()) {
+                GenerationRange range =
+                        new GenerationRange(
+                                turn.ordinal(),
+                                turn.ordinal(),
+                                turn.startMessageSequence(),
+                                turn.endMessageSequence(),
+                                0);
+                pieces.add(
+                        summarizeAtomic(
+                                request,
+                                json.writeValueAsString(List.of(turn)),
+                                range,
+                                identity,
+                                beforeModelCall));
+            }
+        } else if (request.source() instanceof ColdSource cold) {
+            List<String> documents = validatedColdDocuments(request, cold, identity);
+            List<GenerationRange> ranges = coldRanges(cold, request.range());
+            for (int index = 0; index < documents.size(); index++) {
+                pieces.add(
+                        new GeneratedPiece(
+                                documents.get(index),
+                                estimatedSummaryTokens(documents.get(index), ranges.get(index)),
+                                ranges.get(index)));
+            }
+        } else {
+            throw new IllegalArgumentException(ATOMIC_SOURCE_EXCEEDS_INPUT_BUDGET);
+        }
+
+        GeneratedPiece accumulated = pieces.getFirst();
+        for (int index = 1; index < pieces.size(); index++) {
+            GeneratedPiece next = pieces.get(index);
+            GenerationRange combined = combine(accumulated.range(), next.range(), request.range());
+            accumulated =
+                    summarizeAtomic(
+                            request,
+                            summaryArray(List.of(accumulated.document(), next.document())),
+                            combined,
+                            identity,
+                            beforeModelCall);
+        }
+        if (!accumulated.range().equals(request.range())) {
+            throw new IllegalArgumentException(INVALID_SOURCE);
+        }
+        return new GeneratedSummary(
+                nodeKey,
+                accumulated.document(),
+                accumulated.estimatedTokenCount(),
+                identity,
+                request.range());
+    }
+
+    private GeneratedPiece summarizeAtomic(
+            GenerationRequest request,
+            String sourceDocument,
+            GenerationRange range,
+            SummaryGenerationIdentity identity,
+            Runnable beforeModelCall) {
+        if (!fits(request, sourceDocument, range)) {
+            throw new IllegalArgumentException(ATOMIC_SOURCE_EXCEEDS_INPUT_BUDGET);
+        }
+        RuntimeException lastFailure = null;
+        for (int attempt = FIRST_ATTEMPT; attempt <= MAX_ATTEMPTS; attempt++) {
+            beforeModelCall.run();
+            try {
+                ContextSummaryResult result =
+                        model.summarize(toModelRequest(request, sourceDocument, range, attempt));
+                validateResultIdentity(result, identity);
+                ValidationResult validation =
+                        validator.validate(result.content(), request.maxSummaryTokens(), range);
+                if (result.estimatedTokenCount() > request.maxSummaryTokens()) {
+                    throw new IllegalArgumentException(INVALID_PROVIDER_TOKEN_COUNT);
+                }
+                return new GeneratedPiece(
+                        result.content(),
+                        Math.max(result.estimatedTokenCount(), validation.estimatedTokenCount()),
+                        range);
+            } catch (RuntimeException failure) {
+                lastFailure = failure;
+            }
+        }
+        throw new IllegalStateException(FAILURE_CONTEXT_COMPACTION, lastFailure);
+    }
+
+    private boolean fits(GenerationRequest request, String sourceDocument, GenerationRange range) {
+        String prompt = ContextSummaryPrompt.correctiveSystemPrompt(range);
+        long bytes =
+                (long) prompt.getBytes(StandardCharsets.UTF_8).length
+                        + sourceDocument.getBytes(StandardCharsets.UTF_8).length
+                        + validator.schemaDocument().getBytes(StandardCharsets.UTF_8).length
+                        + SUMMARY_PROTOCOL_INPUT_OVERHEAD;
+        return bytes <= request.summaryInputHardTokenBudget();
+    }
+
+    private List<GenerationRange> coldRanges(ColdSource cold, GenerationRange requested) {
+        List<GenerationRange> ranges = new ArrayList<>();
+        if (cold.oldColdSummary() != null) {
+            ranges.add(cold.oldColdSummary().range());
+        }
+        long nextTurn = ranges.isEmpty() ? requested.startTurn() : ranges.getLast().endTurn() + 1L;
+        for (HierarchicalSummaryNode node :
+                cold.promotedNodes().stream().sorted(NODE_ORDER).toList()) {
+            long turns = expectedNodeTurns(node.level());
+            ranges.add(
+                    new GenerationRange(
+                            nextTurn,
+                            nextTurn + turns - 1L,
+                            node.startConversationMessageSequence(),
+                            node.endConversationMessageSequence(),
+                            node.level()));
+            nextTurn += turns;
+        }
+        return List.copyOf(ranges);
+    }
+
+    private int estimatedSummaryTokens(String document, GenerationRange range) {
+        return validator.validate(document, Integer.MAX_VALUE, range).estimatedTokenCount();
+    }
+
+    private static GenerationRange combine(
+            GenerationRange left, GenerationRange right, GenerationRange requested) {
+        if (left.endTurn() + 1L != right.startTurn()
+                || left.endMessageSequence() + 1L != right.startMessageSequence()) {
+            throw new IllegalArgumentException(INVALID_SOURCE);
+        }
+        boolean finalRange =
+                left.startTurn() == requested.startTurn() && right.endTurn() == requested.endTurn();
+        return new GenerationRange(
+                left.startTurn(),
+                right.endTurn(),
+                left.startMessageSequence(),
+                right.endMessageSequence(),
+                finalRange ? requested.level() : 0);
     }
 
     /** 返回调用 provider 前已经固定的会话、协议和模型身份。 */
@@ -203,12 +353,21 @@ public final class HierarchicalSummaryGenerator {
 
     private ContextSummaryRequest toModelRequest(
             GenerationRequest request, String sourceDocument, int attempt) {
+        return toModelRequest(request, sourceDocument, request.range(), attempt);
+    }
+
+    private ContextSummaryRequest toModelRequest(
+            GenerationRequest request, String sourceDocument, GenerationRange range, int attempt) {
         String prompt =
                 attempt == FIRST_ATTEMPT
-                        ? ContextSummaryPrompt.systemPrompt(request.range())
-                        : ContextSummaryPrompt.correctiveSystemPrompt(request.range());
+                        ? ContextSummaryPrompt.systemPrompt(range)
+                        : ContextSummaryPrompt.correctiveSystemPrompt(range);
         return new ContextSummaryRequest(
-                prompt, sourceDocument, validator.schemaDocument(), request.maxSummaryTokens());
+                prompt,
+                sourceDocument,
+                validator.schemaDocument(),
+                request.maxSummaryTokens(),
+                request.summaryInputHardTokenBudget());
     }
 
     private static void validateResultIdentity(
@@ -522,7 +681,26 @@ public final class HierarchicalSummaryGenerator {
             /** execution 首次进入策略时冻结的版本与窗口参数。 */
             HierarchicalContextPolicySnapshot policySnapshot,
             /** 当前节点允许的严格摘要 token 上限。 */
-            int maxSummaryTokens) {
+            int maxSummaryTokens,
+            /** 单次摘要模型调用允许使用的严格输入 token 上限。 */
+            int summaryInputHardTokenBudget) {
+
+        public GenerationRequest(
+                String tenantId,
+                String conversationSessionId,
+                GenerationRange range,
+                SummarySource source,
+                HierarchicalContextPolicySnapshot policySnapshot,
+                int maxSummaryTokens) {
+            this(
+                    tenantId,
+                    conversationSessionId,
+                    range,
+                    source,
+                    policySnapshot,
+                    maxSummaryTokens,
+                    Integer.MAX_VALUE);
+        }
 
         public GenerationRequest {
             tenantId = Objects.requireNonNull(tenantId, "tenantId");
@@ -531,7 +709,10 @@ public final class HierarchicalSummaryGenerator {
             range = Objects.requireNonNull(range, "range");
             source = Objects.requireNonNull(source, "source");
             policySnapshot = Objects.requireNonNull(policySnapshot, "policySnapshot");
-            if (tenantId.isBlank() || conversationSessionId.isBlank() || maxSummaryTokens <= 0) {
+            if (tenantId.isBlank()
+                    || conversationSessionId.isBlank()
+                    || maxSummaryTokens <= 0
+                    || summaryInputHardTokenBudget <= 0) {
                 throw new IllegalArgumentException("Invalid summary generation request");
             }
         }
@@ -553,6 +734,24 @@ public final class HierarchicalSummaryGenerator {
                     maxSummaryTokens);
         }
 
+        public static GenerationRequest leaf(
+                String tenantId,
+                String conversationSessionId,
+                GenerationRange range,
+                List<ConversationTurn> turns,
+                HierarchicalContextPolicySnapshot policySnapshot,
+                int maxSummaryTokens,
+                int summaryInputHardTokenBudget) {
+            return new GenerationRequest(
+                    tenantId,
+                    conversationSessionId,
+                    range,
+                    new LeafSource(turns),
+                    policySnapshot,
+                    maxSummaryTokens,
+                    summaryInputHardTokenBudget);
+        }
+
         /** 构造固定左、右摘要顺序的父节点请求。 */
         public static GenerationRequest parent(
                 String tenantId,
@@ -569,6 +768,25 @@ public final class HierarchicalSummaryGenerator {
                     new ParentSource(left, right),
                     policySnapshot,
                     maxSummaryTokens);
+        }
+
+        public static GenerationRequest parent(
+                String tenantId,
+                String conversationSessionId,
+                GenerationRange range,
+                HierarchicalSummaryNode left,
+                HierarchicalSummaryNode right,
+                HierarchicalContextPolicySnapshot policySnapshot,
+                int maxSummaryTokens,
+                int summaryInputHardTokenBudget) {
+            return new GenerationRequest(
+                    tenantId,
+                    conversationSessionId,
+                    range,
+                    new ParentSource(left, right),
+                    policySnapshot,
+                    maxSummaryTokens,
+                    summaryInputHardTokenBudget);
         }
 
         /** 构造旧 Cold 在前、迁移节点随后排序的滚动摘要请求。 */
@@ -589,6 +807,25 @@ public final class HierarchicalSummaryGenerator {
                     maxSummaryTokens);
         }
 
+        public static GenerationRequest cold(
+                String tenantId,
+                String conversationSessionId,
+                GenerationRange range,
+                ColdSummary oldColdSummary,
+                List<HierarchicalSummaryNode> promotedNodes,
+                HierarchicalContextPolicySnapshot policySnapshot,
+                int maxSummaryTokens,
+                int summaryInputHardTokenBudget) {
+            return new GenerationRequest(
+                    tenantId,
+                    conversationSessionId,
+                    range,
+                    new ColdSource(oldColdSummary, promotedNodes),
+                    policySnapshot,
+                    maxSummaryTokens,
+                    summaryInputHardTokenBudget);
+        }
+
         /** 仅用于基于另一可信规划范围派生同类请求。 */
         public GenerationRequest withRange(GenerationRange replacement) {
             return new GenerationRequest(
@@ -597,7 +834,8 @@ public final class HierarchicalSummaryGenerator {
                     replacement,
                     source,
                     policySnapshot,
-                    maxSummaryTokens);
+                    maxSummaryTokens,
+                    summaryInputHardTokenBudget);
         }
 
         private void validateLeaf(LeafSource leaf) {
@@ -638,6 +876,17 @@ public final class HierarchicalSummaryGenerator {
             document = Objects.requireNonNull(document, "document");
             identity = Objects.requireNonNull(identity, "identity");
             range = Objects.requireNonNull(range, "range");
+            if (estimatedTokenCount < 0) {
+                throw new IllegalArgumentException("Summary token count must not be negative");
+            }
+        }
+    }
+
+    private record GeneratedPiece(String document, int estimatedTokenCount, GenerationRange range) {
+
+        private GeneratedPiece {
+            Objects.requireNonNull(document, "document");
+            Objects.requireNonNull(range, "range");
             if (estimatedTokenCount < 0) {
                 throw new IllegalArgumentException("Summary token count must not be negative");
             }

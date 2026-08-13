@@ -356,7 +356,7 @@ public final class HierarchicalConversationContextAssembler {
             throw publishedFrontierFailure(null);
         }
 
-        // Hot frontier 鍙兘绛夊悓浜?planner 鎸夋渶鑰佷紭鍏堢粰鍑虹殑鍙惰妭鐐瑰€欓€夊墠缂€銆?
+        // Hot frontier 只能等同于 planner 按最老优先给出的叶节点候选前缀。
         List<SummaryRange> candidates =
                 planner.plan(
                                 turns,

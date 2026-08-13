@@ -100,7 +100,8 @@ class HierarchicalCompactionCoordinatorTest {
         when(planning.plan(any(CompactionRequest.class), any(PlanningInput.class)))
                 .thenReturn(planned);
         when(generation.generate(planned)).thenReturn(ready);
-        when(publication.publish(ready)).thenReturn(PublishResult.PUBLISHED);
+        when(publication.publish(ready, state.request(), state.policy()))
+                .thenReturn(PublishResult.PUBLISHED);
         when(checkpoints.findCheckpoint(SESSION_ID)).thenReturn(published);
         when(assembler.preparePublishedView(published, state.request(), POLICY))
                 .thenReturn(
@@ -116,7 +117,7 @@ class HierarchicalCompactionCoordinatorTest {
         order.verify(assembler).toCompactionInput(state);
         order.verify(planning).plan(any(), any());
         order.verify(generation).generate(planned);
-        order.verify(publication).publish(ready);
+        order.verify(publication).publish(ready, state.request(), state.policy());
         order.verify(assembler).preparePublishedView(published, state.request(), POLICY);
     }
 
@@ -136,8 +137,10 @@ class HierarchicalCompactionCoordinatorTest {
         when(planning.plan(any(), any())).thenReturn(firstPlan, secondPlan);
         when(generation.generate(firstPlan)).thenReturn(firstReady);
         when(generation.generate(secondPlan)).thenReturn(secondReady);
-        when(publication.publish(firstReady)).thenReturn(PublishResult.STALE);
-        when(publication.publish(secondReady)).thenReturn(PublishResult.PUBLISHED);
+        when(publication.publish(firstReady, first.request(), first.policy()))
+                .thenReturn(PublishResult.STALE);
+        when(publication.publish(secondReady, refreshed.request(), refreshed.policy()))
+                .thenReturn(PublishResult.PUBLISHED);
         when(assembler.loadAndEstimate(first.request(), POLICY)).thenReturn(refreshed);
         when(checkpoints.findCheckpoint(SESSION_ID)).thenReturn(published);
         when(assembler.preparePublishedView(published, first.request(), POLICY))
@@ -161,7 +164,8 @@ class HierarchicalCompactionCoordinatorTest {
         when(assembler.toCompactionInput(state)).thenReturn(compactionInput(state));
         when(planning.plan(any(), any())).thenReturn(planned);
         when(generation.generate(planned)).thenReturn(ready);
-        when(publication.publish(ready)).thenReturn(PublishResult.PUBLISHED);
+        when(publication.publish(ready, state.request(), state.policy()))
+                .thenReturn(PublishResult.PUBLISHED);
         when(checkpoints.findCheckpoint(SESSION_ID)).thenReturn(published);
         when(assembler.preparePublishedView(published, state.request(), POLICY))
                 .thenReturn(
@@ -215,7 +219,8 @@ class HierarchicalCompactionCoordinatorTest {
         when(assembler.toCompactionInput(state)).thenReturn(compactionInput(state));
         when(planning.plan(any(), any())).thenReturn(planned);
         when(generation.generate(planned)).thenReturn(ready);
-        when(publication.publish(ready)).thenReturn(PublishResult.PUBLISHED);
+        when(publication.publish(ready, state.request(), state.policy()))
+                .thenReturn(PublishResult.PUBLISHED);
         when(checkpoints.findCheckpoint(SESSION_ID)).thenReturn(published);
         when(assembler.preparePublishedView(published, state.request(), POLICY))
                 .thenThrow(new HierarchicalContextWindowExceededException());

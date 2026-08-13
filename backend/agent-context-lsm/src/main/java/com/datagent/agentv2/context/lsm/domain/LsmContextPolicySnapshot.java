@@ -4,14 +4,23 @@ import com.datagent.agentv2.conversation.context.ContextBudget;
 
 /** LSM execution 首次使用时冻结的不可变策略参数。 */
 public record LsmContextPolicySnapshot(
+        /** 持久化策略契约版本。 */
         int policyVersion,
+        /** 每层归并时允许聚合的子段数量。 */
         int fanout,
+        /** 摘要树允许使用的最高层级。 */
         int maxLevel,
+        /** 一个叶摘要段覆盖的完整问答轮数。 */
         int baseSegmentTurns,
+        /** 触发压缩的上下文窗口百分比。 */
         int compressionThresholdPercent,
+        /** 压缩后期望达到的上下文窗口百分比。 */
         int targetWatermarkPercent,
+        /** Warm 层期望保留的完整问答轮数。 */
         int warmTargetTurns,
+        /** Warm 层允许保留的最大完整问答轮数。 */
         int warmMaxTurns,
+        /** 始终优先保留原文的最新完整问答轮数。 */
         int protectedHotTurns) {
 
     private static final int POLICY_VERSION = 1;

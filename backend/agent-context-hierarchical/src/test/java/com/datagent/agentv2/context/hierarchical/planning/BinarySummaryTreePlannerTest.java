@@ -26,6 +26,28 @@ class BinarySummaryTreePlannerTest {
     private final BinarySummaryTreePlanner planner = new BinarySummaryTreePlanner(POLICY);
 
     @Test
+    void executionFrozenPolicyOverridesThePlannerBeanStartupSnapshot() {
+        HierarchicalContextPolicySnapshot frozen =
+                new HierarchicalContextPolicySnapshot(1, 0.75d, 0.70d, 2, 6, 1, 1);
+        List<ConversationTurn> history = turns(8, false);
+        HierarchicalCheckpoint checkpoint = checkpoint(0);
+        BinarySummaryTreePlanner.PlanningInput input =
+                new BinarySummaryTreePlanner.PlanningInput(
+                        history,
+                        checkpoint,
+                        List.of(),
+                        new ContextBudget(1_000, 100, 100, 0),
+                        100,
+                        800);
+
+        HierarchicalCompactionPlan plan = planner.plan(input, frozen);
+
+        assertThat(plan.hotTarget()).isEqualTo(new HierarchicalCompactionPlan.TurnRange(7, 8));
+        assertThat(plan.warmTarget()).isEqualTo(new HierarchicalCompactionPlan.TurnRange(3, 6));
+        assertThat(plan.coldTarget()).isEqualTo(new HierarchicalCompactionPlan.TurnRange(1, 2));
+    }
+
+    @Test
     void buildsParentsOnlyFromAdjacentSameLevelChildren() {
         SummaryRange first = new SummaryRange(1, 1, 10, 19, 0);
         SummaryRange second = new SummaryRange(2, 2, 20, 29, 0);

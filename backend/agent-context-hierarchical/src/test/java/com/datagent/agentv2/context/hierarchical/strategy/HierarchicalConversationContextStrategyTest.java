@@ -182,6 +182,27 @@ class HierarchicalConversationContextStrategyTest {
         verify(coordinator, never()).compactIfRequired(org.mockito.ArgumentMatchers.any());
     }
 
+    @Test
+    void migratesAChangedSummaryModelIdentityBeforeReadingHistory() {
+        HierarchicalContextState state = state(80, checkpoint(0L, 0L));
+        when(summaryModel.identity())
+                .thenReturn(new ContextSummaryModelIdentity("provider-v2", "model-v2"));
+        when(assembler.loadAndEstimate(request, FROZEN_POLICY)).thenReturn(state);
+        when(assembler.prepareCurrentView(state)).thenReturn(prepared(80, false, 0L));
+        when(assembler.activeFrontierCounts(state.checkpoint(), FROZEN_POLICY))
+                .thenReturn(Map.of());
+
+        strategy.prepare(request);
+
+        InOrder order = inOrder(checkpoints, assembler);
+        order.verify(checkpoints)
+                .migrateIdentityIfRequired(
+                        request.execution(),
+                        FROZEN_POLICY,
+                        new ContextSummaryModelIdentity("provider-v2", "model-v2"));
+        order.verify(assembler).loadAndEstimate(request, FROZEN_POLICY);
+    }
+
     private HierarchicalContextState state(int estimatedTokens, HierarchicalCheckpoint checkpoint) {
         return new HierarchicalContextState(
                 request, FROZEN_POLICY, List.of(), null, checkpoint, estimatedTokens);

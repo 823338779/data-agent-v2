@@ -1,10 +1,12 @@
 package com.datagent.agentv2.context.hierarchical.persistence.repository;
 
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCheckpoint;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
 import com.datagent.agentv2.context.hierarchical.persistence.entity.HierarchicalCheckpointEntity;
 import com.datagent.agentv2.context.hierarchical.persistence.json.HierarchicalDocumentCodec;
 import com.datagent.agentv2.context.hierarchical.persistence.mapper.HierarchicalCheckpointMapper;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
+import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.LocalDateTime;
 
@@ -48,6 +50,51 @@ public class HierarchicalCheckpointRepository {
             throw new IllegalStateException(CHECKPOINT_NOT_PERSISTED);
         }
         return persisted;
+    }
+
+    /**
+     * Rebuilds an incompatible published tree from immutable raw history under the new identity.
+     */
+    public HierarchicalCheckpoint migrateIdentityIfRequired(
+            ContextExecutionRef execution,
+            HierarchicalContextPolicySnapshot policy,
+            ContextSummaryModelIdentity model) {
+        String tenantId = TenantContext.requiredTenantId();
+        if (!tenantId.equals(execution.tenantId())) {
+            throw new IllegalArgumentException(EXECUTION_TENANT_MISMATCH);
+        }
+        for (int attempt = 0; attempt < 3; attempt++) {
+            HierarchicalCheckpoint current = findCheckpoint(execution.conversationSessionId());
+            if (current == null) {
+                throw new IllegalStateException(CHECKPOINT_NOT_PERSISTED);
+            }
+            boolean compatible =
+                    current.summarySchemaVersion() == policy.summarySchemaVersion()
+                            && current.summaryPromptVersion() == policy.summaryPromptVersion()
+                            && current.modelProvider().equals(model.provider())
+                            && current.modelName().equals(model.model());
+            if (compatible) {
+                return current;
+            }
+            mapper.migrateIdentity(
+                    tenantId,
+                    execution,
+                    current.version(),
+                    current.strategyGeneration(),
+                    policy.summarySchemaVersion(),
+                    policy.summaryPromptVersion(),
+                    model.provider(),
+                    model.model());
+        }
+        HierarchicalCheckpoint migrated = findCheckpoint(execution.conversationSessionId());
+        if (migrated == null
+                || migrated.summarySchemaVersion() != policy.summarySchemaVersion()
+                || migrated.summaryPromptVersion() != policy.summaryPromptVersion()
+                || !migrated.modelProvider().equals(model.provider())
+                || !migrated.modelName().equals(model.model())) {
+            throw new IllegalStateException("Hierarchical checkpoint identity migration failed");
+        }
+        return migrated;
     }
 
     /** 仅在 version、generation、单调指针及 execution job fence 全部匹配时发布。 */

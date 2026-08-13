@@ -31,6 +31,10 @@ public final class HierarchicalCompactionCoordinator {
     private final HierarchicalCheckpointRepository checkpoints;
     private final ContextExecutionControlPort executions;
     private final int maxSummaryTokens;
+
+    /** 单次摘要模型请求允许使用的严格输入 token 上限。 */
+    private final int summaryInputHardTokenBudget;
+
     private final HierarchicalCompactionBoundaryHook boundaryHook;
 
     /** 固定恢复、生成、发布、重建和 execution 门禁依赖。 */
@@ -52,6 +56,7 @@ public final class HierarchicalCompactionCoordinator {
                 checkpoints,
                 executions,
                 maxSummaryTokens,
+                Integer.MAX_VALUE,
                 HierarchicalCompactionBoundaryHook.NO_OP);
     }
 
@@ -66,6 +71,31 @@ public final class HierarchicalCompactionCoordinator {
             ContextExecutionControlPort executions,
             int maxSummaryTokens,
             HierarchicalCompactionBoundaryHook boundaryHook) {
+        this(
+                planning,
+                generation,
+                recovery,
+                publication,
+                assembler,
+                checkpoints,
+                executions,
+                maxSummaryTokens,
+                Integer.MAX_VALUE,
+                boundaryHook);
+    }
+
+    /** Binds complete summary output and provider-input hard budgets. */
+    public HierarchicalCompactionCoordinator(
+            HierarchicalCompactionPlanningTransaction planning,
+            HierarchicalCandidateGenerationService generation,
+            HierarchicalCompactionRecoveryService recovery,
+            HierarchicalCheckpointPublicationTransaction publication,
+            HierarchicalConversationContextAssembler assembler,
+            HierarchicalCheckpointRepository checkpoints,
+            ContextExecutionControlPort executions,
+            int maxSummaryTokens,
+            int summaryInputHardTokenBudget,
+            HierarchicalCompactionBoundaryHook boundaryHook) {
         this.planning = Objects.requireNonNull(planning, "planning");
         this.generation = Objects.requireNonNull(generation, "generation");
         this.recovery = Objects.requireNonNull(recovery, "recovery");
@@ -78,6 +108,10 @@ public final class HierarchicalCompactionCoordinator {
             throw new IllegalArgumentException("maxSummaryTokens must be positive");
         }
         this.maxSummaryTokens = maxSummaryTokens;
+        if (summaryInputHardTokenBudget <= 0) {
+            throw new IllegalArgumentException("summaryInputHardTokenBudget must be positive");
+        }
+        this.summaryInputHardTokenBudget = summaryInputHardTokenBudget;
     }
 
     /** stale CAS 后只从最新 checkpoint 重建状态，并以有界循环重新进入恢复/规划。 */
@@ -123,7 +157,8 @@ public final class HierarchicalCompactionCoordinator {
                                 new CompactionRequest(
                                         current.request().execution(),
                                         current.policy(),
-                                        maxSummaryTokens),
+                                        maxSummaryTokens,
+                                        summaryInputHardTokenBudget),
                                 input.planningInput());
                 boundaryHook.reached(Boundary.PLANNED, 0);
                 ready = generation.generate(planned);
@@ -133,7 +168,8 @@ public final class HierarchicalCompactionCoordinator {
                 }
             }
 
-            if (publication.publish(ready) == PublishResult.PUBLISHED) {
+            if (publication.publish(ready, current.request(), current.policy())
+                    == PublishResult.PUBLISHED) {
                 HierarchicalCheckpoint published =
                         checkpoints.findCheckpoint(
                                 current.request().execution().conversationSessionId());

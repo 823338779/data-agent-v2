@@ -91,6 +91,47 @@ class HierarchicalSummaryGeneratorTest {
     }
 
     @Test
+    void passesTheFrozenCompleteInputHardBudgetToTheProvider() {
+        GenerationRequest baseline = leafRequest();
+        GenerationRequest bounded =
+                new GenerationRequest(
+                        baseline.tenantId(),
+                        baseline.conversationSessionId(),
+                        baseline.range(),
+                        baseline.source(),
+                        baseline.policySnapshot(),
+                        baseline.maxSummaryTokens(),
+                        64_000);
+        when(model.summarize(any())).thenReturn(result(summary("bounded", 1, 2, 10, 20), 300));
+
+        generator.generate(bounded);
+
+        ArgumentCaptor<ContextSummaryRequest> request =
+                ArgumentCaptor.forClass(ContextSummaryRequest.class);
+        verify(model).summarize(request.capture());
+        assertThat(request.getValue().inputHardTokenBudget()).isEqualTo(64_000);
+    }
+
+    @Test
+    void rejectsAnOversizedCompleteTurnWithoutTruncatingOrCallingTheModel() {
+        GenerationRequest baseline = leafRequest();
+        GenerationRequest impossible =
+                new GenerationRequest(
+                        baseline.tenantId(),
+                        baseline.conversationSessionId(),
+                        baseline.range(),
+                        baseline.source(),
+                        baseline.policySnapshot(),
+                        baseline.maxSummaryTokens(),
+                        1);
+
+        assertThatThrownBy(() -> generator.generate(impossible))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("complete hierarchical summary source atom");
+        verify(model, never()).summarize(any());
+    }
+
+    @Test
     void checksExecutionImmediatelyBeforeEveryRetryModelCall() {
         AtomicInteger checks = new AtomicInteger();
         when(model.summarize(any()))

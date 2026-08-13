@@ -75,7 +75,7 @@ public class HierarchicalCompactionPlanningTransaction {
         CompactionRequest checked = Objects.requireNonNull(request, "request");
         PlanningInput input = Objects.requireNonNull(planningInput, "planningInput");
         executions.assertOwnedAndWithinBudget(checked.execution());
-        HierarchicalCompactionPlan transientPlan = planner.plan(input);
+        HierarchicalCompactionPlan transientPlan = planner.plan(input, checked.policySnapshot());
         SummaryGenerationIdentity identity =
                 generator.generationIdentity(
                         checked.execution().tenantId(),
@@ -83,7 +83,10 @@ public class HierarchicalCompactionPlanningTransaction {
                         checked.policySnapshot());
         GenerationSettings transientSettings =
                 GenerationSettings.from(
-                        checked.policySnapshot(), checked.maxSummaryTokens(), identity);
+                        checked.policySnapshot(),
+                        checked.maxSummaryTokens(),
+                        checked.summaryInputHardTokenBudget(),
+                        identity);
         List<PlannedCandidate> transientCandidates =
                 plannedCandidates(checked, input, transientPlan, identity);
         PlannedCandidate transientCold =
@@ -412,13 +415,22 @@ public class HierarchicalCompactionPlanningTransaction {
     record CompactionRequest(
             ContextExecutionRef execution,
             HierarchicalContextPolicySnapshot policySnapshot,
-            int maxSummaryTokens) {
+            int maxSummaryTokens,
+            /** 单次摘要模型调用允许使用的严格输入 token 上限。 */
+            int summaryInputHardTokenBudget) {
+
+        CompactionRequest(
+                ContextExecutionRef execution,
+                HierarchicalContextPolicySnapshot policySnapshot,
+                int maxSummaryTokens) {
+            this(execution, policySnapshot, maxSummaryTokens, Integer.MAX_VALUE);
+        }
 
         CompactionRequest {
             execution = Objects.requireNonNull(execution, "execution");
             policySnapshot = Objects.requireNonNull(policySnapshot, "policySnapshot");
-            if (maxSummaryTokens <= 0) {
-                throw new IllegalArgumentException("maxSummaryTokens must be positive");
+            if (maxSummaryTokens <= 0 || summaryInputHardTokenBudget <= 0) {
+                throw new IllegalArgumentException("Summary budgets must be positive");
             }
         }
     }
@@ -449,16 +461,36 @@ public class HierarchicalCompactionPlanningTransaction {
     record GenerationSettings(
             HierarchicalContextPolicySnapshot policySnapshot,
             int maxSummaryTokens,
+            /** 持久化到 durable plan 的摘要模型严格输入 token 上限。 */
+            int summaryInputHardTokenBudget,
             int schemaVersion,
             int promptVersion,
             String modelProvider,
             String modelName) {
+
+        GenerationSettings(
+                HierarchicalContextPolicySnapshot policySnapshot,
+                int maxSummaryTokens,
+                int schemaVersion,
+                int promptVersion,
+                String modelProvider,
+                String modelName) {
+            this(
+                    policySnapshot,
+                    maxSummaryTokens,
+                    Integer.MAX_VALUE,
+                    schemaVersion,
+                    promptVersion,
+                    modelProvider,
+                    modelName);
+        }
 
         GenerationSettings {
             policySnapshot = Objects.requireNonNull(policySnapshot, "policySnapshot");
             Objects.requireNonNull(modelProvider, "modelProvider");
             Objects.requireNonNull(modelName, "modelName");
             if (maxSummaryTokens <= 0
+                    || summaryInputHardTokenBudget < 0
                     || schemaVersion != policySnapshot.summarySchemaVersion()
                     || promptVersion != policySnapshot.summaryPromptVersion()
                     || modelProvider.isBlank()
@@ -467,13 +499,22 @@ public class HierarchicalCompactionPlanningTransaction {
             }
         }
 
+        /** Schema-v3 documents written before the input budget field remain recoverable. */
+        public int summaryInputHardTokenBudget() {
+            return summaryInputHardTokenBudget == 0
+                    ? Integer.MAX_VALUE
+                    : summaryInputHardTokenBudget;
+        }
+
         private static GenerationSettings from(
                 HierarchicalContextPolicySnapshot policySnapshot,
                 int maxSummaryTokens,
+                int summaryInputHardTokenBudget,
                 SummaryGenerationIdentity identity) {
             return new GenerationSettings(
                     policySnapshot,
                     maxSummaryTokens,
+                    summaryInputHardTokenBudget,
                     identity.schemaVersion(),
                     identity.promptVersion(),
                     identity.modelIdentity().provider(),

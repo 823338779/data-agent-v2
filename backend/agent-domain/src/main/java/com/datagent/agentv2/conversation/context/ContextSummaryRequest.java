@@ -4,14 +4,25 @@ import java.util.Objects;
 
 /** 一次不携带工具、不会产生用户可见增量的摘要模型请求。 */
 public record ContextSummaryRequest(
-        String systemPrompt, String sourceDocument, String outputSchema, int maxOutputTokens) {
+        String systemPrompt,
+        String sourceDocument,
+        String outputSchema,
+        int maxOutputTokens,
+        /** 摘要 provider 单次请求允许使用的严格输入 token 上限。 */
+        int inputHardTokenBudget) {
+
+    /** Keeps existing summary providers source-compatible while callers adopt an input budget. */
+    public ContextSummaryRequest(
+            String systemPrompt, String sourceDocument, String outputSchema, int maxOutputTokens) {
+        this(systemPrompt, sourceDocument, outputSchema, maxOutputTokens, Integer.MAX_VALUE);
+    }
 
     public ContextSummaryRequest {
         Objects.requireNonNull(systemPrompt, "systemPrompt");
         Objects.requireNonNull(sourceDocument, "sourceDocument");
         Objects.requireNonNull(outputSchema, "outputSchema");
-        if (maxOutputTokens <= 0) {
-            throw new IllegalArgumentException("Summary output budget must be positive");
+        if (maxOutputTokens <= 0 || inputHardTokenBudget <= 0) {
+            throw new IllegalArgumentException("Summary input and output budgets must be positive");
         }
     }
 }

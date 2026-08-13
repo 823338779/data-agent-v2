@@ -23,6 +23,8 @@ public interface HierarchicalCheckpointMapper extends BaseMapper<HierarchicalChe
                     + "' and job.deleted = false)";
     String SELECT_READY_JOB_ID =
             "select hierarchical_compaction_job_id from conversation_context_hierarchical_compaction_job where tenant_id = #{tenantId} and conversation_session_id = #{execution.conversationSessionId} and execution_id = #{execution.executionId} and owner_instance_id = #{execution.ownerInstanceId} and execution_attempt = #{execution.executionAttempt} and input_up_to_message_sequence = #{execution.inputUpToMessageSequence} and base_checkpoint_version = #{baseVersion} and base_strategy_generation = #{baseGeneration} and status = 'READY_TO_PUBLISH' and deleted = false limit 1";
+    String MIGRATE_IDENTITY =
+            "with target as materialized (select hierarchical_checkpoint_id from conversation_context_hierarchical_checkpoint where tenant_id = #{tenantId} and conversation_session_id = #{execution.conversationSessionId} and version = #{expectedVersion} and strategy_generation = #{expectedGeneration} and deleted = false and (summary_schema_version <> #{schemaVersion} or summary_prompt_version <> #{promptVersion} or model_provider <> #{modelProvider} or model_name <> #{modelName}) for update), superseded as (update conversation_context_hierarchical_compaction_job set status = 'CANCELLED', updated_at = now(), updated_by = 'hierarchical-context', version = version + 1 where tenant_id = #{tenantId} and conversation_session_id = #{execution.conversationSessionId} and status in ('PLANNED','GENERATING','READY_TO_PUBLISH') and deleted = false and exists (select 1 from target) returning hierarchical_compaction_job_id) update conversation_context_hierarchical_checkpoint set cold_summary_document = cast('{\"schemaVersion\":1}' as jsonb), summarized_up_to_conversation_message_sequence = 0, summarized_completed_turn_count = 0, estimated_token_count = 0, summary_schema_version = #{schemaVersion}, summary_prompt_version = #{promptVersion}, model_provider = #{modelProvider}, model_name = #{modelName}, active_frontier_document = cast('{\"schemaVersion\":1,\"nodes\":[]}' as jsonb), strategy_generation = strategy_generation + 1, updated_at = now(), updated_by = 'hierarchical-context', version = version + 1 where hierarchical_checkpoint_id in (select hierarchical_checkpoint_id from target)";
 
     /** 读取当前租户会话唯一的有效 checkpoint。 */
     @Select(SELECT_CHECKPOINT)
@@ -51,4 +53,17 @@ public interface HierarchicalCheckpointMapper extends BaseMapper<HierarchicalChe
                     com.datagent.agentv2.conversation.context.ContextExecutionRef execution,
             @Param("baseVersion") long baseVersion,
             @Param("baseGeneration") long baseGeneration);
+
+    /** Atomically retires old jobs and rebuilds the visible tree identity from raw history. */
+    @Update(MIGRATE_IDENTITY)
+    int migrateIdentity(
+            @Param("tenantId") String tenantId,
+            @Param("execution")
+                    com.datagent.agentv2.conversation.context.ContextExecutionRef execution,
+            @Param("expectedVersion") long expectedVersion,
+            @Param("expectedGeneration") long expectedGeneration,
+            @Param("schemaVersion") int schemaVersion,
+            @Param("promptVersion") int promptVersion,
+            @Param("modelProvider") String modelProvider,
+            @Param("modelName") String modelName);
 }

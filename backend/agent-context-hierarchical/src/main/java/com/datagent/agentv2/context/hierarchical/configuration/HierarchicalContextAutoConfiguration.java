@@ -62,6 +62,9 @@ public class HierarchicalContextAutoConfiguration {
     /** 单个层级或 Cold 摘要文档允许的默认最大估算 token 数。 */
     private static final int DEFAULT_MAX_SUMMARY_TOKENS = 1_024;
 
+    /** Complete prompt, schema and source budget for every summary provider invocation. */
+    private static final int DEFAULT_SUMMARY_INPUT_HARD_TOKENS = 32_768;
+
     @Bean
     HierarchicalContextMetrics hierarchicalContextMetrics(MeterRegistry meterRegistry) {
         return new HierarchicalContextMetrics(meterRegistry);
@@ -227,9 +230,18 @@ public class HierarchicalContextAutoConfiguration {
             HierarchicalCandidateGenerationService generation,
             ContextExecutionControlPort executions,
             HierarchicalInvariantValidator invariants,
-            ObjectMapper json) {
+            ObjectMapper json,
+            HierarchicalConversationContextAssembler assembler) {
         return new HierarchicalCheckpointPublicationTransaction(
-                checkpoints, jobs, nodes, planning, generation, executions, invariants, json);
+                checkpoints,
+                jobs,
+                nodes,
+                planning,
+                generation,
+                executions,
+                invariants,
+                json,
+                assembler);
     }
 
     @Bean
@@ -251,6 +263,7 @@ public class HierarchicalContextAutoConfiguration {
                 checkpoints,
                 executions,
                 DEFAULT_MAX_SUMMARY_TOKENS,
+                DEFAULT_SUMMARY_INPUT_HARD_TOKENS,
                 boundaryHook);
     }
 

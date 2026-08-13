@@ -109,7 +109,7 @@ class HierarchicalCompactionPlanningTransactionTest {
         PlanningInput input = planningInput();
         stubGeneratorIdentity(generator);
         HierarchicalCompactionPlan plan = plan();
-        when(planner.plan(input)).thenReturn(plan);
+        when(planner.plan(input, POLICY)).thenReturn(plan);
         when(ids.next("hierarchical_compaction_job")).thenReturn(JOB_ID);
         when(generator.nodeKey(
                         EXECUTION.tenantId(),
@@ -146,7 +146,7 @@ class HierarchicalCompactionPlanningTransactionTest {
 
         InOrder order = inOrder(executions, planner, jobs);
         order.verify(executions).assertOwnedAndWithinBudget(EXECUTION);
-        order.verify(planner).plan(input);
+        order.verify(planner).plan(input, POLICY);
         order.verify(jobs).insertOrSelect(any());
         ArgumentCaptor<ContextLifecycleEvent> event =
                 ArgumentCaptor.forClass(ContextLifecycleEvent.class);
@@ -230,7 +230,7 @@ class HierarchicalCompactionPlanningTransactionTest {
                         List.of(),
                         FrontierSelection.empty(),
                         List.of());
-        when(planner.plan(input)).thenReturn(plan);
+        when(planner.plan(input, POLICY)).thenReturn(plan);
         when(ids.next("hierarchical_compaction_job")).thenReturn(JOB_ID);
         GenerationRange coldRange = new GenerationRange(1, 2, 10, 30, 0);
         when(generator.nodeKey(
@@ -296,7 +296,7 @@ class HierarchicalCompactionPlanningTransactionTest {
                                 true),
                         List.of());
         stubGeneratorIdentity(generator);
-        when(planner.plan(input)).thenReturn(selectedFrontier);
+        when(planner.plan(input, POLICY)).thenReturn(selectedFrontier);
         when(ids.next("hierarchical_compaction_job")).thenReturn(JOB_ID);
         when(jobs.insertOrSelect(any())).thenAnswer(invocation -> invocation.getArgument(0));
         HierarchicalCompactionPlanningTransaction transaction =
@@ -326,7 +326,7 @@ class HierarchicalCompactionPlanningTransactionTest {
         ContextExecutionControlPort executions = mock(ContextExecutionControlPort.class);
         PlanningInput input = planningInput();
         stubGeneratorIdentity(generator);
-        when(planner.plan(input)).thenReturn(plan());
+        when(planner.plan(input, POLICY)).thenReturn(plan());
         when(ids.next("hierarchical_compaction_job")).thenReturn("existing-job", "new-job");
         when(generator.nodeKey(
                         EXECUTION.tenantId(),
@@ -409,7 +409,8 @@ class HierarchicalCompactionPlanningTransactionTest {
                             }
                             return persisted.get();
                         });
-        when(planner.plan(input)).thenReturn(oldPlan, recomputed);
+        when(planner.plan(input, POLICY)).thenReturn(oldPlan);
+        when(planner.plan(input, CHANGED_POLICY)).thenReturn(recomputed);
         when(generator.generationIdentity(EXECUTION.tenantId(), SESSION_ID, CHANGED_POLICY))
                 .thenReturn(IDENTITY);
         HierarchicalCompactionPlanningTransaction transaction =
@@ -442,7 +443,7 @@ class HierarchicalCompactionPlanningTransactionTest {
         ContextExecutionControlPort executions = mock(ContextExecutionControlPort.class);
         PlanningInput input = planningInput();
         stubGeneratorIdentity(generator);
-        when(planner.plan(input)).thenReturn(plan());
+        when(planner.plan(input, POLICY)).thenReturn(plan());
         when(ids.next("hierarchical_compaction_job")).thenReturn("existing-job", "conflicting-job");
         when(generator.nodeKey(
                         EXECUTION.tenantId(),
@@ -482,7 +483,7 @@ class HierarchicalCompactionPlanningTransactionTest {
         ContextExecutionControlPort executions = mock(ContextExecutionControlPort.class);
         PlanningInput input = planningInput();
         stubGeneratorIdentity(generator);
-        when(planner.plan(input)).thenReturn(plan());
+        when(planner.plan(input, POLICY)).thenReturn(plan());
         when(ids.next("hierarchical_compaction_job")).thenReturn(JOB_ID);
         when(generator.nodeKey(
                         EXECUTION.tenantId(),
@@ -561,7 +562,7 @@ class HierarchicalCompactionPlanningTransactionTest {
         ContextExecutionControlPort executions = mock(ContextExecutionControlPort.class);
         PlanningInput input = planningInput();
         stubGeneratorIdentity(generator);
-        when(planner.plan(input)).thenReturn(plan());
+        when(planner.plan(input, POLICY)).thenReturn(plan());
         when(ids.next("hierarchical_compaction_job")).thenReturn(JOB_ID);
         when(generator.nodeKey(
                         EXECUTION.tenantId(),

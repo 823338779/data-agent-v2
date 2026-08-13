@@ -17,6 +17,15 @@ import org.junit.jupiter.api.Test;
 
 class WarmFrontierSelectorTest {
 
+    @Test
+    void rejectsStructurallyImpossibleSuccessfulFrontierState() {
+        assertThatThrownBy(
+                        () ->
+                                new FrontierSelection(
+                                        List.of(), List.of(), List.of(), 1, false, true))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     private static final String SESSION_ID = "session-1";
     private static final String SUMMARY = "{}";
     private static final String PROVIDER = "test-provider";

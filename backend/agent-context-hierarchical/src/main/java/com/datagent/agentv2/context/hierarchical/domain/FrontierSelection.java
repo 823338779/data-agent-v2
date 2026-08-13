@@ -23,9 +23,11 @@ public record FrontierSelection(
         nodeIds = List.copyOf(Objects.requireNonNull(nodeIds, "nodeIds"));
         ranges = List.copyOf(Objects.requireNonNull(ranges, "ranges"));
         missingRanges = List.copyOf(Objects.requireNonNull(missingRanges, "missingRanges"));
+        boolean complete = missingRanges.isEmpty();
         if (nodeIds.size() != ranges.size()
                 || estimatedTokenCount < 0
-                || (!satisfiable && (withinBudget || !missingRanges.isEmpty()))) {
+                || (!satisfiable && (withinBudget || !complete))
+                || (satisfiable && complete && !withinBudget)) {
             throw new IllegalArgumentException("Invalid frontier selection");
         }
     }

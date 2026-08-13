@@ -330,7 +330,8 @@ public class HierarchicalCandidateGenerationService {
                     candidate.range(),
                     sourceTurns,
                     planned.generationSettings().policySnapshot(),
-                    planned.generationSettings().maxSummaryTokens());
+                    planned.generationSettings().maxSummaryTokens(),
+                    planned.generationSettings().summaryInputHardTokenBudget());
         }
         HierarchicalSummaryNode left = requiredNode(candidate.leftChildNodeId(), available);
         HierarchicalSummaryNode right = requiredNode(candidate.rightChildNodeId(), available);
@@ -341,7 +342,8 @@ public class HierarchicalCandidateGenerationService {
                 left,
                 right,
                 planned.generationSettings().policySnapshot(),
-                planned.generationSettings().maxSummaryTokens());
+                planned.generationSettings().maxSummaryTokens(),
+                planned.generationSettings().summaryInputHardTokenBudget());
     }
 
     private void ensureColdCandidate(
@@ -365,7 +367,8 @@ public class HierarchicalCandidateGenerationService {
                         oldCold(checkpoint, planned),
                         promoted,
                         planned.generationSettings().policySnapshot(),
-                        planned.generationSettings().maxSummaryTokens());
+                        planned.generationSettings().maxSummaryTokens(),
+                        planned.generationSettings().summaryInputHardTokenBudget());
         GeneratedSummary generated =
                 generator.generate(request, () -> assertExecution(planned.execution()));
         if (!planned.coldCandidate().nodeId().equals(generated.nodeKey())

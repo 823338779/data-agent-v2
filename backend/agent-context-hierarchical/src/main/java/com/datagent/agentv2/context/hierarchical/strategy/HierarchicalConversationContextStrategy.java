@@ -83,7 +83,10 @@ public final class HierarchicalConversationContextStrategy implements Conversati
         // 必须是首个副作用：retry/takeover 只能读取首次持久化的 execution policy。
         HierarchicalContextPolicySnapshot frozen =
                 policies.findOrCreate(checkedRequest.execution(), configuredPolicy);
-        ensureInitialCheckpoint(checkedRequest, frozen);
+        ContextSummaryModelIdentity model =
+                Objects.requireNonNull(summaryModel.identity(), "summary model identity");
+        ensureInitialCheckpoint(checkedRequest, frozen, model);
+        checkpoints.migrateIdentityIfRequired(checkedRequest.execution(), frozen, model);
         HierarchicalContextState state = assembler.loadAndEstimate(checkedRequest, frozen);
         metrics.recordInput(state.estimatedTokens(), checkedRequest.budget());
         HierarchicalContextPolicy policy = new HierarchicalContextPolicy(frozen);
@@ -115,9 +118,9 @@ public final class HierarchicalConversationContextStrategy implements Conversati
 
     /** 唯一键竞争由 repository 收敛；首次历史读取前所有调用都能观察到同一基线。 */
     private void ensureInitialCheckpoint(
-            ConversationContextRequest request, HierarchicalContextPolicySnapshot policy) {
-        ContextSummaryModelIdentity model =
-                Objects.requireNonNull(summaryModel.identity(), "summary model identity");
+            ConversationContextRequest request,
+            HierarchicalContextPolicySnapshot policy,
+            ContextSummaryModelIdentity model) {
         checkpoints.create(
                 new HierarchicalCheckpoint(
                         ids.next(CHECKPOINT_ID_PREFIX),

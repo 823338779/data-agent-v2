@@ -16,6 +16,7 @@ import com.datagent.agentv2.context.hierarchical.persistence.repository.Hierarch
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalExecutionPolicyRepository;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalSummaryNodeRepository;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
+import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import com.datagent.agentv2.persistence.MybatisPlusConfiguration;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
@@ -169,6 +170,32 @@ class HierarchicalRepositoryIntegrationTest {
                                 TenantContext.call(
                                         TENANT_B, () -> policies.findOrCreate(execution(), first)))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void modelUpgradeAtomicallyResetsVisibleTreeAndSupersedesOldGenerationJobs() {
+        TenantContext.run(TENANT_A, () -> checkpoints.create(checkpoint(30L, 1L)));
+        insertJob(HierarchicalCompactionJob.Status.GENERATING, PLAN_V3_DOCUMENT);
+
+        HierarchicalCheckpoint migrated =
+                TenantContext.call(
+                        TENANT_A,
+                        () ->
+                                checkpoints.migrateIdentityIfRequired(
+                                        execution(),
+                                        policy(0.75d, 0.70d),
+                                        new ContextSummaryModelIdentity(
+                                                "integration-provider-v2",
+                                                "integration-model-v2")));
+
+        assertThat(migrated.summarizedCompletedTurnCount()).isZero();
+        assertThat(migrated.summarizedUpToConversationMessageSequence()).isZero();
+        assertThat(migrated.activeFrontierDocument()).contains("\"nodes\": []");
+        assertThat(migrated.strategyGeneration()).isEqualTo(2L);
+        assertThat(migrated.modelProvider()).isEqualTo("integration-provider-v2");
+        assertThat(migrated.modelName()).isEqualTo("integration-model-v2");
+        assertThat(TenantContext.call(TENANT_A, () -> jobs.findJob(JOB_ID)).status())
+                .isEqualTo(HierarchicalCompactionJob.Status.CANCELLED);
     }
 
     @Test

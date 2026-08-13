@@ -8,6 +8,7 @@ import com.datagent.agentv2.conversation.context.ContextMessage;
 import com.datagent.agentv2.conversation.context.ContextToolCall;
 import com.datagent.agentv2.conversation.context.ContextToolDefinition;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -100,6 +101,17 @@ class ConversationTokenEstimatorTest {
         int largeReserve = estimator.estimate(request(8_000), contextMessages());
 
         assertThat(largeReserve).isEqualTo(smallReserve);
+    }
+
+    @Test
+    void utf8EmojiAndRareCjkAreEstimatedByAByteUpperBound() {
+        String text = "🪷𠮷";
+
+        int contentBytes = text.getBytes(StandardCharsets.UTF_8).length;
+        int empty = estimator.estimateMessages(List.of(ContextMessage.user(EMPTY_CONTENT)));
+        int withUnicode = estimator.estimateMessages(List.of(ContextMessage.user(text)));
+
+        assertThat(withUnicode - empty).isGreaterThanOrEqualTo(contentBytes);
     }
 
     private static List<ContextMessage> contextMessages() {

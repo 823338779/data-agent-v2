@@ -4,6 +4,7 @@ import com.datagent.agentv2.context.hierarchical.domain.FrontierSelection;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCheckpoint;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalColdCandidate;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionJob;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
 import com.datagent.agentv2.context.hierarchical.domain.SummaryNodeIdentity;
 import com.datagent.agentv2.context.hierarchical.domain.SummaryRange;
@@ -19,6 +20,7 @@ import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGene
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort.ContextLifecycleEvent;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
+import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -49,6 +51,10 @@ public class HierarchicalCheckpointPublicationTransaction {
     private final ContextExecutionControlPort executions;
     private final HierarchicalInvariantValidator invariants;
     private final ObjectMapper json;
+
+    /** 发布 CAS 前按最终 Cold/Warm/Hot 组合执行精确模型输入预算校验。 */
+    private final HierarchicalConversationContextAssembler assembler;
+
     private final HierarchicalDurablePlanValidator planValidator =
             new HierarchicalDurablePlanValidator();
 
@@ -62,6 +68,20 @@ public class HierarchicalCheckpointPublicationTransaction {
             ContextExecutionControlPort executions,
             HierarchicalInvariantValidator invariants,
             ObjectMapper json) {
+        this(checkpoints, jobs, nodes, planning, generation, executions, invariants, json, null);
+    }
+
+    /** Adds the assembler used for the final pre-CAS model-input budget check. */
+    public HierarchicalCheckpointPublicationTransaction(
+            HierarchicalCheckpointRepository checkpoints,
+            HierarchicalCompactionJobRepository jobs,
+            HierarchicalSummaryNodeRepository nodes,
+            HierarchicalCompactionPlanningTransaction planning,
+            HierarchicalCandidateGenerationService generation,
+            ContextExecutionControlPort executions,
+            HierarchicalInvariantValidator invariants,
+            ObjectMapper json,
+            HierarchicalConversationContextAssembler assembler) {
         this.checkpoints = Objects.requireNonNull(checkpoints, "checkpoints");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.nodes = Objects.requireNonNull(nodes, "nodes");
@@ -70,13 +90,25 @@ public class HierarchicalCheckpointPublicationTransaction {
         this.executions = Objects.requireNonNull(executions, "executions");
         this.invariants = Objects.requireNonNull(invariants, "invariants");
         this.json = Objects.requireNonNull(json, "json");
+        this.assembler = assembler;
     }
 
     /** 仅对 publication 前的不变量异常提交 FAILED；CAS 之后的异常仍按默认规则整体回滚。 */
     @Transactional(
             propagation = Propagation.REQUIRES_NEW,
-            noRollbackFor = HierarchicalCompactionException.class)
+            noRollbackFor = {
+                HierarchicalCompactionException.class,
+                HierarchicalContextWindowExceededException.class
+            })
     public PublishResult publish(ReadyCompaction suppliedReady) {
+        return publish(suppliedReady, null, null);
+    }
+
+    /** Publishes only after the exact replacement view is known to fit the physical limit. */
+    public PublishResult publish(
+            ReadyCompaction suppliedReady,
+            ConversationContextRequest request,
+            HierarchicalContextPolicySnapshot policy) {
         ReadyCompaction supplied = Objects.requireNonNull(suppliedReady, "suppliedReady");
         PlannedCompaction caller = supplied.planned();
         executions.assertOwnedAndWithinBudget(caller.execution());
@@ -109,9 +141,16 @@ public class HierarchicalCheckpointPublicationTransaction {
             generation.validateReady(durable);
             ReadyCompaction ready = new ReadyCompaction(durable, false);
             validatePublishedView(ready);
-            replacement = replacement(expected, ready);
+            replacement =
+                    request == null || assembler == null
+                            ? replacement(
+                                    expected, ready, ready.plan().hotDegradationRanges().size())
+                            : preflightReplacement(expected, ready, request, policy);
             validateCheckpointIdentity(expected, durable);
             validateMonotonicReplacement(expected, replacement, caller.execution());
+        } catch (HierarchicalContextWindowExceededException hardFailure) {
+            failHardLimitPublication(job, caller.execution());
+            throw new AssertionError("unreachable");
         } catch (RuntimeException invalid) {
             failInvalidPublication(job, caller.execution(), invalid);
             throw new AssertionError("unreachable");
@@ -211,8 +250,25 @@ public class HierarchicalCheckpointPublicationTransaction {
                 HierarchicalCompactionException.FAILURE_CODE, invalid);
     }
 
+    private void failHardLimitPublication(
+            HierarchicalCompactionJob job, ContextExecutionRef execution) {
+        if (!jobs.transitionJob(
+                job.jobId(),
+                HierarchicalCompactionJob.Status.READY_TO_PUBLISH,
+                HierarchicalCompactionJob.Status.FAILED,
+                execution,
+                HierarchicalContextWindowExceededException.FAILURE_CODE)) {
+            throw new IllegalStateException(INVALID_PUBLICATION);
+        }
+        executions.fail(
+                execution,
+                HierarchicalContextWindowExceededException.FAILURE_CODE,
+                HierarchicalContextWindowExceededException.FAILURE_CODE);
+        throw new HierarchicalContextWindowExceededException();
+    }
+
     private HierarchicalCheckpoint replacement(
-            HierarchicalCheckpoint expected, ReadyCompaction ready) {
+            HierarchicalCheckpoint expected, ReadyCompaction ready, int hotPrefixCount) {
         PlannedCompaction planned = ready.planned();
         HierarchicalColdCandidate cold =
                 planned.coldCandidate() == null
@@ -224,7 +280,7 @@ public class HierarchicalCheckpointPublicationTransaction {
                         planned.candidates().stream().map(PlannedCandidate::nodeId).toList());
         Map<String, HierarchicalSummaryNode> byId = new HashMap<>();
         persisted.forEach(node -> byId.put(node.nodeId(), node));
-        FrontierSelection frontier = resolvedFrontier(planned, byId);
+        FrontierSelection frontier = resolvedFrontier(planned, byId, hotPrefixCount);
         String frontierDocument =
                 json.writeValueAsString(
                         Map.of(
@@ -250,9 +306,36 @@ public class HierarchicalCheckpointPublicationTransaction {
                 expected.version() + 1L);
     }
 
+    private HierarchicalCheckpoint preflightReplacement(
+            HierarchicalCheckpoint expected,
+            ReadyCompaction ready,
+            ConversationContextRequest request,
+            HierarchicalContextPolicySnapshot policy) {
+        int hotCandidates = ready.plan().hotDegradationRanges().size();
+        for (int prefix = 0; prefix <= hotCandidates; prefix++) {
+            HierarchicalCheckpoint candidate = replacement(expected, ready, prefix);
+            try {
+                assembler.preparePublishedView(candidate, request, policy);
+                return candidate;
+            } catch (HierarchicalContextWindowExceededException overLimit) {
+                if (prefix == hotCandidates) {
+                    throw overLimit;
+                }
+            }
+        }
+        throw new HierarchicalContextWindowExceededException();
+    }
+
     /** 持久化 frontier 复用原选择，并将缺失 Warm 节点和紧急 Hot 叶替换为生成后的 ID。 */
     static FrontierSelection resolvedFrontier(
             PlannedCompaction planned, Map<String, HierarchicalSummaryNode> byId) {
+        return resolvedFrontier(planned, byId, planned.plan().hotDegradationRanges().size());
+    }
+
+    static FrontierSelection resolvedFrontier(
+            PlannedCompaction planned,
+            Map<String, HierarchicalSummaryNode> byId,
+            int hotPrefixCount) {
         SummaryNodeIdentity identity =
                 new SummaryNodeIdentity(
                         planned.job().conversationSessionId(),
@@ -284,7 +367,10 @@ public class HierarchicalCheckpointPublicationTransaction {
         long hotCursor = planned.plan().hotTarget().startTurn();
         List<SummaryRange> hotRanges = new ArrayList<>(planned.plan().hotDegradationRanges());
         hotRanges.sort(Comparator.comparingLong(SummaryRange::startTurn));
-        for (SummaryRange hot : hotRanges) {
+        if (hotPrefixCount < 0 || hotPrefixCount > hotRanges.size()) {
+            throw new IllegalArgumentException(INVALID_PUBLICATION);
+        }
+        for (SummaryRange hot : hotRanges.subList(0, hotPrefixCount)) {
             if (hot.level() != 0 || hot.startTurn() != hotCursor) {
                 throw new IllegalArgumentException(INVALID_PUBLICATION);
             }

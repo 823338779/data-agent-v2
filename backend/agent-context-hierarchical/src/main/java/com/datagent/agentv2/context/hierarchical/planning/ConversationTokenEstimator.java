@@ -5,6 +5,7 @@ import com.datagent.agentv2.conversation.context.ContextToolCall;
 import com.datagent.agentv2.conversation.context.ContextToolDefinition;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import java.lang.reflect.Array;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -197,7 +198,7 @@ public final class ConversationTokenEstimator {
     }
 
     private static int estimateText(String text) {
-        return Objects.requireNonNull(text, "text").codePointCount(0, text.length());
+        return Objects.requireNonNull(text, "text").getBytes(StandardCharsets.UTF_8).length;
     }
 
     private static int estimateJsonPunctuation(String document) {
