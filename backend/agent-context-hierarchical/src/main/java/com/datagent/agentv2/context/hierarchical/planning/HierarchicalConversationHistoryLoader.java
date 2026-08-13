@@ -32,29 +32,69 @@ import tools.jackson.databind.ObjectMapper;
 /** 从真实会话消息、thinking process 和工具执行行重建原子问答历史。 */
 public final class HierarchicalConversationHistoryLoader {
 
+    /** 持久化 user 角色的稳定值。 */
     private static final String ROLE_USER = "user";
+
+    /** 持久化 assistant 角色的稳定值。 */
     private static final String ROLE_ASSISTANT = "assistant";
+
+    /** thinking-only 和 tool-call assistant 消息使用的空正文。 */
     private static final String EMPTY_CONTENT = "";
+
+    /** execution 查询缺失时的稳定错误。 */
     private static final String ERROR_EXECUTION_NOT_FOUND = "Agent execution was not found";
+
+    /** execution 不属于请求会话时的稳定错误。 */
     private static final String ERROR_EXECUTION_SESSION_MISMATCH =
             "Agent execution does not belong to the requested conversation session";
+
+    /** 有界消息行违反顺序或会话约束时的稳定错误。 */
     private static final String ERROR_INVALID_HISTORY = "Conversation history is inconsistent";
+
+    /** thinking tool 节点与工具执行行不一致时的稳定错误。 */
     private static final String ERROR_MISMATCHED_TOOL_PROCESS =
             "Tool process item does not match its execution row";
+
+    /** 截断载荷预览正文的协议字段名。 */
     private static final String KEY_PREVIEW = "preview";
+
+    /** 截断载荷标记的协议字段名。 */
     private static final String KEY_TRUNCATED = "truncated";
+
+    /** 截断前原始字节数的协议字段名。 */
     private static final String KEY_ORIGINAL_SIZE_BYTES = "originalSizeBytes";
+
+    /** 完整载荷摘要的协议字段名。 */
     private static final String KEY_SHA256 = "sha256";
+
+    /** 载荷内容类型的协议字段名。 */
     private static final String KEY_CONTENT_TYPE = "contentType";
+
+    /** 失败 observation 状态的协议字段名。 */
     private static final String KEY_STATUS = "status";
+
+    /** 失败 observation 错误码的协议字段名。 */
     private static final String KEY_ERROR_CODE = "errorCode";
+
+    /** 失败 observation 安全错误信息的协议字段名。 */
     private static final String KEY_ERROR_MESSAGE = "errorMessage";
+
+    /** 失败工具 observation 使用的稳定状态值。 */
     private static final String TOOL_STATUS_FAILED = "failed";
 
+    /** 读取并校验请求 execution 所属会话的持久化服务。 */
     private final AgentExecutionService agentExecutions;
+
+    /** 按冻结会话序号边界读取真实消息的持久化服务。 */
     private final ConversationMessageService messages;
+
+    /** 跨历史 assistant execution 批量读取工具身份行的持久化服务。 */
     private final ToolExecutionService toolExecutions;
+
+    /** 序列化工具 observation 和截断预览的 JSON 边界。 */
     private final ObjectMapper json;
+
+    /** 将重建来源聚合为原子问答的分组器。 */
     private final ConversationTurnGrouper grouper;
 
     /** 固定持久化读取、JSON 转换和 turn 分组边界。 */
@@ -246,7 +286,9 @@ public final class HierarchicalConversationHistoryLoader {
             ConversationMessage assistant,
             ToolThinkingProcessItem item,
             ToolExecutionEntity persisted) {
-        if (persisted == null
+        // 冻结历史只接受能同时重建 call 与 observation 的 terminal 工具节点。
+        if (!isTerminal(item.status())
+                || persisted == null
                 || !assistant
                         .getConversationMessageId()
                         .equals(persisted.getAssistantConversationMessageId())

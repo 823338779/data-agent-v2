@@ -13,22 +13,55 @@ import java.util.UUID;
 /** 在没有稳定 provider tokenizer 时，按字符和协议结构保守估算完整模型输入。 */
 public final class ConversationTokenEstimator {
 
+    /** 每条消息外层分隔符的保守开销。 */
     private static final int MESSAGE_DELIMITER_TOKENS = 2;
+
+    /** 消息角色字段边界的保守开销。 */
     private static final int ROLE_BOUNDARY_TOKENS = 1;
+
+    /** 消息正文边界的保守开销。 */
     private static final int CONTENT_BOUNDARY_TOKENS = 1;
+
+    /** assistant thinking 字段边界的保守开销。 */
     private static final int THINKING_BOUNDARY_TOKENS = 2;
+
+    /** 单个工具调用对象边界的保守开销。 */
     private static final int TOOL_CALL_BOUNDARY_TOKENS = 2;
+
+    /** 工具调用 ID 字段边界的保守开销。 */
     private static final int TOOL_CALL_ID_BOUNDARY_TOKENS = 1;
+
+    /** 工具名称字段边界的保守开销。 */
     private static final int TOOL_NAME_BOUNDARY_TOKENS = 1;
+
+    /** 单个工具定义外层结构的保守开销。 */
     private static final int TOOL_DEFINITION_BOUNDARY_TOKENS = 3;
+
+    /** 摘要文档进入模型输入时的固定包装开销。 */
     private static final int SUMMARY_WRAPPER_TOKENS = 4;
+
+    /** JSON object 的花括号边界开销。 */
     private static final int JSON_OBJECT_BOUNDARY_TOKENS = 2;
+
+    /** JSON array 的方括号边界开销。 */
     private static final int JSON_ARRAY_BOUNDARY_TOKENS = 2;
+
+    /** JSON key/value 配对分隔开销。 */
     private static final int JSON_PAIR_BOUNDARY_TOKENS = 1;
+
+    /** JSON 相邻成员或元素的逗号开销。 */
     private static final int JSON_ITEM_DELIMITER_TOKENS = 1;
+
+    /** JSON string 的引号边界开销。 */
     private static final int JSON_STRING_BOUNDARY_TOKENS = 2;
+
+    /** JSON null 字面值的最小开销。 */
     private static final int JSON_NULL_TOKENS = 1;
+
+    /** 摘要 JSON 中单个结构标点的附加保守开销。 */
     private static final int JSON_PUNCTUATION_TOKENS = 1;
+
+    /** 估算溢出时使用的饱和值。 */
     private static final int MAX_TOKEN_ESTIMATE = Integer.MAX_VALUE;
 
     /** 估算固定协议、system、工具定义和本次动态消息组成的完整输入。 */
@@ -106,6 +139,7 @@ public final class ConversationTokenEstimator {
     }
 
     private int estimateJsonValue(Object value) {
+        // null 与 JSON string-like 标量分别覆盖字面值或引号边界。
         if (value == null) {
             return JSON_NULL_TOKENS;
         }
@@ -115,6 +149,8 @@ public final class ConversationTokenEstimator {
         if (value instanceof Character || value instanceof Enum<?> || value instanceof UUID) {
             return add(JSON_STRING_BOUNDARY_TOKENS, estimateText(String.valueOf(value)));
         }
+
+        // object 递归计入 key、value、冒号与相邻成员分隔符。
         if (value instanceof Map<?, ?> object) {
             int estimate = JSON_OBJECT_BOUNDARY_TOKENS;
             boolean hasPrevious = false;
@@ -129,6 +165,8 @@ public final class ConversationTokenEstimator {
             }
             return estimate;
         }
+
+        // collection 和数组都按 JSON array 计入外层边界与元素分隔符。
         if (value instanceof Iterable<?> values) {
             int estimate = JSON_ARRAY_BOUNDARY_TOKENS;
             boolean hasPrevious = false;
@@ -141,6 +179,7 @@ public final class ConversationTokenEstimator {
             }
             return estimate;
         }
+
         if (value.getClass().isArray()) {
             int estimate = JSON_ARRAY_BOUNDARY_TOKENS;
             int length = Array.getLength(value);
@@ -152,6 +191,8 @@ public final class ConversationTokenEstimator {
             }
             return estimate;
         }
+
+        // 数值和布尔等其余标量按规范文本长度计量。
         return estimateText(String.valueOf(value));
     }
 

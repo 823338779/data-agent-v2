@@ -205,6 +205,28 @@ class HierarchicalConversationHistoryLoaderTest {
     }
 
     @Test
+    void rejectsNonterminalToolProcessBeforeItCanCreateADanglingProtocolCall() {
+        stubCurrentExecution(SESSION_ID);
+        ToolThinkingProcessItem prepared = preparedToolItem();
+        ConversationMessage assistant = assistantMessage(List.of(prepared), FINAL_ANSWER);
+        when(messages.findByConversationSessionIdUpTo(SESSION_ID, INPUT_BOUNDARY))
+                .thenReturn(List.of(userMessage(), assistant));
+        when(toolExecutions.findByExecutionIds(List.of(PREVIOUS_EXECUTION_ID)))
+                .thenReturn(
+                        List.of(
+                                toolExecution(
+                                        FIRST_TOOL_EXECUTION_ID,
+                                        FIRST_TOOL_CALL_ID,
+                                        FIRST_TOOL_NAME,
+                                        1L,
+                                        firstProcessId())));
+
+        assertThatThrownBy(() -> loader.load(executionRef()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage(ERROR_MISMATCHED_TOOL_PROCESS);
+    }
+
+    @Test
     void rejectsAnExecutionFromAnotherSessionBeforeReadingHistory() {
         stubCurrentExecution(OTHER_SESSION_ID);
 
@@ -322,6 +344,28 @@ class HierarchicalConversationHistoryLoaderTest {
                 input,
                 output,
                 true,
+                null,
+                null);
+    }
+
+    private static ToolThinkingProcessItem preparedToolItem() {
+        return new ToolThinkingProcessItem(
+                firstProcessId(),
+                1L,
+                ThinkingProcessStatus.PREPARED,
+                CREATED_AT,
+                null,
+                null,
+                null,
+                ThinkingProcessItem.CURRENT_SCHEMA_VERSION,
+                FIRST_TOOL_NAME,
+                FIRST_TOOL_NAME,
+                FIRST_TOOL_EXECUTION_ID,
+                FIRST_TOOL_CALL_ID,
+                1L,
+                completePayload(Map.of(ARGUMENT_KEY, ARGUMENT_VALUE)),
+                null,
+                null,
                 null,
                 null);
     }
