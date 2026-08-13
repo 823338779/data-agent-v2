@@ -56,8 +56,10 @@ public class HierarchicalSummaryNodeRepository {
         entity.setLeftChildNodeId(node.leftChildNodeId());
         entity.setRightChildNodeId(node.rightChildNodeId());
         entity.setSummaryDocument(
-                documents.canonicalizeVersionedDocument(
-                        node.summaryDocument(), node.summarySchemaVersion()));
+                documents.canonicalizeSummaryDocument(
+                        node.summaryDocument(),
+                        node.summarySchemaVersion(),
+                        node.summaryPromptVersion()));
         entity.setEstimatedTokenCount(node.estimatedTokenCount());
         entity.setSummarySchemaVersion(node.summarySchemaVersion());
         entity.setSummaryPromptVersion(node.summaryPromptVersion());

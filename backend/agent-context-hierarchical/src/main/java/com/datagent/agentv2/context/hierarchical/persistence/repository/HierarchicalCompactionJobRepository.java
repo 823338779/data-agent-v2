@@ -55,11 +55,16 @@ public class HierarchicalCompactionJobRepository {
         String tenantId = TenantContext.requiredTenantId();
         HierarchicalCompactionJobEntity entity = toEntity(candidate, tenantId);
         mapper.insertIgnore(entity);
-        HierarchicalCompactionJob persisted = findJob(candidate.jobId());
+        HierarchicalCompactionJobEntity persisted =
+                mapper.selectBoundary(
+                        tenantId,
+                        candidate.executionId(),
+                        candidate.executionAttempt(),
+                        candidate.inputUpToMessageSequence());
         if (persisted == null) {
             throw new IllegalStateException(JOB_NOT_PERSISTED);
         }
-        return persisted;
+        return toDomain(persisted);
     }
 
     /** 以读取到的乐观锁版本和调用方 execution fence 推动作业状态。 */

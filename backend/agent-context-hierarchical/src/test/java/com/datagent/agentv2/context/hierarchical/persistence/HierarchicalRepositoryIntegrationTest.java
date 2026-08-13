@@ -9,6 +9,7 @@ import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionJo
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
 import com.datagent.agentv2.context.hierarchical.persistence.json.HierarchicalDocumentCodec;
+import com.datagent.agentv2.context.hierarchical.persistence.mapper.HierarchicalCompactionJobMapper;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCheckpointRepository;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCompactionJobRepository;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalExecutionPolicyRepository;
@@ -67,8 +68,12 @@ class HierarchicalRepositoryIntegrationTest {
             "insert into conversation_context_hierarchical_compaction_job (hierarchical_compaction_job_id, tenant_id, conversation_session_id, execution_id, execution_attempt, owner_instance_id, input_up_to_message_sequence, base_checkpoint_version, base_strategy_generation, plan_document, status, created_at, created_by, updated_at, updated_by, deleted, version) values (?, ?, ?, ?, ?, ?, ?, 0, 1, ?::jsonb, ?, ?, ?, ?, ?, false, 0)";
     private static final String COUNT_NODES_SQL =
             "select count(*) from conversation_context_hierarchical_summary_node where tenant_id = ? and conversation_session_id = ?";
+    private static final String COUNT_JOBS_SQL =
+            "select count(*) from conversation_context_hierarchical_compaction_job where tenant_id = ? and execution_id = ? and execution_attempt = ? and input_up_to_message_sequence = ?";
     private static final String ADVANCE_JOB_BASE_SQL =
             "update conversation_context_hierarchical_compaction_job set base_checkpoint_version = ?, base_strategy_generation = ?, input_up_to_message_sequence = ? where tenant_id = ? and hierarchical_compaction_job_id = ?";
+    private static final String UPDATE_JOB_VERSION_SQL =
+            "update conversation_context_hierarchical_compaction_job set version = ? where tenant_id = ? and hierarchical_compaction_job_id = ?";
     private static final String SESSION_TITLE = "Hierarchical integration session";
     private static final String SESSION_TYPE = "chat";
     private static final String PASSWORD_HASH = "not-used";
@@ -91,6 +96,7 @@ class HierarchicalRepositoryIntegrationTest {
     @Autowired private HierarchicalCheckpointRepository checkpoints;
     @Autowired private HierarchicalSummaryNodeRepository nodes;
     @Autowired private HierarchicalCompactionJobRepository jobs;
+    @Autowired private HierarchicalCompactionJobMapper jobMapper;
     @Autowired private HierarchicalDocumentCodec documents;
 
     @DynamicPropertySource
@@ -213,6 +219,21 @@ class HierarchicalRepositoryIntegrationTest {
     }
 
     @Test
+    void checkpointCasRejectsPointerBeyondFrozenExecutionBoundary() {
+        HierarchicalCheckpoint current =
+                TenantContext.call(TENANT_A, () -> checkpoints.create(checkpoint(20L, 1L)));
+        insertJob(HierarchicalCompactionJob.Status.READY_TO_PUBLISH);
+
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        checkpoints.compareAndSetCheckpoint(
+                                                current, checkpoint(51L, 2L), execution())))
+                .isFalse();
+    }
+
+    @Test
     void duplicateImmutableNodesReturnTheFirstPersistedNode() {
         HierarchicalSummaryNode first = node("node_first");
         HierarchicalSummaryNode duplicate = node("node_duplicate");
@@ -225,6 +246,44 @@ class HierarchicalRepositoryIntegrationTest {
         assertThat(persisted.nodeId()).isEqualTo(first.nodeId());
         assertThat(repeated.nodeId()).isEqualTo(first.nodeId());
         assertThat(jdbc.queryForObject(COUNT_NODES_SQL, Integer.class, TENANT_A, SESSION_ID))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void summaryNodeRejectsUnsupportedSchemaVersionEvenWhenDocumentMatchesCandidate() {
+        HierarchicalSummaryNode unsupported =
+                node("node_schema_unsupported", 99, 1, summaryDocument(99));
+
+        assertThatThrownBy(
+                        () -> TenantContext.call(TENANT_A, () -> nodes.insertOrSelect(unsupported)))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void summaryNodeRejectsUnsupportedPromptVersion() {
+        HierarchicalSummaryNode unsupported =
+                node("node_prompt_unsupported", 1, 99, SUMMARY_DOCUMENT);
+
+        assertThatThrownBy(
+                        () -> TenantContext.call(TENANT_A, () -> nodes.insertOrSelect(unsupported)))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void compactionJobRetryWithDifferentIdReturnsExistingNaturalKeyJob() {
+        HierarchicalCompactionJob first = job(JOB_ID);
+        HierarchicalCompactionJob retry = job("job_retry");
+
+        HierarchicalCompactionJob persisted =
+                TenantContext.call(TENANT_A, () -> jobs.insertOrSelect(first));
+        HierarchicalCompactionJob repeated =
+                TenantContext.call(TENANT_A, () -> jobs.insertOrSelect(retry));
+
+        assertThat(persisted.jobId()).isEqualTo(JOB_ID);
+        assertThat(repeated.jobId()).isEqualTo(JOB_ID);
+        assertThat(
+                        jdbc.queryForObject(
+                                COUNT_JOBS_SQL, Integer.class, TENANT_A, EXECUTION_ID, 1L, 50L))
                 .isEqualTo(1);
     }
 
@@ -290,6 +349,34 @@ class HierarchicalRepositoryIntegrationTest {
         assertThat(TenantContext.call(TENANT_A, () -> jobs.findJob(JOB_ID)))
                 .extracting(HierarchicalCompactionJob::status, HierarchicalCompactionJob::version)
                 .containsExactly(HierarchicalCompactionJob.Status.GENERATING, 1L);
+    }
+
+    @Test
+    void jobTransitionSqlRejectsStaleVersionWhenAllOtherFencesMatch() {
+        insertJob(HierarchicalCompactionJob.Status.PLANNED);
+        jdbc.update(UPDATE_JOB_VERSION_SQL, 1L, TENANT_A, JOB_ID);
+        LocalDateTime now = LocalDateTime.now();
+
+        int transitioned =
+                TenantContext.call(
+                        TENANT_A,
+                        () ->
+                                jobMapper.transitionJob(
+                                        TENANT_A,
+                                        JOB_ID,
+                                        HierarchicalCompactionJob.Status.PLANNED.name(),
+                                        HierarchicalCompactionJob.Status.GENERATING.name(),
+                                        0L,
+                                        execution(),
+                                        null,
+                                        null,
+                                        now,
+                                        SYSTEM_OPERATOR));
+
+        assertThat(transitioned).isZero();
+        assertThat(TenantContext.call(TENANT_A, () -> jobs.findJob(JOB_ID)))
+                .extracting(HierarchicalCompactionJob::status, HierarchicalCompactionJob::version)
+                .containsExactly(HierarchicalCompactionJob.Status.PLANNED, 1L);
     }
 
     @Test
@@ -365,6 +452,11 @@ class HierarchicalRepositoryIntegrationTest {
     }
 
     private static HierarchicalSummaryNode node(String nodeId) {
+        return node(nodeId, 1, 1, SUMMARY_DOCUMENT);
+    }
+
+    private static HierarchicalSummaryNode node(
+            String nodeId, int schemaVersion, int promptVersion, String summaryDocument) {
         return new HierarchicalSummaryNode(
                 nodeId,
                 SESSION_ID,
@@ -374,12 +466,32 @@ class HierarchicalRepositoryIntegrationTest {
                 2L,
                 null,
                 null,
-                SUMMARY_DOCUMENT,
+                summaryDocument,
                 10,
-                1,
-                1,
+                schemaVersion,
+                promptVersion,
                 "integration-provider",
                 "integration-model");
+    }
+
+    private static HierarchicalCompactionJob job(String jobId) {
+        return new HierarchicalCompactionJob(
+                jobId,
+                SESSION_ID,
+                EXECUTION_ID,
+                1L,
+                OWNER_ID,
+                50L,
+                0L,
+                1L,
+                PLAN_DOCUMENT,
+                HierarchicalCompactionJob.Status.PLANNED,
+                null,
+                0L);
+    }
+
+    private static String summaryDocument(int schemaVersion) {
+        return "{\"schemaVersion\":%d,\"confirmedFacts\":[]}".formatted(schemaVersion);
     }
 
     private static Flyway flyway(String location, String historyTable) {

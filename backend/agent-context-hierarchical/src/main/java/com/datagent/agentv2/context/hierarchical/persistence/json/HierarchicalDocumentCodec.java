@@ -66,6 +66,16 @@ public final class HierarchicalDocumentCodec {
         }
     }
 
+    /** 校验摘要文档及其 schema、prompt 版本均受当前插件支持。 */
+    public String canonicalizeSummaryDocument(
+            String document, int schemaVersion, int promptVersion) {
+        if (schemaVersion != SUPPORTED_SUMMARY_SCHEMA_VERSION
+                || promptVersion != SUPPORTED_SUMMARY_PROMPT_VERSION) {
+            throw new IllegalStateException(INVALID_VERSIONED_DOCUMENT);
+        }
+        return canonicalizeVersionedDocument(document, schemaVersion);
+    }
+
     /** 策略版本是读取持久化配置时的兼容性门禁。 */
     private static void validatePolicy(HierarchicalContextPolicySnapshot policy) {
         if (policy == null

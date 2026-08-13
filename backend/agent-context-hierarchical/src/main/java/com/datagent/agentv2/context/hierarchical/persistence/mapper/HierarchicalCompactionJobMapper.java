@@ -17,6 +17,8 @@ public interface HierarchicalCompactionJobMapper
             "select * from conversation_context_hierarchical_compaction_job where tenant_id = #{tenantId} and hierarchical_compaction_job_id = #{jobId} and deleted = false";
     String SELECT_RECOVERABLE =
             "select * from conversation_context_hierarchical_compaction_job where tenant_id = #{tenantId} and execution_id = #{executionId} and execution_attempt = #{executionAttempt} and input_up_to_message_sequence = #{inputBoundary} and status in ('PLANNED', 'GENERATING', 'READY_TO_PUBLISH') and deleted = false";
+    String SELECT_BOUNDARY =
+            "select * from conversation_context_hierarchical_compaction_job where tenant_id = #{tenantId} and execution_id = #{executionId} and execution_attempt = #{executionAttempt} and input_up_to_message_sequence = #{inputBoundary} and deleted = false";
     String INSERT_IGNORE =
             "insert into conversation_context_hierarchical_compaction_job (hierarchical_compaction_job_id, tenant_id, conversation_session_id, execution_id, execution_attempt, owner_instance_id, input_up_to_message_sequence, base_checkpoint_version, base_strategy_generation, plan_document, status, failure_code, completed_at, created_at, created_by, updated_at, updated_by, deleted, version) values (#{hierarchicalCompactionJobId}, #{tenantId}, #{conversationSessionId}, #{executionId}, #{executionAttempt}, #{ownerInstanceId}, #{inputUpToMessageSequence}, #{baseCheckpointVersion}, #{baseStrategyGeneration}, #{planDocument, typeHandler=com.datagent.agentv2.persistence.typehandler.JsonbStringTypeHandler, jdbcType=OTHER}, #{status}, #{failureCode}, #{completedAt}, #{createdAt}, #{createdBy}, #{updatedAt}, #{updatedBy}, #{deleted}, #{version}) on conflict (tenant_id, execution_id, execution_attempt, input_up_to_message_sequence) do nothing";
     String TRANSITION_JOB =
@@ -30,6 +32,14 @@ public interface HierarchicalCompactionJobMapper
     /** 读取固定 execution 边界上的非终态作业。 */
     @Select(SELECT_RECOVERABLE)
     HierarchicalCompactionJobEntity selectRecoverable(
+            @Param("tenantId") String tenantId,
+            @Param("executionId") String executionId,
+            @Param("executionAttempt") long executionAttempt,
+            @Param("inputBoundary") long inputBoundary);
+
+    /** 按唯一自然键读取任意状态作业，供幂等插入冲突后返回既有记录。 */
+    @Select(SELECT_BOUNDARY)
+    HierarchicalCompactionJobEntity selectBoundary(
             @Param("tenantId") String tenantId,
             @Param("executionId") String executionId,
             @Param("executionAttempt") long executionAttempt,
