@@ -14,7 +14,9 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class HierarchicalCompactionJobRepository {
 
-    private static final int PLAN_SCHEMA_VERSION = 1;
+    /** 新计划只允许当前完整冻结 generation settings 的 schema v2。 */
+    private static final int WRITABLE_PLAN_SCHEMA_VERSION = 2;
+
     private static final String SYSTEM_OPERATOR = "hierarchical-context";
     private static final String EXECUTION_TENANT_MISMATCH =
             "Hierarchical execution tenant does not match context";
@@ -152,7 +154,8 @@ public class HierarchicalCompactionJobRepository {
         entity.setBaseCheckpointVersion(job.baseCheckpointVersion());
         entity.setBaseStrategyGeneration(job.baseStrategyGeneration());
         entity.setPlanDocument(
-                documents.canonicalizeVersionedDocument(job.planDocument(), PLAN_SCHEMA_VERSION));
+                documents.canonicalizeVersionedDocument(
+                        job.planDocument(), WRITABLE_PLAN_SCHEMA_VERSION));
         entity.setStatus(job.status().name());
         entity.setFailureCode(job.failureCode());
         entity.setCreatedAt(now);

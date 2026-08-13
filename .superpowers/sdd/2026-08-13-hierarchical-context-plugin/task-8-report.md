@@ -207,3 +207,50 @@ git diff --check
 ```
 
 结果：`Tests run: 132, Failures: 0, Errors: 0, Skipped: 0`。
+
+## Fix round 4/5
+
+### RED
+
+本轮先在真实 PostgreSQL repository 集成测试中补齐计划版本回归：
+
+- schema v2 的 body-free plan 无法写入或重新读取。
+- 自然键已存在 schema v1 job 时，新 v2 candidate 在执行 `insertIgnore` 前即被 v1 写入门禁拒绝，无法返回既有行并进入稳定 replan-required 解码路径。
+- 新写入必须继续拒绝未知 schema v3，不能通过放宽通用 versioned document codec 修复。
+
+首次执行 repository 集成测试得到预期失败：`Tests run: 17, Failures: 0, Errors: 3, Skipped: 0`，三个错误均来自 `HierarchicalCompactionJobRepository.toEntity` 将新 candidate 按 schema v1 canonicalize。
+
+### 修复
+
+- 将 `HierarchicalCompactionJobRepository` 的 plan 专属写入版本门禁更新为 schema v2；未修改共享 `HierarchicalDocumentCodec` 对 checkpoint、frontier、summary 等其他文档的版本约束。
+- repository 仍只在新 candidate 转换为 entity 时校验 v2。数据库已存在的 v1 job 保持可读，因此 v2 candidate 遇到自然键冲突后可返回既有 v1 行，由 planning decode 稳定抛出 `Hierarchical plan version 1 is unsupported; replan required`。
+- PostgreSQL 集成覆盖 v2 plan 语义不变的写入/读取、v2 与既有 v1 的自然键冲突，以及未知 v3 新写拒绝。
+
+### GREEN
+
+定向 repository 与 planning 验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am `
+  '-Dtest=HierarchicalRepositoryIntegrationTest,HierarchicalCompactionPlanningTransactionTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+结果：`Tests run: 27, Failures: 0, Errors: 0, Skipped: 0`。
+
+完整插件模块验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical test
+```
+
+结果：`Tests run: 135, Failures: 0, Errors: 0, Skipped: 0`。
+
+格式与差异检查：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical spotless:check
+git diff --check
+```
+
+结果：全部通过。

@@ -38,6 +38,8 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /** 使用真实 PostgreSQL 和 MyBatis 验证插件私有 repository 的并发与隔离边界。 */
 @SpringBootTest(
@@ -53,6 +55,10 @@ class HierarchicalRepositoryIntegrationTest {
     private static final String OWNER_ID = "owner_hierarchical";
     private static final String OTHER_OWNER_ID = "owner_stale";
     private static final String JOB_ID = "job_hierarchical";
+
+    /** 自然键重试使用不同的业务 ID，证明持久化行仍是唯一事实源。 */
+    private static final String RETRY_JOB_ID = "job_retry";
+
     private static final String PRIMARY_HISTORY = "flyway_schema_history";
     private static final String HIERARCHICAL_HISTORY =
             "flyway_agent_context_hierarchical_schema_history";
@@ -82,9 +88,25 @@ class HierarchicalRepositoryIntegrationTest {
     private static final String SYSTEM_OPERATOR = "hierarchical-test";
     private static final String EMPTY_FRONTIER = "{\"schemaVersion\":1,\"nodes\":[]}";
     private static final String SUMMARY_DOCUMENT = "{\"schemaVersion\":1,\"confirmedFacts\":[]}";
-    private static final String PLAN_DOCUMENT = "{\"schemaVersion\":1,\"operations\":[]}";
+
+    /** 旧任务行仅用于验证升级后的自然键冲突读取兼容性。 */
+    private static final String LEGACY_PLAN_V1_DOCUMENT = "{\"schemaVersion\":1,\"operations\":[]}";
+
+    /** 新建任务必须使用当前 body-free plan schema。 */
+    private static final String PLAN_V2_DOCUMENT =
+            "{\"schemaVersion\":2,\"candidates\":[],\"coldCandidate\":null}";
+
+    /** 未知未来 plan schema 不得作为新任务写入。 */
+    private static final String PLAN_V3_DOCUMENT = "{\"schemaVersion\":3,\"operations\":[]}";
+
+    /** 正文属性不得进入 durable plan。 */
+    private static final String SUMMARY_DOCUMENT_FIELD = "summaryDocument";
+
     private static final String COLD_DOCUMENT =
             "{\"schemaVersion\":1,\"confirmedFacts\":[{\"statement\":\"cold fact\"}]}";
+
+    /** JSONB 字段顺序不稳定，测试按 Jackson tree 比较语义等价性。 */
+    private static final ObjectMapper JSON = JsonMapper.builder().build();
 
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
@@ -297,7 +319,7 @@ class HierarchicalRepositoryIntegrationTest {
     @Test
     void compactionJobRetryWithDifferentIdReturnsExistingNaturalKeyJob() {
         HierarchicalCompactionJob first = job(JOB_ID);
-        HierarchicalCompactionJob retry = job("job_retry");
+        HierarchicalCompactionJob retry = job(RETRY_JOB_ID);
 
         HierarchicalCompactionJob persisted =
                 TenantContext.call(TENANT_A, () -> jobs.insertOrSelect(first));
@@ -310,6 +332,49 @@ class HierarchicalRepositoryIntegrationTest {
                         jdbc.queryForObject(
                                 COUNT_JOBS_SQL, Integer.class, TENANT_A, EXECUTION_ID, 1L, 50L))
                 .isEqualTo(1);
+    }
+
+    @Test
+    void compactionJobPersistsAndReadsV2BodyFreePlanUnchanged() {
+        HierarchicalCompactionJob candidate = job(JOB_ID);
+
+        HierarchicalCompactionJob persisted =
+                TenantContext.call(TENANT_A, () -> jobs.insertOrSelect(candidate));
+        HierarchicalCompactionJob reloaded =
+                TenantContext.call(TENANT_A, () -> jobs.findJob(JOB_ID));
+
+        // PostgreSQL jsonb may reorder fields, so equality is asserted on the JSON tree.
+        assertThat(documentsEqual(persisted.planDocument(), PLAN_V2_DOCUMENT)).isTrue();
+        assertThat(documentsEqual(reloaded.planDocument(), PLAN_V2_DOCUMENT)).isTrue();
+        assertThat(reloaded.planDocument()).doesNotContain(SUMMARY_DOCUMENT_FIELD);
+    }
+
+    @Test
+    void compactionJobNaturalKeyCollisionReturnsExistingLegacyV1Plan() {
+        insertJob(HierarchicalCompactionJob.Status.PLANNED);
+
+        HierarchicalCompactionJob collided =
+                TenantContext.call(TENANT_A, () -> jobs.insertOrSelect(job(RETRY_JOB_ID)));
+
+        // Planning can now observe this v1 document and emit its stable replan-required result.
+        assertThat(collided.jobId()).isEqualTo(JOB_ID);
+        assertThat(documentsEqual(collided.planDocument(), LEGACY_PLAN_V1_DOCUMENT)).isTrue();
+        assertThat(
+                        jdbc.queryForObject(
+                                COUNT_JOBS_SQL, Integer.class, TENANT_A, EXECUTION_ID, 1L, 50L))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void compactionJobRejectsUnknownFuturePlanVersionForNewWrite() {
+        HierarchicalCompactionJob unknown = job(JOB_ID, PLAN_V3_DOCUMENT);
+
+        assertThatThrownBy(() -> TenantContext.call(TENANT_A, () -> jobs.insertOrSelect(unknown)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(
+                        jdbc.queryForObject(
+                                COUNT_JOBS_SQL, Integer.class, TENANT_A, EXECUTION_ID, 1L, 50L))
+                .isZero();
     }
 
     @Test
@@ -501,7 +566,7 @@ class HierarchicalRepositoryIntegrationTest {
                 1L,
                 OWNER_ID,
                 50L,
-                PLAN_DOCUMENT,
+                LEGACY_PLAN_V1_DOCUMENT,
                 status.name(),
                 now,
                 SYSTEM_OPERATOR,
@@ -567,6 +632,10 @@ class HierarchicalRepositoryIntegrationTest {
     }
 
     private static HierarchicalCompactionJob job(String jobId) {
+        return job(jobId, PLAN_V2_DOCUMENT);
+    }
+
+    private static HierarchicalCompactionJob job(String jobId, String planDocument) {
         return new HierarchicalCompactionJob(
                 jobId,
                 SESSION_ID,
@@ -576,10 +645,19 @@ class HierarchicalRepositoryIntegrationTest {
                 50L,
                 0L,
                 1L,
-                PLAN_DOCUMENT,
+                planDocument,
                 HierarchicalCompactionJob.Status.PLANNED,
                 null,
                 0L);
+    }
+
+    /** 比较经过 PostgreSQL JSONB 往返后的文档语义。 */
+    private static boolean documentsEqual(String left, String right) {
+        try {
+            return JSON.readTree(left).equals(JSON.readTree(right));
+        } catch (RuntimeException failure) {
+            throw new IllegalStateException("Invalid integration-test JSON document", failure);
+        }
     }
 
     private static HierarchicalColdCandidate coldCandidate(String document) {
