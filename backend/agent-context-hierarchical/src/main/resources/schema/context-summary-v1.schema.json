@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datagent.local/schema/hierarchical-context-summary-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "coverage",
+    "confirmedFacts",
+    "workingHypotheses",
+    "decisions",
+    "rejectedApproaches",
+    "toolFindings",
+    "nextSteps",
+    "openQuestions"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "coverage": { "$ref": "#/$defs/coverage" },
+    "confirmedFacts": { "$ref": "#/$defs/entries" },
+    "workingHypotheses": { "$ref": "#/$defs/entries" },
+    "decisions": { "$ref": "#/$defs/entries" },
+    "rejectedApproaches": { "$ref": "#/$defs/entries" },
+    "toolFindings": { "$ref": "#/$defs/entries" },
+    "nextSteps": { "$ref": "#/$defs/entries" },
+    "openQuestions": { "$ref": "#/$defs/entries" }
+  },
+  "$defs": {
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startTurn",
+        "endTurn",
+        "startMessageSequence",
+        "endMessageSequence"
+      ],
+      "properties": {
+        "startTurn": { "type": "integer", "minimum": 1 },
+        "endTurn": { "type": "integer", "minimum": 1 },
+        "startMessageSequence": { "type": "integer", "minimum": 1 },
+        "endMessageSequence": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/entry" }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statement", "sourceRanges"],
+      "properties": {
+        "statement": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "sourceRanges": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/sourceRange" }
+        }
+      }
+    },
+    "sourceRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startMessageSequence", "endMessageSequence"],
+      "properties": {
+        "startMessageSequence": { "type": "integer", "minimum": 1 },
+        "endMessageSequence": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}
