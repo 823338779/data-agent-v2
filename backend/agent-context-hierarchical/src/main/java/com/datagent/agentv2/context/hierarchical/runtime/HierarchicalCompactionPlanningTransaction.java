@@ -29,14 +29,16 @@ import tools.jackson.databind.ObjectMapper;
 /** 在独立短事务内冻结压缩边界并持久化不含正文的可恢复计划。 */
 public class HierarchicalCompactionPlanningTransaction {
 
-    private static final int PLAN_SCHEMA_VERSION = 2;
-    private static final int LEGACY_PLAN_SCHEMA_VERSION = 1;
+    private static final int PLAN_SCHEMA_VERSION = 3;
+    private static final int LEGACY_PLAN_SCHEMA_VERSION_ONE = 1;
+    private static final int LEGACY_PLAN_SCHEMA_VERSION_TWO = 2;
     private static final String JOB_ID_PREFIX = "hierarchical_compaction_job";
     private static final String EVENT_JOB_ID = "compactionJobId";
     private static final String EVENT_INPUT_BOUNDARY = "inputUpToMessageSequence";
     private static final String INVALID_PLAN_DOCUMENT = "Invalid hierarchical plan document";
-    private static final String LEGACY_PLAN_REQUIRES_REPLAN =
-            "Hierarchical plan version 1 is unsupported; replan required";
+    private static final String LEGACY_PLAN_REQUIRES_REPLAN_PREFIX = "Hierarchical plan version ";
+    private static final String LEGACY_PLAN_REQUIRES_REPLAN_SUFFIX =
+            " is unsupported; replan required";
     private static final String UNSUPPORTED_PLAN_VERSION_PREFIX =
             "Unsupported hierarchical plan schema version: ";
     private static final String INCOMPATIBLE_PERSISTED_JOB =
@@ -85,13 +87,16 @@ public class HierarchicalCompactionPlanningTransaction {
         PlannedCandidate transientCold =
                 plannedColdCandidate(checked, input, transientPlan, identity);
         HierarchicalCheckpoint checkpoint = input.checkpoint();
+        int targetInputTokens = checked.policySnapshot().targetInputTokens(input.budget());
+        int warmTokenBudget = Math.max(0, targetInputTokens - input.nonWarmInputTokens());
         DurablePlanDocument transientDocument =
                 new DurablePlanDocument(
                         PLAN_SCHEMA_VERSION,
                         checkpoint.version(),
                         checkpoint.strategyGeneration(),
                         checked.execution().inputUpToMessageSequence(),
-                        checked.policySnapshot().targetInputTokens(input.budget()),
+                        targetInputTokens,
+                        warmTokenBudget,
                         transientSettings,
                         transientPlan,
                         transientCandidates,
@@ -113,6 +118,17 @@ public class HierarchicalCompactionPlanningTransaction {
                         null,
                         0L);
         HierarchicalCompactionJob persisted = jobs.insertOrSelect(candidate);
+        boolean resetStale = false;
+        if (staleReady(persisted, candidate)) {
+            if (!jobs.resetStale(persisted, candidate, checked.execution())) {
+                throw new IllegalStateException(INCOMPATIBLE_PERSISTED_JOB);
+            }
+            resetStale = true;
+            persisted = jobs.findJob(persisted.jobId());
+            if (persisted == null) {
+                throw new IllegalStateException(INCOMPATIBLE_PERSISTED_JOB);
+            }
+        }
         requireCompatible(persisted, checked.execution());
 
         // 唯一边界冲突后 persisted plan 是唯一事实源，禁止继续使用刚重算的瞬态计划。
@@ -120,7 +136,7 @@ public class HierarchicalCompactionPlanningTransaction {
         validateDurablePlan(persisted, durable);
 
         // 只有本次首次插入的 job 发布 STARTED；唯一边界竞争返回既有 job 时不会重复事件。
-        if (candidate.jobId().equals(persisted.jobId())) {
+        if (candidate.jobId().equals(persisted.jobId()) || resetStale) {
             executions.publish(
                     checked.execution(),
                     new ContextLifecycleEvent(
@@ -135,6 +151,24 @@ public class HierarchicalCompactionPlanningTransaction {
                 persisted,
                 checked.execution(),
                 durable.generationSettings(),
+                durable.warmTokenBudget(),
+                durable.plan(),
+                durable.candidates(),
+                durable.coldCandidate());
+    }
+
+    /** 从 job 内 schema-v3 body-free 文档恢复原计划，不重新运行 planner 或读取当前配置。 */
+    PlannedCompaction restore(HierarchicalCompactionJob job, ContextExecutionRef execution) {
+        HierarchicalCompactionJob checkedJob = Objects.requireNonNull(job, "job");
+        ContextExecutionRef checkedExecution = Objects.requireNonNull(execution, "execution");
+        requireCompatible(checkedJob, checkedExecution);
+        DurablePlanDocument durable = readPlan(checkedJob.planDocument());
+        validateDurablePlan(checkedJob, durable);
+        return new PlannedCompaction(
+                checkedJob,
+                checkedExecution,
+                durable.generationSettings(),
+                durable.warmTokenBudget(),
                 durable.plan(),
                 durable.candidates(),
                 durable.coldCandidate());
@@ -263,8 +297,12 @@ public class HierarchicalCompactionPlanningTransaction {
 
     private DurablePlanDocument readPlan(String document) {
         int schemaVersion = readPlanVersion(document);
-        if (schemaVersion == LEGACY_PLAN_SCHEMA_VERSION) {
-            throw new IllegalStateException(LEGACY_PLAN_REQUIRES_REPLAN);
+        if (schemaVersion == LEGACY_PLAN_SCHEMA_VERSION_ONE
+                || schemaVersion == LEGACY_PLAN_SCHEMA_VERSION_TWO) {
+            throw new IllegalStateException(
+                    LEGACY_PLAN_REQUIRES_REPLAN_PREFIX
+                            + schemaVersion
+                            + LEGACY_PLAN_REQUIRES_REPLAN_SUFFIX);
         }
         if (schemaVersion != PLAN_SCHEMA_VERSION) {
             throw new IllegalStateException(UNSUPPORTED_PLAN_VERSION_PREFIX + schemaVersion);
@@ -301,11 +339,24 @@ public class HierarchicalCompactionPlanningTransaction {
         }
     }
 
+    private static boolean staleReady(
+            HierarchicalCompactionJob persisted, HierarchicalCompactionJob candidate) {
+        return persisted.status() == HierarchicalCompactionJob.Status.READY_TO_PUBLISH
+                && persisted.executionAttempt() == candidate.executionAttempt()
+                && persisted.ownerInstanceId().equals(candidate.ownerInstanceId())
+                && persisted.inputUpToMessageSequence() == candidate.inputUpToMessageSequence()
+                && (persisted.baseCheckpointVersion() != candidate.baseCheckpointVersion()
+                        || persisted.baseStrategyGeneration()
+                                != candidate.baseStrategyGeneration());
+    }
+
     private void validateDurablePlan(HierarchicalCompactionJob job, DurablePlanDocument document) {
         if (document.baseCheckpointVersion() != job.baseCheckpointVersion()
                 || document.baseStrategyGeneration() != job.baseStrategyGeneration()
                 || document.inputUpToMessageSequence() != job.inputUpToMessageSequence()
-                || document.targetInputTokens() < 0) {
+                || document.targetInputTokens() < 0
+                || document.warmTokenBudget() < 0
+                || document.warmTokenBudget() > document.targetInputTokens()) {
             throw new IllegalStateException(INVALID_PLAN_DOCUMENT);
         }
         try {
@@ -373,6 +424,7 @@ public class HierarchicalCompactionPlanningTransaction {
             HierarchicalCompactionJob job,
             ContextExecutionRef execution,
             GenerationSettings generationSettings,
+            int warmTokenBudget,
             HierarchicalCompactionPlan plan,
             List<PlannedCandidate> candidates,
             PlannedCandidate coldCandidate) {
@@ -383,6 +435,9 @@ public class HierarchicalCompactionPlanningTransaction {
             Objects.requireNonNull(generationSettings, "generationSettings");
             Objects.requireNonNull(plan, "plan");
             candidates = List.copyOf(Objects.requireNonNull(candidates, "candidates"));
+            if (warmTokenBudget < 0) {
+                throw new IllegalArgumentException("warmTokenBudget must not be negative");
+            }
         }
     }
 
@@ -472,6 +527,7 @@ public class HierarchicalCompactionPlanningTransaction {
             long baseStrategyGeneration,
             long inputUpToMessageSequence,
             int targetInputTokens,
+            int warmTokenBudget,
             GenerationSettings generationSettings,
             HierarchicalCompactionPlan plan,
             List<PlannedCandidate> candidates,

@@ -79,6 +79,8 @@ class HierarchicalCompactionPlanningTransactionTest {
               "coldCandidate": null
             }
             """;
+    private static final String LEGACY_V2_PLAN_DOCUMENT =
+            LEGACY_V1_PLAN_DOCUMENT.replace("\"schemaVersion\": 1", "\"schemaVersion\": 2");
     private static final HierarchicalContextPolicySnapshot POLICY =
             new HierarchicalContextPolicySnapshot(1, 0.75d, 0.70d, 10, 100, 1, 1);
     private static final HierarchicalContextPolicySnapshot CHANGED_POLICY =
@@ -123,7 +125,11 @@ class HierarchicalCompactionPlanningTransactionTest {
         assertThat(job.getValue().baseStrategyGeneration()).isEqualTo(5L);
         assertThat(job.getValue().inputUpToMessageSequence()).isEqualTo(20L);
         assertThat(job.getValue().planDocument())
-                .contains(LEAF_NODE_ID, "\"schemaVersion\":2", "\"targetInputTokens\":700")
+                .contains(
+                        LEAF_NODE_ID,
+                        "\"schemaVersion\":3",
+                        "\"targetInputTokens\":700",
+                        "\"warmTokenBudget\":600")
                 .doesNotContain(SECRET_BODY);
         assertThat(planned.candidates())
                 .extracting(candidate -> candidate.nodeId())
@@ -165,10 +171,17 @@ class HierarchicalCompactionPlanningTransactionTest {
     }
 
     @Test
+    void priorV2PlanFailsWithStableReplanRequiredOutcome() {
+        assertPersistedPlanRejected(
+                LEGACY_V2_PLAN_DOCUMENT,
+                "Hierarchical plan version 2 is unsupported; replan required");
+    }
+
+    @Test
     void unknownFuturePlanVersionIsRejectedExplicitly() {
         assertPersistedPlanRejected(
-                LEGACY_V1_PLAN_DOCUMENT.replace("\"schemaVersion\": 1", "\"schemaVersion\": 3"),
-                "Unsupported hierarchical plan schema version: 3");
+                LEGACY_V1_PLAN_DOCUMENT.replace("\"schemaVersion\": 1", "\"schemaVersion\": 4"),
+                "Unsupported hierarchical plan schema version: 4");
     }
 
     @Test

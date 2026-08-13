@@ -67,12 +67,26 @@ public class HierarchicalCandidateGenerationService {
         PlannedCompaction planned = Objects.requireNonNull(plannedCompaction, "plannedCompaction");
         ContextExecutionRef execution = planned.execution();
         String jobId = planned.job().jobId();
-        if (!jobs.transitionJob(
-                jobId,
-                HierarchicalCompactionJob.Status.PLANNED,
-                HierarchicalCompactionJob.Status.GENERATING,
-                execution,
-                null)) {
+        HierarchicalCompactionJob current = jobs.findJob(jobId);
+        requireCurrentJob(planned, current);
+        if (current.status() == HierarchicalCompactionJob.Status.PLANNED) {
+            if (!jobs.transitionJob(
+                    jobId,
+                    HierarchicalCompactionJob.Status.PLANNED,
+                    HierarchicalCompactionJob.Status.GENERATING,
+                    execution,
+                    null)) {
+                throw new IllegalStateException(INVALID_JOB_STATE);
+            }
+        } else if (current.status() == HierarchicalCompactionJob.Status.READY_TO_PUBLISH) {
+            assertExecution(execution);
+            List<PlannedCandidate> requiredCandidates = requiredCandidates(planned);
+            Map<String, HierarchicalSummaryNode> available =
+                    loadAndValidateNodes(planned, requiredCandidates);
+            loadAndValidateCold(planned);
+            assertComplete(planned, requiredCandidates, available);
+            return ready(planned, false);
+        } else if (current.status() != HierarchicalCompactionJob.Status.GENERATING) {
             throw new IllegalStateException(INVALID_JOB_STATE);
         }
 
@@ -137,10 +151,25 @@ public class HierarchicalCandidateGenerationService {
                     failure.getMessage())) {
                 failJob(planned, failure);
                 throw new HierarchicalCompactionException(
-                        HierarchicalSummaryGenerator.FAILURE_CONTEXT_COMPACTION, failure);
+                        HierarchicalCompactionException.FAILURE_CODE, failure);
             }
             throw failure;
         }
+    }
+
+    /** publication 前重读并复验全部 durable 节点与 Cold，不加载正文也不调用模型。 */
+    void validateReady(PlannedCompaction plannedCompaction) {
+        PlannedCompaction planned = Objects.requireNonNull(plannedCompaction, "plannedCompaction");
+        HierarchicalCompactionJob current = jobs.findJob(planned.job().jobId());
+        requireCurrentJob(planned, current);
+        if (current.status() != HierarchicalCompactionJob.Status.READY_TO_PUBLISH) {
+            throw new IllegalStateException(INVALID_JOB_STATE);
+        }
+        List<PlannedCandidate> requiredCandidates = requiredCandidates(planned);
+        Map<String, HierarchicalSummaryNode> available =
+                loadAndValidateNodes(planned, requiredCandidates);
+        loadAndValidateCold(planned);
+        assertComplete(planned, requiredCandidates, available);
     }
 
     private GenerationSources loadSources(PlannedCompaction planned) {
@@ -454,7 +483,7 @@ public class HierarchicalCandidateGenerationService {
     }
 
     private void failJob(PlannedCompaction planned, RuntimeException failure) {
-        String failureCode = HierarchicalSummaryGenerator.FAILURE_CONTEXT_COMPACTION;
+        String failureCode = HierarchicalCompactionException.FAILURE_CODE;
         jobs.transitionJob(
                 planned.job().jobId(),
                 HierarchicalCompactionJob.Status.GENERATING,
@@ -465,12 +494,22 @@ public class HierarchicalCandidateGenerationService {
     }
 
     private static ReadyCompaction ready(PlannedCompaction planned, boolean cancelled) {
-        return new ReadyCompaction(
-                planned.job().jobId(),
-                planned.plan(),
-                planned.candidates().stream().map(PlannedCandidate::nodeId).toList(),
-                planned.coldCandidate() == null ? null : planned.coldCandidate().nodeId(),
-                cancelled);
+        return new ReadyCompaction(planned, cancelled);
+    }
+
+    private static void requireCurrentJob(
+            PlannedCompaction planned, HierarchicalCompactionJob current) {
+        if (current == null
+                || !current.jobId().equals(planned.job().jobId())
+                || !current.conversationSessionId()
+                        .equals(planned.execution().conversationSessionId())
+                || !current.executionId().equals(planned.execution().executionId())
+                || current.executionAttempt() != planned.execution().executionAttempt()
+                || !current.ownerInstanceId().equals(planned.execution().ownerInstanceId())
+                || current.inputUpToMessageSequence()
+                        != planned.execution().inputUpToMessageSequence()) {
+            throw new IllegalStateException(INVALID_JOB_STATE);
+        }
     }
 
     private static GenerationRange generationRange(SummaryRange range) {
@@ -484,16 +523,29 @@ public class HierarchicalCandidateGenerationService {
 
     /** READY 结果只携带 job、范围规划和 durable candidate ID，不复制任何正文。 */
     record ReadyCompaction(
-            String jobId,
-            HierarchicalCompactionPlan plan,
-            List<String> nodeIds,
-            String coldCandidateId,
+            /** 包含 durable job、fence、冻结设置和范围元数据，不携带正文。 */
+            PlannedCompaction planned,
+            /** 生成期间是否观察到取消。 */
             boolean cancelled) {
 
         ReadyCompaction {
-            Objects.requireNonNull(jobId, "jobId");
-            Objects.requireNonNull(plan, "plan");
-            nodeIds = List.copyOf(Objects.requireNonNull(nodeIds, "nodeIds"));
+            Objects.requireNonNull(planned, "planned");
+        }
+
+        String jobId() {
+            return planned.job().jobId();
+        }
+
+        HierarchicalCompactionPlan plan() {
+            return planned.plan();
+        }
+
+        List<String> nodeIds() {
+            return planned.candidates().stream().map(PlannedCandidate::nodeId).toList();
+        }
+
+        String coldCandidateId() {
+            return planned.coldCandidate() == null ? null : planned.coldCandidate().nodeId();
         }
     }
 

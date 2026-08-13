@@ -53,7 +53,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 class HierarchicalCandidateGenerationServiceTest {
 
     private static final String SESSION_ID = "session-1";
-    private static final String FAILURE_CODE = "FAILURE_CONTEXT_COMPACTION";
+    private static final String GENERATOR_FAILURE_CODE = "FAILURE_CONTEXT_COMPACTION";
+    private static final String FAILURE_CODE = HierarchicalCompactionException.FAILURE_CODE;
     private static final HierarchicalContextPolicySnapshot POLICY =
             new HierarchicalContextPolicySnapshot(1, 0.75d, 0.70d, 10, 100, 1, 1);
     private static final ContextExecutionRef EXECUTION =
@@ -87,6 +88,7 @@ class HierarchicalCandidateGenerationServiceTest {
                                 List.of(turn(1, 1, 10), turn(2, 11, 20)), checkpoint()));
         when(nodes.findByIds(eq(SESSION_ID), any())).thenReturn(List.of());
         when(nodes.insertOrSelect(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(jobs.findJob("job-1")).thenAnswer(invocation -> planned().job());
         when(jobs.transitionJob(any(), any(), any(), eq(EXECUTION), any())).thenReturn(true);
         when(jobs.storeColdCandidate(eq("job-1"), eq(EXECUTION), any()))
                 .thenAnswer(
@@ -188,7 +190,8 @@ class HierarchicalCandidateGenerationServiceTest {
 
     @Test
     void stableGeneratorFailureMarksTheJobFailedAndBecomesCompactionException() {
-        when(generator.generate(any(), any())).thenThrow(new IllegalStateException(FAILURE_CODE));
+        when(generator.generate(any(), any()))
+                .thenThrow(new IllegalStateException(GENERATOR_FAILURE_CODE));
 
         assertThatThrownBy(() -> service.generate(planned()))
                 .isInstanceOf(HierarchicalCompactionException.class)
@@ -388,6 +391,7 @@ class HierarchicalCandidateGenerationServiceTest {
                         baseline.job(),
                         baseline.execution(),
                         baseline.generationSettings(),
+                        baseline.warmTokenBudget(),
                         tampered,
                         List.of(plannedCandidate("right", RIGHT, SourceKind.LEAF, null, null)),
                         null);
@@ -556,6 +560,7 @@ class HierarchicalCandidateGenerationServiceTest {
                 job,
                 EXECUTION,
                 generationSettings(),
+                600,
                 plan,
                 List.of(
                         plannedCandidate("left", LEFT, SourceKind.LEAF, null, null),
@@ -594,6 +599,7 @@ class HierarchicalCandidateGenerationServiceTest {
                 job,
                 EXECUTION,
                 generationSettings(),
+                600,
                 plan,
                 List.of(plannedCandidate("left", LEFT, SourceKind.LEAF, null, null)),
                 null);
@@ -642,7 +648,8 @@ class HierarchicalCandidateGenerationServiceTest {
                         HierarchicalCompactionJob.Status.PLANNED,
                         null,
                         0);
-        return new PlannedCompaction(job, EXECUTION, generationSettings(), plan, candidates, null);
+        return new PlannedCompaction(
+                job, EXECUTION, generationSettings(), 600, plan, candidates, null);
     }
 
     private static PlannedCompaction withPlan(
@@ -651,6 +658,7 @@ class HierarchicalCandidateGenerationServiceTest {
                 baseline.job(),
                 baseline.execution(),
                 baseline.generationSettings(),
+                baseline.warmTokenBudget(),
                 plan,
                 baseline.candidates(),
                 baseline.coldCandidate());

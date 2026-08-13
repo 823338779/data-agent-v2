@@ -22,7 +22,7 @@ public final class WarmFrontierSelector {
 
     private final HierarchicalInvariantValidator validator = new HierarchicalInvariantValidator();
 
-    /** 选择可发布 frontier；覆盖不足时仅报告缺失范围，不生成摘要或发布部分结果。 */
+    /** 规划时使用完整问答索引选择 frontier；覆盖不足时返回可生成的缺失范围。 */
     public FrontierSelection select(
             SummaryNodeIdentity expectedIdentity,
             List<HierarchicalSummaryNode> availableNodes,
@@ -40,10 +40,61 @@ public final class WarmFrontierSelector {
             return FrontierSelection.empty();
         }
 
-        // 将消息序号覆盖映射回连续完整问答范围，并拒绝不匹配的伪二叉节点。
+        // 规划路径把消息序号映射回完整问答序号，并据此构造缺失的对齐范围。
         TurnIndex turnIndex = new TurnIndex(completedTurns);
         Map<String, Candidate> candidatesById =
                 indexCandidates(availableNodes, turnIndex, expectedIdentity);
+        return selectCandidates(
+                expectedIdentity,
+                availableNodes,
+                candidatesById,
+                targetRanges,
+                tokenBudget,
+                turnIndex::alignedRanges);
+    }
+
+    /** 发布时仅使用 durable descriptor 范围重选完整 frontier，不重新读取原始消息正文。 */
+    public FrontierSelection selectResolved(
+            SummaryNodeIdentity expectedIdentity,
+            List<HierarchicalSummaryNode> availableNodes,
+            Map<String, SummaryRange> rangesByNodeId,
+            List<SummaryRange> targetRanges,
+            int tokenBudget) {
+        Objects.requireNonNull(expectedIdentity, "expectedIdentity");
+        Objects.requireNonNull(availableNodes, "availableNodes");
+        Objects.requireNonNull(rangesByNodeId, "rangesByNodeId");
+        Objects.requireNonNull(targetRanges, "targetRanges");
+        if (tokenBudget < 0) {
+            throw new IllegalArgumentException("tokenBudget must not be negative");
+        }
+        if (targetRanges.isEmpty()) {
+            return FrontierSelection.empty();
+        }
+
+        // descriptor 是问答序号的 durable 事实源；节点元数据必须与其逐项一致。
+        Map<String, Candidate> candidatesById =
+                indexCandidates(availableNodes, rangesByNodeId, expectedIdentity);
+        FrontierSelection selection =
+                selectCandidates(
+                        expectedIdentity,
+                        availableNodes,
+                        candidatesById,
+                        targetRanges,
+                        tokenBudget,
+                        WarmFrontierSelector::rejectDurableGap);
+        if (!selection.publishable()) {
+            throw new IllegalArgumentException("Durable Warm frontier is not publishable");
+        }
+        return selection;
+    }
+
+    private FrontierSelection selectCandidates(
+            SummaryNodeIdentity expectedIdentity,
+            List<HierarchicalSummaryNode> availableNodes,
+            Map<String, Candidate> candidatesById,
+            List<SummaryRange> targetRanges,
+            int tokenBudget,
+            MissingRangeResolver missingRangeResolver) {
         long targetStart = targetRanges.getFirst().startTurn();
         long targetEnd = targetRanges.getLast().endTurn();
         List<Candidate> candidates =
@@ -55,14 +106,15 @@ public final class WarmFrontierSelector {
                         .sorted(CHRONOLOGICAL)
                         .toList();
 
-        // 先选择每个时间游标可用的最粗节点；没有覆盖时以最大对齐范围记录缺口。
-        CoverageResult coverage = coarsestCoverage(candidates, turnIndex, targetStart, targetEnd);
+        // 先构造覆盖目标的最粗 frontier，缺口交给调用路径决定是报告还是拒绝。
+        CoverageResult coverage =
+                coarsestCoverage(candidates, missingRangeResolver, targetStart, targetEnd);
         if (!coverage.missingRanges().isEmpty()) {
             return new FrontierSelection(
                     List.of(), List.of(), coverage.missingRanges(), 0, false, true);
         }
 
-        // 从最新历史向前展开；每次仅用两个直接子节点完整替换父节点。
+        // 从最新历史向前展开；较新的可展开节点超预算后不再把预算花在更老节点上。
         List<Candidate> frontier = new ArrayList<>(coverage.frontier());
         boolean expanded;
         boolean recencyBlocked = false;
@@ -96,7 +148,7 @@ public final class WarmFrontierSelector {
             }
         } while (expanded && !recencyBlocked);
 
-        // 现有节点仍超预算时，报告可自底向上生成的最老优先父范围，由协调器后续物化。
+        // 规划阶段可报告尚未生成的直接父范围；发布阶段的完整 durable 树必须已满足预算。
         List<SummaryRange> missingParents =
                 estimatedTokens(frontier) > tokenBudget
                         ? missingImmediateParents(frontier, candidates)
@@ -166,7 +218,10 @@ public final class WarmFrontierSelector {
     }
 
     private static CoverageResult coarsestCoverage(
-            List<Candidate> candidates, TurnIndex turnIndex, long targetStart, long targetEnd) {
+            List<Candidate> candidates,
+            MissingRangeResolver missingRangeResolver,
+            long targetStart,
+            long targetEnd) {
         List<Candidate> frontier = new ArrayList<>();
         List<SummaryRange> missing = new ArrayList<>();
         long cursor = targetStart;
@@ -195,7 +250,7 @@ public final class WarmFrontierSelector {
                             .min()
                             .orElse(targetEnd + 1L);
             long missingEnd = Math.min(targetEnd, nextCoveredStart - 1L);
-            missing.addAll(turnIndex.alignedRanges(cursor, missingEnd));
+            missing.addAll(missingRangeResolver.resolve(cursor, missingEnd));
             cursor = missingEnd + 1L;
         }
         return new CoverageResult(List.copyOf(frontier), List.copyOf(missing));
@@ -228,6 +283,38 @@ public final class WarmFrontierSelector {
         return Map.copyOf(result);
     }
 
+    private static Map<String, Candidate> indexCandidates(
+            List<HierarchicalSummaryNode> nodes,
+            Map<String, SummaryRange> rangesByNodeId,
+            SummaryNodeIdentity expectedIdentity) {
+        Map<String, SummaryRange> checkedRanges = Map.copyOf(rangesByNodeId);
+        Map<String, Candidate> result = new HashMap<>();
+        for (HierarchicalSummaryNode node : nodes) {
+            HierarchicalSummaryNode checked = Objects.requireNonNull(node, "node");
+            expectedIdentity.validate(checked);
+            SummaryRange range = checkedRanges.get(checked.nodeId());
+            if (range == null
+                    || checked.level() != range.level()
+                    || checked.coveredCompletedTurnCount() != range.coveredTurns()
+                    || checked.startConversationMessageSequence() != range.startMessageSequence()
+                    || checked.endConversationMessageSequence() != range.endMessageSequence()) {
+                throw new IllegalArgumentException("Invalid durable hierarchical node range");
+            }
+            Candidate candidate = new Candidate(checked.nodeId(), checked, range);
+            if (result.put(candidate.nodeId(), candidate) != null) {
+                throw new IllegalArgumentException("Duplicate hierarchical node ID");
+            }
+        }
+        if (result.size() != checkedRanges.size()) {
+            throw new IllegalArgumentException("Durable hierarchical node range is missing");
+        }
+        return Map.copyOf(result);
+    }
+
+    private static List<SummaryRange> rejectDurableGap(long startTurn, long endTurn) {
+        throw new IllegalArgumentException("Durable Warm frontier contains a coverage gap");
+    }
+
     private static int estimatedTokens(List<Candidate> frontier) {
         int total = 0;
         for (Candidate candidate : frontier) {
@@ -244,6 +331,12 @@ public final class WarmFrontierSelector {
     private record Candidate(String nodeId, HierarchicalSummaryNode node, SummaryRange range) {}
 
     private record CoverageResult(List<Candidate> frontier, List<SummaryRange> missingRanges) {}
+
+    @FunctionalInterface
+    private interface MissingRangeResolver {
+
+        List<SummaryRange> resolve(long startTurn, long endTurn);
+    }
 
     /** 提供消息序号与完整问答序号之间唯一、连续的映射。 */
     private static final class TurnIndex {

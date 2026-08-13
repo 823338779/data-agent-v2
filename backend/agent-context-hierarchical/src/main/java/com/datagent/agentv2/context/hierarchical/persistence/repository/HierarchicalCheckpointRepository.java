@@ -57,11 +57,36 @@ public class HierarchicalCheckpointRepository {
             HierarchicalCheckpoint expected,
             HierarchicalCheckpoint replacement,
             ContextExecutionRef execution) {
+        return compareAndSetCheckpoint(expected, replacement, null, execution);
+    }
+
+    /** 运行时发布必须把 READY job 业务 ID 加入 SQL fence，不能借用其他作业授权。 */
+    public boolean compareAndSetCheckpoint(
+            HierarchicalCheckpoint expected,
+            HierarchicalCheckpoint replacement,
+            String jobId,
+            ContextExecutionRef execution) {
         String tenantId = TenantContext.requiredTenantId();
         requireExecutionBoundary(tenantId, expected, replacement, execution);
+        if (!isNextReplacement(expected, replacement)) {
+            return false;
+        }
         HierarchicalCheckpointEntity expectedEntity = toEntity(expected, tenantId, false);
         HierarchicalCheckpointEntity replacementEntity = toEntity(replacement, tenantId, false);
-        return mapper.compareAndSet(tenantId, expectedEntity, replacementEntity, execution) == 1;
+        String fencedJobId = jobId == null ? findReadyJobId(execution, expected) : jobId;
+        return fencedJobId != null
+                && mapper.compareAndSet(
+                                tenantId, expectedEntity, replacementEntity, fencedJobId, execution)
+                        == 1;
+    }
+
+    /** 兼容既有仓储测试；运行时始终显式传入 jobId。 */
+    private String findReadyJobId(ContextExecutionRef execution, HierarchicalCheckpoint expected) {
+        return mapper.selectReadyJobId(
+                TenantContext.requiredTenantId(),
+                execution,
+                expected.version(),
+                expected.strategyGeneration());
     }
 
     /** 在 Mapper 调用前绑定租户和审计字段，并校验 versioned JSON。 */
@@ -131,5 +156,11 @@ public class HierarchicalCheckpointRepository {
                 || !replacement.conversationSessionId().equals(execution.conversationSessionId())) {
             throw new IllegalArgumentException(CHECKPOINT_SESSION_MISMATCH);
         }
+    }
+
+    private static boolean isNextReplacement(
+            HierarchicalCheckpoint expected, HierarchicalCheckpoint replacement) {
+        return expected.checkpointId().equals(replacement.checkpointId())
+                && replacement.strategyGeneration() == expected.strategyGeneration() + 1L;
     }
 }

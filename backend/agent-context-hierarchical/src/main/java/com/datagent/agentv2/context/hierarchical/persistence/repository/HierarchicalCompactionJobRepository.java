@@ -14,13 +14,14 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class HierarchicalCompactionJobRepository {
 
-    /** 新计划只允许当前完整冻结 generation settings 的 schema v2。 */
-    private static final int WRITABLE_PLAN_SCHEMA_VERSION = 2;
+    /** 新计划只允许当前完整冻结 publication 预算与 generation settings 的 schema v3。 */
+    private static final int WRITABLE_PLAN_SCHEMA_VERSION = 3;
 
     private static final String SYSTEM_OPERATOR = "hierarchical-context";
     private static final String EXECUTION_TENANT_MISMATCH =
             "Hierarchical execution tenant does not match context";
     private static final String JOB_NOT_PERSISTED = "Hierarchical compaction job was not persisted";
+    private static final String INVALID_STALE_RESET = "Invalid hierarchical stale compaction reset";
 
     /** job SQL 与版本化计划文档门禁依赖。 */
     private final HierarchicalCompactionJobMapper mapper;
@@ -40,17 +41,93 @@ public class HierarchicalCompactionJobRepository {
         return entity == null ? null : toDomain(entity);
     }
 
-    /** 读取固定 execution 边界上可由新 owner 恢复的非终态作业。 */
-    public HierarchicalCompactionJob findRecoverable(ContextExecutionRef execution) {
+    /** 读取当前 attempt 自然边界上的任意状态作业，供 takeover 冲突检查。 */
+    public HierarchicalCompactionJob findBoundary(ContextExecutionRef execution) {
         String tenantId = TenantContext.requiredTenantId();
         requireExecutionTenant(tenantId, execution);
         HierarchicalCompactionJobEntity entity =
-                mapper.selectRecoverable(
+                mapper.selectBoundary(
                         tenantId,
                         execution.executionId(),
                         execution.executionAttempt(),
                         execution.inputUpToMessageSequence());
         return entity == null ? null : toDomain(entity);
+    }
+
+    /** 读取固定会话、execution、输入和 checkpoint 边界上可接管的非终态作业。 */
+    public HierarchicalCompactionJob findRecoverable(
+            ContextExecutionRef execution, long baseVersion, long baseGeneration) {
+        String tenantId = TenantContext.requiredTenantId();
+        requireExecutionTenant(tenantId, execution);
+        HierarchicalCompactionJobEntity entity =
+                mapper.selectRecoverable(
+                        tenantId,
+                        execution.conversationSessionId(),
+                        execution.executionId(),
+                        execution.inputUpToMessageSequence(),
+                        baseVersion,
+                        baseGeneration);
+        return entity == null ? null : toDomain(entity);
+    }
+
+    /** 查找已与给定 checkpoint 原子完成的作业，供 caller 崩溃后幂等恢复。 */
+    public HierarchicalCompactionJob findCompleted(
+            ContextExecutionRef execution, long checkpointVersion, long checkpointGeneration) {
+        String tenantId = TenantContext.requiredTenantId();
+        requireExecutionTenant(tenantId, execution);
+        HierarchicalCompactionJobEntity entity =
+                mapper.selectCompleted(
+                        tenantId,
+                        execution.conversationSessionId(),
+                        execution.executionId(),
+                        execution.inputUpToMessageSequence(),
+                        checkpointVersion,
+                        checkpointGeneration);
+        return entity == null ? null : toDomain(entity);
+    }
+
+    /** CAS 更新 owner、attempt 和 version；计划、候选和状态保持不变。 */
+    public boolean claimRecoverable(HierarchicalCompactionJob job, ContextExecutionRef execution) {
+        String tenantId = TenantContext.requiredTenantId();
+        requireExecutionTenant(tenantId, execution);
+        LocalDateTime now = LocalDateTime.now();
+        return mapper.claimRecoverable(
+                        tenantId,
+                        job.jobId(),
+                        job.version(),
+                        job.baseCheckpointVersion(),
+                        job.baseStrategyGeneration(),
+                        execution,
+                        now,
+                        SYSTEM_OPERATOR)
+                == 1;
+    }
+
+    /** 在原自然键记录上 CAS 替换 stale READY 的 checkpoint 基线与 schema-v3 plan，并清除旧 Cold。 */
+    public boolean resetStale(
+            HierarchicalCompactionJob stale,
+            HierarchicalCompactionJob replacement,
+            ContextExecutionRef execution) {
+        String tenantId = TenantContext.requiredTenantId();
+        requireExecutionTenant(tenantId, execution);
+        requireStaleReset(stale, replacement, execution);
+        String planDocument =
+                documents.canonicalizeVersionedDocument(
+                        replacement.planDocument(), WRITABLE_PLAN_SCHEMA_VERSION);
+        LocalDateTime now = LocalDateTime.now();
+        return mapper.resetStale(
+                        tenantId,
+                        stale.jobId(),
+                        stale.version(),
+                        stale.baseCheckpointVersion(),
+                        stale.baseStrategyGeneration(),
+                        replacement.baseCheckpointVersion(),
+                        replacement.baseStrategyGeneration(),
+                        planDocument,
+                        execution,
+                        now,
+                        SYSTEM_OPERATOR)
+                == 1;
     }
 
     /** 幂等创建 execution 边界 job，并返回唯一键竞争后的记录。 */
@@ -200,6 +277,33 @@ public class HierarchicalCompactionJobRepository {
                 && job.getOwnerInstanceId().equals(execution.ownerInstanceId())
                 && job.getExecutionAttempt() == execution.executionAttempt()
                 && job.getInputUpToMessageSequence() == execution.inputUpToMessageSequence();
+    }
+
+    private static void requireStaleReset(
+            HierarchicalCompactionJob stale,
+            HierarchicalCompactionJob replacement,
+            ContextExecutionRef execution) {
+        boolean sameFence =
+                stale.conversationSessionId().equals(replacement.conversationSessionId())
+                        && stale.conversationSessionId().equals(execution.conversationSessionId())
+                        && stale.executionId().equals(replacement.executionId())
+                        && stale.executionId().equals(execution.executionId())
+                        && stale.executionAttempt() == replacement.executionAttempt()
+                        && stale.executionAttempt() == execution.executionAttempt()
+                        && stale.ownerInstanceId().equals(replacement.ownerInstanceId())
+                        && stale.ownerInstanceId().equals(execution.ownerInstanceId())
+                        && stale.inputUpToMessageSequence()
+                                == replacement.inputUpToMessageSequence()
+                        && stale.inputUpToMessageSequence() == execution.inputUpToMessageSequence();
+        boolean forwardBase =
+                replacement.baseCheckpointVersion() > stale.baseCheckpointVersion()
+                        && replacement.baseStrategyGeneration() > stale.baseStrategyGeneration();
+        if (!sameFence
+                || !forwardBase
+                || stale.status() != HierarchicalCompactionJob.Status.READY_TO_PUBLISH
+                || replacement.status() != HierarchicalCompactionJob.Status.PLANNED) {
+            throw new IllegalArgumentException(INVALID_STALE_RESET);
+        }
     }
 
     private boolean sameColdCandidate(String left, String right) {

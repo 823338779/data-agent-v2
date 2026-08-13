@@ -93,11 +93,14 @@ class HierarchicalRepositoryIntegrationTest {
     private static final String LEGACY_PLAN_V1_DOCUMENT = "{\"schemaVersion\":1,\"operations\":[]}";
 
     /** 新建任务必须使用当前 body-free plan schema。 */
-    private static final String PLAN_V2_DOCUMENT =
+    private static final String LEGACY_PLAN_V2_DOCUMENT =
             "{\"schemaVersion\":2,\"candidates\":[],\"coldCandidate\":null}";
 
     /** 未知未来 plan schema 不得作为新任务写入。 */
-    private static final String PLAN_V3_DOCUMENT = "{\"schemaVersion\":3,\"operations\":[]}";
+    private static final String PLAN_V3_DOCUMENT =
+            "{\"schemaVersion\":3,\"warmTokenBudget\":600,\"candidates\":[],\"coldCandidate\":null}";
+
+    private static final String PLAN_V4_DOCUMENT = "{\"schemaVersion\":4,\"operations\":[]}";
 
     /** 正文属性不得进入 durable plan。 */
     private static final String SUMMARY_DOCUMENT_FIELD = "summaryDocument";
@@ -335,7 +338,7 @@ class HierarchicalRepositoryIntegrationTest {
     }
 
     @Test
-    void compactionJobPersistsAndReadsV2BodyFreePlanUnchanged() {
+    void compactionJobPersistsAndReadsV3WarmBudgetPlanUnchanged() {
         HierarchicalCompactionJob candidate = job(JOB_ID);
 
         HierarchicalCompactionJob persisted =
@@ -344,8 +347,8 @@ class HierarchicalRepositoryIntegrationTest {
                 TenantContext.call(TENANT_A, () -> jobs.findJob(JOB_ID));
 
         // PostgreSQL jsonb may reorder fields, so equality is asserted on the JSON tree.
-        assertThat(documentsEqual(persisted.planDocument(), PLAN_V2_DOCUMENT)).isTrue();
-        assertThat(documentsEqual(reloaded.planDocument(), PLAN_V2_DOCUMENT)).isTrue();
+        assertThat(documentsEqual(persisted.planDocument(), PLAN_V3_DOCUMENT)).isTrue();
+        assertThat(documentsEqual(reloaded.planDocument(), PLAN_V3_DOCUMENT)).isTrue();
         assertThat(reloaded.planDocument()).doesNotContain(SUMMARY_DOCUMENT_FIELD);
     }
 
@@ -366,8 +369,19 @@ class HierarchicalRepositoryIntegrationTest {
     }
 
     @Test
+    void compactionJobNaturalKeyCollisionReturnsExistingLegacyV2Plan() {
+        insertJob(HierarchicalCompactionJob.Status.PLANNED, LEGACY_PLAN_V2_DOCUMENT);
+
+        HierarchicalCompactionJob collided =
+                TenantContext.call(TENANT_A, () -> jobs.insertOrSelect(job(RETRY_JOB_ID)));
+
+        assertThat(collided.jobId()).isEqualTo(JOB_ID);
+        assertThat(documentsEqual(collided.planDocument(), LEGACY_PLAN_V2_DOCUMENT)).isTrue();
+    }
+
+    @Test
     void compactionJobRejectsUnknownFuturePlanVersionForNewWrite() {
-        HierarchicalCompactionJob unknown = job(JOB_ID, PLAN_V3_DOCUMENT);
+        HierarchicalCompactionJob unknown = job(JOB_ID, PLAN_V4_DOCUMENT);
 
         assertThatThrownBy(() -> TenantContext.call(TENANT_A, () -> jobs.insertOrSelect(unknown)))
                 .isInstanceOf(IllegalStateException.class);
@@ -556,6 +570,10 @@ class HierarchicalRepositoryIntegrationTest {
     }
 
     private void insertJob(HierarchicalCompactionJob.Status status) {
+        insertJob(status, LEGACY_PLAN_V1_DOCUMENT);
+    }
+
+    private void insertJob(HierarchicalCompactionJob.Status status, String planDocument) {
         LocalDateTime now = LocalDateTime.now();
         jdbc.update(
                 INSERT_JOB_SQL,
@@ -566,7 +584,7 @@ class HierarchicalRepositoryIntegrationTest {
                 1L,
                 OWNER_ID,
                 50L,
-                LEGACY_PLAN_V1_DOCUMENT,
+                planDocument,
                 status.name(),
                 now,
                 SYSTEM_OPERATOR,
@@ -632,7 +650,7 @@ class HierarchicalRepositoryIntegrationTest {
     }
 
     private static HierarchicalCompactionJob job(String jobId) {
-        return job(jobId, PLAN_V2_DOCUMENT);
+        return job(jobId, PLAN_V3_DOCUMENT);
     }
 
     private static HierarchicalCompactionJob job(String jobId, String planDocument) {
