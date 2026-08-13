@@ -8,10 +8,8 @@ import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.LocalDateTime;
-import org.springframework.stereotype.Repository;
 
 /** 封装 execution 策略快照的一次创建、多次读取语义。 */
-@Repository
 public class HierarchicalExecutionPolicyRepository {
 
     private static final String ID_PREFIX = "hierarchical_execution_policy";

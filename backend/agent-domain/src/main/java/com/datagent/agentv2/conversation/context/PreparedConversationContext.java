@@ -9,6 +9,7 @@ public record PreparedConversationContext(
         List<ContextMessage> messages,
         int estimatedInputTokens,
         boolean compacted,
+        /** 当前策略正式发布状态的中立代次；raw 固定为 0。 */
         long strategyGeneration) {
 
     public PreparedConversationContext {

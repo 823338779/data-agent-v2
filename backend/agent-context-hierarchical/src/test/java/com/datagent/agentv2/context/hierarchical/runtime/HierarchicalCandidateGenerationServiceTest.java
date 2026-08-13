@@ -21,6 +21,7 @@ import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionPl
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
 import com.datagent.agentv2.context.hierarchical.domain.SummaryRange;
+import com.datagent.agentv2.context.hierarchical.observability.HierarchicalContextMetrics;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCompactionJobRepository;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalSummaryNodeRepository;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction.GenerationSettings;
@@ -37,6 +38,7 @@ import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -147,6 +149,36 @@ class HierarchicalCandidateGenerationServiceTest {
                         HierarchicalCompactionJob.Status.READY_TO_PUBLISH,
                         EXECUTION,
                         null);
+    }
+
+    @Test
+    void recordsOnlyNewlyGeneratedNodeCountsByFiniteTreeLevel() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        HierarchicalContextMetrics metrics = new HierarchicalContextMetrics(registry);
+        service =
+                new HierarchicalCandidateGenerationService(
+                        generator, nodes, jobs, executions, sources, metrics);
+        when(generator.generate(any(), any()))
+                .thenAnswer(
+                        invocation -> {
+                            invocation.<Runnable>getArgument(1).run();
+                            return generated(invocation.getArgument(0));
+                        });
+
+        service.generate(planned());
+
+        assertThat(
+                        registry.get("agent_context_generated_nodes_total")
+                                .tag("level", "0")
+                                .counter()
+                                .count())
+                .isEqualTo(2d);
+        assertThat(
+                        registry.get("agent_context_generated_nodes_total")
+                                .tag("level", "1")
+                                .counter()
+                                .count())
+                .isEqualTo(1d);
     }
 
     @Test

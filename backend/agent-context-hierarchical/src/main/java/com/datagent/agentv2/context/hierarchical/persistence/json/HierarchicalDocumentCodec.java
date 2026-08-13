@@ -2,13 +2,11 @@ package com.datagent.agentv2.context.hierarchical.persistence.json;
 
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalColdCandidate;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
-import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
 /** 插件私有 JSON 文档的版本校验和确定性编解码边界。 */
-@Component
 public final class HierarchicalDocumentCodec {
 
     private static final int SUPPORTED_POLICY_VERSION = 1;

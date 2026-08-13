@@ -8,10 +8,8 @@ import com.datagent.agentv2.context.hierarchical.persistence.mapper.Hierarchical
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.LocalDateTime;
-import org.springframework.stereotype.Repository;
 
 /** 封装可恢复 job 的幂等创建、读取和联合 fencing 状态转换。 */
-@Repository
 public class HierarchicalCompactionJobRepository {
 
     /** 新计划只允许当前完整冻结 publication 预算与 generation settings 的 schema v3。 */

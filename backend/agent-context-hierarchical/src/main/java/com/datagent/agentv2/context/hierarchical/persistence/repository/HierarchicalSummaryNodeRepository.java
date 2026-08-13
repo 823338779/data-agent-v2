@@ -9,10 +9,8 @@ import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
-import org.springframework.stereotype.Repository;
 
 /** 封装不可变摘要节点的租户隔离和 identity 幂等写入。 */
-@Repository
 public class HierarchicalSummaryNodeRepository {
 
     private static final String SYSTEM_OPERATOR = "hierarchical-context";

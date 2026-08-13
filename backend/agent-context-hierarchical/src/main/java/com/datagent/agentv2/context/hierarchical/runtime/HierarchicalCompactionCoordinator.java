@@ -31,7 +31,7 @@ public final class HierarchicalCompactionCoordinator {
     private final ContextExecutionControlPort executions;
     private final int maxSummaryTokens;
 
-    /** 固定 Task 9 最小协调依赖；策略装配和观测属于后续任务。 */
+    /** 固定恢复、生成、发布、重建和 execution 门禁依赖。 */
     public HierarchicalCompactionCoordinator(
             HierarchicalCompactionPlanningTransaction planning,
             HierarchicalCandidateGenerationService generation,
@@ -158,10 +158,10 @@ public final class HierarchicalCompactionCoordinator {
     }
 
     /** 原子发布后的 checkpoint 及目标线、物理 hard limit 结果。 */
-    record CompactionOutcome(
+    public record CompactionOutcome(
             HierarchicalCheckpoint checkpoint, boolean targetReached, boolean withinHardLimit) {
 
-        CompactionOutcome {
+        public CompactionOutcome {
             Objects.requireNonNull(checkpoint, "checkpoint");
         }
     }

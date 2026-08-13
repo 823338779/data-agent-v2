@@ -7,10 +7,8 @@ import com.datagent.agentv2.context.hierarchical.persistence.mapper.Hierarchical
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.LocalDateTime;
-import org.springframework.stereotype.Repository;
 
 /** 封装每个会话唯一 checkpoint 的创建、读取和 fenced CAS 发布。 */
-@Repository
 public class HierarchicalCheckpointRepository {
 
     private static final int FRONTIER_SCHEMA_VERSION = 1;

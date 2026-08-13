@@ -15,6 +15,8 @@ import com.datagent.agentv2.context.hierarchical.planning.BinarySummaryTreePlann
 import com.datagent.agentv2.context.hierarchical.planning.BinarySummaryTreePlanner.PlanningInput;
 import com.datagent.agentv2.context.hierarchical.planning.ConversationTokenEstimator;
 import com.datagent.agentv2.context.hierarchical.planning.HierarchicalConversationHistoryLoader;
+import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalGenerationSourceProvider.GenerationSourceKey;
+import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalGenerationSourceProvider.GenerationSources;
 import com.datagent.agentv2.conversation.context.ContextMessage;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import com.datagent.agentv2.conversation.context.PreparedConversationContext;
@@ -57,6 +59,10 @@ public final class HierarchicalConversationContextAssembler {
     /** frontier schema、节点集合、identity 或覆盖非法时使用的统一安全错误。 */
     private static final String ERROR_PUBLISHED_FRONTIER =
             "Hierarchical published frontier is inconsistent";
+
+    /** generation source 所依赖的 checkpoint 已越过 durable plan fence 时使用的稳定错误。 */
+    private static final String ERROR_GENERATION_CHECKPOINT_CHANGED =
+            "Hierarchical generation source checkpoint changed";
 
     /** 将摘要正文明确降级为不可覆盖 system/current 指令的历史数据。 */
     private static final String MEMORY_WRAPPER =
@@ -177,6 +183,33 @@ public final class HierarchicalConversationContextAssembler {
                 true);
     }
 
+    /** 按 durable fence 重读 checkpoint 与 execution 冻结历史，正文只在生成调用期间存活。 */
+    public GenerationSources loadGenerationSources(GenerationSourceKey sourceKey) {
+        GenerationSourceKey key = Objects.requireNonNull(sourceKey, "sourceKey");
+        HierarchicalCheckpoint checkpoint =
+                checkpoints.findCheckpoint(key.execution().conversationSessionId());
+        if (checkpoint == null) {
+            throw new IllegalStateException(ERROR_CHECKPOINT_MISSING);
+        }
+        if (!checkpoint.conversationSessionId().equals(key.execution().conversationSessionId())
+                || checkpoint.version() != key.baseCheckpointVersion()
+                || checkpoint.strategyGeneration() != key.baseStrategyGeneration()) {
+            throw new IllegalStateException(ERROR_GENERATION_CHECKPOINT_CHANGED);
+        }
+        return new GenerationSources(history.load(key.execution()), checkpoint);
+    }
+
+    /** 聚合正式 frontier 的有限树层级计数，不把会话或节点标识交给指标层。 */
+    public Map<Integer, Integer> activeFrontierCounts(
+            HierarchicalCheckpoint checkpoint, HierarchicalContextPolicySnapshot policy) {
+        Map<Integer, Integer> counts = new HashMap<>();
+        resolvedPublishedNodes(
+                        Objects.requireNonNull(checkpoint, "checkpoint"),
+                        Objects.requireNonNull(policy, "policy"))
+                .forEach(node -> counts.merge(node.level(), 1, Integer::sum));
+        return Map.copyOf(counts);
+    }
+
     /** 将冻结状态转换为 planner 输入，并保留受保护最低水位未达到 70% 目标的事实。 */
     CompactionInput toCompactionInput(HierarchicalContextState state) {
         HierarchicalContextState checked = Objects.requireNonNull(state, "state");
@@ -233,7 +266,7 @@ public final class HierarchicalConversationContextAssembler {
         List<HierarchicalSummaryNode> activeNodes = resolvedPublishedNodes(checkpoint, policy);
         validatePublishedCoverage(checkpoint, completedTurns, activeNodes);
 
-        // 鍙戝竷 frontier 涓€鏃﹁Е鍙?Hot锛屽繀椤诲厛鐢ㄥ綋鍓?planner 杈圭晫閲嶅缓绱ф€ラ檷绾х殑鍚堟硶鍓嶇紑銆?
+        // 发布 frontier 一旦触及 Hot，必须先用当前 planner 边界重建紧急降级的合法前缀。
         validateHotFrontier(request, checkpoint, policy, completedTurns, currentTurn, activeNodes);
         return assembleDynamic(checkpoint, completedTurns, currentTurn, activeNodes);
     }
@@ -282,7 +315,7 @@ public final class HierarchicalConversationContextAssembler {
             return;
         }
 
-        // Cold 鎸囬拡涓嶅緱渚濋潬 checkpoint 鏂囨。缁曡繃褰撳墠 planner 淇濇姢鐨?Hot 鍘熸枃銆?
+        // Cold 指针不得依靠 checkpoint 文档绕过当前 planner 保护的 Hot 原文。
         if (checkpoint.summarizedCompletedTurnCount() >= hotTarget.startTurn()) {
             throw publishedFrontierFailure(null);
         }
@@ -314,7 +347,7 @@ public final class HierarchicalConversationContextAssembler {
             return;
         }
 
-        // 鍘熷 hard 鍒ゆ柇淇濈暀姝ｅ父 Warm frontier锛屼絾鎾ゅ洖鎵€鏈?Hot 鎽樿鍚庡繀椤荤‘瀹炶秴闄愩€?
+        // 原始 hard 判断保留正常 Warm frontier，但撤回所有 Hot 摘要后必须确实超限。
         List<HierarchicalSummaryNode> normalNodes = activeNodes.subList(0, firstHotNode);
         List<ContextMessage> preDegradation =
                 assembleDynamic(checkpoint, completedTurns, currentTurn, normalNodes);
@@ -587,7 +620,7 @@ public final class HierarchicalConversationContextAssembler {
                 : new IllegalStateException(ERROR_PUBLISHED_FRONTIER, cause);
     }
 
-    /** Task 8 只引用现有 state/planner 结果，不复制消息或摘要正文。 */
+    /** 压缩输入只引用现有 state/planner 结果，不复制消息或摘要正文。 */
     record CompactionInput(
             /** assembler 持有的冻结请求、问答和完整估算。 */
             HierarchicalContextState state,

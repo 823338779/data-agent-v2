@@ -14,6 +14,7 @@ import com.datagent.agentv2.context.hierarchical.persistence.repository.Hierarch
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalSummaryNodeRepository;
 import com.datagent.agentv2.context.hierarchical.planning.ConversationTokenEstimator;
 import com.datagent.agentv2.context.hierarchical.planning.HierarchicalConversationHistoryLoader;
+import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalGenerationSourceProvider.GenerationSourceKey;
 import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
@@ -86,6 +87,57 @@ class HierarchicalConversationContextAssemblerTest {
                                 request.fixedSystemMessages(),
                                 turns.stream().flatMap(turn -> turn.messages().stream()).toList()));
         assertThat(prepared.estimatedInputTokens()).isEqualTo(state.estimatedTokens());
+    }
+
+    @Test
+    void generationSourcesUseExactCheckpointAndFrozenExecutionHistoryBoundary() {
+        ConversationContextRequest request = request(new ContextBudget(4_096, 256, 128, 11));
+        List<ConversationTurn> turns = turns(2, true);
+        HierarchicalCheckpoint checkpoint = checkpoint(0L, 0L, EMPTY_SUMMARY, EMPTY_FRONTIER, 3L);
+        when(checkpoints.findCheckpoint(SESSION_ID)).thenReturn(checkpoint);
+        when(history.load(request.execution())).thenReturn(turns);
+
+        HierarchicalGenerationSourceProvider.GenerationSources sources =
+                assembler.loadGenerationSources(
+                        new GenerationSourceKey(request.execution(), checkpoint.version(), 3L));
+
+        assertThat(sources.checkpoint()).isSameAs(checkpoint);
+        assertThat(sources.turns()).containsExactlyElementsOf(turns);
+    }
+
+    @Test
+    void generationSourcesRejectCheckpointThatMovedPastTheDurablePlanFence() {
+        ConversationContextRequest request = request(new ContextBudget(4_096, 256, 128, 11));
+        HierarchicalCheckpoint checkpoint = checkpoint(0L, 0L, EMPTY_SUMMARY, EMPTY_FRONTIER, 4L);
+        when(checkpoints.findCheckpoint(SESSION_ID)).thenReturn(checkpoint);
+
+        assertThatThrownBy(
+                        () ->
+                                assembler.loadGenerationSources(
+                                        new GenerationSourceKey(
+                                                request.execution(), checkpoint.version(), 3L)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Hierarchical generation source checkpoint changed");
+    }
+
+    @Test
+    void activeFrontierCountsResolvePublishedNodeLevelsWithoutIdentifierDimensions() {
+        HierarchicalCheckpoint checkpoint =
+                checkpoint(
+                        0L,
+                        0L,
+                        EMPTY_SUMMARY,
+                        "{\"schemaVersion\":1,\"nodes\":[\"leaf-a\",\"leaf-b\",\"parent\"]}",
+                        2L);
+        when(nodes.findByIds(SESSION_ID, List.of("leaf-a", "leaf-b", "parent")))
+                .thenReturn(
+                        List.of(
+                                node("parent", 1, 1L, 4L, WARM_ONE_SUMMARY),
+                                node("leaf-b", 0, 3L, 4L, WARM_TWO_SUMMARY),
+                                node("leaf-a", 0, 1L, 2L, WARM_ONE_SUMMARY)));
+
+        assertThat(assembler.activeFrontierCounts(checkpoint, POLICY))
+                .containsExactlyInAnyOrderEntriesOf(java.util.Map.of(0, 2, 1, 1));
     }
 
     @Test

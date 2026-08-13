@@ -21,8 +21,7 @@ public class HierarchicalCompactionRecoveryService {
     private final HierarchicalCandidateGenerationService generation;
     private final HierarchicalCompactionClaimTransaction claims;
 
-    /** 便于测试及 Task 10 装配的最小构造器。 */
-    /** Spring 装配可注入真实代理过的 claim 短事务。 */
+    /** Spring 装配注入真实代理过的 claim 短事务。 */
     public HierarchicalCompactionRecoveryService(
             HierarchicalCompactionJobRepository jobs,
             HierarchicalCheckpointRepository checkpoints,

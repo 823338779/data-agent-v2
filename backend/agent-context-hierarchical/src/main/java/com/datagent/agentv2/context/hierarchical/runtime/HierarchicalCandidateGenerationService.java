@@ -7,6 +7,7 @@ import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionJo
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionPlan;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
 import com.datagent.agentv2.context.hierarchical.domain.SummaryRange;
+import com.datagent.agentv2.context.hierarchical.observability.HierarchicalContextMetrics;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCompactionJobRepository;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalSummaryNodeRepository;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction.PlannedCandidate;
@@ -46,6 +47,10 @@ public class HierarchicalCandidateGenerationService {
     private final HierarchicalCompactionJobRepository jobs;
     private final ContextExecutionControlPort executions;
     private final HierarchicalGenerationSourceProvider sources;
+
+    /** 记录实际新生成节点的有限层级计数。 */
+    private final HierarchicalContextMetrics metrics;
+
     private final HierarchicalDurablePlanValidator planValidator =
             new HierarchicalDurablePlanValidator();
 
@@ -56,11 +61,23 @@ public class HierarchicalCandidateGenerationService {
             HierarchicalCompactionJobRepository jobs,
             ContextExecutionControlPort executions,
             HierarchicalGenerationSourceProvider sources) {
+        this(generator, nodes, jobs, executions, sources, HierarchicalContextMetrics.isolated());
+    }
+
+    /** 运行时构造器额外注入共享低基数指标记录器。 */
+    public HierarchicalCandidateGenerationService(
+            HierarchicalSummaryGenerator generator,
+            HierarchicalSummaryNodeRepository nodes,
+            HierarchicalCompactionJobRepository jobs,
+            ContextExecutionControlPort executions,
+            HierarchicalGenerationSourceProvider sources,
+            HierarchicalContextMetrics metrics) {
         this.generator = Objects.requireNonNull(generator, "generator");
         this.nodes = Objects.requireNonNull(nodes, "nodes");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.executions = Objects.requireNonNull(executions, "executions");
         this.sources = Objects.requireNonNull(sources, "sources");
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
     }
 
     /** Spring 代理显式挂起调用方事务，确保模型调用和整个生成阶段均无数据库事务。 */
@@ -116,6 +133,7 @@ public class HierarchicalCandidateGenerationService {
                     HierarchicalSummaryNode persisted =
                             nodes.insertOrSelectFenced(jobId, execution, generated);
                     validateNode(planned, candidate, persisted);
+                    metrics.recordGeneratedNodes(persisted.level(), 1L);
                     available.put(candidate.nodeId(), persisted);
                 }
             }
