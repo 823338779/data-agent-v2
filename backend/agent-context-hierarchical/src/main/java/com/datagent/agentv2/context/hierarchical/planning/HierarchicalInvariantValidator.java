@@ -2,6 +2,7 @@ package com.datagent.agentv2.context.hierarchical.planning;
 
 import com.datagent.agentv2.context.hierarchical.domain.FrontierSelection;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
+import com.datagent.agentv2.context.hierarchical.domain.SummaryNodeIdentity;
 import com.datagent.agentv2.context.hierarchical.domain.SummaryRange;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -48,10 +49,13 @@ public final class HierarchicalInvariantValidator {
             List<HierarchicalSummaryNode> availableNodes,
             List<SummaryRange> targetRanges,
             long coldPointerTurn,
-            Long currentIncompleteTurn) {
+            Long currentIncompleteTurn,
+            SummaryNodeIdentity expectedIdentity) {
         Objects.requireNonNull(selection, "selection");
         Objects.requireNonNull(availableNodes, "availableNodes");
         Objects.requireNonNull(targetRanges, "targetRanges");
+        Objects.requireNonNull(expectedIdentity, "expectedIdentity");
+        availableNodes.forEach(expectedIdentity::validate);
         if (!selection.missingRanges().isEmpty()) {
             throw new IllegalArgumentException("Missing ranges cannot be published");
         }

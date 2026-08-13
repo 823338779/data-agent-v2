@@ -49,3 +49,57 @@ git diff --check
 - 原 brief 的 reactor 目标测试命令在 `-am` 下会先进入没有这些测试的依赖模块，并被 Surefire 的 “No tests matching pattern” 阻断，因此实际验证追加了 `-Dsurefire.failIfNoSpecifiedTests=false`。
 - 全 reactor `spotless:check` 会被本任务未修改的 `agent-persistence` 中 `Phase1MigrationTest.java` 与 `UuidTypeHandlerTest.java` 既存格式差异阻断；本任务所属 module 的 Spotless 独立通过，未修改这些无关文件。
 - 本任务只产生规划数据；摘要生成、持久化 mutation 与运行时插件集成留给后续任务。
+
+## Fix round 1/5
+
+### 修复结果
+
+- parent 和缺失父节点规划均只接受全局问答序号对齐的真正 sibling；Warm `2..3` 与真实 `58..147` 的 leaf-only 紧预算不再构造非法 parent，而是返回合法的 aligned build ranges。
+- frontier 从新到旧展开时，一旦较新的可展开节点因预算不足而无法展开，立即停止更老节点的展开，防止出现 old fine/new coarse 的精度倒置。
+- 新增 aggregate `PlanningInput` 和 `plan(PlanningInput)`，在一次纯函数调用内组合 checkpoint Cold pointer、冻结策略、70% Warm 目标预算、可用节点 selected/missing frontier 和 hard-limit Hot 降级候选。
+- 新增 `SummaryNodeIdentity`，从 checkpoint 的 session/provider/model 与冻结策略的 schema/prompt 构造唯一期望身份；selector 和 validator 均拒绝任一维度不一致的节点。
+- parent 消息范围要求严格相邻：`right.startMessageSequence == left.endMessageSequence + 1`。
+
+### 分段 TDD 证据
+
+第一段 RED（alignment、recency、message gap）：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am `
+  '-Dtest=BinarySummaryTreePlannerTest,WarmFrontierSelectorTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+失败结果：14 tests 中 2 failures、2 errors。具体为 message gap 未拒绝、asymmetric cost 得到错误的 `[n-1-2, n-3-4, n-5-8]`，以及 Warm `2..3` 和真实 `58..147` 均因构造非对齐 parent 抛出 `Summary range must be aligned to its binary level`。
+
+第一段 GREEN：同一命令 14 tests，0 failures，0 errors。
+
+第二段 RED（generation identity）：`WarmFrontierSelectorTest` 在 testCompile 阶段因缺少 `SummaryNodeIdentity` 失败。
+
+第二段 GREEN：`WarmFrontierSelectorTest` 9 tests，0 failures，0 errors；覆盖 session、schema、prompt、provider、model 五个身份维度，selector 与 validator 均拒绝混用。
+
+第三段 RED（aggregate planner）：`BinarySummaryTreePlannerTest` 在 testCompile 阶段因缺少 `BinarySummaryTreePlanner.PlanningInput` 失败。
+
+第三段 GREEN：`BinarySummaryTreePlannerTest` 7 tests，0 failures，0 errors；aggregate 用例同时验证 Cold promotion、selected frontier、missing frontier、70% Warm budget 与 hard-limit Hot candidates。
+
+### 最终验证
+
+目标测试：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am `
+  '-Dtest=HierarchicalContextPolicyTest,BinarySummaryTreePlannerTest,WarmFrontierSelectorTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+结果：18 tests，0 failures，0 errors。
+
+完整模块及依赖：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am test
+```
+
+结果：`agent-domain` 5 tests、`agent-persistence` 38 tests、`agent-context-hierarchical` 49 tests，全部通过。
+
+identity 输入没有未决歧义：checkpoint 提供 session/provider/model，frozen policy 提供 schema/prompt；两者版本不一致时规划明确拒绝，不做静默兼容。

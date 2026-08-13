@@ -3,6 +3,7 @@ package com.datagent.agentv2.context.hierarchical.planning;
 import com.datagent.agentv2.context.hierarchical.domain.ConversationTurn;
 import com.datagent.agentv2.context.hierarchical.domain.FrontierSelection;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
+import com.datagent.agentv2.context.hierarchical.domain.SummaryNodeIdentity;
 import com.datagent.agentv2.context.hierarchical.domain.SummaryRange;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -23,10 +24,12 @@ public final class WarmFrontierSelector {
 
     /** 选择可发布 frontier；覆盖不足时仅报告缺失范围，不生成摘要或发布部分结果。 */
     public FrontierSelection select(
+            SummaryNodeIdentity expectedIdentity,
             List<HierarchicalSummaryNode> availableNodes,
             List<ConversationTurn> completedTurns,
             List<SummaryRange> targetRanges,
             int tokenBudget) {
+        Objects.requireNonNull(expectedIdentity, "expectedIdentity");
         Objects.requireNonNull(availableNodes, "availableNodes");
         Objects.requireNonNull(completedTurns, "completedTurns");
         Objects.requireNonNull(targetRanges, "targetRanges");
@@ -39,7 +42,8 @@ public final class WarmFrontierSelector {
 
         // 将消息序号覆盖映射回连续完整问答范围，并拒绝不匹配的伪二叉节点。
         TurnIndex turnIndex = new TurnIndex(completedTurns);
-        Map<String, Candidate> candidatesById = indexCandidates(availableNodes, turnIndex);
+        Map<String, Candidate> candidatesById =
+                indexCandidates(availableNodes, turnIndex, expectedIdentity);
         long targetStart = targetRanges.getFirst().startTurn();
         long targetEnd = targetRanges.getLast().endTurn();
         List<Candidate> candidates =
@@ -60,6 +64,7 @@ public final class WarmFrontierSelector {
         // 从最新历史向前展开；每次仅用两个直接子节点完整替换父节点。
         List<Candidate> frontier = new ArrayList<>(coverage.frontier());
         boolean expanded;
+        boolean recencyBlocked = false;
         do {
             expanded = false;
             for (int index = frontier.size() - 1; index >= 0; index--) {
@@ -79,7 +84,8 @@ public final class WarmFrontierSelector {
                                         left.node().estimatedTokenCount(),
                                         right.node().estimatedTokenCount()));
                 if (expandedTokens > tokenBudget) {
-                    continue;
+                    recencyBlocked = true;
+                    break;
                 }
                 frontier.remove(index);
                 frontier.add(index, right);
@@ -87,7 +93,7 @@ public final class WarmFrontierSelector {
                 expanded = true;
                 break;
             }
-        } while (expanded);
+        } while (expanded && !recencyBlocked);
 
         // 现有节点仍超预算时，报告可自底向上生成的最老优先父范围，由协调器后续物化。
         List<SummaryRange> missingParents =
@@ -103,7 +109,12 @@ public final class WarmFrontierSelector {
                         estimatedTokens(frontier) <= tokenBudget);
         if (missingParents.isEmpty()) {
             validator.validateFrontier(
-                    selection, availableNodes, targetRanges, targetStart - 1L, null);
+                    selection,
+                    availableNodes,
+                    targetRanges,
+                    targetStart - 1L,
+                    null,
+                    expectedIdentity);
         }
         return selection;
     }
@@ -138,9 +149,11 @@ public final class WarmFrontierSelector {
     private static boolean canFormParent(Candidate left, Candidate right) {
         HierarchicalSummaryNode leftNode = left.node();
         HierarchicalSummaryNode rightNode = right.node();
+        long parentCoverage = left.range().coveredTurns() * 2L;
         return left.range().level() == right.range().level()
                 && left.range().endTurn() + 1L == right.range().startTurn()
-                && left.range().endMessageSequence() < right.range().startMessageSequence()
+                && (left.range().startTurn() - 1L) % parentCoverage == 0L
+                && left.range().endMessageSequence() + 1L == right.range().startMessageSequence()
                 && leftNode.conversationSessionId().equals(rightNode.conversationSessionId())
                 && leftNode.summarySchemaVersion() == rightNode.summarySchemaVersion()
                 && leftNode.summaryPromptVersion() == rightNode.summaryPromptVersion()
@@ -195,10 +208,13 @@ public final class WarmFrontierSelector {
     }
 
     private static Map<String, Candidate> indexCandidates(
-            List<HierarchicalSummaryNode> nodes, TurnIndex turnIndex) {
+            List<HierarchicalSummaryNode> nodes,
+            TurnIndex turnIndex,
+            SummaryNodeIdentity expectedIdentity) {
         Map<String, Candidate> result = new HashMap<>();
         for (HierarchicalSummaryNode node : nodes) {
             HierarchicalSummaryNode checked = Objects.requireNonNull(node, "node");
+            expectedIdentity.validate(checked);
             SummaryRange range = turnIndex.rangeFor(checked);
             Candidate candidate = new Candidate(checked.nodeId(), checked, range);
             if (result.put(candidate.nodeId(), candidate) != null) {

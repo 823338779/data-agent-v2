@@ -2,9 +2,12 @@ package com.datagent.agentv2.context.hierarchical.planning;
 
 import com.datagent.agentv2.context.hierarchical.domain.ConversationTurn;
 import com.datagent.agentv2.context.hierarchical.domain.FrontierSelection;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCheckpoint;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionPlan;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionPlan.TurnRange;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
+import com.datagent.agentv2.context.hierarchical.domain.SummaryNodeIdentity;
 import com.datagent.agentv2.context.hierarchical.domain.SummaryRange;
 import com.datagent.agentv2.conversation.context.ContextBudget;
 import java.util.ArrayList;
@@ -20,10 +23,46 @@ public final class BinarySummaryTreePlanner {
             Comparator.comparingLong(ConversationTurn::ordinal);
 
     private final HierarchicalContextPolicy policy;
+    private final HierarchicalContextPolicySnapshot snapshot;
+    private final WarmFrontierSelector frontierSelector = new WarmFrontierSelector();
 
     /** 使用 execution 首次固化的策略窗口规划所有层级边界。 */
     public BinarySummaryTreePlanner(HierarchicalContextPolicySnapshot snapshot) {
+        this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
         this.policy = new HierarchicalContextPolicy(snapshot);
+    }
+
+    /** 一次完成边界、Cold、Warm frontier 和紧急 Hot 候选的纯规划。 */
+    public HierarchicalCompactionPlan plan(PlanningInput input) {
+        PlanningInput checked = Objects.requireNonNull(input, "input");
+        HierarchicalCompactionPlan boundaries =
+                plan(
+                        checked.turns(),
+                        checked.checkpoint().summarizedCompletedTurnCount(),
+                        checked.estimatedInputTokens(),
+                        checked.budget());
+        int warmBudget =
+                Math.max(
+                        0,
+                        policy.targetInputTokens(checked.budget()) - checked.nonWarmInputTokens());
+        SummaryNodeIdentity identity = SummaryNodeIdentity.from(checked.checkpoint(), snapshot);
+        FrontierSelection frontier =
+                frontierSelector.select(
+                        identity,
+                        checked.availableNodes(),
+                        checked.turns(),
+                        boundaries.warmTargetRanges(),
+                        warmBudget);
+        return new HierarchicalCompactionPlan(
+                boundaries.completedTurnBoundary(),
+                boundaries.currentIncompleteTurn(),
+                boundaries.coldTarget(),
+                boundaries.warmTarget(),
+                boundaries.hotTarget(),
+                boundaries.coldPromotionRanges(),
+                boundaries.warmTargetRanges(),
+                frontier,
+                boundaries.hotDegradationRanges());
     }
 
     /** 固定当前历史边界，并规划 Cold 迁移与 Warm 对齐范围。 */
@@ -123,7 +162,7 @@ public final class BinarySummaryTreePlanner {
         Objects.requireNonNull(right, "right");
         if (left.level() != right.level()
                 || left.endTurn() + 1L != right.startTurn()
-                || left.endMessageSequence() >= right.startMessageSequence()) {
+                || left.endMessageSequence() + 1L != right.startMessageSequence()) {
             throw new IllegalArgumentException("Parent requires adjacent same-level children");
         }
         return new SummaryRange(
@@ -212,5 +251,32 @@ public final class BinarySummaryTreePlanner {
 
     private static TurnRange range(long startTurn, long endTurn) {
         return startTurn > endTurn ? TurnRange.EMPTY : new TurnRange(startTurn, endTurn);
+    }
+
+    /** 聚合规划所需的固定输入快照，不携带摘要正文生成请求或持久化操作。 */
+    public record PlanningInput(
+            /** 本次固定消息上界内重建出的有序问答。 */
+            List<ConversationTurn> turns,
+            /** 当前正式 checkpoint，提供 Cold 指针和节点生成身份。 */
+            HierarchicalCheckpoint checkpoint,
+            /** 当前版本和模型身份下可复用的不可变节点。 */
+            List<HierarchicalSummaryNode> availableNodes,
+            /** 当前模型物理预算。 */
+            ContextBudget budget,
+            /** 除 Warm 树外全部输入的保守 token 估算。 */
+            int nonWarmInputTokens,
+            /** 使用当前最详细输入时的完整 token 估算。 */
+            int estimatedInputTokens) {
+
+        /** 固化列表并拒绝负 token 估算。 */
+        public PlanningInput {
+            turns = List.copyOf(Objects.requireNonNull(turns, "turns"));
+            checkpoint = Objects.requireNonNull(checkpoint, "checkpoint");
+            availableNodes = List.copyOf(Objects.requireNonNull(availableNodes, "availableNodes"));
+            budget = Objects.requireNonNull(budget, "budget");
+            if (nonWarmInputTokens < 0 || estimatedInputTokens < 0) {
+                throw new IllegalArgumentException("Planning token estimates must not be negative");
+            }
+        }
     }
 }

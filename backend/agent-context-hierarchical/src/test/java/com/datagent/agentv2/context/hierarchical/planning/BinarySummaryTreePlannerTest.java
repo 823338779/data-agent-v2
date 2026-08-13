@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.datagent.agentv2.context.hierarchical.domain.ConversationTurn;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCheckpoint;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionPlan;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
 import com.datagent.agentv2.context.hierarchical.domain.SummaryRange;
 import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextMessage;
@@ -15,9 +17,13 @@ import org.junit.jupiter.api.Test;
 
 class BinarySummaryTreePlannerTest {
 
-    private final BinarySummaryTreePlanner planner =
-            new BinarySummaryTreePlanner(
-                    new HierarchicalContextPolicySnapshot(1, 0.75d, 0.70d, 10, 100, 1, 1));
+    private static final String SESSION_ID = "session-1";
+    private static final String PROVIDER = "test-provider";
+    private static final String MODEL = "test-model";
+    private static final HierarchicalContextPolicySnapshot POLICY =
+            new HierarchicalContextPolicySnapshot(1, 0.75d, 0.70d, 10, 100, 1, 1);
+
+    private final BinarySummaryTreePlanner planner = new BinarySummaryTreePlanner(POLICY);
 
     @Test
     void buildsParentsOnlyFromAdjacentSameLevelChildren() {
@@ -32,6 +38,8 @@ class BinarySummaryTreePlannerTest {
         assertThatThrownBy(() -> planner.parent(first, new SummaryRange(3, 3, 30, 39, 0)))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> planner.parent(first, new SummaryRange(3, 4, 30, 49, 1)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> planner.parent(first, new SummaryRange(2, 2, 21, 30, 0)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -107,6 +115,45 @@ class BinarySummaryTreePlannerTest {
                 .isEqualTo(1_480L);
     }
 
+    @Test
+    void aggregatePlanningComposesCheckpointFrontierTargetAndEmergencyHotRanges() {
+        List<ConversationTurn> turns = turns(157, false);
+        HierarchicalCompactionPlan boundaries = planner.plan(turns, 32);
+        List<HierarchicalSummaryNode> nodes =
+                boundaries.warmTargetRanges().stream()
+                        .map(BinarySummaryTreePlannerTest::node)
+                        .toList();
+        ContextBudget budget = new ContextBudget(65_536, 4_096, 4_096, 0);
+
+        HierarchicalCompactionPlan plan =
+                planner.plan(
+                        new BinarySummaryTreePlanner.PlanningInput(
+                                turns, checkpoint(32), nodes, budget, 45_835, 57_345));
+        HierarchicalCompactionPlan missing =
+                planner.plan(
+                        new BinarySummaryTreePlanner.PlanningInput(
+                                turns,
+                                checkpoint(32),
+                                nodes.subList(0, nodes.size() - 1),
+                                budget,
+                                45_835,
+                                57_345));
+
+        assertThat(plan.coldPromotionRanges().getFirst().startTurn()).isEqualTo(33L);
+        assertThat(plan.coldPromotionRanges().getLast().endTurn()).isEqualTo(57L);
+        assertThat(plan.frontier().publishable()).isTrue();
+        assertThat(plan.frontier().nodeIds())
+                .containsExactlyElementsOf(
+                        nodes.stream().map(HierarchicalSummaryNode::nodeId).toList());
+        assertThat(plan.frontier().missingRanges()).isEmpty();
+        assertThat(missing.frontier().publishable()).isFalse();
+        assertThat(missing.frontier().missingRanges())
+                .containsExactly(boundaries.warmTargetRanges().getLast());
+        assertThat(plan.hotDegradationRanges())
+                .extracting(SummaryRange::startTurn)
+                .containsExactly(148L, 149L, 150L, 151L, 152L, 153L, 154L, 155L, 156L, 157L);
+    }
+
     private static List<ConversationTurn> turns(int total, boolean lastIncomplete) {
         List<ConversationTurn> turns = new ArrayList<>();
         for (int ordinal = 1; ordinal <= total; ordinal++) {
@@ -121,5 +168,43 @@ class BinarySummaryTreePlannerTest {
                             List.of(ContextMessage.user("question-" + ordinal))));
         }
         return turns;
+    }
+
+    private static HierarchicalCheckpoint checkpoint(long summarizedTurns) {
+        return new HierarchicalCheckpoint(
+                "checkpoint-1",
+                SESSION_ID,
+                "{}",
+                summarizedTurns == 0L ? 0L : summarizedTurns * 10L + 9L,
+                summarizedTurns,
+                4,
+                1,
+                1,
+                PROVIDER,
+                MODEL,
+                "{}",
+                0,
+                0);
+    }
+
+    private static HierarchicalSummaryNode node(SummaryRange range) {
+        String nodeId = "n-" + range.startTurn() + "-" + range.endTurn();
+        String leftChild = range.level() == 0 ? null : "left-" + nodeId;
+        String rightChild = range.level() == 0 ? null : "right-" + nodeId;
+        return new HierarchicalSummaryNode(
+                nodeId,
+                SESSION_ID,
+                range.level(),
+                range.coveredTurns(),
+                range.startMessageSequence(),
+                range.endMessageSequence(),
+                leftChild,
+                rightChild,
+                "{}",
+                4,
+                1,
+                1,
+                PROVIDER,
+                MODEL);
     }
 }

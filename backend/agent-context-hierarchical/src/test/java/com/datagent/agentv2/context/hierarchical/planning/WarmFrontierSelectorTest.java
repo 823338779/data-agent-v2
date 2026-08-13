@@ -5,11 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.datagent.agentv2.context.hierarchical.domain.ConversationTurn;
 import com.datagent.agentv2.context.hierarchical.domain.FrontierSelection;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
+import com.datagent.agentv2.context.hierarchical.domain.SummaryNodeIdentity;
 import com.datagent.agentv2.context.hierarchical.domain.SummaryRange;
 import com.datagent.agentv2.conversation.context.ContextMessage;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class WarmFrontierSelectorTest {
@@ -18,6 +21,8 @@ class WarmFrontierSelectorTest {
     private static final String SUMMARY = "{}";
     private static final String PROVIDER = "test-provider";
     private static final String MODEL = "test-model";
+    private static final SummaryNodeIdentity IDENTITY =
+            new SummaryNodeIdentity(SESSION_ID, 1, 1, PROVIDER, MODEL);
 
     private final WarmFrontierSelector selector = new WarmFrontierSelector();
 
@@ -26,14 +31,16 @@ class WarmFrontierSelectorTest {
         Tree tree = tree(1, 8);
 
         FrontierSelection selection =
-                selector.select(tree.nodes(), tree.turns(), List.of(tree.rootRange()), 17);
+                selector.select(
+                        IDENTITY, tree.nodes(), tree.turns(), List.of(tree.rootRange()), 17);
 
         assertThat(selection.publishable()).isTrue();
         assertThat(selection.nodeIds()).containsExactly("n-1-4", "n-5-6", "n-7", "n-8");
         assertThat(selection.ranges().getFirst().startTurn()).isEqualTo(1);
         assertThat(selection.ranges().getLast().endTurn()).isEqualTo(8);
         new HierarchicalInvariantValidator()
-                .validateFrontier(selection, tree.nodes(), List.of(tree.rootRange()), 0, null);
+                .validateFrontier(
+                        selection, tree.nodes(), List.of(tree.rootRange()), 0, null, IDENTITY);
     }
 
     @Test
@@ -41,9 +48,11 @@ class WarmFrontierSelectorTest {
         Tree tree = tree(1, 8);
 
         FrontierSelection tight =
-                selector.select(tree.nodes(), tree.turns(), List.of(tree.rootRange()), 10);
+                selector.select(
+                        IDENTITY, tree.nodes(), tree.turns(), List.of(tree.rootRange()), 10);
         FrontierSelection roomy =
-                selector.select(tree.nodes(), tree.turns(), List.of(tree.rootRange()), 17);
+                selector.select(
+                        IDENTITY, tree.nodes(), tree.turns(), List.of(tree.rootRange()), 17);
 
         assertThat(tight.nodeIds()).containsExactly("n-1-4", "n-5-8");
         assertThat(roomy.nodeIds()).containsExactly("n-1-4", "n-5-6", "n-7", "n-8");
@@ -59,7 +68,8 @@ class WarmFrontierSelectorTest {
                         .toList();
 
         FrontierSelection selection =
-                selector.select(withoutNewestHalf, tree.turns(), List.of(tree.rootRange()), 100);
+                selector.select(
+                        IDENTITY, withoutNewestHalf, tree.turns(), List.of(tree.rootRange()), 100);
 
         assertThat(selection.publishable()).isFalse();
         assertThat(selection.nodeIds()).isEmpty();
@@ -75,7 +85,7 @@ class WarmFrontierSelectorTest {
                 tree.nodes().stream().filter(node -> node.level() == 0).toList();
 
         FrontierSelection selection =
-                selector.select(leaves, tree.turns(), List.of(tree.rootRange()), 10);
+                selector.select(IDENTITY, leaves, tree.turns(), List.of(tree.rootRange()), 10);
 
         assertThat(selection.publishable()).isFalse();
         assertThat(selection.missingRanges())
@@ -85,6 +95,125 @@ class WarmFrontierSelectorTest {
                         org.assertj.core.groups.Tuple.tuple(3L, 4L),
                         org.assertj.core.groups.Tuple.tuple(5L, 6L),
                         org.assertj.core.groups.Tuple.tuple(7L, 8L));
+    }
+
+    @Test
+    void neverCombinesAdjacentLeavesThatAreNotGloballyAlignedSiblings() {
+        List<ConversationTurn> turns = turns(3);
+        List<HierarchicalSummaryNode> leaves =
+                List.of(node("n-2", 0, 2, 2, null, null, 4), node("n-3", 0, 3, 3, null, null, 4));
+        List<SummaryRange> targets =
+                List.of(new SummaryRange(2, 2, 20, 29, 0), new SummaryRange(3, 3, 30, 39, 0));
+
+        FrontierSelection selection = selector.select(IDENTITY, leaves, turns, targets, 4);
+
+        assertThat(selection.publishable()).isFalse();
+        assertThat(selection.missingRanges())
+                .allSatisfy(
+                        range ->
+                                assertThat((range.startTurn() - 1L) % range.coveredTurns())
+                                        .isZero());
+    }
+
+    @Test
+    void reportsOnlyAlignedBuildRangesForTheRealWarmBoundary() {
+        BinarySummaryTreePlanner planner =
+                new BinarySummaryTreePlanner(
+                        new HierarchicalContextPolicySnapshot(1, 0.75d, 0.70d, 10, 100, 1, 1));
+        List<ConversationTurn> turns = turns(157);
+        List<SummaryRange> targets = planner.plan(turns, 0).warmTargetRanges();
+        List<HierarchicalSummaryNode> leaves =
+                turns.stream()
+                        .filter(turn -> turn.ordinal() >= 58 && turn.ordinal() <= 147)
+                        .map(
+                                turn ->
+                                        node(
+                                                "n-" + turn.ordinal(),
+                                                0,
+                                                turn.ordinal(),
+                                                turn.ordinal(),
+                                                null,
+                                                null,
+                                                4))
+                        .toList();
+
+        FrontierSelection selection = selector.select(IDENTITY, leaves, turns, targets, 100);
+
+        assertThat(selection.publishable()).isFalse();
+        assertThat(selection.missingRanges()).isNotEmpty();
+        assertThat(selection.missingRanges())
+                .allSatisfy(
+                        range ->
+                                assertThat((range.startTurn() - 1L) % range.coveredTurns())
+                                        .isZero());
+    }
+
+    @Test
+    void doesNotExpandOlderHistoryAfterANewerExpansionIsUnaffordable() {
+        Tree tree = tree(1, 8);
+        Map<String, Integer> asymmetricTokens =
+                Map.of(
+                        "n-1-8", 4,
+                        "n-1-4", 5,
+                        "n-5-8", 5,
+                        "n-1-2", 3,
+                        "n-3-4", 3,
+                        "n-5-6", 8,
+                        "n-7-8", 8);
+        List<HierarchicalSummaryNode> nodes =
+                tree.nodes().stream()
+                        .map(
+                                node ->
+                                        copyWithTokens(
+                                                node,
+                                                asymmetricTokens.getOrDefault(
+                                                        node.nodeId(), node.estimatedTokenCount())))
+                        .toList();
+
+        FrontierSelection selection =
+                selector.select(IDENTITY, nodes, tree.turns(), List.of(tree.rootRange()), 15);
+
+        assertThat(selection.nodeIds()).containsExactly("n-1-4", "n-5-8");
+    }
+
+    @Test
+    void rejectsNodesFromAnotherGenerationIdentity() {
+        Tree tree = tree(1, 8);
+        HierarchicalSummaryNode source = tree.nodes().getFirst();
+        List<HierarchicalSummaryNode> incompatibleNodes =
+                List.of(
+                        copyWithIdentity(source, "another-session", 1, 1, PROVIDER, MODEL),
+                        copyWithIdentity(source, SESSION_ID, 2, 1, PROVIDER, MODEL),
+                        copyWithIdentity(source, SESSION_ID, 1, 2, PROVIDER, MODEL),
+                        copyWithIdentity(source, SESSION_ID, 1, 1, "another-provider", MODEL),
+                        copyWithIdentity(source, SESSION_ID, 1, 1, PROVIDER, "another-model"));
+
+        assertThat(incompatibleNodes)
+                .allSatisfy(
+                        incompatible -> {
+                            List<HierarchicalSummaryNode> mixed = new ArrayList<>(tree.nodes());
+                            mixed.set(0, incompatible);
+                            assertThatThrownBy(
+                                            () ->
+                                                    selector.select(
+                                                            IDENTITY,
+                                                            mixed,
+                                                            tree.turns(),
+                                                            List.of(tree.rootRange()),
+                                                            100))
+                                    .isInstanceOf(IllegalArgumentException.class);
+                            assertThatThrownBy(
+                                            () ->
+                                                    new HierarchicalInvariantValidator()
+                                                            .validateFrontier(
+                                                                    FrontierSelection.empty(),
+                                                                    List.of(incompatible),
+                                                                    List.of(),
+                                                                    0,
+                                                                    null,
+                                                                    IDENTITY))
+                                    .isInstanceOf(IllegalArgumentException.class);
+                        });
     }
 
     @Test
@@ -106,17 +235,9 @@ class WarmFrontierSelectorTest {
     }
 
     private static Tree tree(long startTurn, long endTurn) {
-        List<ConversationTurn> turns = new ArrayList<>();
+        List<ConversationTurn> turns = new ArrayList<>(turns(Math.toIntExact(endTurn)));
         List<HierarchicalSummaryNode> nodes = new ArrayList<>();
         for (long turn = startTurn; turn <= endTurn; turn++) {
-            long startSequence = turn * 10L;
-            turns.add(
-                    new ConversationTurn(
-                            turn,
-                            startSequence,
-                            startSequence + 9L,
-                            true,
-                            List.of(ContextMessage.user("question-" + turn))));
             nodes.add(node("n-" + turn, 0, turn, turn, null, null, 4));
         }
 
@@ -142,6 +263,64 @@ class WarmFrontierSelectorTest {
                 List.copyOf(turns),
                 List.copyOf(nodes),
                 new SummaryRange(startTurn, endTurn, startTurn * 10L, endTurn * 10L + 9L, 3));
+    }
+
+    private static List<ConversationTurn> turns(int total) {
+        List<ConversationTurn> turns = new ArrayList<>();
+        for (int ordinal = 1; ordinal <= total; ordinal++) {
+            long startSequence = ordinal * 10L;
+            turns.add(
+                    new ConversationTurn(
+                            ordinal,
+                            startSequence,
+                            startSequence + 9L,
+                            true,
+                            List.of(ContextMessage.user("question-" + ordinal))));
+        }
+        return List.copyOf(turns);
+    }
+
+    private static HierarchicalSummaryNode copyWithTokens(
+            HierarchicalSummaryNode source, int tokens) {
+        return new HierarchicalSummaryNode(
+                source.nodeId(),
+                source.conversationSessionId(),
+                source.level(),
+                source.coveredCompletedTurnCount(),
+                source.startConversationMessageSequence(),
+                source.endConversationMessageSequence(),
+                source.leftChildNodeId(),
+                source.rightChildNodeId(),
+                source.summaryDocument(),
+                tokens,
+                source.summarySchemaVersion(),
+                source.summaryPromptVersion(),
+                source.modelProvider(),
+                source.modelName());
+    }
+
+    private static HierarchicalSummaryNode copyWithIdentity(
+            HierarchicalSummaryNode source,
+            String sessionId,
+            int schemaVersion,
+            int promptVersion,
+            String provider,
+            String model) {
+        return new HierarchicalSummaryNode(
+                source.nodeId(),
+                sessionId,
+                source.level(),
+                source.coveredCompletedTurnCount(),
+                source.startConversationMessageSequence(),
+                source.endConversationMessageSequence(),
+                source.leftChildNodeId(),
+                source.rightChildNodeId(),
+                source.summaryDocument(),
+                source.estimatedTokenCount(),
+                schemaVersion,
+                promptVersion,
+                provider,
+                model);
     }
 
     private static HierarchicalSummaryNode node(
