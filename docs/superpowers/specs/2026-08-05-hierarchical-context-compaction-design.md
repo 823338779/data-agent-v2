@@ -12,9 +12,10 @@ Data Agent V2 已经按会话持久化 `message` 和每条 assistant 消息的
 - Warm：最近 100 个完整问答中除 Hot 之外的二进制摘要树。
 - Cold：100 个完整问答之前的滚动摘要检查点。
 
-该能力作为独立的 `agent-context-compaction-plugin` Maven module 实现。插件通过宿主定义的
-会话上下文策略 SPI 接入执行链，自带私有持久化、迁移和测试；移除插件依赖或切换策略后，
-Agent 仍可使用内置原始上下文策略运行。
+该能力作为独立的 `agent-context-hierarchical` Maven module 实现，作为现有
+`agent-context-lsm` 的替代策略而非改版。插件直接复用现有 `ConversationContextStrategy` SPI、
+摘要模型端口和 execution control 端口，自带私有持久化、迁移和测试；移除插件依赖或切换
+策略后，Agent 仍可使用 `raw` 或 `lsm` 策略运行。
 
 本设计替代
 `docs/superpowers/specs/2026-08-03-session-context-memory-design.md` 中关于压缩触发水位、最近
@@ -51,15 +52,16 @@ Agent 仍可使用内置原始上下文策略运行。
 
 ### 4.1 模块和依赖
 
-新增单一 Maven module：
+在现有 `agent-context-lsm` 旁新增一个 Maven module：
 
 ```text
 backend/
 ├── agent-domain
 ├── agent-persistence
+├── agent-context-lsm
+├── agent-context-hierarchical
 ├── agent-auth
 ├── agent-web
-├── agent-context-compaction-plugin
 ├── agent-server
 └── agent-evals
 ```
@@ -67,73 +69,147 @@ backend/
 依赖方向为：
 
 ```text
-agent-domain
-    ↑
-agent-persistence ← agent-web ← agent-context-compaction-plugin
-                          ↑                 ↑
-                          └──── agent-server┘
+                         agent-domain
+                        ↑      ↑      ↑
+       agent-persistence       │      agent-web
+              ↑                │          ↑
+              ├── agent-context-lsm       │
+              └── agent-context-hierarchical
+                         ↑                 │
+                         └──── agent-server┘
 ```
 
 具体规则：
 
-- `agent-web` 是宿主，定义稳定 SPI、内置 raw 策略和策略路由器，不依赖任何具体插件。
-- `agent-context-compaction-plugin` 依赖 `agent-web` 提供的 SPI、模型、execution lease 和事件
-  能力；通过宿主事实快照读取原始历史，不导入 `agent-persistence` 的 Entity、Mapper 或 Service。
-- `agent-server` 同时依赖 `agent-web` 和要安装的插件，从而把插件带入最终 Spring Boot 应用。
-- 删除 `agent-server` 中的插件依赖后，宿主仍可独立构建并使用 raw 策略。
-- 插件不得成为 `agent-domain`、`agent-persistence`、`agent-auth` 或 `agent-web` 的反向依赖。
+- `agent-domain` 持有现有供应商无关的上下文策略、摘要模型和 execution control 契约。
+- `agent-web` 继续提供 `raw` 策略、`ConversationContextStrategyResolver`、请求工厂、模型消息
+  映射和两个端口的运行时适配，不依赖任一具体插件。
+- `agent-context-hierarchical` 与 `agent-context-lsm` 一样只依赖 `agent-domain` 和
+  `agent-persistence`，不得依赖 `agent-web` 或 `agent-server`。
+- `agent-server` 同时依赖 `agent-web` 和需要安装的策略插件，从而把策略带入最终应用。
+- 删除 `agent-server` 中的新插件依赖后，`raw` 和现有 `lsm` 行为不受影响。
+- 两个插件互不依赖，也不得访问或复用对方的 Entity、Mapper、Repository、表或 Flyway 历史。
 
 这是一种 classpath 插件，不使用自定义 ClassLoader。安装和卸载发生在构建或部署阶段；策略
 选择发生在应用启动阶段。
 
-### 4.2 宿主 SPI
+### 4.2 复用并中立化现有 SPI
 
-`agent-web` 新增最小 SPI：
+继续使用 `agent-domain` 已有接口，不新增第二套 SPI：
 
 ```java
 public interface ConversationContextStrategy {
     String strategyId();
 
-    PreparedConversationContext prepare(ContextPreparationRequest request);
+    PreparedConversationContext prepare(ConversationContextRequest request);
 }
 ```
 
-宿主同时定义：
+保留现有 `ContextExecutionRef`、`ContextMessage`、`ContextToolDefinition`、
+`ContextSummaryModelPort` 和 `ContextExecutionControlPort`。本设计只对被 LSM 参数污染的共享类型
+做一次兼容性重构。
+
+`ConversationContextRequest` 调整为只携带宿主事实：
 
 ```java
-public record ContextPreparationRequest(
-        AgentExecutionPort.ClaimedAgentExecution execution,
-        long inputUpToConversationMessageSequence,
-        ConversationContextSnapshot sourceSnapshot,
-        List<ModelToolDefinition> toolDefinitions) {}
-
-public record PreparedConversationContext(
-        List<ModelInputMessage> messages,
-        long estimatedInputTokens,
-        boolean compactionTriggered,
-        boolean targetReached) {}
+public record ConversationContextRequest(
+        ContextExecutionRef execution,
+        ContextBudget budget,
+        List<ContextMessage> fixedSystemMessages,
+        List<ContextToolDefinition> toolDefinitions) {}
 ```
 
-`ConversationContextSnapshot` 由宿主按固定消息边界构建，包含有序的完整问答、当前未完成
-问答、message、thinking 和已经校验配对的工具过程。SPI 只表达策略决策所需的事实快照、正常
-模型调用输入与诊断结果，不暴露 checkpoint、摘要树节点、Mapper 或插件内部异常。
+删除共享请求中的 `ContextPolicySnapshot policy` 和 `withPolicy(...)`。策略参数由各插件从自己的
+配置构建并在首次进入 execution 时冻结到自己的私有表中。
 
-### 4.3 策略发现与选择
+`ContextBudget` 只描述模型物理边界：
 
-Spring 收集所有 `ConversationContextStrategy` Bean。宿主
-`ConversationContextStrategyRegistry` 在启动时执行以下校验：
+```java
+public record ContextBudget(
+        int contextWindowTokens,
+        int maxOutputTokens,
+        int safetyReserveTokens,
+        int fixedInputTokens) {
+
+    public int hardInputLimitTokens() { ... }
+}
+```
+
+删除其中硬编码的 75% 和 65%。触发比例和目标水位属于具体策略：现有 LSM 保持 75%/65%，
+本插件使用 75%/70%。
+
+`PreparedConversationContext` 保持结果含义，只把带有 LSM 语义的字段中立化：
+
+```java
+public record PreparedConversationContext(
+        String strategyId,
+        List<ContextMessage> messages,
+        int estimatedInputTokens,
+        boolean compacted,
+        long strategyGeneration) {}
+```
+
+`strategyGeneration` 在 `raw` 中为 0，在 `lsm` 中等价于原 manifest generation，在本插件中是
+已发布 checkpoint/frontier generation。上述调整是内部 Java 契约重构，不改变 REST、SSE 或
+数据库公开契约。
+
+### 4.3 现有 LSM 兼容迁移
+
+共享的 `ContextPolicySnapshot` 当前含有 `fanout`、`maxLevel`、`baseSegmentTurns` 等 LSM 参数，
+应移入 `agent-context-lsm` 并重命名为 `LsmContextPolicySnapshot`。`LsmContextProperties` 负责
+生成配置快照；`LsmConversationContextStrategy` 的首个副作用仍是通过
+`LsmExecutionPolicyRepository` 幂等冻结该快照：
+
+```java
+LsmContextPolicySnapshot frozen =
+        policies.findOrCreateExecutionPolicy(
+                request.execution(), properties.snapshot());
+```
+
+LSM 的表结构、JSON 字段、摘要 identity、compaction 算法和对外行为不改变。已有 JSON 文档仍
+使用相同字段名；Java 类型改名不能造成数据迁移。`ContextBudget.softTriggerTokens()` 和
+`targetInputTokens()` 的调用机械迁移到接收 `LsmContextPolicySnapshot` 的 `LsmContextPolicy`。
+
+这一步必须先于新插件实现完成，并通过现有 LSM 单元、持久化、恢复和端到端测试，证明行为
+保持 75% 触发、65% 目标以及原 manifest generation 语义。
+
+### 4.4 新插件策略入口
+
+新插件注册：
+
+```java
+public final class HierarchicalConversationContextStrategy
+        implements ConversationContextStrategy {
+
+    public static final String STRATEGY_ID = "hierarchical";
+
+    @Override
+    public String strategyId() {
+        return STRATEGY_ID;
+    }
+
+    @Override
+    public PreparedConversationContext prepare(
+            ConversationContextRequest request) {
+        // 冻结插件私有 policy，估算、压缩并组装最终输入。
+    }
+}
+```
+
+### 4.5 策略发现与选择
+
+继续使用现有 `ConversationContextStrategyResolver` 收集所有策略 Bean，并在启动时校验：
 
 - `strategyId` 非空且全局唯一。
 - 配置的策略必须存在，否则应用启动失败。
 - 一次模型调用只能选择一个策略，禁止多个策略串联修改同一上下文。
 
-宿主内置 `raw` 策略，行为等价于当前 `ConversationContextLoader`。本插件注册
-`hierarchical-compaction` 策略。选择配置为：
+宿主内置 `raw`，现有插件注册 `lsm`，本插件注册 `hierarchical`。选择配置为：
 
 ```yaml
 data-agent:
   context:
-    strategy: hierarchical-compaction
+    strategy: hierarchical
 ```
 
 切回原始策略只需配置：
@@ -144,25 +220,22 @@ data-agent:
     strategy: raw
 ```
 
-未来插件可以注册 `sliding-window`、`alternative-summary` 或其他策略，但不得复用
-`hierarchical-compaction` 的私有表来形成隐式耦合。
+未来插件可以注册其他 strategy ID，但不得复用 `lsm` 或 `hierarchical` 的私有表形成隐式耦合。
 
-### 4.4 执行链接入
+### 4.6 执行链接入
 
-现有 `ConversationContextLoader` 重构为宿主 `ConversationContextSourceLoader`，负责从主持久化读取
-同一份确定性事实快照。新增 `ConversationContextRouter`，由它先加载快照，再读取配置的策略并
-调用 `prepare`。`ReactExecutionEngine` 只把原来的 `ConversationContextLoader.load(...)`
-替换为：
+不再修改 `ReactExecutionEngine` 的接入形态。它已经通过现有请求工厂和 resolver 调用策略：
 
 ```java
-PreparedConversationContext context =
-        contextRouter.prepare(run, inputBoundary, toolDefinitions);
+ConversationContextRequest request =
+        contextRequests.create(run, modelInvocation, modelTools);
+PreparedConversationContext prepared = contexts.prepare(request);
 ```
 
-模型网关仍接收 `context.messages()` 和原始 `toolDefinitions`。执行引擎不感知压缩阈值、树节点、
-checkpoint、摘要模型或插件表。
+共享契约中立化后，请求工厂不再构造任何 LSM 或 hierarchical policy。执行引擎仍不感知压缩
+阈值、树节点、checkpoint、摘要模型或插件表。
 
-### 4.5 自动配置
+### 4.7 自动配置
 
 插件不依赖宿主 component scan，使用 Spring Boot AutoConfiguration：
 
@@ -171,15 +244,15 @@ META-INF/spring/
 org.springframework.boot.autoconfigure.AutoConfiguration.imports
 ```
 
-`ContextCompactionAutoConfiguration` 负责：
+`HierarchicalContextAutoConfiguration` 负责：
 
-- 注册 `hierarchical-compaction` 策略 Bean。
+- 注册 `hierarchical` 策略 Bean。
 - 注册预算、摘要树、checkpoint、摘要模型和协调器 Bean。
 - 扫描插件私有 Mapper。
 - 初始化插件私有 Flyway migration。
 - 校验插件配置和必需的宿主 Bean。
 
-自动配置仅在 `data-agent.context.strategy=hierarchical-compaction` 时激活。插件未进入 classpath
+自动配置仅在 `data-agent.context.strategy=hierarchical` 时激活。插件未进入 classpath
 或选择其他策略时，不会产生插件 Bean、Mapper 扫描或插件数据库迁移。
 
 ## 5. 核心术语
@@ -218,19 +291,19 @@ level n = 2^n 个完整问答
 
 ### 6.1 配置
 
-新增或统一以下配置：
+模型物理预算继续由现有 `ContextModelBudgetProvider` 从 provider 配置构建。新插件只新增自己的
+策略配置：
 
 | 配置 | 默认值 | 含义 |
 | --- | ---: | --- |
-| `data-agent.context.window-tokens` | `65536` | 模型上下文窗口 `W` |
 | `data-agent.context.strategy` | `raw` | 宿主选择的上下文策略 ID |
-| `data-agent.context.strategies.hierarchical-compaction.trigger-ratio` | `0.75` | 压缩软触发比例 |
-| `data-agent.context.strategies.hierarchical-compaction.target-ratio` | `0.70` | 压缩完成后的目标比例 |
-| `data-agent.context.strategies.hierarchical-compaction.recent-raw-turns` | `10` | Hot 层正常保护轮数 |
-| `data-agent.context.strategies.hierarchical-compaction.warm-window-turns` | `100` | Hot 与 Warm 合计的近期窗口 |
-| `data-agent.context.strategies.hierarchical-compaction.safety-reserve-tokens` | `4096` | 输入与输出之外的安全余量 |
+| `data-agent.context.hierarchical.trigger-ratio` | `0.75` | 压缩软触发比例 |
+| `data-agent.context.hierarchical.target-ratio` | `0.70` | 压缩完成后的目标比例 |
+| `data-agent.context.hierarchical.recent-raw-turns` | `10` | Hot 层正常保护轮数 |
+| `data-agent.context.hierarchical.warm-window-turns` | `100` | Hot 与 Warm 合计的近期窗口 |
 
-模型现有 `maxOutputTokens` 继续作为输出预留。配置必须满足：
+`contextWindowTokens`、`maxOutputTokens`、`safetyReserveTokens` 和 `fixedInputTokens` 均来自共享
+`ContextBudget`。插件配置必须满足：
 
 ```text
 0 < targetRatio < triggerRatio < 1
@@ -239,7 +312,8 @@ warmWindowTurns > recentRawTurns
 hardInputLimit > softTrigger
 ```
 
-非法配置导致应用启动失败，不在运行时静默修正。
+二叉 fanout 固定为 2，最高层级由 `warmWindowTurns - recentRawTurns` 自动推导，不暴露无必要的
+配置。非法配置导致应用启动失败，不在运行时静默修正。
 
 ### 6.2 水位计算
 
@@ -360,21 +434,22 @@ Cold 和 Warm 使用相同的版本化 JSON schema，首版至少包含：
 
 ## 9. 插件私有持久化
 
-所有新增 Entity、Mapper、`ServiceImpl`、迁移和持久化测试均位于
-`agent-context-compaction-plugin`。宿主通过 `ConversationContextSourceLoader` 提供固定边界的
-事实快照；插件不得为读取 message、execution 或 tool execution 而直接访问主持久化表，也不
-得要求 `agent-persistence` 增加插件专用查询。
+所有新增 Entity、Mapper、Repository、迁移和持久化测试均位于
+`agent-context-hierarchical`。与现有 LSM 插件相同，新插件可以通过 `agent-persistence` 已公开的
+`AgentExecutionService`、`ConversationMessageService` 和 `ToolExecutionService` 读取会话事实源，
+但不得向 `agent-persistence` 增加 hierarchical 专用 Entity、Mapper、Repository、migration 或
+查询。
 
-插件表统一使用 `context_compaction_` 前缀。其他模块不得直接访问插件 Mapper、ServiceImpl 或
-表；宿主只能通过 `ConversationContextStrategy` 观察最终上下文结果。
+插件表统一使用 `conversation_context_hierarchical_` 前缀。其他模块不得直接访问插件 Mapper、
+Repository 或表；宿主只能通过 `ConversationContextStrategy` 观察最终上下文结果。
 
-### 9.1 `context_compaction_checkpoint`
+### 9.1 `conversation_context_hierarchical_checkpoint`
 
 每个会话只有一条当前有效 Cold 检查点：
 
 | 字段 | 含义 |
 | --- | --- |
-| `context_compaction_checkpoint_id` | 业务唯一标识 |
+| `hierarchical_checkpoint_id` | 业务唯一标识 |
 | `tenant_id` | 租户隔离键 |
 | `conversation_session_id` | 所属会话 |
 | `cold_summary_document` | 当前结构化 Cold 摘要 |
@@ -389,13 +464,13 @@ Cold 和 Warm 使用相同的版本化 JSON schema，首版至少包含：
 `(tenant_id, conversation_session_id)` 在有效记录中唯一。指针非负且只能向前移动。摘要文档、
 指针、token 数和生成版本通过同一条 CAS 更新原子提交。
 
-### 9.2 `context_compaction_summary_node`
+### 9.2 `conversation_context_hierarchical_summary_node`
 
 Warm 节点使用不可变记录：
 
 | 字段 | 含义 |
 | --- | --- |
-| `context_compaction_summary_node_id` | 节点业务唯一标识 |
+| `hierarchical_summary_node_id` | 节点业务唯一标识 |
 | `tenant_id` / `conversation_session_id` | 租户和会话边界 |
 | `level` | 二进制层级 |
 | `covered_completed_turn_count` | 覆盖完整问答数，必须等于 `2^level` |
@@ -425,13 +500,13 @@ Warm 节点使用不可变记录：
 插件 migration 放在独立路径：
 
 ```text
-classpath:db/context-compaction/migration
+classpath:db/agent-context-hierarchical/migration
 ```
 
 插件使用同一业务 `DataSource`，但使用独立 schema history 表：
 
 ```text
-context_compaction_flyway_schema_history
+flyway_agent_context_hierarchical_schema_history
 ```
 
 这样插件版本不会占用或冲突于 `agent-persistence` 的主 Flyway 版本。插件关闭或移除后不主动
@@ -448,23 +523,34 @@ context_compaction_flyway_schema_history
 
 ### 10.1 已有模块的最小改动
 
-`agent-domain` 原则上不感知具体压缩策略。只有现有通用失败收敛机制无法接受插件稳定错误码
-时，才增加最小通用错误表达；不得放入摘要树、checkpoint 或预算模型。
+`agent-domain`：
+
+- 保留 `ConversationContextStrategy`、摘要模型端口、execution control 端口和中立消息契约。
+- 从 `ConversationContextRequest` 移除 `ContextPolicySnapshot`。
+- 将 `ContextBudget` 收敛为模型物理预算，只保留硬输入上限计算。
+- 将 `PreparedConversationContext.manifestGeneration` 重命名为 `strategyGeneration`。
+- 删除共享 `ContextPolicySnapshot`，不放入任何 hierarchical 私有类型。
 
 `agent-persistence` 不增加新的 Entity、Mapper、ServiceImpl、migration 或插件专用查询。
 
-`agent-web` 只增加：
+`agent-web`：
 
-- `ConversationContextStrategy` SPI 及请求、响应值对象。
-- `ConversationContextSnapshot` 和 `ConversationContextSourceLoader`，统一提供确定性会话事实源。
-- 内置 `raw` 策略和 `ConversationContextStrategyRegistry`。
-- `ConversationContextRouter`。
-- `ReactExecutionEngine` 的单一接入改动。
-- `ModelInputMessage` 的历史 thinking 表达以及模型网关映射。
+- `ConversationContextRequestFactory` 不再持有 LSM 常量或构建策略快照。
+- `ConversationContextStrategyResolver`、`RawConversationContextStrategy`、消息映射和两个端口适配器
+  保持现有职责。
+- `ReactExecutionEngine` 不新增接入点，只适配中立化后的请求和结果字段。
+- 将 `WebContextExecutionControlAdapter` 等共享代码中的 LSM 专用注释改为上下文策略通用措辞。
 
-`agent-server` 只在 POM 中安装插件，并提供选择策略的部署配置。
+`agent-context-lsm`：
 
-### 10.2 `agent-context-compaction-plugin`
+- 新增私有 `LsmContextPolicySnapshot` 并接管原共享策略参数。
+- `LsmContextProperties` 生成策略快照，LSM 首次进入 execution 时继续幂等冻结。
+- 把 75%/65% 预算计算迁移到 `LsmContextPolicy`。
+- 不改变表结构、持久化 JSON 字段、算法、指标或运行行为。
+
+`agent-server` 在 POM 中安装新插件，并允许部署配置在 `raw`、`lsm` 和 `hierarchical` 之间选择。
+
+### 10.2 `agent-context-hierarchical`
 
 - `ConversationTurnGrouper`：识别完整问答、retry 归属和当前未完成问答。
 - `ConversationTokenEstimator`：估算所有模型输入组成。
@@ -473,10 +559,11 @@ context_compaction_flyway_schema_history
 - `RollingContextCheckpointService`：把移出近期窗口的完整节点融合进 Cold。
 - `ConversationContextAssembler`：选择 Cold、Warm frontier、Hot 原文和当前轮。
 - `ContextCompactionCoordinator`：协调快照、lease、模型调用、CAS 和事件。
-- `SummaryModelGateway`：执行不携带 tools 的结构化摘要调用。
-- `ContextCompactionProperties`：绑定插件私有配置。
-- `ContextCompactionAutoConfiguration`：注册策略、Mapper、Flyway 和全部插件 Bean。
-- 插件私有 Entity、Mapper、ServiceImpl、migration、摘要 schema 和测试资源。
+- 复用 `ContextSummaryModelPort` 执行不携带 tools 的结构化摘要调用。
+- 复用 `ContextExecutionControlPort` 执行 fencing、取消、事件和失败收敛。
+- `HierarchicalContextProperties`：绑定插件私有配置并生成私有执行策略快照。
+- `HierarchicalContextAutoConfiguration`：注册策略、Mapper、Flyway 和全部插件 Bean。
+- 插件私有 Entity、Mapper、Repository、migration、摘要 schema 和测试资源。
 
 插件内部仍保持单一职责。预算策略不访问数据库，节点服务不决定 execution 所有权，模型
 网关不决定压缩范围，上下文组装器不修改摘要。除自动配置入口和 SPI 实现外，内部类型优先
@@ -485,11 +572,11 @@ context_compaction_flyway_schema_history
 ### 10.3 插件目录建议
 
 ```text
-agent-context-compaction-plugin/
+agent-context-hierarchical/
 ├── pom.xml
 └── src/
     ├── main/
-    │   ├── java/com/datagent/agentv2/contextcompaction/
+    │   ├── java/com/datagent/agentv2/context/hierarchical/
     │   │   ├── autoconfigure/
     │   │   ├── budget/
     │   │   ├── history/
@@ -504,8 +591,8 @@ agent-context-compaction-plugin/
     │   │       └── service/
     │   └── resources/
     │       ├── META-INF/spring/
-    │       ├── db/context-compaction/migration/
-    │       └── context-compaction-summary-schema.json
+    │       ├── db/agent-context-hierarchical/migration/
+    │       └── schema/context-summary-v1.schema.json
     └── test/
 ```
 
@@ -514,10 +601,10 @@ agent-context-compaction-plugin/
 每次正常模型调用前执行：
 
 1. 使用 `inputUpToConversationMessageSequence` 固定本次可读消息上界。
-2. 宿主加载 `ConversationContextSnapshot`，重建跨 execution 的 message、thinking、tool call 和
+2. 插件通过已有主持久化 Service 重建跨 execution 的 message、thinking、tool call 和
    observation，并完成工具协议配对校验。
 3. 插件读取 Cold 检查点和适用版本的 Warm 节点。
-4. 从快照识别当前未完成问答和最近 10 个 Hot 问答。
+4. 按完整问答分组，识别当前未完成问答和最近 10 个 Hot 问答。
 5. 组装当前可用的最详细、无重叠上下文并估算完整输入 token。
 6. 预计占用不超过 75% 时直接调用正常模型。
 7. 超过 75% 时创建固定边界的 `CompactionPlan` 并写入开始事件。
@@ -694,7 +781,8 @@ worker 读取并校验已提交节点后继续。
 - 第一次摘要失败第二次成功，以及两次失败保持旧 checkpoint。
 - 正常模型可以延续摘要中的事实、工作假设、方案取舍、工具发现和下一步。
 - 配置 `raw` 时不实例化或调用压缩策略，行为与当前上下文加载一致。
-- 配置 `hierarchical-compaction` 时只调用该策略一次。
+- 配置 `hierarchical` 时只调用该策略一次。
+- 配置 `lsm` 时现有 LSM 的 75%/65%、manifest 发布和恢复行为保持不变。
 - 配置不存在或出现重复 strategy ID 时应用启动失败。
 - 从 `agent-server` 移除插件依赖后，`agent-web` 和 `agent-server` 仍可独立构建运行。
 
@@ -713,7 +801,8 @@ worker 读取并校验已提交节点后继续。
 8. 原始 message 和 `thinkingProcess` 不被修改或删除。
 9. 崩溃、失败、重试、取消和多实例接管均保持确定、可恢复和可审计。
 10. 受影响模块测试及后端完整构建通过。
-11. 压缩业务、私有持久化和迁移主要集中在 `agent-context-compaction-plugin`。
+11. 压缩业务、私有持久化和迁移集中在 `agent-context-hierarchical`。
 12. `agent-persistence` 不包含任何新增压缩 Entity、Mapper、ServiceImpl 或 migration。
-13. 宿主可通过配置在 `raw` 与 `hierarchical-compaction` 之间切换，未知或重复策略启动失败。
-14. 移除插件依赖后 Agent 仍能以 raw 策略构建和运行，插件私有数据不会影响其他策略。
+13. 宿主可通过配置在 `raw`、`lsm` 与 `hierarchical` 之间切换，未知或重复策略启动失败。
+14. 移除新插件依赖后 Agent 仍能以 raw 或 lsm 策略构建和运行，插件私有数据不会影响其他策略。
+15. 共享 SPI 不包含 LSM 或 hierarchical 专用参数；现有 LSM 在中立化重构前后行为一致。
