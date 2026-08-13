@@ -127,3 +127,43 @@ git diff --check
 ```
 
 结果：`Tests run: 164, Failures: 0, Errors: 0, Skipped: 0`。真实 PostgreSQL 17 fenced insert、claim、恢复和 publication 集成测试全部通过。
+
+## Fix round 2/5
+
+### RED
+
+新增确定性交错回归，使用顺序 mock 固定以下可见性窗口：
+
+1. recovery 首次读取旧 checkpoint。
+2. publication 原子提交新 checkpoint 与 `SUCCEEDED` job。
+3. `findBoundary` 已观察到 `SUCCEEDED`。
+4. 第二次 checkpoint 读取可观察到新 version/generation。
+
+修复前 recovery 直接把首次 checkpoint 不匹配的 `SUCCEEDED` 分类为无效 publication，测试稳定失败：期望 `COMPLETED`，实际 `FAILED`。
+
+### 修复
+
+- 保留首次 `findCompleted` 快路径。
+- 仅当当前 attempt 已为 `SUCCEEDED`、但首次 checkpoint 尚不匹配时，执行一次有界 double-check；不引入循环或无界重试。
+- double-check 先重新读取最新 checkpoint，再严格使用刚读取的 version 与 strategy generation 查询 completed job，避免把首次旧 generation 与后续 job 状态混用。
+- 二次一致读取若匹配则返回新 checkpoint 的 `COMPLETED`；若 checkpoint 缺失或仍无匹配 completed job，才维持稳定 `FAILED` 分类。
+
+### GREEN
+
+完整 recovery 与 coordinator 验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am `
+  '-Dtest=HierarchicalCompactionRecoveryTest,HierarchicalCompactionCoordinatorTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+结果：`Tests run: 18, Failures: 0, Errors: 0, Skipped: 0`。
+
+完整模块验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical test
+```
+
+结果：`Tests run: 165, Failures: 0, Errors: 0, Skipped: 0`。

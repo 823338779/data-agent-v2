@@ -65,8 +65,7 @@ public class HierarchicalCompactionRecoveryService {
                 return RecoveryResult.failed(false);
             }
             if (currentAttempt.status() == HierarchicalCompactionJob.Status.SUCCEEDED) {
-                // matching SUCCEEDED 已由 findCompleted 捕获；剩余情况是 checkpoint 未随 publication 提交。
-                return RecoveryResult.failed(true);
+                return doubleCheckSucceeded(checkedExecution);
             }
         }
         HierarchicalCompactionJob recoverable =
@@ -84,6 +83,20 @@ public class HierarchicalCompactionRecoveryService {
         PlannedCompaction planned = planning.restore(claimed, checkedExecution);
         ReadyCompaction ready = generation.generate(planned);
         return ready.cancelled() ? RecoveryResult.cancelled() : RecoveryResult.publish(ready);
+    }
+
+    /** SUCCEEDED 可能与首次 checkpoint 读取跨越同一次 publication；只做一次有界一致性复核。 */
+    private RecoveryResult doubleCheckSucceeded(ContextExecutionRef execution) {
+        HierarchicalCheckpoint latest =
+                checkpoints.findCheckpoint(execution.conversationSessionId());
+        if (latest == null) {
+            return RecoveryResult.failed(true);
+        }
+
+        // completed 查询严格使用刚读取的 checkpoint identity，避免混用首次读取的旧 generation。
+        HierarchicalCompactionJob completed =
+                jobs.findCompleted(execution, latest.version(), latest.strategyGeneration());
+        return completed == null ? RecoveryResult.failed(true) : RecoveryResult.completed(latest);
     }
 
     /** coordinator 只消费有限 durable 动作，避免根据进程内阶段猜测恢复路径。 */

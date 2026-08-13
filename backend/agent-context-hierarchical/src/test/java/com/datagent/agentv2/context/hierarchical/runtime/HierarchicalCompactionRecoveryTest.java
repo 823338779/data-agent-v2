@@ -240,6 +240,44 @@ class HierarchicalCompactionRecoveryTest {
     }
 
     @Test
+    void succeededBoundaryDoubleChecksPublicationCommittedBetweenRecoveryReads() {
+        HierarchicalCheckpointRepository interleavedCheckpoints =
+                mock(HierarchicalCheckpointRepository.class);
+        HierarchicalCompactionJobRepository interleavedJobs =
+                mock(HierarchicalCompactionJobRepository.class);
+        HierarchicalCompactionPlanningTransaction interleavedPlanning =
+                mock(HierarchicalCompactionPlanningTransaction.class);
+        HierarchicalCandidateGenerationService interleavedGeneration =
+                mock(HierarchicalCandidateGenerationService.class);
+        HierarchicalCompactionClaimTransaction interleavedClaims =
+                mock(HierarchicalCompactionClaimTransaction.class);
+        HierarchicalCompactionRecoveryService interleavedRecovery =
+                new HierarchicalCompactionRecoveryService(
+                        interleavedJobs,
+                        interleavedCheckpoints,
+                        interleavedPlanning,
+                        interleavedGeneration,
+                        interleavedClaims);
+        HierarchicalCheckpoint oldCheckpoint = checkpoint(0L, 5L, 0L);
+        HierarchicalCheckpoint publishedCheckpoint = checkpoint(0L, 6L, 1L);
+        HierarchicalCompactionJob succeeded =
+                job(JOB_ID, HierarchicalCompactionJob.Status.SUCCEEDED, 2L);
+
+        // publication 在首次 checkpoint 读取后提交；boundary 与第二次 checkpoint 读取观察到新状态。
+        when(interleavedCheckpoints.findCheckpoint(SESSION_ID))
+                .thenReturn(oldCheckpoint, publishedCheckpoint);
+        when(interleavedJobs.findCompleted(newExecution(), 0L, 5L)).thenReturn(null);
+        when(interleavedJobs.findBoundary(newExecution())).thenReturn(succeeded);
+        when(interleavedJobs.findCompleted(newExecution(), 1L, 6L)).thenReturn(succeeded);
+
+        RecoveryResult result = interleavedRecovery.recover(newExecution(), oldCheckpoint);
+
+        assertThat(result.action()).isEqualTo(RecoveryAction.COMPLETED);
+        assertThat(result.publishedCheckpoint()).isEqualTo(publishedCheckpoint);
+        verifyNoInteractions(interleavedPlanning, interleavedGeneration, interleavedClaims);
+    }
+
+    @Test
     void committedPublicationIsObservedIdempotentlyAfterCallerCrash() {
         TenantContext.run(
                 TENANT_ID,
