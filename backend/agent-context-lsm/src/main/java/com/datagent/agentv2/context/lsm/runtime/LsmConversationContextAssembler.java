@@ -3,6 +3,7 @@ package com.datagent.agentv2.context.lsm.runtime;
 import com.datagent.agentv2.context.lsm.domain.ConversationTurn;
 import com.datagent.agentv2.context.lsm.domain.FrontierSelection;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.domain.LsmPlanningInput;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
@@ -148,7 +149,8 @@ public class LsmConversationContextAssembler {
     }
 
     /** 固定本次原始消息边界、manifest 与摘要段，并估算未压缩完整输入。 */
-    public ContextState loadAndEstimate(ConversationContextRequest request) {
+    public ContextState loadAndEstimate(
+            ConversationContextRequest request, LsmContextPolicySnapshot policy) {
         AgentExecution execution = executions.findByExecutionId(request.execution().executionId());
         if (execution == null) {
             throw new IllegalStateException(ERROR_EXECUTION_NOT_FOUND);
@@ -160,11 +162,12 @@ public class LsmConversationContextAssembler {
         List<TurnSource> turnSources = toTurns(rows);
         List<ContextMessage> rawMessages =
                 turnSources.stream().flatMap(turn -> turn.turn().messages().stream()).toList();
-        LsmContextManifestEntity manifestEntity = findOrCreateManifest(request);
+        LsmContextManifestEntity manifestEntity = findOrCreateManifest(request, policy);
         LsmContextManifest manifest = toManifest(manifestEntity);
         List<LsmSummarySegmentEntity> persistedSegments = loadAuthorizedLineage(manifest);
         return new ContextState(
                 request,
+                policy,
                 turnSources,
                 rawMessages,
                 manifest,
@@ -184,8 +187,10 @@ public class LsmConversationContextAssembler {
 
     /** 使用发布视图按 ROOT、Cold、Warm、Hot 与当前轮顺序组装输入。 */
     public PreparedConversationContext preparePublishedView(
-            LsmContextManifest manifest, ConversationContextRequest request) {
-        ContextState refreshed = loadAndEstimate(request);
+            LsmContextManifest manifest,
+            ConversationContextRequest request,
+            LsmContextPolicySnapshot policy) {
+        ContextState refreshed = loadAndEstimate(request, policy);
         List<LsmSummarySegmentEntity> active =
                 segments.findByIdsInOrder(manifest.activeSegmentIds());
         validateActiveSegments(manifest, active);
@@ -245,10 +250,10 @@ public class LsmConversationContextAssembler {
         }
         return new CompactionRequest(
                 state.request().execution(),
-                state.request().policy(),
+                state.policy(),
                 planningInput,
                 candidates,
-                superseded -> toCompactionRequest(loadAndEstimate(state.request())));
+                superseded -> toCompactionRequest(loadAndEstimate(state.request(), state.policy())));
     }
 
     private PreparedConversationContext boundedPrepared(
@@ -292,13 +297,10 @@ public class LsmConversationContextAssembler {
                 state.turns().stream().map(TurnSource::turn).toList(),
                 state.manifest(),
                 state.persistedSegments().stream().map(this::toDomainSegment).toList(),
-                new LsmPlanningInput.Policy(
-                        state.request().policy().policyVersion(),
-                        state.request().policy().fanout(),
-                        state.request().policy().maxLevel()),
+                state.policy(),
                 new LsmPlanningInput.TokenPressure(
                         state.estimatedTokens(),
-                        state.request().budget().targetInputTokens(),
+                        state.policy().targetInputTokens(state.request().budget()),
                         state.request().budget().hardInputLimitTokens()),
                 state.estimatedTokens() > state.request().budget().hardInputLimitTokens());
     }
@@ -354,7 +356,7 @@ public class LsmConversationContextAssembler {
         int warmBudget =
                 Math.max(
                         0,
-                        state.request().budget().targetInputTokens()
+                        state.policy().targetInputTokens(state.request().budget())
                                 - estimator.estimateCompleteInput(state.request(), reserved));
         FrontierSelection warm;
         try {
@@ -546,7 +548,8 @@ public class LsmConversationContextAssembler {
                 json.createObjectNode().put(KEY_PLANNED_SUMMARY_SEGMENT_ID, sourceId));
     }
 
-    private LsmContextManifestEntity findOrCreateManifest(ConversationContextRequest request) {
+    private LsmContextManifestEntity findOrCreateManifest(
+            ConversationContextRequest request, LsmContextPolicySnapshot policy) {
         return manifests
                 .findManifest(request.execution().conversationSessionId())
                 .orElseGet(
@@ -560,9 +563,9 @@ public class LsmConversationContextAssembler {
                             created.setWarmCutoffTurnSequence(0L);
                             created.setHotFromTurnSequence(0L);
                             created.setEvaluatedUpToMessageSequence(0L);
-                            created.setEffectivePolicyVersion(request.policy().policyVersion());
-                            created.setEffectiveFanout(request.policy().fanout());
-                            created.setEffectiveMaxLevel(request.policy().maxLevel());
+                            created.setEffectivePolicyVersion(policy.policyVersion());
+                            created.setEffectiveFanout(policy.fanout());
+                            created.setEffectiveMaxLevel(policy.maxLevel());
                             created.setGeneration(0L);
                             created.setCreatedAt(now);
                             created.setCreatedBy(SYSTEM_OPERATOR);
@@ -788,6 +791,8 @@ public class LsmConversationContextAssembler {
     /** assembler 内部固定的一次读取快照。 */
     public record ContextState(
             ConversationContextRequest request,
+            /** 本次 LSM 读取固定使用的 execution 策略快照。 */
+            LsmContextPolicySnapshot policy,
             List<TurnSource> turns,
             List<ContextMessage> rawMessages,
             LsmContextManifest manifest,
@@ -795,6 +800,7 @@ public class LsmConversationContextAssembler {
             int estimatedTokens) {
 
         public ContextState {
+            policy = Objects.requireNonNull(policy, "policy");
             turns = List.copyOf(turns);
             rawMessages = List.copyOf(rawMessages);
             persistedSegments = List.copyOf(persistedSegments);
@@ -802,10 +808,12 @@ public class LsmConversationContextAssembler {
 
         public static ContextState forTest(
                 ConversationContextRequest request,
+                LsmContextPolicySnapshot policy,
                 List<ContextMessage> rawMessages,
                 int estimatedTokens) {
             return new ContextState(
                     request,
+                    policy,
                     List.of(),
                     rawMessages,
                     LsmContextManifest.empty(),

@@ -2,10 +2,10 @@ package com.datagent.agentv2.context.lsm.summary;
 
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.SegmentKind;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.planning.ConversationTokenEstimator;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryDocumentValidator.ContextSummaryDocument;
-import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ContextSummaryRequest;
 import com.datagent.agentv2.conversation.context.ContextSummaryResult;
@@ -51,7 +51,7 @@ public final class ContextSummaryGenerator {
 
     /** 调用中立摘要端口，最多两次，并且绝不截断无效或超限 JSON。 */
     public GeneratedSummary generate(
-            GenerationRequest generationRequest, ContextPolicySnapshot policySnapshot) {
+            GenerationRequest generationRequest, LsmContextPolicySnapshot policySnapshot) {
         GenerationRequest request = Objects.requireNonNull(generationRequest, "generationRequest");
         SummaryGenerationIdentity identity = generationIdentity(policySnapshot);
         int maxTokens = maxSummaryTokens(request.kind(), request.level());
@@ -120,12 +120,12 @@ public final class ContextSummaryGenerator {
     }
 
     /** 在调用模型前计算候选的确定性 key，供 job 持久化和恢复查重。 */
-    public String segmentKey(GenerationRequest request, ContextPolicySnapshot policySnapshot) {
+    public String segmentKey(GenerationRequest request, LsmContextPolicySnapshot policySnapshot) {
         return keyFactory.create(request, generationIdentity(policySnapshot));
     }
 
     /** 返回当前 generator 在调用 provider 前即可审计的完整稳定生成身份。 */
-    public SummaryGenerationIdentity generationIdentity(ContextPolicySnapshot policySnapshot) {
+    public SummaryGenerationIdentity generationIdentity(LsmContextPolicySnapshot policySnapshot) {
         return new SummaryGenerationIdentity(
                 ContextSummaryDocumentValidator.SCHEMA_VERSION,
                 ContextSummaryPrompt.PROMPT_VERSION,

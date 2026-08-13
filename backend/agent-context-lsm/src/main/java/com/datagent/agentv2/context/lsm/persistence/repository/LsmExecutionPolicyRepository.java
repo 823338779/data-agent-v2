@@ -3,8 +3,8 @@ package com.datagent.agentv2.context.lsm.persistence.repository;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmExecutionPolicyEntity;
 import com.datagent.agentv2.context.lsm.persistence.json.LsmDocumentCodec;
 import com.datagent.agentv2.context.lsm.persistence.mapper.LsmExecutionPolicyMapper;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
-import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.LocalDateTime;
@@ -32,8 +32,8 @@ public class LsmExecutionPolicyRepository {
     }
 
     /** 返回已冻结策略；缺失时以唯一键幂等写入本次 execution 的配置快照。 */
-    public ContextPolicySnapshot findOrCreateExecutionPolicy(
-            ContextExecutionRef execution, ContextPolicySnapshot configuredPolicy) {
+    public LsmContextPolicySnapshot findOrCreateExecutionPolicy(
+            ContextExecutionRef execution, LsmContextPolicySnapshot configuredPolicy) {
         String tenantId = TenantContext.requiredTenantId();
         if (!tenantId.equals(execution.tenantId())) {
             throw new IllegalArgumentException(EXECUTION_TENANT_MISMATCH);

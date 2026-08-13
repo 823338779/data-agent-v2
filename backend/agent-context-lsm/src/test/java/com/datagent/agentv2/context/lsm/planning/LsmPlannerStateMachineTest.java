@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.datagent.agentv2.context.lsm.domain.ConversationTurn;
 import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.domain.LsmPlanningInput;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.conversation.context.ContextMessage;
@@ -47,7 +48,7 @@ class LsmPlannerStateMachineTest {
                                     turns,
                                     manifest,
                                     activeSegments,
-                                    new LsmPlanningInput.Policy(1, fanout, maxLevel),
+                                    new LsmContextPolicySnapshot(1, fanout, maxLevel, 10, 75, 65, 100, 109, 10),
                                     new LsmPlanningInput.TokenPressure(20_000, 8_000, 16_000),
                                     true);
                     LsmCompactionPlan plan = planner.plan(input);
@@ -71,7 +72,7 @@ class LsmPlannerStateMachineTest {
                         turns,
                         LsmContextManifest.empty(),
                         List.of(),
-                        new LsmPlanningInput.Policy(1, 5, 4),
+                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10),
                         new LsmPlanningInput.TokenPressure(20_000, 8_000, 16_000),
                         true);
         LsmCompactionPlan valid = planner.plan(input);
@@ -105,7 +106,7 @@ class LsmPlannerStateMachineTest {
                         completedTurns(117),
                         LsmContextManifest.empty(),
                         List.of(),
-                        new LsmPlanningInput.Policy(1, 5, 4),
+                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10),
                         new LsmPlanningInput.TokenPressure(12_000, 8_000, 16_000),
                         false);
 
@@ -120,11 +121,13 @@ class LsmPlannerStateMachineTest {
     @Test
     void retryAndTakeoverReuseFrozenPolicyAndProduceTheSamePlan() {
         List<LsmSummarySegment> segments = fiveL0Segments();
-        LsmPlanningInput.Policy frozenPolicy = new LsmPlanningInput.Policy(7, 5, 4);
+        LsmContextPolicySnapshot frozenPolicy =
+                new LsmContextPolicySnapshot(7, 5, 4, 10, 75, 65, 100, 109, 10);
         LsmPlanningInput initialInput = planningInput(segments, frozenPolicy);
 
         LsmCompactionPlan initial = planner.plan(initialInput);
-        LsmPlanningInput.Policy changedServicePolicy = new LsmPlanningInput.Policy(8, 3, 3);
+        LsmContextPolicySnapshot changedServicePolicy =
+                new LsmContextPolicySnapshot(8, 3, 3, 10, 75, 65, 100, 109, 10);
         LsmCompactionPlan servicePolicyPlan =
                 planner.plan(planningInput(segments, changedServicePolicy));
         LsmCompactionPlan retry = planner.plan(planningInput(segments, frozenPolicy));
@@ -169,7 +172,7 @@ class LsmPlannerStateMachineTest {
     }
 
     private static LsmPlanningInput planningInput(
-            List<LsmSummarySegment> segments, LsmPlanningInput.Policy policy) {
+            List<LsmSummarySegment> segments, LsmContextPolicySnapshot policy) {
         return new LsmPlanningInput(
                 List.of(),
                 new LsmContextManifest(

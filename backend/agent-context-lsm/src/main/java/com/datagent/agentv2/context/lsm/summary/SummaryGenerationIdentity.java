@@ -1,6 +1,6 @@
 package com.datagent.agentv2.context.lsm.summary;
 
-import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import java.util.Objects;
 
@@ -11,7 +11,7 @@ public record SummaryGenerationIdentity(
         /** 摘要系统提示词版本。 */
         int promptVersion,
         /** execution 冻结的完整压缩策略快照。 */
-        ContextPolicySnapshot policySnapshot,
+        LsmContextPolicySnapshot policySnapshot,
         /** 调用前可确定的摘要模型供应商与名称。 */
         ContextSummaryModelIdentity modelIdentity) {
 

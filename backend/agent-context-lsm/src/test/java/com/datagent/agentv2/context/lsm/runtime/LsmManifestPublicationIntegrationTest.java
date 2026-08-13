@@ -24,7 +24,7 @@ import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.Publish
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.ReadyCompaction;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
-import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.persistence.MybatisPlusConfiguration;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.LocalDateTime;
@@ -230,7 +230,7 @@ class LsmManifestPublicationIntegrationTest {
     private ReadyCompaction ready(String owner) {
         ContextExecutionRef execution =
                 new ContextExecutionRef(TENANT_ID, SESSION_ID, EXECUTION_ID, owner, 1L, 2L);
-        ContextPolicySnapshot policy = new ContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
+        LsmContextPolicySnapshot policy = new LsmContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
         CompactionRequest request = mock(CompactionRequest.class);
         LsmPlanningInput planningInput = mock(LsmPlanningInput.class);
         org.mockito.Mockito.when(request.execution()).thenReturn(execution);

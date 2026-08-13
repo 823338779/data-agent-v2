@@ -9,12 +9,12 @@ public record PreparedConversationContext(
         List<ContextMessage> messages,
         int estimatedInputTokens,
         boolean compacted,
-        long manifestGeneration) {
+        long strategyGeneration) {
 
     public PreparedConversationContext {
         Objects.requireNonNull(strategyId, "strategyId");
         messages = List.copyOf(messages);
-        if (estimatedInputTokens < 0 || manifestGeneration < 0) {
+        if (estimatedInputTokens < 0 || strategyGeneration < 0) {
             throw new IllegalArgumentException("Context counters must not be negative");
         }
     }

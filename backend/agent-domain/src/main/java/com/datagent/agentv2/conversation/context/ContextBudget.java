@@ -7,9 +7,6 @@ public record ContextBudget(
         int safetyReserveTokens,
         int fixedInputTokens) {
 
-    private static final double SOFT_TRIGGER_RATIO = 0.75d;
-    private static final double TARGET_INPUT_RATIO = 0.65d;
-
     public ContextBudget {
         if (contextWindowTokens <= 0
                 || maxOutputTokens < 0
@@ -18,14 +15,6 @@ public record ContextBudget(
                 || maxOutputTokens + safetyReserveTokens >= contextWindowTokens) {
             throw new IllegalArgumentException("Invalid context budget");
         }
-    }
-
-    public int softTriggerTokens() {
-        return (int) Math.floor(contextWindowTokens * SOFT_TRIGGER_RATIO);
-    }
-
-    public int targetInputTokens() {
-        return (int) Math.floor(contextWindowTokens * TARGET_INPUT_RATIO);
     }
 
     public int hardInputLimitTokens() {

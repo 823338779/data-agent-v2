@@ -13,7 +13,6 @@ import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
 import com.datagent.agentv2.conversation.context.ContextModelMessageMapper;
-import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ContextToolDefinition;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import com.datagent.agentv2.conversation.context.ConversationContextRequestFactory;
@@ -173,7 +172,6 @@ class ReactExecutionEngineIntegrationTest {
                         run.executionAttemptNumber(),
                         inputBoundary),
                 new ContextBudget(65_536, 4_096, 4_096, 128),
-                new ContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10),
                 List.of(),
                 tools.stream()
                         .map(

@@ -17,7 +17,7 @@ import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
-import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import java.util.ArrayList;
 import java.util.List;
@@ -55,6 +55,7 @@ class LsmConversationContextAssemblerTest {
         var state =
                 new LsmConversationContextAssembler.ContextState(
                         request,
+                        policy(),
                         turns,
                         turns.stream().flatMap(turn -> turn.turn().messages().stream()).toList(),
                         manifest,
@@ -131,15 +132,15 @@ class LsmConversationContextAssemblerTest {
         ConversationContextRequest tight = request(new ContextBudget(600, 50, 50, 0));
         var roomyState = publishedState(roomy, manifest, all);
         var tightState = publishedState(tight, manifest, all);
-        doReturn(roomyState).when(assembler).loadAndEstimate(roomy);
-        doReturn(tightState).when(assembler).loadAndEstimate(tight);
+        doReturn(roomyState).when(assembler).loadAndEstimate(roomy, policy());
+        doReturn(tightState).when(assembler).loadAndEstimate(tight, policy());
 
         List<String> roomyContents =
-                assembler.preparePublishedView(manifest, roomy).messages().stream()
+                assembler.preparePublishedView(manifest, roomy, policy()).messages().stream()
                         .map(ContextMessage::content)
                         .toList();
         List<String> tightContents =
-                assembler.preparePublishedView(manifest, tight).messages().stream()
+                assembler.preparePublishedView(manifest, tight, policy()).messages().stream()
                         .map(ContextMessage::content)
                         .toList();
 
@@ -220,10 +221,10 @@ class LsmConversationContextAssemblerTest {
         when(segments.findByIdsInOrder(manifest.activeSegmentIds())).thenReturn(active);
         doReturn(publishedState(request, manifest, authorized))
                 .when(assembler)
-                .loadAndEstimate(request);
+                .loadAndEstimate(request, policy());
 
         List<String> contents =
-                assembler.preparePublishedView(manifest, request).messages().stream()
+                assembler.preparePublishedView(manifest, request, policy()).messages().stream()
                         .map(ContextMessage::content)
                         .toList();
 
@@ -312,10 +313,10 @@ class LsmConversationContextAssemblerTest {
         when(segments.findByIdsInOrder(manifest.activeSegmentIds())).thenReturn(active);
         doReturn(publishedState(request, manifest, allPersisted))
                 .when(assembler)
-                .loadAndEstimate(request);
+                .loadAndEstimate(request, policy());
 
         List<String> contents =
-                assembler.preparePublishedView(manifest, request).messages().stream()
+                assembler.preparePublishedView(manifest, request, policy()).messages().stream()
                         .map(ContextMessage::content)
                         .toList();
 
@@ -344,9 +345,9 @@ class LsmConversationContextAssemblerTest {
         when(segments.findByIdsInOrder(manifest.activeSegmentIds())).thenReturn(active);
         doReturn(publishedState(request, manifest, active))
                 .when(assembler)
-                .loadAndEstimate(request);
+                .loadAndEstimate(request, policy());
 
-        assertThatThrownBy(() -> assembler.preparePublishedView(manifest, request))
+        assertThatThrownBy(() -> assembler.preparePublishedView(manifest, request, policy()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("LSM manifest active segment set is inconsistent");
     }
@@ -364,7 +365,7 @@ class LsmConversationContextAssemblerTest {
                         new LsmConversationContextAssembler.TurnSource(
                                 new ConversationTurn(42, List.of(current), false), 42, 42));
         return new LsmConversationContextAssembler.ContextState(
-                request, turns, List.of(hot, current), manifest, persisted, 500);
+                request, policy(), turns, List.of(hot, current), manifest, persisted, 500);
     }
 
     private static List<LsmConversationContextAssembler.TurnSource> turns(int count) {
@@ -408,9 +409,12 @@ class LsmConversationContextAssemblerTest {
         return new ConversationContextRequest(
                 new ContextExecutionRef("tenant", "session", "execution", "owner", 1, 42),
                 budget,
-                new ContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10),
                 List.of(ContextMessage.system("fixed-system")),
                 List.of());
+    }
+
+    private static LsmContextPolicySnapshot policy() {
+        return new LsmContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
     }
 
     private static LsmConversationContextAssembler assembler(LsmSummarySegmentRepository segments) {

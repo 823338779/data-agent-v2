@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.datagent.agentv2.context.lsm.domain.ConversationTurn;
 import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.domain.LsmPlanningInput;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.SegmentKind;
@@ -104,7 +105,7 @@ class LsmCompactionPlannerTest {
                         turns,
                         LsmContextManifest.empty(),
                         List.of(),
-                        new LsmPlanningInput.Policy(1, 5, 4),
+                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10),
                         new LsmPlanningInput.TokenPressure(20_000, 8_000, 16_000),
                         true);
 
@@ -366,7 +367,7 @@ class LsmCompactionPlannerTest {
                         completedTurns(127),
                         LsmContextManifest.empty(),
                         List.of(),
-                        new LsmPlanningInput.Policy(1, 5, 4),
+                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10),
                         new LsmPlanningInput.TokenPressure(20_000, 8_000, 16_000),
                         true);
 
@@ -434,7 +435,7 @@ class LsmCompactionPlannerTest {
                         fanout,
                         maxLevel),
                 segments,
-                new LsmPlanningInput.Policy(1, fanout, maxLevel),
+                new LsmContextPolicySnapshot(1, fanout, maxLevel, 10, 75, 65, 100, 109, 10),
                 pressure,
                 false);
     }
@@ -467,7 +468,7 @@ class LsmCompactionPlannerTest {
                         previousFanout,
                         previousMaxLevel),
                 all,
-                new LsmPlanningInput.Policy(2, fanout, maxLevel),
+                new LsmContextPolicySnapshot(2, fanout, maxLevel, 10, 75, 65, 100, 109, 10),
                 new LsmPlanningInput.TokenPressure(7_000, 8_000, 16_000),
                 false);
     }

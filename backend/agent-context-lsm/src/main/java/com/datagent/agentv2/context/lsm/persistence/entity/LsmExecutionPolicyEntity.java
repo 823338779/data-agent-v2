@@ -31,7 +31,7 @@ public final class LsmExecutionPolicyEntity {
     /** 首次使用该策略快照的 execution 标识。 */
     private String executionId;
 
-    /** 不可变的 ContextPolicySnapshot JSON 文档。 */
+    /** 不可变的 LsmContextPolicySnapshot JSON 文档。 */
     @TableField(jdbcType = JdbcType.OTHER, typeHandler = JsonbStringTypeHandler.class)
     private String policySnapshot;
 

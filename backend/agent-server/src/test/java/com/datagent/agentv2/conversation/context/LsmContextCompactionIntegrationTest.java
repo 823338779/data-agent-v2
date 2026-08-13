@@ -3,6 +3,8 @@ package com.datagent.agentv2.conversation.context;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.datagent.agentv2.AgentV2Application;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
+import com.datagent.agentv2.context.lsm.persistence.repository.LsmExecutionPolicyRepository;
 import com.datagent.agentv2.context.lsm.persistence.json.LsmDocumentCodec;
 import com.datagent.agentv2.context.lsm.runtime.LsmConversationContextAssembler;
 import com.datagent.agentv2.context.lsm.strategy.LsmConversationContextStrategy;
@@ -57,6 +59,7 @@ class LsmContextCompactionIntegrationTest {
     @Autowired private JdbcTemplate jdbc;
     @Autowired private LsmConversationContextStrategy realStrategy;
     @Autowired private LsmConversationContextAssembler realAssembler;
+    @Autowired private LsmExecutionPolicyRepository policies;
     @Autowired private DeterministicSummaryModel summaryModel;
 
     @BeforeEach
@@ -313,7 +316,11 @@ class LsmContextCompactionIntegrationTest {
                         new ContextBudget(1_000_000, 1, 1, 0));
         int actualTokens =
                 TenantContext.call(
-                                TENANT_ID, () -> realAssembler.loadAndEstimate(measurementRequest))
+                                TENANT_ID,
+                                () ->
+                                        realAssembler.loadAndEstimate(
+                                                measurementRequest,
+                                                LsmContextPolicySnapshot.defaults(5, 4)))
                         .estimatedTokens();
         ConversationContextRequest triggerRequest =
                 request(
@@ -324,17 +331,21 @@ class LsmContextCompactionIntegrationTest {
                         budgetWithSoftTrigger(actualTokens - 1));
 
         var triggerState =
-                TenantContext.call(TENANT_ID, () -> realAssembler.loadAndEstimate(triggerRequest));
+                TenantContext.call(
+                        TENANT_ID,
+                        () ->
+                                realAssembler.loadAndEstimate(
+                                        triggerRequest, LsmContextPolicySnapshot.defaults(5, 4)));
         PreparedConversationContext prepared =
                 TenantContext.call(TENANT_ID, () -> realStrategy.prepare(triggerRequest));
         PreparedConversationContext reread =
                 TenantContext.call(TENANT_ID, () -> realStrategy.prepare(triggerRequest));
 
         assertThat(triggerState.estimatedTokens())
-                .isEqualTo(triggerRequest.budget().softTriggerTokens() + 1);
+                .isEqualTo(LsmContextPolicySnapshot.defaults(5, 4).softTriggerTokens(triggerRequest.budget()) + 1);
         assertThat(prepared.compacted()).isTrue();
         assertThat(prepared.estimatedInputTokens())
-                .isLessThanOrEqualTo(triggerRequest.budget().targetInputTokens());
+                .isLessThanOrEqualTo(LsmContextPolicySnapshot.defaults(5, 4).targetInputTokens(triggerRequest.budget()));
         assertThat(reread.estimatedInputTokens()).isEqualTo(prepared.estimatedInputTokens());
         assertThat(
                         jdbc.queryForObject(
@@ -385,7 +396,11 @@ class LsmContextCompactionIntegrationTest {
                         new ContextBudget(1_000_000, 1, 1, 0));
         int actualTokens =
                 TenantContext.call(
-                                TENANT_ID, () -> realAssembler.loadAndEstimate(measurementRequest))
+                                TENANT_ID,
+                                () ->
+                                        realAssembler.loadAndEstimate(
+                                                measurementRequest,
+                                                LsmContextPolicySnapshot.defaults(5, 4)))
                         .estimatedTokens();
         ConversationContextRequest triggerRequest =
                 request(
@@ -415,7 +430,7 @@ class LsmContextCompactionIntegrationTest {
                 .containsEntry("pending_raw_start_turn_sequence", 111L)
                 .containsEntry("pending_raw_end_turn_sequence", 117L);
         assertThat(117L - 11L + 1L).isBetween(100L, 109L);
-        assertThat(reread.manifestGeneration()).isEqualTo(prepared.manifestGeneration());
+        assertThat(reread.strategyGeneration()).isEqualTo(prepared.strategyGeneration());
         assertThat(reread.messages())
                 .extracting(ContextMessage::content)
                 .contains(
@@ -442,7 +457,7 @@ class LsmContextCompactionIntegrationTest {
         PreparedConversationContext advanced = publishTriggered(inputBoundary, 3, 3);
         PublishedRoot published = publishedRoot();
 
-        assertThat(advanced.manifestGeneration()).isEqualTo(8L);
+        assertThat(advanced.strategyGeneration()).isEqualTo(8L);
         assertThat(published.rootId()).isNotEqualTo(oldRoot);
         assertThat(published.activeCount()).isEqualTo(1);
         assertThat(published.kind()).isEqualTo("ROOT");
@@ -472,7 +487,7 @@ class LsmContextCompactionIntegrationTest {
         PreparedConversationContext prepared = publishTriggered(inputBoundary, fanout, maxLevel);
         PublishedRoot published = publishedRoot();
 
-        assertThat(prepared.manifestGeneration()).isEqualTo(8L);
+        assertThat(prepared.strategyGeneration()).isEqualTo(8L);
         assertThat(published.activeCount()).isEqualTo(1);
         assertThat(published.kind()).isEqualTo("ROOT");
         assertThat(published.level()).isEqualTo(maxLevel);
@@ -496,9 +511,18 @@ class LsmContextCompactionIntegrationTest {
                         fanout,
                         maxLevel,
                         new ContextBudget(1_000_000, 1, 1, 0));
+        LsmContextPolicySnapshot policy =
+                TenantContext.call(
+                        TENANT_ID,
+                        () ->
+                                policies.findOrCreateExecutionPolicy(
+                                        measurementRequest.execution(),
+                                        new LsmContextPolicySnapshot(
+                                                1, fanout, maxLevel, 10, 75, 65, 100, 109, 10)));
         int actualTokens =
                 TenantContext.call(
-                                TENANT_ID, () -> realAssembler.loadAndEstimate(measurementRequest))
+                                TENANT_ID,
+                                () -> realAssembler.loadAndEstimate(measurementRequest, policy))
                         .estimatedTokens();
         ConversationContextRequest triggerRequest =
                 request(
@@ -617,7 +641,6 @@ class LsmContextCompactionIntegrationTest {
                 new ContextExecutionRef(
                         TENANT_ID, SESSION_ID, executionId, OWNER_ID, 1L, inputBoundary),
                 budget,
-                new ContextPolicySnapshot(1, fanout, maxLevel, 10, 75, 65, 100, 109, 10),
                 List.of(),
                 List.of());
     }

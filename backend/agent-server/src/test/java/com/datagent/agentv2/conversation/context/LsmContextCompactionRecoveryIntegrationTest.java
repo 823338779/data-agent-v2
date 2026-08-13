@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmExecutionPolicyRepository;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.PlannedCompaction;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.ReadyCompaction;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionPlanningTransaction;
@@ -140,13 +141,13 @@ class LsmContextCompactionRecoveryIntegrationTest {
         assertThatThrownBy(() -> redis.getConnection().ping()).isInstanceOf(RuntimeException.class);
 
         ConversationContextRequest oldRequest = triggerRequest(OLD_OWNER_ID, 1L);
-        ContextPolicySnapshot frozen =
+        LsmContextPolicySnapshot frozen =
                 TenantContext.call(
                         TENANT_ID,
                         () ->
                                 policies.findOrCreateExecutionPolicy(
-                                        oldRequest.execution(), oldRequest.policy()));
-        ConversationContextRequest frozenOldRequest = oldRequest.withPolicy(frozen);
+                                        oldRequest.execution(),
+                                        new LsmContextPolicySnapshot(1, 3, 3, 10, 75, 65, 100, 109, 10)));
 
         // 旧 owner 真实持久化 PLANNED/READY job 与候选，但故意停在 manifest publication 前。
         PlannedCompaction oldPlanned =
@@ -155,7 +156,7 @@ class LsmContextCompactionRecoveryIntegrationTest {
                         () ->
                                 planning.begin(
                                         assembler.toCompactionRequest(
-                                                assembler.loadAndEstimate(frozenOldRequest))));
+                                                assembler.loadAndEstimate(oldRequest, frozen))));
         ReadyCompaction oldReady = TenantContext.call(TENANT_ID, () -> recovery.resume(oldPlanned));
         assertThat(summaryModel.invocationCount()).isEqualTo(1);
         assertThat(jobStatus(1L)).isEqualTo("READY");
@@ -197,7 +198,12 @@ class LsmContextCompactionRecoveryIntegrationTest {
         ConversationContextRequest measurement =
                 request(ownerId, attempt, new ContextBudget(1_000_000, 1, 1, 0));
         int actual =
-                TenantContext.call(TENANT_ID, () -> assembler.loadAndEstimate(measurement))
+                TenantContext.call(
+                                TENANT_ID,
+                                () ->
+                                        assembler.loadAndEstimate(
+                                                measurement,
+                                                LsmContextPolicySnapshot.defaults(5, 4)))
                         .estimatedTokens();
         return request(ownerId, attempt, budgetWithSoftTrigger(actual - 1));
     }
@@ -208,7 +214,6 @@ class LsmContextCompactionRecoveryIntegrationTest {
                 new ContextExecutionRef(
                         TENANT_ID, SESSION_ID, EXECUTION_ID, ownerId, attempt, INPUT_BOUNDARY),
                 budget,
-                new ContextPolicySnapshot(1, 3, 3, 10, 75, 65, 100, 109, 10),
                 List.of(),
                 List.of());
     }

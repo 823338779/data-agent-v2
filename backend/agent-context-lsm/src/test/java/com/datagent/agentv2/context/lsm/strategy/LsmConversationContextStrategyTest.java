@@ -10,8 +10,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.datagent.agentv2.context.lsm.configuration.LsmContextProperties;
 import com.datagent.agentv2.context.lsm.domain.ConversationTurn;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmSummarySegmentEntity;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmExecutionPolicyRepository;
@@ -24,7 +26,6 @@ import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
-import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ContextPreparationException;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import com.datagent.agentv2.conversation.context.PreparedConversationContext;
@@ -41,7 +42,8 @@ class LsmConversationContextStrategyTest {
         LsmCompactionCoordinator coordinator = mock(LsmCompactionCoordinator.class);
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         LsmContextMetrics metrics = new LsmContextMetrics(registry);
-        ConversationContextRequest request = request(policy(5));
+        ConversationContextRequest request = request();
+        LsmContextPolicySnapshot policy = policy(5);
         LsmSummarySegmentEntity levelZero = new LsmSummarySegmentEntity();
         levelZero.setSummarySegmentId("active-zero");
         levelZero.setLevel(0);
@@ -65,21 +67,21 @@ class LsmConversationContextStrategyTest {
         var state =
                 new LsmConversationContextAssembler.ContextState(
                         request,
+                        policy,
                         List.of(),
                         List.of(ContextMessage.user("question")),
                         manifest,
                         List.of(levelZero, levelTwo, inactiveLevelFour),
                         50);
-        when(policies.findOrCreateExecutionPolicy(request.execution(), request.policy()))
-                .thenReturn(request.policy());
-        when(assembler.loadAndEstimate(request)).thenReturn(state);
+        when(policies.findOrCreateExecutionPolicy(request.execution(), policy)).thenReturn(policy);
+        when(assembler.loadAndEstimate(request, policy)).thenReturn(state);
         when(assembler.activeSegmentCounts(manifest)).thenReturn(java.util.Map.of(0, 1, 2, 1));
         when(assembler.prepareCurrentView(state))
                 .thenReturn(
                         new PreparedConversationContext(
                                 "lsm", List.of(ContextMessage.user("question")), 50, false, 0));
 
-        new LsmConversationContextStrategy(policies, assembler, coordinator, metrics)
+        new LsmConversationContextStrategy(policies, assembler, coordinator, metrics, properties(5))
                 .prepare(request);
 
         assertThat(registry.get("agent_context_input_estimated_tokens").gauge().value())
@@ -98,24 +100,25 @@ class LsmConversationContextStrategyTest {
         LsmExecutionPolicyRepository policies = mock(LsmExecutionPolicyRepository.class);
         LsmConversationContextAssembler assembler = mock(LsmConversationContextAssembler.class);
         LsmCompactionCoordinator coordinator = mock(LsmCompactionCoordinator.class);
-        ContextPolicySnapshot configured = policy(5);
-        ContextPolicySnapshot frozen = policy(3);
-        ConversationContextRequest request = request(configured);
+        LsmContextPolicySnapshot configured = policy(5);
+        LsmContextPolicySnapshot frozen = policy(3);
+        ConversationContextRequest request = request();
         when(policies.findOrCreateExecutionPolicy(request.execution(), configured))
                 .thenReturn(frozen);
-        when(assembler.loadAndEstimate(request.withPolicy(frozen)))
+        when(assembler.loadAndEstimate(request, frozen))
                 .thenReturn(
                         LsmConversationContextAssembler.ContextState.forTest(
-                                request.withPolicy(frozen),
+                                request,
+                                frozen,
                                 List.of(ContextMessage.user("question")),
-                                request.budget().softTriggerTokens()));
+                                frozen.softTriggerTokens(request.budget())));
         when(assembler.prepareCurrentView(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(
                         new PreparedConversationContext(
                                 "lsm", List.of(ContextMessage.user("question")), 75, false, 0));
 
         var prepared =
-                new LsmConversationContextStrategy(policies, assembler, coordinator)
+                new LsmConversationContextStrategy(policies, assembler, coordinator, properties(5))
                         .prepare(request);
 
         assertThat(prepared.compacted()).isFalse();
@@ -123,7 +126,7 @@ class LsmConversationContextStrategyTest {
         verify(coordinator, never()).compactIfRequired(org.mockito.ArgumentMatchers.any());
         var order = inOrder(policies, assembler);
         order.verify(policies).findOrCreateExecutionPolicy(request.execution(), configured);
-        order.verify(assembler).loadAndEstimate(request.withPolicy(frozen));
+        order.verify(assembler).loadAndEstimate(request, frozen);
     }
 
     @Test
@@ -131,7 +134,8 @@ class LsmConversationContextStrategyTest {
         LsmExecutionPolicyRepository policies = mock(LsmExecutionPolicyRepository.class);
         LsmConversationContextAssembler assembler = mock(LsmConversationContextAssembler.class);
         LsmCompactionCoordinator coordinator = mock(LsmCompactionCoordinator.class);
-        ConversationContextRequest request = request(policy(5));
+        ConversationContextRequest request = request();
+        LsmContextPolicySnapshot policy = policy(5);
         LsmSummarySegmentEntity oldLevelZero = new LsmSummarySegmentEntity();
         oldLevelZero.setSummarySegmentId("old-zero");
         oldLevelZero.setLevel(0);
@@ -140,6 +144,7 @@ class LsmConversationContextStrategyTest {
         LsmConversationContextAssembler.ContextState state =
                 new LsmConversationContextAssembler.ContextState(
                         request,
+                        policy,
                         List.of(),
                         List.of(ContextMessage.user("question")),
                         previous,
@@ -153,24 +158,23 @@ class LsmConversationContextStrategyTest {
         PreparedConversationContext expected =
                 new PreparedConversationContext(
                         "lsm", List.of(ContextMessage.user("question")), 60, true, 4);
-        when(policies.findOrCreateExecutionPolicy(request.execution(), request.policy()))
-                .thenReturn(request.policy());
-        when(assembler.loadAndEstimate(request)).thenReturn(state);
+        when(policies.findOrCreateExecutionPolicy(request.execution(), policy)).thenReturn(policy);
+        when(assembler.loadAndEstimate(request, policy)).thenReturn(state);
         when(assembler.toCompactionRequest(state)).thenReturn(compactionRequest);
         when(coordinator.compactIfRequired(compactionRequest))
                 .thenReturn(CompactionOutcome.unchanged(published));
-        when(assembler.preparePublishedView(published, request)).thenReturn(expected);
+        when(assembler.preparePublishedView(published, request, policy)).thenReturn(expected);
         when(assembler.activeSegmentCounts(published)).thenReturn(java.util.Map.of(2, 1));
 
         PreparedConversationContext prepared =
-                new LsmConversationContextStrategy(policies, assembler, coordinator, metrics)
+                new LsmConversationContextStrategy(policies, assembler, coordinator, metrics, properties(5))
                         .prepare(request);
 
         assertThat(prepared).isSameAs(expected);
         verify(coordinator).compactIfRequired(compactionRequest);
-        verify(assembler).preparePublishedView(published, request);
+        verify(assembler).preparePublishedView(published, request, policy);
         var observationOrder = inOrder(assembler);
-        observationOrder.verify(assembler).preparePublishedView(published, request);
+        observationOrder.verify(assembler).preparePublishedView(published, request, policy);
         observationOrder.verify(assembler).activeSegmentCounts(published);
         assertThat(registry.find("agent_context_active_segments").tag("level", "0").gauge())
                 .isNull();
@@ -197,6 +201,7 @@ class LsmConversationContextStrategyTest {
         var state =
                 new LsmConversationContextAssembler.ContextState(
                         request,
+                        policy(5),
                         turns,
                         List.of(oldUser, oldAssistant, current),
                         LsmContextManifest.empty(),
@@ -230,6 +235,7 @@ class LsmConversationContextStrategyTest {
         var state =
                 new LsmConversationContextAssembler.ContextState(
                         request,
+                        policy(5),
                         turns,
                         List.of(oldUser, oldAssistant, current),
                         LsmContextManifest.empty(),
@@ -257,6 +263,7 @@ class LsmConversationContextStrategyTest {
         var state =
                 new LsmConversationContextAssembler.ContextState(
                         request,
+                        policy(5),
                         turns,
                         List.of(current),
                         LsmContextManifest.empty(),
@@ -275,26 +282,30 @@ class LsmConversationContextStrategyTest {
                 .isEqualTo(1d);
     }
 
-    private static ConversationContextRequest request(ContextPolicySnapshot policy) {
+    private static ConversationContextRequest request() {
         return new ConversationContextRequest(
                 new ContextExecutionRef("tenant", "session", "execution", "owner", 1, 9),
                 new ContextBudget(100, 10, 5, 0),
-                policy,
                 List.of(),
                 List.of());
     }
 
-    private static ContextPolicySnapshot policy(int fanout) {
-        return new ContextPolicySnapshot(1, fanout, 4, 10, 75, 65, 100, 109, 10);
+    private static LsmContextPolicySnapshot policy(int fanout) {
+        return new LsmContextPolicySnapshot(1, fanout, 4, 10, 75, 65, 100, 109, 10);
     }
 
     private static ConversationContextRequest hardLimitRequest() {
         return new ConversationContextRequest(
                 new ContextExecutionRef("tenant", "session", "execution", "owner", 1, 9),
                 new ContextBudget(140, 10, 10, 0),
-                policy(5),
                 List.of(),
                 List.of());
+    }
+
+    private static LsmContextProperties properties(int fanout) {
+        LsmContextProperties properties = new LsmContextProperties();
+        properties.setFanout(fanout);
+        return properties;
     }
 
     private static LsmConversationContextAssembler assembler(

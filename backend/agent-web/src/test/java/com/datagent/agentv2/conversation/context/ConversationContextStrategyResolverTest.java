@@ -81,7 +81,6 @@ class ConversationContextStrategyResolverTest {
         return new ConversationContextRequest(
                 new ContextExecutionRef("tenant-1", "session-1", "execution-1", "owner-1", 1L, 4L),
                 new ContextBudget(65_536, 4_096, 4_096, 0),
-                new ContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10),
                 List.of(),
                 List.of());
     }

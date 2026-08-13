@@ -1,5 +1,6 @@
 package com.datagent.agentv2.context.lsm.configuration;
 
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -34,5 +35,10 @@ public class LsmContextProperties {
 
     public void setMaxLevel(int maxLevel) {
         this.maxLevel = maxLevel;
+    }
+
+    /** 将当前服务配置转换为首次 execution 使用的兼容策略快照。 */
+    public LsmContextPolicySnapshot snapshot() {
+        return LsmContextPolicySnapshot.defaults(fanout, maxLevel);
     }
 }

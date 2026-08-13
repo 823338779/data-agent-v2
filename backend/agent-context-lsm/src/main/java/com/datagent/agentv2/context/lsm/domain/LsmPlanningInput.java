@@ -12,7 +12,7 @@ public record LsmPlanningInput(
         /** manifest 活动段及 frontier 展开可用的不可变摘要段。 */
         List<LsmSummarySegment> segments,
         /** execution 首次创建时冻结的层级策略。 */
-        Policy policy,
+        LsmContextPolicySnapshot policy,
         /** 本次完整输入和目标水位的 token 压力快照。 */
         TokenPressure pressure,
         /** 超过硬边界后是否允许将不足十轮的完整历史强制封为 L0。 */
@@ -24,28 +24,6 @@ public record LsmPlanningInput(
         segments = List.copyOf(Objects.requireNonNull(segments, "segments"));
         policy = Objects.requireNonNull(policy, "policy");
         pressure = Objects.requireNonNull(pressure, "pressure");
-    }
-
-    /** 固化到 execution 的 LSM 配置快照。 */
-    public record Policy(
-            /** 策略版本，用于持久化追溯和幂等键。 */
-            int version,
-            /** 同层晋升严格需要的连续节点数量。 */
-            int fanout,
-            /** 当前配置唯一 ROOT 所在逻辑顶层。 */
-            int maxLevel) {
-
-        public Policy {
-            if (version <= 0) {
-                throw new IllegalArgumentException("policy version must be positive");
-            }
-            if (fanout < 3 || fanout > 10) {
-                throw new IllegalArgumentException("fanout must be between 3 and 10");
-            }
-            if (maxLevel < 1 || maxLevel > 8) {
-                throw new IllegalArgumentException("maxLevel must be between 1 and 8");
-            }
-        }
     }
 
     /** Planner 判断 forced L0 和 Major Compaction 所需的 token 压力。 */

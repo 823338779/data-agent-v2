@@ -14,6 +14,7 @@ import ch.qos.logback.classic.spi.ThrowableProxyUtil;
 import ch.qos.logback.core.read.ListAppender;
 import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.domain.LsmPlanningInput;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
@@ -170,7 +171,8 @@ class ContextCompactionSecurityIntegrationTest {
         ContextExecutionRef execution =
                 new ContextExecutionRef(
                         "tenant-safe", "session-safe", "execution-safe", "owner-safe", 1L, 2L);
-        ContextPolicySnapshot policy = new ContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10);
+        LsmContextPolicySnapshot policy =
+                new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10);
         LsmPlanningInput planningInput = mock(LsmPlanningInput.class);
         when(planningInput.manifest()).thenReturn(LsmContextManifest.empty());
         CandidateInput input =

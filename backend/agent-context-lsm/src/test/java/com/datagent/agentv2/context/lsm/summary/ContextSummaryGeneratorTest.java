@@ -16,7 +16,7 @@ import com.datagent.agentv2.context.lsm.summary.ContextSummaryDocumentValidator.
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GeneratedSummary;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GenerationRequest;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.MessageCoverage;
-import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ContextSummaryRequest;
@@ -46,8 +46,8 @@ class ContextSummaryGeneratorTest {
             """;
     private static final String PROVIDER = "test-provider";
     private static final String MODEL = "test-summary-model";
-    private static final ContextPolicySnapshot POLICY =
-            new ContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
+    private static final LsmContextPolicySnapshot POLICY =
+            new LsmContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
 
     @Mock private ContextSummaryModelPort model;
     @Mock private ConversationTokenEstimator estimator;
@@ -215,7 +215,7 @@ class ContextSummaryGeneratorTest {
                                         new SummaryGenerationIdentity(
                                                 1,
                                                 ContextSummaryPrompt.PROMPT_VERSION,
-                                                new ContextPolicySnapshot(
+                                                new LsmContextPolicySnapshot(
                                                         2, 3, 2, 10, 75, 65, 100, 109, 10),
                                                 baseline.modelIdentity())),
                                 factory.create(

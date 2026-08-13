@@ -153,7 +153,8 @@ public class LsmContextAutoConfiguration {
             LsmExecutionPolicyRepository policies,
             LsmConversationContextAssembler assembler,
             LsmCompactionCoordinator coordinator,
-            LsmContextMetrics metrics) {
-        return new LsmConversationContextStrategy(policies, assembler, coordinator, metrics);
+            LsmContextMetrics metrics,
+            LsmContextProperties properties) {
+        return new LsmConversationContextStrategy(policies, assembler, coordinator, metrics, properties);
     }
 }

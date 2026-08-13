@@ -1,7 +1,7 @@
 package com.datagent.agentv2.context.lsm.persistence.json;
 
 import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan;
-import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -32,7 +32,7 @@ public final class LsmDocumentCodec {
     }
 
     /** 将策略快照写成可持久化的 JSONB 文档。 */
-    public String writePolicy(ContextPolicySnapshot policy) {
+    public String writePolicy(LsmContextPolicySnapshot policy) {
         try {
             return json.writeValueAsString(policy);
         } catch (RuntimeException failure) {
@@ -41,9 +41,9 @@ public final class LsmDocumentCodec {
     }
 
     /** 从持久化 JSONB 文档读取并重新执行领域快照校验。 */
-    public ContextPolicySnapshot readPolicy(String document) {
+    public LsmContextPolicySnapshot readPolicy(String document) {
         try {
-            return json.readValue(document, ContextPolicySnapshot.class);
+            return json.readValue(document, LsmContextPolicySnapshot.class);
         } catch (RuntimeException failure) {
             throw new IllegalStateException(INVALID_POLICY_SNAPSHOT, failure);
         }

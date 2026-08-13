@@ -27,7 +27,7 @@ import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.Publish
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.ReadyCompaction;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
-import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
@@ -86,7 +86,7 @@ class LsmManifestPublicationMetricsTest {
         CompactionRequest request = mock(CompactionRequest.class);
         when(request.execution()).thenReturn(execution);
         when(request.policySnapshot())
-                .thenReturn(new ContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10));
+                .thenReturn(new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10));
         PlannedCompaction planned =
                 new PlannedCompaction("job", request, plan(), 7L, 3L, JobStatus.READY, false);
         return new ReadyCompaction(planned, plan(), List.of(segment()), false);

@@ -2,13 +2,13 @@ package com.datagent.agentv2.context.lsm.runtime;
 
 import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.domain.LsmPlanningInput;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics.CompactionResult;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GenerationRequest;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
-import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashSet;
@@ -146,7 +146,7 @@ public final class LsmCompactionCoordinator {
             /** 当前 execution 的 owner、attempt 与输入 fencing 边界。 */
             ContextExecutionRef execution,
             /** execution 首次进入 LSM 时冻结的策略快照。 */
-            ContextPolicySnapshot policySnapshot,
+            LsmContextPolicySnapshot policySnapshot,
             /** planner 的完整不可变领域输入。 */
             LsmPlanningInput planningInput,
             /** 每个生成目标对应的可信摘要输入。 */

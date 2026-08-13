@@ -1,11 +1,12 @@
 package com.datagent.agentv2.context.lsm.strategy;
 
+import com.datagent.agentv2.context.lsm.configuration.LsmContextProperties;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmExecutionPolicyRepository;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator;
 import com.datagent.agentv2.context.lsm.runtime.LsmConversationContextAssembler;
-import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import com.datagent.agentv2.conversation.context.ConversationContextStrategy;
 import com.datagent.agentv2.conversation.context.PreparedConversationContext;
@@ -20,23 +21,28 @@ public class LsmConversationContextStrategy implements ConversationContextStrate
     private final LsmConversationContextAssembler assembler;
     private final LsmCompactionCoordinator coordinator;
     private final LsmContextMetrics metrics;
+    /** 首次访问 execution 时用于创建冻结策略的当前服务配置。 */
+    private final LsmContextProperties properties;
 
     public LsmConversationContextStrategy(
             LsmExecutionPolicyRepository policies,
             LsmConversationContextAssembler assembler,
-            LsmCompactionCoordinator coordinator) {
-        this(policies, assembler, coordinator, LsmContextMetrics.isolated());
+            LsmCompactionCoordinator coordinator,
+            LsmContextProperties properties) {
+        this(policies, assembler, coordinator, LsmContextMetrics.isolated(), properties);
     }
 
     public LsmConversationContextStrategy(
             LsmExecutionPolicyRepository policies,
             LsmConversationContextAssembler assembler,
             LsmCompactionCoordinator coordinator,
-            LsmContextMetrics metrics) {
+            LsmContextMetrics metrics,
+            LsmContextProperties properties) {
         this.policies = Objects.requireNonNull(policies, "policies");
         this.assembler = Objects.requireNonNull(assembler, "assembler");
         this.coordinator = Objects.requireNonNull(coordinator, "coordinator");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
+        this.properties = Objects.requireNonNull(properties, "properties");
     }
 
     @Override
@@ -47,22 +53,21 @@ public class LsmConversationContextStrategy implements ConversationContextStrate
     @Override
     public PreparedConversationContext prepare(ConversationContextRequest request) {
         // 必须是首个副作用：即使不足 75%，retry/takeover 也只能读取同一策略快照。
-        ContextPolicySnapshot frozen =
-                policies.findOrCreateExecutionPolicy(request.execution(), request.policy());
-        ConversationContextRequest frozenRequest = request.withPolicy(frozen);
+        LsmContextPolicySnapshot frozen =
+                policies.findOrCreateExecutionPolicy(request.execution(), properties.snapshot());
         LsmConversationContextAssembler.ContextState state =
-                assembler.loadAndEstimate(frozenRequest);
+                assembler.loadAndEstimate(request, frozen);
         recordInputPressure(state);
-        if (state.estimatedTokens() <= request.budget().softTriggerTokens()) {
+        if (state.estimatedTokens() <= frozen.softTriggerTokens(request.budget())) {
             PreparedConversationContext prepared = assembler.prepareCurrentView(state);
-            recordActiveSegments(frozenRequest, state.manifest());
+            recordActiveSegments(request, state.manifest());
             return prepared;
         }
         LsmCompactionCoordinator.CompactionOutcome outcome =
                 coordinator.compactIfRequired(assembler.toCompactionRequest(state));
         PreparedConversationContext prepared =
-                assembler.preparePublishedView(outcome.manifest(), frozenRequest);
-        recordActiveSegments(frozenRequest, outcome.manifest());
+                assembler.preparePublishedView(outcome.manifest(), request, frozen);
+        recordActiveSegments(request, outcome.manifest());
         return prepared;
     }
 

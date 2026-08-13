@@ -33,7 +33,7 @@ import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.MessageC
 import com.datagent.agentv2.context.lsm.summary.LsmSegmentKeyFactory;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
-import com.datagent.agentv2.conversation.context.ContextPolicySnapshot;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ContextSummaryResult;
@@ -63,8 +63,8 @@ class LsmCompactionRecoveryTest {
     private static final String MODEL = "test-model";
     private static final String NEXT_PROVIDER = "next-provider";
     private static final String NEXT_MODEL = "next-model";
-    private static final ContextPolicySnapshot POLICY =
-            new ContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
+    private static final LsmContextPolicySnapshot POLICY =
+            new LsmContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
 
     private final ContextSummaryModelPort model = mock(ContextSummaryModelPort.class);
     private final LsmSummarySegmentRepository segments = mock(LsmSummarySegmentRepository.class);
