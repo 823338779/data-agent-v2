@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -170,6 +171,36 @@ class HierarchicalCompactionCoordinatorTest {
 
         assertThat(outcome.targetReached()).isFalse();
         assertThat(outcome.withinHardLimit()).isTrue();
+    }
+
+    @Test
+    void terminalRecoveryFailureNeverReplansCurrentAttempt() {
+        HierarchicalContextState state = state(checkpoint(5L, 0L), 760);
+        when(recovery.recover(EXECUTION, state.checkpoint()))
+                .thenReturn(RecoveryResult.failed(false));
+
+        assertThatThrownBy(() -> coordinator.compactIfRequired(state))
+                .isInstanceOf(HierarchicalCompactionException.class)
+                .hasMessage(HierarchicalCompactionException.FAILURE_CODE);
+        verifyNoInteractions(planning, generation, publication);
+        verify(executions, never()).fail(any(), any(), any());
+    }
+
+    @Test
+    void mismatchedSucceededRecoveryReportsStableFailureWithoutReplanning() {
+        HierarchicalContextState state = state(checkpoint(5L, 0L), 760);
+        when(recovery.recover(EXECUTION, state.checkpoint()))
+                .thenReturn(RecoveryResult.failed(true));
+
+        assertThatThrownBy(() -> coordinator.compactIfRequired(state))
+                .isInstanceOf(HierarchicalCompactionException.class)
+                .hasMessage(HierarchicalCompactionException.FAILURE_CODE);
+        verifyNoInteractions(planning, generation, publication);
+        verify(executions)
+                .fail(
+                        EXECUTION,
+                        HierarchicalCompactionException.FAILURE_CODE,
+                        HierarchicalCompactionException.SAFE_MESSAGE);
     }
 
     @Test

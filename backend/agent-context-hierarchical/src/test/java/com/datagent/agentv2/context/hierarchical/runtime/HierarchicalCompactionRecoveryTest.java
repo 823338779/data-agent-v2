@@ -206,6 +206,40 @@ class HierarchicalCompactionRecoveryTest {
     }
 
     @Test
+    void currentAttemptFailureConvergesWithoutReplanning() {
+        TenantContext.run(
+                TENANT_ID,
+                () ->
+                        jobs.insertOrSelect(
+                                job(JOB_ID, HierarchicalCompactionJob.Status.FAILED, 2L)));
+
+        RecoveryResult result =
+                TenantContext.call(
+                        TENANT_ID, () -> recovery.recover(newExecution(), currentCheckpoint()));
+
+        assertThat(result.action()).isEqualTo(RecoveryAction.FAILED);
+        assertThat(result.reportFailure()).isFalse();
+        verifyNoInteractions(planning, generation);
+    }
+
+    @Test
+    void currentAttemptSucceededWithoutMatchingCheckpointIsStableFailure() {
+        TenantContext.run(
+                TENANT_ID,
+                () ->
+                        jobs.insertOrSelect(
+                                job(JOB_ID, HierarchicalCompactionJob.Status.SUCCEEDED, 2L)));
+
+        RecoveryResult result =
+                TenantContext.call(
+                        TENANT_ID, () -> recovery.recover(newExecution(), currentCheckpoint()));
+
+        assertThat(result.action()).isEqualTo(RecoveryAction.FAILED);
+        assertThat(result.reportFailure()).isTrue();
+        verifyNoInteractions(planning, generation);
+    }
+
+    @Test
     void committedPublicationIsObservedIdempotentlyAfterCallerCrash() {
         TenantContext.run(
                 TENANT_ID,

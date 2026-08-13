@@ -89,3 +89,41 @@ git diff --check
 - 未实现 Task 10 的 Spring 自动装配、策略切换、调度或指标。
 - 未新增跨模块依赖或数据库表；沿用插件现有四表与 Task 8 的 durable Cold 列。
 - 未更新根仓库子模块指针。
+
+## Fix round 1/5
+
+### RED
+
+针对首轮审查新增 6 个回归，并先确认测试因缺少以下契约而编译失败：
+
+- 不存在将 immutable node 首次写入与 exact job/execution fence 绑定的 repository/SQL API。
+- 生成失败的 `GENERATING -> FAILED` CAS 丢失后仍无 stale-owner abandonment 结果。
+- recovery 没有 `FAILED` durable action，coordinator 无法阻止当前 attempt 的终态 job 重新进入 planning。
+
+### 修复
+
+- 新增 fenced node insert：使用单条 PostgreSQL `INSERT ... SELECT ... WHERE EXISTS`，同时绑定 `jobId`、tenant、session、execution、owner、attempt、input boundary 与 `GENERATING` 状态；子查询使用 `FOR UPDATE` 与 takeover claim 串行化，避免 Java 预检查与写入之间的竞态。
+- generation 入口已加载并验证的 durable nodes 继续直接复用；只有当时确实缺失、经过模型生成的首次结果才调用 fenced insert。fence 丢失或唯一键竞争均不能通过事后 select 伪装本次旧 owner 写入成功。
+- 真实 PostgreSQL 回归按“旧 owner 已得到模型结果、new owner claim、旧 owner insert”的顺序证明：旧 owner 首次写入被拒且表中仍无节点；new owner 可写入；旧 owner 随后也不能借相同 identity 返回成功。
+- `failJob` 仅在 `GENERATING -> FAILED` CAS 成功时调用 `executions.fail`。CAS 失败会重读 durable job 并抛出稳定 stale-owner abandonment，绝不修改或上报新 attempt。
+- recovery 对当前 attempt 的 `FAILED`、`CANCELLED` 和 `SUCCEEDED` 终态先行收敛：匹配 checkpoint 的 `SUCCEEDED` 仍返回 `COMPLETED`；`FAILED` 返回已上报失败；非匹配 `SUCCEEDED` 作为无效 publication 状态请求 coordinator 安全上报 `CONTEXT_COMPACTION_FAILED`。这些路径均不会返回 `NONE` 或重新 planning。
+
+### GREEN
+
+聚焦 repository、generation、recovery 与 coordinator 的验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am `
+  '-Dtest=HierarchicalRepositoryIntegrationTest,HierarchicalCandidateGenerationServiceTest,HierarchicalCompactionRecoveryTest,HierarchicalCompactionCoordinatorTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+结果：`Tests run: 51, Failures: 0, Errors: 0, Skipped: 0`。
+
+完整模块验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical test
+```
+
+结果：`Tests run: 164, Failures: 0, Errors: 0, Skipped: 0`。真实 PostgreSQL 17 fenced insert、claim、恢复和 publication 集成测试全部通过。

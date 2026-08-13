@@ -87,7 +87,8 @@ class HierarchicalCandidateGenerationServiceTest {
                         new HierarchicalGenerationSourceProvider.GenerationSources(
                                 List.of(turn(1, 1, 10), turn(2, 11, 20)), checkpoint()));
         when(nodes.findByIds(eq(SESSION_ID), any())).thenReturn(List.of());
-        when(nodes.insertOrSelect(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(nodes.insertOrSelectFenced(eq("job-1"), eq(EXECUTION), any()))
+                .thenAnswer(invocation -> invocation.getArgument(2));
         when(jobs.findJob("job-1")).thenAnswer(invocation -> planned().job());
         when(jobs.transitionJob(any(), any(), any(), eq(EXECUTION), any())).thenReturn(true);
         when(jobs.storeColdCandidate(eq("job-1"), eq(EXECUTION), any()))
@@ -204,6 +205,47 @@ class HierarchicalCandidateGenerationServiceTest {
                         EXECUTION,
                         FAILURE_CODE);
         verify(executions).fail(EXECUTION, FAILURE_CODE, "Hierarchical context compaction failed");
+    }
+
+    @Test
+    void generatorFailureAfterTakeoverDoesNotFailTheNewAttempt() {
+        ContextExecutionRef newExecution =
+                new ContextExecutionRef(
+                        EXECUTION.tenantId(),
+                        SESSION_ID,
+                        EXECUTION.executionId(),
+                        "owner-2",
+                        2L,
+                        EXECUTION.inputUpToMessageSequence());
+        HierarchicalCompactionJob claimedByNewOwner =
+                new HierarchicalCompactionJob(
+                        "job-1",
+                        SESSION_ID,
+                        EXECUTION.executionId(),
+                        2L,
+                        newExecution.ownerInstanceId(),
+                        EXECUTION.inputUpToMessageSequence(),
+                        checkpoint().version(),
+                        checkpoint().strategyGeneration(),
+                        "{\"schemaVersion\":3}",
+                        HierarchicalCompactionJob.Status.GENERATING,
+                        null,
+                        2L);
+        when(generator.generate(any(), any()))
+                .thenThrow(new IllegalStateException(GENERATOR_FAILURE_CODE));
+        when(jobs.transitionJob(
+                        "job-1",
+                        HierarchicalCompactionJob.Status.GENERATING,
+                        HierarchicalCompactionJob.Status.FAILED,
+                        EXECUTION,
+                        FAILURE_CODE))
+                .thenReturn(false);
+        when(jobs.findJob("job-1")).thenReturn(planned().job(), claimedByNewOwner);
+
+        assertThatThrownBy(() -> service.generate(planned()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Hierarchical failure abandoned after job fence loss");
+        verify(executions, never()).fail(any(), any(), any());
     }
 
     @Test

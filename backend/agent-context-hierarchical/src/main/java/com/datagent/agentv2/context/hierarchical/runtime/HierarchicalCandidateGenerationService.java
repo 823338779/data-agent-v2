@@ -38,6 +38,8 @@ public class HierarchicalCandidateGenerationService {
     private static final String INVALID_JOB_STATE = "Hierarchical job cannot start generation";
     private static final String INVALID_GENERATION_SOURCES =
             "Hierarchical generation sources do not match the durable plan";
+    private static final String FAILURE_FENCE_LOST =
+            "Hierarchical failure abandoned after job fence loss";
 
     private final HierarchicalSummaryGenerator generator;
     private final HierarchicalSummaryNodeRepository nodes;
@@ -111,7 +113,8 @@ public class HierarchicalCandidateGenerationService {
                 if (!available.containsKey(candidate.nodeId())) {
                     HierarchicalSummaryNode generated =
                             generateNode(planned, candidate, available, turns);
-                    HierarchicalSummaryNode persisted = nodes.insertOrSelect(generated);
+                    HierarchicalSummaryNode persisted =
+                            nodes.insertOrSelectFenced(jobId, execution, generated);
                     validateNode(planned, candidate, persisted);
                     available.put(candidate.nodeId(), persisted);
                 }
@@ -484,12 +487,18 @@ public class HierarchicalCandidateGenerationService {
 
     private void failJob(PlannedCompaction planned, RuntimeException failure) {
         String failureCode = HierarchicalCompactionException.FAILURE_CODE;
-        jobs.transitionJob(
-                planned.job().jobId(),
-                HierarchicalCompactionJob.Status.GENERATING,
-                HierarchicalCompactionJob.Status.FAILED,
-                planned.execution(),
-                failureCode);
+        boolean failed =
+                jobs.transitionJob(
+                        planned.job().jobId(),
+                        HierarchicalCompactionJob.Status.GENERATING,
+                        HierarchicalCompactionJob.Status.FAILED,
+                        planned.execution(),
+                        failureCode);
+        if (!failed) {
+            // CAS 失败后重读 durable owner/attempt；旧 owner 只放弃本次失败，不触碰新 attempt。
+            jobs.findJob(planned.job().jobId());
+            throw new IllegalStateException(FAILURE_FENCE_LOST, failure);
+        }
         executions.fail(planned.execution(), failureCode, SAFE_FAILURE_MESSAGE);
     }
 

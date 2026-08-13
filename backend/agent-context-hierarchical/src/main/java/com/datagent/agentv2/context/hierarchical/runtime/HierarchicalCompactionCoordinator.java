@@ -67,6 +67,16 @@ public final class HierarchicalCompactionCoordinator {
             if (recovered.action() == RecoveryAction.CANCELLED) {
                 return currentOutcome(current);
             }
+            if (recovered.action() == RecoveryAction.FAILED) {
+                if (recovered.reportFailure()) {
+                    executions.fail(
+                            current.request().execution(),
+                            HierarchicalCompactionException.FAILURE_CODE,
+                            HierarchicalCompactionException.SAFE_MESSAGE);
+                }
+                throw new HierarchicalCompactionException(
+                        HierarchicalCompactionException.FAILURE_CODE, null);
+            }
 
             ReadyCompaction ready;
             if (recovered.action() == RecoveryAction.PUBLISH) {

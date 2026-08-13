@@ -55,11 +55,19 @@ public class HierarchicalCompactionRecoveryService {
             return RecoveryResult.completed(checkpoint);
         }
 
-        // 当前 attempt 已持久化取消边界时直接终止，避免把取消误判为无恢复任务后重新规划。
+        // 当前 attempt 的终态必须直接收敛，禁止落入 NONE 后在同一自然键上重新规划。
         HierarchicalCompactionJob currentAttempt = jobs.findBoundary(checkedExecution);
-        if (currentAttempt != null
-                && currentAttempt.status() == HierarchicalCompactionJob.Status.CANCELLED) {
-            return RecoveryResult.cancelled();
+        if (currentAttempt != null) {
+            if (currentAttempt.status() == HierarchicalCompactionJob.Status.CANCELLED) {
+                return RecoveryResult.cancelled();
+            }
+            if (currentAttempt.status() == HierarchicalCompactionJob.Status.FAILED) {
+                return RecoveryResult.failed(false);
+            }
+            if (currentAttempt.status() == HierarchicalCompactionJob.Status.SUCCEEDED) {
+                // matching SUCCEEDED 已由 findCompleted 捕获；剩余情况是 checkpoint 未随 publication 提交。
+                return RecoveryResult.failed(true);
+            }
         }
         HierarchicalCompactionJob recoverable =
                 jobs.findRecoverable(
@@ -83,34 +91,41 @@ public class HierarchicalCompactionRecoveryService {
         NONE,
         PUBLISH,
         COMPLETED,
-        CANCELLED
+        CANCELLED,
+        FAILED
     }
 
     /** 恢复结果只携带 body-free READY carrier 或已发布 checkpoint。 */
     record RecoveryResult(
             RecoveryAction action,
             ReadyCompaction ready,
-            HierarchicalCheckpoint publishedCheckpoint) {
+            HierarchicalCheckpoint publishedCheckpoint,
+            boolean reportFailure) {
 
         RecoveryResult {
             Objects.requireNonNull(action, "action");
         }
 
         static RecoveryResult none() {
-            return new RecoveryResult(RecoveryAction.NONE, null, null);
+            return new RecoveryResult(RecoveryAction.NONE, null, null, false);
         }
 
         static RecoveryResult publish(ReadyCompaction ready) {
-            return new RecoveryResult(RecoveryAction.PUBLISH, Objects.requireNonNull(ready), null);
+            return new RecoveryResult(
+                    RecoveryAction.PUBLISH, Objects.requireNonNull(ready), null, false);
         }
 
         static RecoveryResult completed(HierarchicalCheckpoint checkpoint) {
             return new RecoveryResult(
-                    RecoveryAction.COMPLETED, null, Objects.requireNonNull(checkpoint));
+                    RecoveryAction.COMPLETED, null, Objects.requireNonNull(checkpoint), false);
         }
 
         static RecoveryResult cancelled() {
-            return new RecoveryResult(RecoveryAction.CANCELLED, null, null);
+            return new RecoveryResult(RecoveryAction.CANCELLED, null, null, false);
+        }
+
+        static RecoveryResult failed(boolean reportFailure) {
+            return new RecoveryResult(RecoveryAction.FAILED, null, null, reportFailure);
         }
     }
 }

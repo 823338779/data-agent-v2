@@ -279,6 +279,51 @@ class HierarchicalRepositoryIntegrationTest {
     }
 
     @Test
+    void generatedNodeFirstWriteIsAtomicallyRejectedAfterTakeover() {
+        insertJob(HierarchicalCompactionJob.Status.GENERATING, PLAN_V3_DOCUMENT);
+        HierarchicalCompactionJob generatedUnderOldOwner =
+                TenantContext.call(TENANT_A, () -> jobs.findJob(JOB_ID));
+        ContextExecutionRef newOwner = execution(OTHER_OWNER_ID, 2L);
+
+        // 模型结果已生成但尚未 insert 时发生 claim，随后旧 owner 不得成为 immutable node 首个写入者。
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () -> jobs.claimRecoverable(generatedUnderOldOwner, newOwner)))
+                .isTrue();
+        assertThatThrownBy(
+                        () ->
+                                TenantContext.call(
+                                        TENANT_A,
+                                        () ->
+                                                nodes.insertOrSelectFenced(
+                                                        JOB_ID, execution(), node("node_stale"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Hierarchical summary node write lost its job fence");
+        assertThat(jdbc.queryForObject(COUNT_NODES_SQL, Integer.class, TENANT_A, SESSION_ID))
+                .isZero();
+
+        // 新 owner 仍可持久化相同有效结果；旧 owner 之后也不能借唯一键冲突伪装写入成功。
+        assertThat(
+                        TenantContext.call(
+                                        TENANT_A,
+                                        () ->
+                                                nodes.insertOrSelectFenced(
+                                                        JOB_ID, newOwner, node("node_new_owner")))
+                                .nodeId())
+                .isEqualTo("node_new_owner");
+        assertThatThrownBy(
+                        () ->
+                                TenantContext.call(
+                                        TENANT_A,
+                                        () ->
+                                                nodes.insertOrSelectFenced(
+                                                        JOB_ID, execution(), node("node_stale"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Hierarchical summary node write lost its job fence");
+    }
+
+    @Test
     void summaryNodeIdReadsStayInsideRequiredTenantAndConversationSession() {
         HierarchicalSummaryNode persisted =
                 TenantContext.call(TENANT_A, () -> nodes.insertOrSelect(node("node_first")));

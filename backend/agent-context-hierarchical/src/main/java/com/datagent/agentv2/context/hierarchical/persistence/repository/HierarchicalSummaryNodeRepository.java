@@ -4,6 +4,7 @@ import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
 import com.datagent.agentv2.context.hierarchical.persistence.entity.HierarchicalSummaryNodeEntity;
 import com.datagent.agentv2.context.hierarchical.persistence.json.HierarchicalDocumentCodec;
 import com.datagent.agentv2.context.hierarchical.persistence.mapper.HierarchicalSummaryNodeMapper;
+import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -16,6 +17,10 @@ public class HierarchicalSummaryNodeRepository {
 
     private static final String SYSTEM_OPERATOR = "hierarchical-context";
     private static final String NODE_NOT_PERSISTED = "Hierarchical summary node was not persisted";
+    private static final String NODE_WRITE_FENCE_LOST =
+            "Hierarchical summary node write lost its job fence";
+    private static final String EXECUTION_TENANT_MISMATCH =
+            "Hierarchical execution tenant does not match context";
 
     /** 摘要节点 SQL 与 JSON 文档门禁依赖。 */
     private final HierarchicalSummaryNodeMapper mapper;
@@ -37,6 +42,27 @@ public class HierarchicalSummaryNodeRepository {
             return toDomain(existing);
         }
         mapper.insertIgnore(entity);
+        HierarchicalSummaryNodeEntity persisted = mapper.selectIdentity(tenantId, entity);
+        if (persisted == null) {
+            throw new IllegalStateException(NODE_NOT_PERSISTED);
+        }
+        return toDomain(persisted);
+    }
+
+    /** 首次生成结果只通过数据库内 exact job fence 写入；唯一键冲突或 takeover 均视为本次写入失败。 */
+    public HierarchicalSummaryNode insertOrSelectFenced(
+            String jobId, ContextExecutionRef execution, HierarchicalSummaryNode candidate) {
+        String tenantId = TenantContext.requiredTenantId();
+        ContextExecutionRef checkedExecution = Objects.requireNonNull(execution, "execution");
+        if (!tenantId.equals(checkedExecution.tenantId())) {
+            throw new IllegalArgumentException(EXECUTION_TENANT_MISMATCH);
+        }
+        HierarchicalSummaryNodeEntity entity = toEntity(candidate, tenantId);
+
+        // 不先读 identity：generation 入口已记录可复用节点，本方法只代表一次首次写入尝试。
+        if (mapper.insertFenced(tenantId, jobId, checkedExecution, entity) != 1) {
+            throw new IllegalStateException(NODE_WRITE_FENCE_LOST);
+        }
         HierarchicalSummaryNodeEntity persisted = mapper.selectIdentity(tenantId, entity);
         if (persisted == null) {
             throw new IllegalStateException(NODE_NOT_PERSISTED);
