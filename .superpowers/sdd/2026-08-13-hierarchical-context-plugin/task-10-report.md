@@ -98,3 +98,31 @@ git diff --check
 - 未修改数据库 schema、Flyway migration 或 OpenAPI。
 - 未安装 `agent-server` 依赖、未修改 server 配置，Task 11 仍可独立执行。
 - 未更新根工作区子模块指针。
+
+## 修复轮次 1/5
+
+### 问题与 RED
+
+- 指标层原先把 `level > 8` 当成非法输入；新增 level 9/62 的 generated nodes 与 active frontier 测试后，定向测试按预期在 `recordGeneratedNodes(9, 1)` 抛出 `IllegalArgumentException`。
+- 自动配置测试改为使用位于插件根包 `com.datagent.agentv2.context.hierarchical` 的测试 marker 扫描整个插件包。`raw` 与 `lsm` 下断言 properties、Flyway、Mapper、repository、planner、runtime、metrics 和 strategy 均不存在。
+- 新增真实 PostgreSQL 17 的 `ApplicationContextRunner`：加载 `DataSourceAutoConfiguration`、主 Flyway、MyBatis Plus 与 `HierarchicalContextAutoConfiguration`，仅 mock 宿主提供的 port/service。该测试确认完整插件 Bean 图可以创建，并通过私有 Flyway 历史表及 strategy BeanDefinition 的 `dependsOn` 验证迁移先于策略可用。
+
+### 修复
+
+- `HierarchicalContextMetrics` 保留 `0..8` 精确 level 标签，并把所有非负高层级映射为单一 `9_plus` 桶。
+- generated nodes 在同一 overflow counter 中累计；active frontier 在更新 gauge 前先按桶聚合，避免 level 9 和 level 62 注册相同 meter identity 却绑定不同状态对象。
+- 负 level 和负 count 仍在任何动态 meter 副作用前拒绝。level 标签全集严格限制为十个值：`0..8` 与 `9_plus`。
+
+### 修复验证
+
+定向测试命令：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am `
+  '-Dtest=HierarchicalContextMetricsTest,HierarchicalContextAutoConfigurationTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+首次 RED：`Tests run: 8, Failures: 0, Errors: 1`，level 9 被错误拒绝。最小修复后同一命令：`Tests run: 8, Failures: 0, Errors: 0`，reactor `BUILD SUCCESS`。
+
+完整模块回归：`.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical test`，结果 `Tests run: 180, Failures: 0, Errors: 0, Skipped: 0`，`BUILD SUCCESS`。

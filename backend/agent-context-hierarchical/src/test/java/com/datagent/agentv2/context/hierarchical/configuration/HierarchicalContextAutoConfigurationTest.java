@@ -3,26 +3,50 @@ package com.datagent.agentv2.context.hierarchical.configuration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
+import com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration;
+import com.datagent.agentv2.context.hierarchical.HierarchicalPluginPackageMarker;
 import com.datagent.agentv2.context.hierarchical.observability.HierarchicalContextMetrics;
 import com.datagent.agentv2.context.hierarchical.persistence.mapper.HierarchicalCheckpointMapper;
 import com.datagent.agentv2.context.hierarchical.persistence.mapper.HierarchicalCompactionJobMapper;
 import com.datagent.agentv2.context.hierarchical.persistence.mapper.HierarchicalExecutionPolicyMapper;
 import com.datagent.agentv2.context.hierarchical.persistence.mapper.HierarchicalSummaryNodeMapper;
+import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCheckpointRepository;
+import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCompactionJobRepository;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalExecutionPolicyRepository;
+import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalSummaryNodeRepository;
+import com.datagent.agentv2.context.hierarchical.planning.BinarySummaryTreePlanner;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionCoordinator;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalConversationContextAssembler;
 import com.datagent.agentv2.context.hierarchical.strategy.HierarchicalConversationContextStrategy;
+import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
+import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ConversationContextStrategy;
-import java.lang.reflect.Method;
+import com.datagent.agentv2.persistence.MybatisPlusConfiguration;
+import com.datagent.agentv2.persistence.service.AgentExecutionService;
+import com.datagent.agentv2.persistence.service.ConversationMessageService;
+import com.datagent.agentv2.persistence.service.ToolExecutionService;
+import com.datagent.agentv2.platform.id.IdGenerator;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.context.properties.bind.validation.BindValidationException;
+import org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.DependsOn;
 import org.springframework.context.annotation.FilterType;
+import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.testcontainers.postgresql.PostgreSQLContainer;
+import org.testcontainers.utility.DockerImageName;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 class HierarchicalContextAutoConfigurationTest {
 
@@ -37,6 +61,14 @@ class HierarchicalContextAutoConfigurationTest {
 
     /** Names the private Flyway bean that must initialize before the strategy factory. */
     private static final String HIERARCHICAL_FLYWAY_BEAN_NAME = "hierarchicalContextFlyway";
+
+    /** Names the strategy factory so its runtime dependency metadata can be asserted. */
+    private static final String HIERARCHICAL_STRATEGY_BEAN_NAME =
+            "hierarchicalConversationContextStrategy";
+
+    /** Plugin migration history proves the private migration completed before strategy access. */
+    private static final String HIERARCHICAL_HISTORY_COUNT_SQL =
+            "select count(*) from flyway_agent_context_hierarchical_schema_history";
 
     /** Provides a valid trigger watermark for the invalid-ordering test. */
     private static final String TRIGGER_RATIO =
@@ -64,25 +96,47 @@ class HierarchicalContextAutoConfigurationTest {
     }
 
     @Test
-    void hierarchicalStrategyFactoryDependsOnPluginFlywayAndExposesSharedSpi() throws Exception {
-        Method factory = strategyFactory();
-        DependsOn dependsOn = factory.getAnnotation(DependsOn.class);
-        HierarchicalContextAutoConfiguration configuration =
-                new HierarchicalContextAutoConfiguration();
+    void hierarchicalStartsTheCompleteBeanGraphAfterPluginMigration() {
+        try (PostgreSQLContainer postgres =
+                new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"))) {
+            postgres.start();
+            hierarchicalContextRunner(postgres)
+                    .run(
+                            context -> {
+                                assertThat(context).hasNotFailed();
+                                assertThat(context)
+                                        .hasSingleBean(HierarchicalExecutionPolicyRepository.class)
+                                        .hasSingleBean(HierarchicalCheckpointRepository.class)
+                                        .hasSingleBean(HierarchicalSummaryNodeRepository.class)
+                                        .hasSingleBean(HierarchicalCompactionJobRepository.class)
+                                        .hasSingleBean(BinarySummaryTreePlanner.class)
+                                        .hasSingleBean(
+                                                HierarchicalConversationContextAssembler.class)
+                                        .hasSingleBean(HierarchicalCompactionCoordinator.class)
+                                        .hasSingleBean(HierarchicalContextMetrics.class)
+                                        .hasSingleBean(
+                                                HierarchicalConversationContextStrategy.class);
 
-        // The factory contract makes migration completion a creation-time prerequisite.
-        assertThat(dependsOn).isNotNull();
-        assertThat(dependsOn.value()).containsExactly(HIERARCHICAL_FLYWAY_BEAN_NAME);
-
-        ConversationContextStrategy strategy =
-                configuration.hierarchicalConversationContextStrategy(
-                        mock(HierarchicalExecutionPolicyRepository.class),
-                        mock(HierarchicalConversationContextAssembler.class),
-                        mock(HierarchicalCompactionCoordinator.class),
-                        mock(HierarchicalContextMetrics.class),
-                        new HierarchicalContextProperties());
-        assertThat(strategy).isInstanceOf(HierarchicalConversationContextStrategy.class);
-        assertThat(strategy.strategyId()).isEqualTo("hierarchical");
+                                // A real migration and BeanDefinition dependency prove runtime
+                                // order.
+                                JdbcTemplate jdbc =
+                                        new JdbcTemplate(context.getBean(DataSource.class));
+                                assertThat(
+                                                jdbc.queryForObject(
+                                                        HIERARCHICAL_HISTORY_COUNT_SQL, Long.class))
+                                        .isPositive();
+                                assertThat(
+                                                context.getBeanFactory()
+                                                        .getBeanDefinition(
+                                                                HIERARCHICAL_STRATEGY_BEAN_NAME)
+                                                        .getDependsOn())
+                                        .containsExactly(HIERARCHICAL_FLYWAY_BEAN_NAME);
+                                ConversationContextStrategy strategy =
+                                        context.getBean(
+                                                HierarchicalConversationContextStrategy.class);
+                                assertThat(strategy.strategyId()).isEqualTo("hierarchical");
+                            });
+        }
     }
 
     @Test
@@ -105,7 +159,16 @@ class HierarchicalContextAutoConfigurationTest {
                         context -> {
                             assertThat(context)
                                     .doesNotHaveBean(HierarchicalContextProperties.class)
-                                    .doesNotHaveBean(HierarchicalConversationContextStrategy.class);
+                                    .doesNotHaveBean(HierarchicalFlywayMigrator.class)
+                                    .doesNotHaveBean(HierarchicalConversationContextStrategy.class)
+                                    .doesNotHaveBean(HierarchicalExecutionPolicyRepository.class)
+                                    .doesNotHaveBean(HierarchicalCheckpointRepository.class)
+                                    .doesNotHaveBean(HierarchicalSummaryNodeRepository.class)
+                                    .doesNotHaveBean(HierarchicalCompactionJobRepository.class)
+                                    .doesNotHaveBean(BinarySummaryTreePlanner.class)
+                                    .doesNotHaveBean(HierarchicalConversationContextAssembler.class)
+                                    .doesNotHaveBean(HierarchicalCompactionCoordinator.class)
+                                    .doesNotHaveBean(HierarchicalContextMetrics.class);
                             assertThat(
                                             context.getBeanFactory()
                                                     .containsBeanDefinition(
@@ -119,14 +182,21 @@ class HierarchicalContextAutoConfigurationTest {
                         });
     }
 
-    private static Method strategyFactory() throws NoSuchMethodException {
-        return HierarchicalContextAutoConfiguration.class.getDeclaredMethod(
-                "hierarchicalConversationContextStrategy",
-                HierarchicalExecutionPolicyRepository.class,
-                HierarchicalConversationContextAssembler.class,
-                HierarchicalCompactionCoordinator.class,
-                HierarchicalContextMetrics.class,
-                HierarchicalContextProperties.class);
+    private static ApplicationContextRunner hierarchicalContextRunner(
+            PostgreSQLContainer postgres) {
+        return new ApplicationContextRunner()
+                .withConfiguration(
+                        AutoConfigurations.of(
+                                DataSourceAutoConfiguration.class,
+                                FlywayAutoConfiguration.class,
+                                MybatisPlusAutoConfiguration.class,
+                                HierarchicalContextAutoConfiguration.class))
+                .withUserConfiguration(FullGraphExternalDependencies.class)
+                .withPropertyValues(
+                        STRATEGY_HIERARCHICAL,
+                        "spring.datasource.url=" + postgres.getJdbcUrl(),
+                        "spring.datasource.username=" + postgres.getUsername(),
+                        "spring.datasource.password=" + postgres.getPassword());
     }
 
     /**
@@ -134,15 +204,60 @@ class HierarchicalContextAutoConfigurationTest {
      */
     @Configuration(proxyBeanMethods = false)
     @ComponentScan(
-            basePackageClasses = HierarchicalContextAutoConfiguration.class,
-            excludeFilters =
-                    @ComponentScan.Filter(
-                            type = FilterType.ASSIGNABLE_TYPE,
-                            classes = HierarchicalPropertiesBinding.class))
+            basePackageClasses = HierarchicalPluginPackageMarker.class,
+            excludeFilters = @ComponentScan.Filter(type = FilterType.REGEX, pattern = ".*Test.*"))
     static class HierarchicalPluginComponentScan {}
 
     /** Isolates property validation from Flyway and mapper infrastructure. */
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(HierarchicalContextProperties.class)
     static class HierarchicalPropertiesBinding {}
+
+    /**
+     * Supplies only host-owned dependencies while the plugin creates its complete internal graph.
+     */
+    @TestConfiguration(proxyBeanMethods = false)
+    @Import(MybatisPlusConfiguration.class)
+    static class FullGraphExternalDependencies {
+
+        @Bean
+        AgentExecutionService agentExecutionService() {
+            return mock(AgentExecutionService.class);
+        }
+
+        @Bean
+        ConversationMessageService conversationMessageService() {
+            return mock(ConversationMessageService.class);
+        }
+
+        @Bean
+        ToolExecutionService toolExecutionService() {
+            return mock(ToolExecutionService.class);
+        }
+
+        @Bean
+        ContextExecutionControlPort contextExecutionControlPort() {
+            return mock(ContextExecutionControlPort.class);
+        }
+
+        @Bean
+        ContextSummaryModelPort contextSummaryModelPort() {
+            return mock(ContextSummaryModelPort.class);
+        }
+
+        @Bean
+        IdGenerator idGenerator() {
+            return mock(IdGenerator.class);
+        }
+
+        @Bean
+        MeterRegistry meterRegistry() {
+            return new SimpleMeterRegistry();
+        }
+
+        @Bean
+        ObjectMapper objectMapper() {
+            return JsonMapper.builder().build();
+        }
+    }
 }

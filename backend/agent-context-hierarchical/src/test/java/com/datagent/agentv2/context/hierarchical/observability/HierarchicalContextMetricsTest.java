@@ -101,15 +101,45 @@ class HierarchicalContextMetricsTest {
     }
 
     @Test
+    void bucketsHigherHierarchyLevelsWithoutIncreasingTagCardinality() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        HierarchicalContextMetrics metrics = new HierarchicalContextMetrics(registry);
+
+        // Domain-valid high levels share one bounded overflow bucket for both meter families.
+        for (int level = 0; level <= 8; level++) {
+            metrics.recordGeneratedNodes(level, 1);
+        }
+        metrics.recordGeneratedNodes(9, 1);
+        metrics.recordGeneratedNodes(62, 2);
+        metrics.recordActiveFrontier(Map.of(9, 3, 62, 4));
+
+        assertThat(
+                        registry.get("agent_context_generated_nodes_total")
+                                .tag(TAG_LEVEL, "9_plus")
+                                .counter()
+                                .count())
+                .isEqualTo(3d);
+        assertThat(
+                        registry.get("agent_context_active_frontier_nodes")
+                                .tag(TAG_LEVEL, "9_plus")
+                                .gauge()
+                                .value())
+                .isEqualTo(7d);
+        assertThat(levelTagValues(registry))
+                .containsOnly("0", "1", "2", "3", "4", "5", "6", "7", "8", "9_plus")
+                .hasSize(10);
+    }
+
+    @Test
     void rejectsInvalidMetricDimensionsBeforeRegisteringDynamicMeters() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         HierarchicalContextMetrics metrics = new HierarchicalContextMetrics(registry);
 
         assertThatThrownBy(() -> metrics.recordGeneratedNodes(-1, 1))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> metrics.recordGeneratedNodes(9, 1))
-                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> metrics.recordGeneratedNodes(0, -1))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> metrics.recordActiveFrontier(Map.of(-1, 1)))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> metrics.recordActiveFrontier(Map.of(0, -1)))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -124,5 +154,13 @@ class HierarchicalContextMetricsTest {
 
         assertThat(registry.find("agent_context_generated_nodes_total").meters()).isEmpty();
         assertThat(registry.find("agent_context_active_frontier_nodes").meters()).isEmpty();
+    }
+
+    private static Set<String> levelTagValues(SimpleMeterRegistry registry) {
+        return registry.getMeters().stream()
+                .map(Meter::getId)
+                .map(id -> id.getTag(TAG_LEVEL))
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
     }
 }
