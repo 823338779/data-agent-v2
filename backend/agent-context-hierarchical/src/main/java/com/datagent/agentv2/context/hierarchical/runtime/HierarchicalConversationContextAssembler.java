@@ -3,10 +3,12 @@ package com.datagent.agentv2.context.hierarchical.runtime;
 import com.datagent.agentv2.context.hierarchical.domain.ConversationTurn;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCheckpoint;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionPlan;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionPlan.TurnRange;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextState;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
 import com.datagent.agentv2.context.hierarchical.domain.SummaryNodeIdentity;
+import com.datagent.agentv2.context.hierarchical.domain.SummaryRange;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCheckpointRepository;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalSummaryNodeRepository;
 import com.datagent.agentv2.context.hierarchical.planning.BinarySummaryTreePlanner;
@@ -23,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -111,6 +114,7 @@ public final class HierarchicalConversationContextAssembler {
         assertProtectedMinimumFits(checkedRequest, partition.currentTurn());
         List<ContextMessage> dynamic =
                 publishedDynamic(
+                        checkedRequest,
                         checkpoint,
                         checkedPolicy,
                         partition.completedTurns(),
@@ -130,6 +134,7 @@ public final class HierarchicalConversationContextAssembler {
         HierarchicalContextState checked = Objects.requireNonNull(state, "state");
         List<ContextMessage> dynamic =
                 publishedDynamic(
+                        checked.request(),
                         checked.checkpoint(),
                         checked.policy(),
                         checked.completedTurns(),
@@ -159,6 +164,7 @@ public final class HierarchicalConversationContextAssembler {
         assertProtectedMinimumFits(checkedRequest, partition.currentTurn());
         List<ContextMessage> dynamic =
                 publishedDynamic(
+                        checkedRequest,
                         checkedCheckpoint,
                         checkedPolicy,
                         partition.completedTurns(),
@@ -219,11 +225,24 @@ public final class HierarchicalConversationContextAssembler {
     }
 
     private List<ContextMessage> publishedDynamic(
+            ConversationContextRequest request,
             HierarchicalCheckpoint checkpoint,
             HierarchicalContextPolicySnapshot policy,
             List<ConversationTurn> completedTurns,
             ConversationTurn currentTurn) {
         List<HierarchicalSummaryNode> activeNodes = resolvedPublishedNodes(checkpoint, policy);
+        validatePublishedCoverage(checkpoint, completedTurns, activeNodes);
+
+        // 鍙戝竷 frontier 涓€鏃﹁Е鍙?Hot锛屽繀椤诲厛鐢ㄥ綋鍓?planner 杈圭晫閲嶅缓绱ф€ラ檷绾х殑鍚堟硶鍓嶇紑銆?
+        validateHotFrontier(request, checkpoint, policy, completedTurns, currentTurn, activeNodes);
+        return assembleDynamic(checkpoint, completedTurns, currentTurn, activeNodes);
+    }
+
+    private static List<ContextMessage> assembleDynamic(
+            HierarchicalCheckpoint checkpoint,
+            List<ConversationTurn> completedTurns,
+            ConversationTurn currentTurn,
+            List<HierarchicalSummaryNode> activeNodes) {
         long nextRawTurn = validatePublishedCoverage(checkpoint, completedTurns, activeNodes);
         List<ContextMessage> dynamic = new ArrayList<>();
 
@@ -245,6 +264,89 @@ public final class HierarchicalConversationContextAssembler {
             dynamic.addAll(currentTurn.messages());
         }
         return List.copyOf(dynamic);
+    }
+
+    private void validateHotFrontier(
+            ConversationContextRequest request,
+            HierarchicalCheckpoint checkpoint,
+            HierarchicalContextPolicySnapshot policy,
+            List<ConversationTurn> completedTurns,
+            ConversationTurn currentTurn,
+            List<HierarchicalSummaryNode> activeNodes) {
+        List<ConversationTurn> turns = allTurns(completedTurns, currentTurn);
+        BinarySummaryTreePlanner planner = new BinarySummaryTreePlanner(policy);
+        HierarchicalCompactionPlan boundaries =
+                planner.plan(turns, checkpoint.summarizedCompletedTurnCount());
+        TurnRange hotTarget = boundaries.hotTarget();
+        if (hotTarget.isEmpty()) {
+            return;
+        }
+
+        // Cold 鎸囬拡涓嶅緱渚濋潬 checkpoint 鏂囨。缁曡繃褰撳墠 planner 淇濇姢鐨?Hot 鍘熸枃銆?
+        if (checkpoint.summarizedCompletedTurnCount() >= hotTarget.startTurn()) {
+            throw publishedFrontierFailure(null);
+        }
+
+        Map<Long, ConversationTurn> byStartSequence = new HashMap<>();
+        Map<Long, ConversationTurn> byEndSequence = new HashMap<>();
+        completedTurns.forEach(
+                turn -> {
+                    byStartSequence.put(turn.startMessageSequence(), turn);
+                    byEndSequence.put(turn.endMessageSequence(), turn);
+                });
+        int firstHotNode = activeNodes.size();
+        for (int index = 0; index < activeNodes.size(); index++) {
+            HierarchicalSummaryNode node = activeNodes.get(index);
+            ConversationTurn first = byStartSequence.get(node.startConversationMessageSequence());
+            ConversationTurn last = byEndSequence.get(node.endConversationMessageSequence());
+            if (first == null || last == null) {
+                throw publishedFrontierFailure(null);
+            }
+            if (last.ordinal() >= hotTarget.startTurn()) {
+                if (first.ordinal() < hotTarget.startTurn()) {
+                    throw publishedFrontierFailure(null);
+                }
+                firstHotNode = index;
+                break;
+            }
+        }
+        if (firstHotNode == activeNodes.size()) {
+            return;
+        }
+
+        // 鍘熷 hard 鍒ゆ柇淇濈暀姝ｅ父 Warm frontier锛屼絾鎾ゅ洖鎵€鏈?Hot 鎽樿鍚庡繀椤荤‘瀹炶秴闄愩€?
+        List<HierarchicalSummaryNode> normalNodes = activeNodes.subList(0, firstHotNode);
+        List<ContextMessage> preDegradation =
+                assembleDynamic(checkpoint, completedTurns, currentTurn, normalNodes);
+        int preDegradationTokens = estimator.estimate(request, preDegradation);
+        if (preDegradationTokens <= request.budget().hardInputLimitTokens()) {
+            throw publishedFrontierFailure(null);
+        }
+
+        // Hot frontier 鍙兘绛夊悓浜?planner 鎸夋渶鑰佷紭鍏堢粰鍑虹殑鍙惰妭鐐瑰€欓€夊墠缂€銆?
+        List<SummaryRange> candidates =
+                planner.plan(
+                                turns,
+                                checkpoint.summarizedCompletedTurnCount(),
+                                preDegradationTokens,
+                                request.budget())
+                        .hotDegradationRanges();
+        List<HierarchicalSummaryNode> hotNodes =
+                activeNodes.subList(firstHotNode, activeNodes.size());
+        if (hotNodes.size() > candidates.size()) {
+            throw publishedFrontierFailure(null);
+        }
+        for (int index = 0; index < hotNodes.size(); index++) {
+            HierarchicalSummaryNode node = hotNodes.get(index);
+            SummaryRange candidate = candidates.get(index);
+            if (node.level() != candidate.level()
+                    || node.coveredCompletedTurnCount()
+                            != candidate.endTurn() - candidate.startTurn() + 1L
+                    || node.startConversationMessageSequence() != candidate.startMessageSequence()
+                    || node.endConversationMessageSequence() != candidate.endMessageSequence()) {
+                throw publishedFrontierFailure(null);
+            }
+        }
     }
 
     private List<HierarchicalSummaryNode> resolvedPublishedNodes(
@@ -278,7 +380,10 @@ public final class HierarchicalConversationContextAssembler {
 
     private List<String> readFrontierNodeIds(String document) {
         try {
-            JsonNode root = json.readTree(document);
+            JsonNode root =
+                    json.reader()
+                            .with(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+                            .readTree(document);
             JsonNode version = root == null ? null : root.get(FRONTIER_SCHEMA_VERSION_FIELD);
             JsonNode nodeArray = root == null ? null : root.get(FRONTIER_NODES_FIELD);
             if (root == null

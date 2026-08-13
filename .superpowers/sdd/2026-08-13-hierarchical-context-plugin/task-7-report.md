@@ -91,3 +91,68 @@
 ## 已知提示
 
 - 测试仍显示仓库既有的 Mockito inline mock maker 动态 agent 提示和 javac annotation processor 提示；本任务未新增依赖或修改全局测试配置。
+
+## Fix round 1/5：保护 Hot frontier 与严格 JSON key
+
+本轮仅修正 Task 7 的 read-side 发布校验，未实现 Task 8/9：
+
+- `publishedDynamic` 的所有入口都重新使用当前完整历史和固化 policy 计算 Cold/Warm/Hot 边界，checkpoint 不能把当前受保护 Hot 伪装成 Cold。
+- 正常 Warm frontier 仍可在低于 hard limit 时发布；frontier 一旦进入 Hot，assembler 会先撤回全部 Hot 摘要并重建 pre-degradation 完整输入，只有该输入严格超过 hard limit 才允许紧急降级。
+- 紧急 Hot 节点必须逐个精确匹配 planner 给出的 level-0 候选，并且只能形成 oldest-first 连续前缀，不能跳过最老候选或任意选择较新 turn。
+- frontier JSON 使用 `StreamReadFeature.STRICT_DUPLICATE_DETECTION` 解析，重复 `schemaVersion` 或 `nodes` key 均以稳定 frontier 错误拒绝。
+- 回归测试把最近 10 个完整 Hot turn 的 raw 消息和正式发布消息顺序改为完整精确序列断言。
+
+### RED
+
+先添加上述回归测试并运行：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am `
+  '-Dtest=HierarchicalConversationContextAssemblerTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+结果为预期 RED：`Tests run: 11, Failures: 4, Errors: 0, Skipped: 0`。四个失败精确对应：低于 hard 的 Hot frontier 被错误接受、Cold pointer 跳过最老 Hot 候选、Cold pointer 选择任意较新 Hot turn、重复 JSON key 被错误接受。把原正式发布夹具扩展为合法的 102 completed turns Cold/Warm/Hot 场景后，同一命令仍保持相同四个目标失败，没有引入额外失败。
+
+### GREEN
+
+完成最小生产修复后，以相同 focused 命令验证：
+
+- `Tests run: 11`
+- `Failures: 0`
+- `Errors: 0`
+- `Skipped: 0`
+- `BUILD SUCCESS`
+
+真实 repository 集成验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am `
+  '-Dtest=HierarchicalRepositoryIntegrationTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+结果为 `Tests run: 12, Failures: 0, Errors: 0, Skipped: 0`，`BUILD SUCCESS`。
+
+格式验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am spotless:apply spotless:check
+```
+
+结果为 `BUILD SUCCESS`；命令对两个上游既有测试产生的纯格式变化已立即撤回，最终 diff 仅包含 Task 7 assembler、测试和本报告。
+
+全模块及依赖验证：
+
+```powershell
+.\backend\mvnw.cmd -q -f .\backend\pom.xml -pl agent-context-hierarchical -am test
+```
+
+首次明确退出码运行命中仓库既有 `MybatisPlusAuditIntegrationTest` PostgreSQL 时间精度 flake：实际时间比断言下界低 `100ns`，`agent-persistence` 为 38 tests / 1 failure；未修改或弱化该测试。原命令重跑后 Surefire 报告为：
+
+- `agent-domain`：5 tests，0 failures/errors
+- `agent-persistence`：38 tests，0 failures/errors
+- `agent-context-hierarchical`：102 tests，0 failures/errors
+- 合计 145 tests，0 failures/errors/skipped
+
+附加检查：`git diff --check` 通过；未修改 Task 8/9 相关压缩事务、摘要模型调用或 checkpoint CAS 发布流程。
