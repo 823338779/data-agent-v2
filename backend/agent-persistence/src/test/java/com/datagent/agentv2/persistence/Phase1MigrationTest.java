@@ -24,6 +24,7 @@ class Phase1MigrationTest {
     /** 会话业务标识在租户命名空间内保持唯一的数据库约束表达式。 */
     private static final String TENANT_SCOPED_SESSION_UNIQUE =
             "unique (tenant_id, conversation_session_id)";
+
     private static final List<String> TABLES =
             List.of(
                     "agent_execution",
@@ -164,15 +165,11 @@ class Phase1MigrationTest {
     @Test
     void everyIdentityPrimaryKeyIsTheFirstColumn() throws SQLException {
         for (String table : IDENTITY_TABLES) {
-            assertThat(columns(table))
-                    .as("physical column order for %s", table)
-                    .startsWith("id");
+            assertThat(columns(table)).as("physical column order for %s", table).startsWith("id");
             assertThat(primaryKey(table))
                     .as("identity primary key for %s", table)
                     .isEqualTo("primary key (id)");
-            assertThat(identityFlag(table, "id"))
-                    .as("identity id for %s", table)
-                    .isEqualTo("YES");
+            assertThat(identityFlag(table, "id")).as("identity id for %s", table).isEqualTo("YES");
         }
         assertThat(uniqueConstraints("conversation_session_user_state"))
                 .contains("unique (tenant_id, user_id, conversation_session_id)");
