@@ -1,5 +1,6 @@
 package com.datagent.agentv2.context.hierarchical.persistence.repository;
 
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalColdCandidate;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionJob;
 import com.datagent.agentv2.context.hierarchical.persistence.entity.HierarchicalCompactionJobEntity;
 import com.datagent.agentv2.context.hierarchical.persistence.json.HierarchicalDocumentCodec;
@@ -97,6 +98,45 @@ public class HierarchicalCompactionJobRepository {
                 == 1;
     }
 
+    /** 在 GENERATING 状态按 execution fence 幂等写入唯一 durable Cold 候选。 */
+    public boolean storeColdCandidate(
+            String jobId, ContextExecutionRef execution, HierarchicalColdCandidate candidate) {
+        String tenantId = TenantContext.requiredTenantId();
+        requireExecutionTenant(tenantId, execution);
+        String candidateDocument = documents.writeColdCandidate(candidate);
+        HierarchicalCompactionJobEntity current = mapper.selectJob(tenantId, jobId);
+        if (!canStoreColdCandidate(current, execution)) {
+            return false;
+        }
+        if (current.getCandidateColdDocument() != null) {
+            return sameColdCandidate(current.getCandidateColdDocument(), candidateDocument);
+        }
+
+        // 首次写入使用 version CAS；唯一键竞争后只接受完全相同的 durable candidate。
+        LocalDateTime now = LocalDateTime.now();
+        mapper.storeColdCandidate(
+                tenantId,
+                jobId,
+                current.getVersion(),
+                execution,
+                candidateDocument,
+                now,
+                SYSTEM_OPERATOR);
+        HierarchicalCompactionJobEntity persisted = mapper.selectJob(tenantId, jobId);
+        return canStoreColdCandidate(persisted, execution)
+                && persisted.getCandidateColdDocument() != null
+                && sameColdCandidate(persisted.getCandidateColdDocument(), candidateDocument);
+    }
+
+    /** 按当前租户和 job ID 恢复 durable Cold candidate；尚未生成时返回 null。 */
+    public HierarchicalColdCandidate findColdCandidate(String jobId) {
+        HierarchicalCompactionJobEntity job =
+                mapper.selectJob(TenantContext.requiredTenantId(), jobId);
+        return job == null || job.getCandidateColdDocument() == null
+                ? null
+                : documents.readColdCandidate(job.getCandidateColdDocument());
+    }
+
     /** 绑定租户和审计字段，并拒绝未知计划 schema。 */
     private HierarchicalCompactionJobEntity toEntity(
             HierarchicalCompactionJob job, String tenantId) {
@@ -146,6 +186,21 @@ public class HierarchicalCompactionJobRepository {
         return status == HierarchicalCompactionJob.Status.SUCCEEDED
                 || status == HierarchicalCompactionJob.Status.FAILED
                 || status == HierarchicalCompactionJob.Status.CANCELLED;
+    }
+
+    private static boolean canStoreColdCandidate(
+            HierarchicalCompactionJobEntity job, ContextExecutionRef execution) {
+        return job != null
+                && HierarchicalCompactionJob.Status.GENERATING.name().equals(job.getStatus())
+                && job.getConversationSessionId().equals(execution.conversationSessionId())
+                && job.getExecutionId().equals(execution.executionId())
+                && job.getOwnerInstanceId().equals(execution.ownerInstanceId())
+                && job.getExecutionAttempt() == execution.executionAttempt()
+                && job.getInputUpToMessageSequence() == execution.inputUpToMessageSequence();
+    }
+
+    private boolean sameColdCandidate(String left, String right) {
+        return documents.readColdCandidate(left).equals(documents.readColdCandidate(right));
     }
 
     /** 防止当前租户调用方携带其他租户的 execution fence。 */

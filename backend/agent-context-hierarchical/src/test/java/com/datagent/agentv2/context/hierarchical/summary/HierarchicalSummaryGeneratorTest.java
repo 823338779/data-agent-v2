@@ -25,6 +25,7 @@ import com.datagent.agentv2.conversation.context.ContextSummaryResult;
 import com.datagent.agentv2.conversation.context.ContextToolCall;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -83,6 +84,35 @@ class HierarchicalSummaryGeneratorTest {
         assertThat(requests.getAllValues().get(1).systemPrompt())
                 .contains("上一次输出未通过校验")
                 .doesNotContain("confirmedFacts");
+    }
+
+    @Test
+    void checksExecutionImmediatelyBeforeEveryRetryModelCall() {
+        AtomicInteger checks = new AtomicInteger();
+        when(model.summarize(any()))
+                .thenReturn(
+                        result("{\"confirmedFacts\":{}}", 20),
+                        result(summary("valid retry", 1, 2, 10, 20), 300));
+
+        generator.generate(leafRequest(), checks::incrementAndGet);
+
+        assertThat(checks).hasValue(2);
+        verify(model, times(2)).summarize(any());
+    }
+
+    @Test
+    void cancellationGuardEscapesWithoutBecomingAValidationRetry() {
+        RuntimeException cancelled = new RuntimeException("cancelled");
+
+        assertThatThrownBy(
+                        () ->
+                                generator.generate(
+                                        leafRequest(),
+                                        () -> {
+                                            throw cancelled;
+                                        }))
+                .isSameAs(cancelled);
+        verify(model, never()).summarize(any());
     }
 
     @Test

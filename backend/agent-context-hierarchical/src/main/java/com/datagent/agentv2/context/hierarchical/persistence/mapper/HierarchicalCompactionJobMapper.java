@@ -23,6 +23,8 @@ public interface HierarchicalCompactionJobMapper
             "insert into conversation_context_hierarchical_compaction_job (hierarchical_compaction_job_id, tenant_id, conversation_session_id, execution_id, execution_attempt, owner_instance_id, input_up_to_message_sequence, base_checkpoint_version, base_strategy_generation, plan_document, status, failure_code, completed_at, created_at, created_by, updated_at, updated_by, deleted, version) values (#{hierarchicalCompactionJobId}, #{tenantId}, #{conversationSessionId}, #{executionId}, #{executionAttempt}, #{ownerInstanceId}, #{inputUpToMessageSequence}, #{baseCheckpointVersion}, #{baseStrategyGeneration}, #{planDocument, typeHandler=com.datagent.agentv2.persistence.typehandler.JsonbStringTypeHandler, jdbcType=OTHER}, #{status}, #{failureCode}, #{completedAt}, #{createdAt}, #{createdBy}, #{updatedAt}, #{updatedBy}, #{deleted}, #{version}) on conflict (tenant_id, execution_id, execution_attempt, input_up_to_message_sequence) do nothing";
     String TRANSITION_JOB =
             "update conversation_context_hierarchical_compaction_job set status = #{replacementStatus}, failure_code = #{failureCode}, completed_at = #{completedAt}, updated_at = #{updatedAt}, updated_by = #{updatedBy}, version = version + 1 where tenant_id = #{tenantId} and hierarchical_compaction_job_id = #{jobId} and conversation_session_id = #{execution.conversationSessionId} and execution_id = #{execution.executionId} and owner_instance_id = #{execution.ownerInstanceId} and execution_attempt = #{execution.executionAttempt} and input_up_to_message_sequence = #{execution.inputUpToMessageSequence} and status = #{expectedStatus} and version = #{expectedVersion} and deleted = false";
+    String STORE_COLD_CANDIDATE =
+            "update conversation_context_hierarchical_compaction_job set candidate_cold_document = #{candidateDocument, typeHandler=com.datagent.agentv2.persistence.typehandler.JsonbStringTypeHandler, jdbcType=OTHER}, updated_at = #{updatedAt}, updated_by = #{updatedBy}, version = version + 1 where tenant_id = #{tenantId} and hierarchical_compaction_job_id = #{jobId} and conversation_session_id = #{execution.conversationSessionId} and execution_id = #{execution.executionId} and owner_instance_id = #{execution.ownerInstanceId} and execution_attempt = #{execution.executionAttempt} and input_up_to_message_sequence = #{execution.inputUpToMessageSequence} and status = 'GENERATING' and candidate_cold_document is null and version = #{expectedVersion} and deleted = false";
 
     /** 按业务标识读取当前租户作业。 */
     @Select(SELECT_JOB)
@@ -61,6 +63,18 @@ public interface HierarchicalCompactionJobMapper
                     com.datagent.agentv2.conversation.context.ContextExecutionRef execution,
             @Param("failureCode") String failureCode,
             @Param("completedAt") java.time.LocalDateTime completedAt,
+            @Param("updatedAt") java.time.LocalDateTime updatedAt,
+            @Param("updatedBy") String updatedBy);
+
+    /** 仅允许 fenced GENERATING job 首次写入 durable Cold candidate。 */
+    @Update(STORE_COLD_CANDIDATE)
+    int storeColdCandidate(
+            @Param("tenantId") String tenantId,
+            @Param("jobId") String jobId,
+            @Param("expectedVersion") long expectedVersion,
+            @Param("execution")
+                    com.datagent.agentv2.conversation.context.ContextExecutionRef execution,
+            @Param("candidateDocument") String candidateDocument,
             @Param("updatedAt") java.time.LocalDateTime updatedAt,
             @Param("updatedBy") String updatedBy);
 }

@@ -2,6 +2,7 @@ package com.datagent.agentv2.context.hierarchical.summary;
 
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.GenerationRange;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.GenerationRequest;
+import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.SourceKind;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -20,24 +21,38 @@ public final class HierarchicalNodeKeyFactory {
     /** 相同会话、来源种类、范围、协议与模型身份总是生成同一 key。 */
     public String create(GenerationRequest request, SummaryGenerationIdentity identity) {
         GenerationRequest checkedRequest = Objects.requireNonNull(request, "request");
+        return create(
+                checkedRequest.conversationSessionId(),
+                checkedRequest.source().kind(),
+                checkedRequest.range(),
+                identity);
+    }
+
+    /** 在不构造或复制摘要正文的规划阶段，根据纯元数据生成相同的确定性 key。 */
+    public String create(
+            String conversationSessionId,
+            SourceKind sourceKind,
+            GenerationRange range,
+            SummaryGenerationIdentity identity) {
+        String checkedSessionId =
+                Objects.requireNonNull(conversationSessionId, "conversationSessionId");
+        SourceKind checkedSourceKind = Objects.requireNonNull(sourceKind, "sourceKind");
+        GenerationRange checkedRange = Objects.requireNonNull(range, "range");
         SummaryGenerationIdentity checkedIdentity = Objects.requireNonNull(identity, "identity");
-        if (!checkedRequest
-                .conversationSessionId()
-                .equals(checkedIdentity.conversationSessionId())) {
+        if (!checkedSessionId.equals(checkedIdentity.conversationSessionId())) {
             throw new IllegalArgumentException(IDENTITY_MISMATCH);
         }
 
         // 节点 key 与数据库不可变 identity 对齐；固定宽度数字和长度前缀文本不存在分隔符歧义。
-        GenerationRange range = checkedRequest.range();
         try {
             MessageDigest digest = MessageDigest.getInstance(HASH_ALGORITHM);
             updateText(digest, checkedIdentity.conversationSessionId());
-            updateText(digest, checkedRequest.source().kind().name());
-            updateInt(digest, range.level());
-            updateLong(digest, range.startTurn());
-            updateLong(digest, range.endTurn());
-            updateLong(digest, range.startMessageSequence());
-            updateLong(digest, range.endMessageSequence());
+            updateText(digest, checkedSourceKind.name());
+            updateInt(digest, checkedRange.level());
+            updateLong(digest, checkedRange.startTurn());
+            updateLong(digest, checkedRange.endTurn());
+            updateLong(digest, checkedRange.startMessageSequence());
+            updateLong(digest, checkedRange.endMessageSequence());
             updateInt(digest, checkedIdentity.schemaVersion());
             updateInt(digest, checkedIdentity.promptVersion());
             updateText(digest, checkedIdentity.modelIdentity().provider());

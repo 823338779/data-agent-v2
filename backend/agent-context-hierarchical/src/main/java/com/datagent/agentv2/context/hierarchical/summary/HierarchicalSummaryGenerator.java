@@ -62,7 +62,15 @@ public final class HierarchicalSummaryGenerator {
 
     /** 最多调用共享模型端口两次，第二次只追加稳定纠错指令。 */
     public GeneratedSummary generate(GenerationRequest generationRequest) {
+        return generate(generationRequest, () -> {});
+    }
+
+    /** 每次 provider 调用前执行 execution fencing，且 fencing 失败不会被摘要重试吞掉。 */
+    public GeneratedSummary generate(
+            GenerationRequest generationRequest, Runnable beforeModelCall) {
         GenerationRequest request = Objects.requireNonNull(generationRequest, "generationRequest");
+        Runnable checkedBeforeModelCall =
+                Objects.requireNonNull(beforeModelCall, "beforeModelCall");
         if (request.source() instanceof LeafSource leaf) {
             request.validateLeaf(leaf);
         }
@@ -73,6 +81,7 @@ public final class HierarchicalSummaryGenerator {
 
         // 每次尝试只处理内存候选；不记录 prompt、来源或模型正文，也不执行持久化操作。
         for (int attempt = FIRST_ATTEMPT; attempt <= MAX_ATTEMPTS; attempt++) {
+            checkedBeforeModelCall.run();
             try {
                 ContextSummaryResult result =
                         model.summarize(toModelRequest(request, sourceDocument, attempt));
@@ -112,6 +121,32 @@ public final class HierarchicalSummaryGenerator {
     /** 在 provider 调用前返回同 identity 可复用的确定性节点 key。 */
     public String nodeKey(GenerationRequest request) {
         return keyFactory.create(request, generationIdentity(request));
+    }
+
+    /** 规划阶段只使用范围、来源类别和冻结身份计算 key，不构造正文来源。 */
+    public String nodeKey(
+            String conversationSessionId,
+            GenerationRange range,
+            SourceKind sourceKind,
+            HierarchicalContextPolicySnapshot policySnapshot) {
+        SummaryGenerationIdentity identity =
+                generationIdentity(conversationSessionId, policySnapshot);
+        return keyFactory.create(conversationSessionId, sourceKind, range, identity);
+    }
+
+    private SummaryGenerationIdentity generationIdentity(
+            String conversationSessionId, HierarchicalContextPolicySnapshot policySnapshot) {
+        HierarchicalContextPolicySnapshot policy =
+                Objects.requireNonNull(policySnapshot, "policySnapshot");
+        if (policy.summarySchemaVersion() != ContextSummaryDocumentValidator.SCHEMA_VERSION
+                || policy.summaryPromptVersion() != ContextSummaryPrompt.PROMPT_VERSION) {
+            throw new IllegalArgumentException(INVALID_POLICY_VERSION);
+        }
+        return new SummaryGenerationIdentity(
+                Objects.requireNonNull(conversationSessionId, "conversationSessionId"),
+                policy.summarySchemaVersion(),
+                policy.summaryPromptVersion(),
+                Objects.requireNonNull(model.identity(), "summary model identity"));
     }
 
     private ContextSummaryRequest toModelRequest(

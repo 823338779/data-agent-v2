@@ -50,6 +50,10 @@ public final class HierarchicalCompactionJobEntity {
     @TableField(jdbcType = JdbcType.OTHER, typeHandler = JsonbStringTypeHandler.class)
     private String planDocument;
 
+    /** GENERATING job 私有持有、供崩溃恢复读取的版本化 Cold 候选 JSON 文档。 */
+    @TableField(jdbcType = JdbcType.OTHER, typeHandler = JsonbStringTypeHandler.class)
+    private String candidateColdDocument;
+
     /** 插件私有作业生命周期状态。 */
     private String status;
 

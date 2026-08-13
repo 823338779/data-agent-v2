@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.datagent.agentv2.context.hierarchical.configuration.HierarchicalMapperConfiguration;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCheckpoint;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalColdCandidate;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionJob;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
@@ -82,6 +83,8 @@ class HierarchicalRepositoryIntegrationTest {
     private static final String EMPTY_FRONTIER = "{\"schemaVersion\":1,\"nodes\":[]}";
     private static final String SUMMARY_DOCUMENT = "{\"schemaVersion\":1,\"confirmedFacts\":[]}";
     private static final String PLAN_DOCUMENT = "{\"schemaVersion\":1,\"operations\":[]}";
+    private static final String COLD_DOCUMENT =
+            "{\"schemaVersion\":1,\"confirmedFacts\":[{\"statement\":\"cold fact\"}]}";
 
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
@@ -402,6 +405,73 @@ class HierarchicalRepositoryIntegrationTest {
     }
 
     @Test
+    void coldCandidateWriteIsFencedIdempotentAndRecoverable() {
+        insertJob(HierarchicalCompactionJob.Status.GENERATING);
+        HierarchicalColdCandidate candidate = coldCandidate(COLD_DOCUMENT);
+
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () -> jobs.storeColdCandidate(JOB_ID, execution(), candidate)))
+                .isTrue();
+        assertThat(TenantContext.call(TENANT_A, () -> jobs.findColdCandidate(JOB_ID)))
+                .isEqualTo(candidate);
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () -> jobs.storeColdCandidate(JOB_ID, execution(), candidate)))
+                .isTrue();
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        jobs.storeColdCandidate(
+                                                JOB_ID,
+                                                execution(),
+                                                coldCandidate(
+                                                        COLD_DOCUMENT.replace(
+                                                                "cold fact", "conflict")))))
+                .isFalse();
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        jobs.storeColdCandidate(
+                                                JOB_ID, execution(OTHER_OWNER_ID, 1L), candidate)))
+                .isFalse();
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        jobs.storeColdCandidate(
+                                                JOB_ID, execution(OWNER_ID, 2L), candidate)))
+                .isFalse();
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        jobs.storeColdCandidate(
+                                                JOB_ID, execution(OWNER_ID, 1L, 51L), candidate)))
+                .isFalse();
+        assertThat(TenantContext.call(TENANT_A, () -> jobs.findColdCandidate(JOB_ID)))
+                .isEqualTo(candidate);
+    }
+
+    @Test
+    void coldCandidateWriteRejectsJobsOutsideGeneratingStatus() {
+        insertJob(HierarchicalCompactionJob.Status.PLANNED);
+
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        jobs.storeColdCandidate(
+                                                JOB_ID, execution(), coldCandidate(COLD_DOCUMENT))))
+                .isFalse();
+        assertThat(TenantContext.call(TENANT_A, () -> jobs.findColdCandidate(JOB_ID))).isNull();
+    }
+
+    @Test
     void codecRejectsMalformedDocumentsAndUnknownSchemaVersions() {
         assertThatThrownBy(() -> documents.readPolicy("{not-json"))
                 .isInstanceOf(IllegalStateException.class);
@@ -510,6 +580,21 @@ class HierarchicalRepositoryIntegrationTest {
                 HierarchicalCompactionJob.Status.PLANNED,
                 null,
                 0L);
+    }
+
+    private static HierarchicalColdCandidate coldCandidate(String document) {
+        return new HierarchicalColdCandidate(
+                "cold-candidate-1",
+                1L,
+                2L,
+                1L,
+                20L,
+                document,
+                100,
+                1,
+                1,
+                "integration-provider",
+                "integration-model");
     }
 
     private static String summaryDocument(int schemaVersion) {
