@@ -56,6 +56,9 @@ public final class HierarchicalInvariantValidator {
         Objects.requireNonNull(targetRanges, "targetRanges");
         Objects.requireNonNull(expectedIdentity, "expectedIdentity");
         availableNodes.forEach(expectedIdentity::validate);
+        if (!selection.satisfiable()) {
+            throw new IllegalArgumentException("Unsatisfiable frontier cannot be published");
+        }
         if (!selection.missingRanges().isEmpty()) {
             throw new IllegalArgumentException("Missing ranges cannot be published");
         }

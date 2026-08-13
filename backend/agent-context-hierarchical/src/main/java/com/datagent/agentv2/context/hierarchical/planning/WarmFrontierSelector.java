@@ -58,7 +58,8 @@ public final class WarmFrontierSelector {
         // 先选择每个时间游标可用的最粗节点；没有覆盖时以最大对齐范围记录缺口。
         CoverageResult coverage = coarsestCoverage(candidates, turnIndex, targetStart, targetEnd);
         if (!coverage.missingRanges().isEmpty()) {
-            return new FrontierSelection(List.of(), List.of(), coverage.missingRanges(), 0, false);
+            return new FrontierSelection(
+                    List.of(), List.of(), coverage.missingRanges(), 0, false, true);
         }
 
         // 从最新历史向前展开；每次仅用两个直接子节点完整替换父节点。
@@ -100,14 +101,17 @@ public final class WarmFrontierSelector {
                 estimatedTokens(frontier) > tokenBudget
                         ? missingImmediateParents(frontier, candidates)
                         : List.of();
+        boolean withinBudget = estimatedTokens(frontier) <= tokenBudget;
+        boolean satisfiable = withinBudget || !missingParents.isEmpty();
         FrontierSelection selection =
                 new FrontierSelection(
                         frontier.stream().map(Candidate::nodeId).toList(),
                         frontier.stream().map(Candidate::range).toList(),
                         missingParents,
                         estimatedTokens(frontier),
-                        estimatedTokens(frontier) <= tokenBudget);
-        if (missingParents.isEmpty()) {
+                        withinBudget,
+                        satisfiable);
+        if (satisfiable && missingParents.isEmpty()) {
             validator.validateFrontier(
                     selection,
                     availableNodes,

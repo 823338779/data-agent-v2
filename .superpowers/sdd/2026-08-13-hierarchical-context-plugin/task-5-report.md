@@ -103,3 +103,36 @@ git diff --check
 结果：`agent-domain` 5 tests、`agent-persistence` 38 tests、`agent-context-hierarchical` 49 tests，全部通过。
 
 identity 输入没有未决歧义：checkpoint 提供 session/provider/model，frozen policy 提供 schema/prompt；两者版本不一致时规划明确拒绝，不做静默兼容。
+
+## Fix round 2/5
+
+### 修复结果
+
+- 对于 leaf-only、紧预算的 Warm `2..3`，selector 继续保留精确覆盖节点 `[n-2, n-3]` 作为诊断结果，并显式返回 `satisfiable=false`、`publishable=false`。`2` 和 `3` 分属不同的全局二叉 sibling 块，其共同对齐祖先必然越出 Warm，因此不存在既满足预算又不发布 Warm 外内容的合法结构路径。
+- 对于其余超预算结果，仅当存在可实际构建的全局对齐父范围时才返回 `satisfiable=true`，并在 `missingRanges` 中给出这些 actionable build ranges；若不存在合法父范围，则只能显式返回 `satisfiable=false` 且 `missingRanges` 为空。
+- invariant validator 明确拒绝发布 unsatisfiable frontier；`publishable()` 同时要求 satisfiable、无缺失范围且位于预算内。
+- 测试不再对空集合使用 vacuous `allSatisfy`：Warm `2..3` 精确断言不可满足契约；真实 Warm `58..147` 精确断言 44 个 level-1 对齐范围 `59..60`、`61..62`、……、`145..146`。
+
+### TDD 证据
+
+第一段 RED：将 Warm `2..3` 的空 `missingRanges` 断言改为必须非空后运行单测，得到 1 test、1 failure，失败原因为实际结果仍为空，证明原断言没有覆盖不可操作结果。
+
+第二段 RED：确定显式 unsatisfiable 契约并先改测试后，`testCompile` 因 `FrontierSelection` 缺少 `satisfiable()` 失败。
+
+聚焦 GREEN：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am `
+  '-Dtest=WarmFrontierSelectorTest#neverCombinesAdjacentLeavesThatAreNotGloballyAlignedSiblings+reportsOnlyAlignedBuildRangesForTheRealWarmBoundary' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+结果：2 tests，0 failures，0 errors。
+
+完整模块及依赖：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am test
+```
+
+结果：`agent-domain` 5 tests、`agent-persistence` 38 tests、`agent-context-hierarchical` 49 tests，全部通过。

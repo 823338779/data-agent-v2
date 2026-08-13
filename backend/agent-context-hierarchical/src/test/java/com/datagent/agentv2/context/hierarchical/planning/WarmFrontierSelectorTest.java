@@ -108,11 +108,11 @@ class WarmFrontierSelectorTest {
         FrontierSelection selection = selector.select(IDENTITY, leaves, turns, targets, 4);
 
         assertThat(selection.publishable()).isFalse();
-        assertThat(selection.missingRanges())
-                .allSatisfy(
-                        range ->
-                                assertThat((range.startTurn() - 1L) % range.coveredTurns())
-                                        .isZero());
+        assertThat(selection.satisfiable()).isFalse();
+        assertThat(selection.nodeIds()).containsExactly("n-2", "n-3");
+        assertThat(selection.ranges()).containsExactlyElementsOf(targets);
+        assertThat(selection.missingRanges()).isEmpty();
+        assertThat(selection.withinBudget()).isFalse();
     }
 
     @Test
@@ -140,12 +140,21 @@ class WarmFrontierSelectorTest {
         FrontierSelection selection = selector.select(IDENTITY, leaves, turns, targets, 100);
 
         assertThat(selection.publishable()).isFalse();
-        assertThat(selection.missingRanges()).isNotEmpty();
         assertThat(selection.missingRanges())
-                .allSatisfy(
-                        range ->
-                                assertThat((range.startTurn() - 1L) % range.coveredTurns())
-                                        .isZero());
+                .extracting(SummaryRange::startTurn)
+                .containsExactly(
+                        59L, 61L, 63L, 65L, 67L, 69L, 71L, 73L, 75L, 77L, 79L, 81L, 83L, 85L, 87L,
+                        89L, 91L, 93L, 95L, 97L, 99L, 101L, 103L, 105L, 107L, 109L, 111L, 113L,
+                        115L, 117L, 119L, 121L, 123L, 125L, 127L, 129L, 131L, 133L, 135L, 137L,
+                        139L, 141L, 143L, 145L);
+        assertThat(selection.missingRanges())
+                .extracting(SummaryRange::endTurn)
+                .containsExactly(
+                        60L, 62L, 64L, 66L, 68L, 70L, 72L, 74L, 76L, 78L, 80L, 82L, 84L, 86L, 88L,
+                        90L, 92L, 94L, 96L, 98L, 100L, 102L, 104L, 106L, 108L, 110L, 112L, 114L,
+                        116L, 118L, 120L, 122L, 124L, 126L, 128L, 130L, 132L, 134L, 136L, 138L,
+                        140L, 142L, 144L, 146L);
+        assertThat(selection.missingRanges()).extracting(SummaryRange::level).containsOnly(1);
     }
 
     @Test

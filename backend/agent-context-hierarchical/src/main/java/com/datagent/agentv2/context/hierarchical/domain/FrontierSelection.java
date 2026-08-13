@@ -14,25 +14,29 @@ public record FrontierSelection(
         /** 所选摘要节点的 token 估算总数。 */
         int estimatedTokenCount,
         /** 最粗合法表示是否位于本次 Warm 预算内。 */
-        boolean withinBudget) {
+        boolean withinBudget,
+        /** 目标 Warm 内部是否存在可通过合法二叉节点达到预算的结构路径。 */
+        boolean satisfiable) {
 
     /** 固化所有列表副本，避免规划结果被调用方修改。 */
     public FrontierSelection {
         nodeIds = List.copyOf(Objects.requireNonNull(nodeIds, "nodeIds"));
         ranges = List.copyOf(Objects.requireNonNull(ranges, "ranges"));
         missingRanges = List.copyOf(Objects.requireNonNull(missingRanges, "missingRanges"));
-        if (nodeIds.size() != ranges.size() || estimatedTokenCount < 0) {
+        if (nodeIds.size() != ranges.size()
+                || estimatedTokenCount < 0
+                || (!satisfiable && (withinBudget || !missingRanges.isEmpty()))) {
             throw new IllegalArgumentException("Invalid frontier selection");
         }
     }
 
     /** 返回当前结果能否安全发布为完整 Warm frontier。 */
     public boolean publishable() {
-        return missingRanges.isEmpty() && withinBudget;
+        return satisfiable && missingRanges.isEmpty() && withinBudget;
     }
 
     /** 返回不包含任何 Warm 节点的初始规划结果。 */
     public static FrontierSelection empty() {
-        return new FrontierSelection(List.of(), List.of(), List.of(), 0, true);
+        return new FrontierSelection(List.of(), List.of(), List.of(), 0, true, true);
     }
 }
