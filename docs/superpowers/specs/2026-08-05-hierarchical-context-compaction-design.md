@@ -443,7 +443,21 @@ Cold 和 Warm 使用相同的版本化 JSON schema，首版至少包含：
 插件表统一使用 `conversation_context_hierarchical_` 前缀。其他模块不得直接访问插件 Mapper、
 Repository 或表；宿主只能通过 `ConversationContextStrategy` 观察最终上下文结果。
 
-### 9.1 `conversation_context_hierarchical_checkpoint`
+### 9.1 `conversation_context_hierarchical_execution_policy`
+
+每个首次进入 hierarchical 策略的 execution 固化一份插件私有策略：
+
+| 字段 | 含义 |
+| --- | --- |
+| `hierarchical_execution_policy_id` | 业务唯一标识 |
+| `tenant_id` / `execution_id` | 租户和 execution 边界 |
+| `policy_document` | 版本化 `HierarchicalContextPolicySnapshot` JSON |
+| `created_at` | 首次冻结时间 |
+
+`(tenant_id, execution_id)` 唯一。策略入口的首个副作用必须是幂等创建或读取该记录；retry、恢复
+和 lease takeover 不重新读取服务当前配置。
+
+### 9.2 `conversation_context_hierarchical_checkpoint`
 
 每个会话只有一条当前有效 Cold 检查点：
 
@@ -459,12 +473,15 @@ Repository 或表；宿主只能通过 `ConversationContextStrategy` 观察最�
 | `summary_schema_version` | 摘要文档版本 |
 | `summary_prompt_version` | 摘要 prompt 版本 |
 | `model_provider` / `model_name` | 生成摘要的模型标识 |
+| `active_frontier_document` | 当前正式发布的无重叠 Warm 节点 ID、范围和层级 |
+| `strategy_generation` | 每次成功发布单调递增的策略代次 |
 | 审计、逻辑删除和 `version` | 与现有租户审计实体一致 |
 
 `(tenant_id, conversation_session_id)` 在有效记录中唯一。指针非负且只能向前移动。摘要文档、
-指针、token 数和生成版本通过同一条 CAS 更新原子提交。
+指针、frontier、token 数和 strategy generation 通过同一条 CAS 更新原子提交。正常上下文只读取
+checkpoint 正式引用的节点；已生成但尚未发布的节点不能进入模型输入。
 
-### 9.2 `conversation_context_hierarchical_summary_node`
+### 9.3 `conversation_context_hierarchical_summary_node`
 
 Warm 节点使用不可变记录：
 
@@ -492,10 +509,30 @@ Warm 节点使用不可变记录：
 - 相同租户、会话、覆盖区间、层级、schema、prompt 和模型版本只能有一个节点。
 - 节点创建后不修改；模型或 schema 变化时创建新版本。
 
-不持久化某次模型调用选择的 Warm frontier；`ConversationContextAssembler` 每次根据预算和覆盖
-关系重新确定。
+不为每次未触发压缩的模型调用单独保存临时节点选择；`ConversationContextAssembler` 根据预算
+和覆盖关系生成候选 frontier，压缩周期只有通过 checkpoint CAS 发布后才替换正式 frontier。
 
-### 9.3 独立 Flyway 历史
+### 9.4 `conversation_context_hierarchical_compaction_job`
+
+每个压缩计划持久化为可恢复 job：
+
+| 字段 | 含义 |
+| --- | --- |
+| `hierarchical_compaction_job_id` | job 业务唯一标识 |
+| `tenant_id` / `conversation_session_id` / `execution_id` | 所属范围 |
+| `execution_attempt` / `owner_instance_id` | 创建 job 时的 fencing 身份 |
+| `input_up_to_message_sequence` | 固定的模型输入消息边界 |
+| `base_checkpoint_version` / `base_strategy_generation` | 规划依据的已发布版本 |
+| `plan_document` | 不含正文的范围、节点和发布计划 |
+| `status` | `PLANNED`、`GENERATING`、`READY_TO_PUBLISH`、`SUCCEEDED` 或 `FAILED` |
+| `failure_code` | 安全稳定错误码，成功时为空 |
+| `created_at` / `updated_at` / `version` | 审计和乐观锁字段 |
+
+job 不保存 message、thinking、tool input/output 或摘要 prompt 正文。新 owner 根据 execution、固定
+消息边界、冻结 policy、job 状态和不可变候选节点恢复生成或重新发布；旧 owner 不能修改新
+attempt 已接管的 job。
+
+### 9.5 独立 Flyway 历史
 
 插件 migration 放在独立路径：
 
@@ -513,7 +550,7 @@ flyway_agent_context_hierarchical_schema_history
 删除表和数据；重新安装兼容版本后可以继续迁移。自动配置必须保证插件 migration 完成后才
 创建依赖这些表的策略 Bean。
 
-### 9.4 MyBatis 和租户隔离
+### 9.6 MyBatis 和租户隔离
 
 插件自动配置只扫描插件包内带 `@Mapper` 的接口。插件复用现有 MyBatis 配置、事务管理器和
 租户拦截器，因此每张插件业务表都必须包含 `tenant_id`，并接受与主持久化相同的租户条件
