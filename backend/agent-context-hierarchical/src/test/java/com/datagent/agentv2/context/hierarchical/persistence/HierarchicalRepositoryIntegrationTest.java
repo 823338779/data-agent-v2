@@ -1,0 +1,417 @@
+package com.datagent.agentv2.context.hierarchical.persistence;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.datagent.agentv2.context.hierarchical.configuration.HierarchicalMapperConfiguration;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCheckpoint;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionJob;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
+import com.datagent.agentv2.context.hierarchical.persistence.json.HierarchicalDocumentCodec;
+import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCheckpointRepository;
+import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCompactionJobRepository;
+import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalExecutionPolicyRepository;
+import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalSummaryNodeRepository;
+import com.datagent.agentv2.conversation.context.ContextExecutionRef;
+import com.datagent.agentv2.persistence.MybatisPlusConfiguration;
+import com.datagent.agentv2.platform.context.TenantContext;
+import com.datagent.agentv2.platform.id.IdGenerator;
+import com.datagent.agentv2.platform.id.PrefixedUuidIdGenerator;
+import java.time.LocalDateTime;
+import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.SpringBootConfiguration;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.postgresql.PostgreSQLContainer;
+import org.testcontainers.utility.DockerImageName;
+
+/** 使用真实 PostgreSQL 和 MyBatis 验证插件私有 repository 的并发与隔离边界。 */
+@SpringBootTest(
+        classes = HierarchicalRepositoryIntegrationTest.Application.class,
+        properties = "spring.flyway.enabled=false")
+class HierarchicalRepositoryIntegrationTest {
+
+    private static final String TENANT_A = "tenant_a";
+    private static final String TENANT_B = "tenant_b";
+    private static final String SESSION_ID = "session_shared";
+    private static final String USER_A = "user_a";
+    private static final String EXECUTION_ID = "execution_hierarchical";
+    private static final String OWNER_ID = "owner_hierarchical";
+    private static final String OTHER_OWNER_ID = "owner_stale";
+    private static final String JOB_ID = "job_hierarchical";
+    private static final String PRIMARY_HISTORY = "flyway_schema_history";
+    private static final String HIERARCHICAL_HISTORY =
+            "flyway_agent_context_hierarchical_schema_history";
+    private static final String PRIMARY_MIGRATION_LOCATION = "classpath:db/migration";
+    private static final String HIERARCHICAL_MIGRATION_LOCATION =
+            "classpath:db/agent-context-hierarchical/migration";
+    private static final String INITIAL_BASELINE_VERSION = "0";
+    private static final String INSERT_TENANT_SQL =
+            "insert into tenant (tenant_id, name) values (?, ?)";
+    private static final String INSERT_USER_SQL =
+            "insert into user_account (user_id, tenant_id, username, password_hash) values (?, ?, ?, ?)";
+    private static final String INSERT_SESSION_SQL =
+            "insert into conversation_session (conversation_session_id, tenant_id, title, session_type, created_by_user_id) values (?, ?, ?, ?, ?)";
+    private static final String INSERT_JOB_SQL =
+            "insert into conversation_context_hierarchical_compaction_job (hierarchical_compaction_job_id, tenant_id, conversation_session_id, execution_id, execution_attempt, owner_instance_id, input_up_to_message_sequence, base_checkpoint_version, base_strategy_generation, plan_document, status, created_at, created_by, updated_at, updated_by, deleted, version) values (?, ?, ?, ?, ?, ?, ?, 0, 1, ?::jsonb, ?, ?, ?, ?, ?, false, 0)";
+    private static final String COUNT_NODES_SQL =
+            "select count(*) from conversation_context_hierarchical_summary_node where tenant_id = ? and conversation_session_id = ?";
+    private static final String ADVANCE_JOB_BASE_SQL =
+            "update conversation_context_hierarchical_compaction_job set base_checkpoint_version = ?, base_strategy_generation = ?, input_up_to_message_sequence = ? where tenant_id = ? and hierarchical_compaction_job_id = ?";
+    private static final String SESSION_TITLE = "Hierarchical integration session";
+    private static final String SESSION_TYPE = "chat";
+    private static final String PASSWORD_HASH = "not-used";
+    private static final String SYSTEM_OPERATOR = "hierarchical-test";
+    private static final String EMPTY_FRONTIER = "{\"schemaVersion\":1,\"nodes\":[]}";
+    private static final String SUMMARY_DOCUMENT = "{\"schemaVersion\":1,\"confirmedFacts\":[]}";
+    private static final String PLAN_DOCUMENT = "{\"schemaVersion\":1,\"operations\":[]}";
+
+    private static final PostgreSQLContainer POSTGRES =
+            new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
+
+    static {
+        POSTGRES.start();
+        flyway(PRIMARY_MIGRATION_LOCATION, PRIMARY_HISTORY).migrate();
+        flyway(HIERARCHICAL_MIGRATION_LOCATION, HIERARCHICAL_HISTORY).migrate();
+    }
+
+    @Autowired private JdbcTemplate jdbc;
+    @Autowired private HierarchicalExecutionPolicyRepository policies;
+    @Autowired private HierarchicalCheckpointRepository checkpoints;
+    @Autowired private HierarchicalSummaryNodeRepository nodes;
+    @Autowired private HierarchicalCompactionJobRepository jobs;
+    @Autowired private HierarchicalDocumentCodec documents;
+
+    @DynamicPropertySource
+    static void databaseProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", POSTGRES::getUsername);
+        registry.add("spring.datasource.password", POSTGRES::getPassword);
+    }
+
+    @AfterAll
+    static void stopDatabase() {
+        POSTGRES.stop();
+    }
+
+    @BeforeEach
+    void seedSession() {
+        jdbc.execute("truncate table tenant cascade");
+        jdbc.update(INSERT_TENANT_SQL, TENANT_A, "Tenant A");
+        jdbc.update(INSERT_TENANT_SQL, TENANT_B, "Tenant B");
+        jdbc.update(INSERT_USER_SQL, USER_A, TENANT_A, USER_A, PASSWORD_HASH);
+        jdbc.update(INSERT_SESSION_SQL, SESSION_ID, TENANT_A, SESSION_TITLE, SESSION_TYPE, USER_A);
+    }
+
+    @Test
+    void executionPolicyIsFrozenOnFirstUseAndTenantBound() {
+        HierarchicalContextPolicySnapshot first = policy(0.75d, 0.70d);
+        HierarchicalContextPolicySnapshot changed = policy(0.80d, 0.60d);
+
+        TenantContext.run(TENANT_A, () -> policies.findOrCreate(execution(), first));
+
+        assertThat(TenantContext.call(TENANT_A, () -> policies.findOrCreate(execution(), changed)))
+                .isEqualTo(first);
+        assertThatThrownBy(
+                        () ->
+                                TenantContext.call(
+                                        TENANT_B, () -> policies.findOrCreate(execution(), first)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void checkpointCasRejectsPointerRegressionStaleVersionOwnerAndAttempt() {
+        HierarchicalCheckpoint current =
+                TenantContext.call(TENANT_A, () -> checkpoints.create(checkpoint(20L, 1L)));
+        insertJob(HierarchicalCompactionJob.Status.READY_TO_PUBLISH);
+
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        checkpoints.compareAndSetCheckpoint(
+                                                current, checkpoint(10L, 2L), execution())))
+                .isFalse();
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        checkpoints.compareAndSetCheckpoint(
+                                                current,
+                                                checkpoint(30L, 2L),
+                                                execution(OTHER_OWNER_ID, 1L))))
+                .isFalse();
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        checkpoints.compareAndSetCheckpoint(
+                                                current,
+                                                checkpoint(30L, 2L),
+                                                execution(OWNER_ID, 2L))))
+                .isFalse();
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        checkpoints.compareAndSetCheckpoint(
+                                                current, checkpoint(30L, 2L), execution())))
+                .isTrue();
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        checkpoints.compareAndSetCheckpoint(
+                                                current, checkpoint(40L, 3L), execution())))
+                .isFalse();
+        assertThat(TenantContext.call(TENANT_A, () -> checkpoints.findCheckpoint(SESSION_ID)))
+                .extracting(
+                        HierarchicalCheckpoint::summarizedUpToConversationMessageSequence,
+                        HierarchicalCheckpoint::strategyGeneration,
+                        HierarchicalCheckpoint::version)
+                .containsExactly(30L, 2L, 1L);
+        assertThat(TenantContext.call(TENANT_B, () -> checkpoints.findCheckpoint(SESSION_ID)))
+                .isNull();
+    }
+
+    @Test
+    void checkpointCasAllowsFrontierPublicationWithoutColdPointerMovement() {
+        HierarchicalCheckpoint current =
+                TenantContext.call(TENANT_A, () -> checkpoints.create(checkpoint(20L, 1L)));
+        insertJob(HierarchicalCompactionJob.Status.READY_TO_PUBLISH);
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        checkpoints.compareAndSetCheckpoint(
+                                                current, checkpoint(30L, 2L), execution())))
+                .isTrue();
+        HierarchicalCheckpoint published =
+                TenantContext.call(TENANT_A, () -> checkpoints.findCheckpoint(SESSION_ID));
+        jdbc.update(ADVANCE_JOB_BASE_SQL, 1L, 2L, 51L, TENANT_A, JOB_ID);
+
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        checkpoints.compareAndSetCheckpoint(
+                                                published,
+                                                checkpoint(30L, 3L),
+                                                execution(OWNER_ID, 1L, 51L))))
+                .isTrue();
+    }
+
+    @Test
+    void duplicateImmutableNodesReturnTheFirstPersistedNode() {
+        HierarchicalSummaryNode first = node("node_first");
+        HierarchicalSummaryNode duplicate = node("node_duplicate");
+
+        HierarchicalSummaryNode persisted =
+                TenantContext.call(TENANT_A, () -> nodes.insertOrSelect(first));
+        HierarchicalSummaryNode repeated =
+                TenantContext.call(TENANT_A, () -> nodes.insertOrSelect(duplicate));
+
+        assertThat(persisted.nodeId()).isEqualTo(first.nodeId());
+        assertThat(repeated.nodeId()).isEqualTo(first.nodeId());
+        assertThat(jdbc.queryForObject(COUNT_NODES_SQL, Integer.class, TENANT_A, SESSION_ID))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void jobTransitionRequiresExpectedStatusVersionOwnerAndAttempt() {
+        insertJob(HierarchicalCompactionJob.Status.PLANNED);
+
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        jobs.transitionJob(
+                                                JOB_ID,
+                                                HierarchicalCompactionJob.Status.GENERATING,
+                                                HierarchicalCompactionJob.Status.READY_TO_PUBLISH,
+                                                execution(),
+                                                null)))
+                .isFalse();
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        jobs.transitionJob(
+                                                JOB_ID,
+                                                HierarchicalCompactionJob.Status.PLANNED,
+                                                HierarchicalCompactionJob.Status.GENERATING,
+                                                execution(OTHER_OWNER_ID, 1L),
+                                                null)))
+                .isFalse();
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        jobs.transitionJob(
+                                                JOB_ID,
+                                                HierarchicalCompactionJob.Status.PLANNED,
+                                                HierarchicalCompactionJob.Status.GENERATING,
+                                                execution(OWNER_ID, 2L),
+                                                null)))
+                .isFalse();
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        jobs.transitionJob(
+                                                JOB_ID,
+                                                HierarchicalCompactionJob.Status.PLANNED,
+                                                HierarchicalCompactionJob.Status.GENERATING,
+                                                execution(),
+                                                null)))
+                .isTrue();
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        jobs.transitionJob(
+                                                JOB_ID,
+                                                HierarchicalCompactionJob.Status.PLANNED,
+                                                HierarchicalCompactionJob.Status.GENERATING,
+                                                execution(),
+                                                null)))
+                .isFalse();
+        assertThat(TenantContext.call(TENANT_A, () -> jobs.findJob(JOB_ID)))
+                .extracting(HierarchicalCompactionJob::status, HierarchicalCompactionJob::version)
+                .containsExactly(HierarchicalCompactionJob.Status.GENERATING, 1L);
+    }
+
+    @Test
+    void codecRejectsMalformedDocumentsAndUnknownSchemaVersions() {
+        assertThatThrownBy(() -> documents.readPolicy("{not-json"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(
+                        () ->
+                                documents.readPolicy(
+                                        "{\"policyVersion\":99,\"triggerRatio\":0.75,\"targetRatio\":0.70,\"recentRawTurns\":10,\"warmWindowTurns\":100,\"summarySchemaVersion\":1,\"summaryPromptVersion\":1}"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(
+                        () ->
+                                documents.readPolicy(
+                                        "{\"policyVersion\":1,\"triggerRatio\":0.75,\"targetRatio\":0.70,\"recentRawTurns\":10,\"warmWindowTurns\":100,\"summarySchemaVersion\":99,\"summaryPromptVersion\":1}"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(
+                        () -> documents.canonicalizeVersionedDocument("{\"schemaVersion\":99}", 1))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    private void insertJob(HierarchicalCompactionJob.Status status) {
+        LocalDateTime now = LocalDateTime.now();
+        jdbc.update(
+                INSERT_JOB_SQL,
+                JOB_ID,
+                TENANT_A,
+                SESSION_ID,
+                EXECUTION_ID,
+                1L,
+                OWNER_ID,
+                50L,
+                PLAN_DOCUMENT,
+                status.name(),
+                now,
+                SYSTEM_OPERATOR,
+                now,
+                SYSTEM_OPERATOR);
+    }
+
+    private static ContextExecutionRef execution() {
+        return execution(OWNER_ID, 1L);
+    }
+
+    private static ContextExecutionRef execution(String ownerId, long attempt) {
+        return execution(ownerId, attempt, 50L);
+    }
+
+    private static ContextExecutionRef execution(String ownerId, long attempt, long inputBoundary) {
+        return new ContextExecutionRef(
+                TENANT_A, SESSION_ID, EXECUTION_ID, ownerId, attempt, inputBoundary);
+    }
+
+    private static HierarchicalContextPolicySnapshot policy(double trigger, double target) {
+        return new HierarchicalContextPolicySnapshot(1, trigger, target, 10, 100, 1, 1);
+    }
+
+    private static HierarchicalCheckpoint checkpoint(long pointer, long generation) {
+        return new HierarchicalCheckpoint(
+                "checkpoint_current",
+                SESSION_ID,
+                SUMMARY_DOCUMENT,
+                pointer,
+                1L,
+                10,
+                1,
+                1,
+                "integration-provider",
+                "integration-model",
+                EMPTY_FRONTIER,
+                generation,
+                0L);
+    }
+
+    private static HierarchicalSummaryNode node(String nodeId) {
+        return new HierarchicalSummaryNode(
+                nodeId,
+                SESSION_ID,
+                0,
+                1L,
+                1L,
+                2L,
+                null,
+                null,
+                SUMMARY_DOCUMENT,
+                10,
+                1,
+                1,
+                "integration-provider",
+                "integration-model");
+    }
+
+    private static Flyway flyway(String location, String historyTable) {
+        return Flyway.configure()
+                .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+                .locations(location)
+                .table(historyTable)
+                .baselineOnMigrate(true)
+                .baselineVersion(INITIAL_BASELINE_VERSION)
+                .load();
+    }
+
+    @SpringBootConfiguration
+    @EnableAutoConfiguration
+    @Import({
+        MybatisPlusConfiguration.class,
+        HierarchicalMapperConfiguration.class,
+        HierarchicalExecutionPolicyRepository.class,
+        HierarchicalCheckpointRepository.class,
+        HierarchicalSummaryNodeRepository.class,
+        HierarchicalCompactionJobRepository.class,
+        HierarchicalDocumentCodec.class,
+        InfrastructureConfiguration.class
+    })
+    static class Application {}
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class InfrastructureConfiguration {
+
+        @Bean
+        IdGenerator idGenerator() {
+            return new PrefixedUuidIdGenerator();
+        }
+    }
+}
