@@ -29,11 +29,16 @@ import tools.jackson.databind.ObjectMapper;
 /** 在独立短事务内冻结压缩边界并持久化不含正文的可恢复计划。 */
 public class HierarchicalCompactionPlanningTransaction {
 
-    private static final int PLAN_SCHEMA_VERSION = 1;
+    private static final int PLAN_SCHEMA_VERSION = 2;
+    private static final int LEGACY_PLAN_SCHEMA_VERSION = 1;
     private static final String JOB_ID_PREFIX = "hierarchical_compaction_job";
     private static final String EVENT_JOB_ID = "compactionJobId";
     private static final String EVENT_INPUT_BOUNDARY = "inputUpToMessageSequence";
     private static final String INVALID_PLAN_DOCUMENT = "Invalid hierarchical plan document";
+    private static final String LEGACY_PLAN_REQUIRES_REPLAN =
+            "Hierarchical plan version 1 is unsupported; replan required";
+    private static final String UNSUPPORTED_PLAN_VERSION_PREFIX =
+            "Unsupported hierarchical plan schema version: ";
     private static final String INCOMPATIBLE_PERSISTED_JOB =
             "Persisted hierarchical job is incompatible with the caller boundary";
 
@@ -43,6 +48,8 @@ public class HierarchicalCompactionPlanningTransaction {
     private final IdGenerator ids;
     private final ContextExecutionControlPort executions;
     private final ObjectMapper json;
+    private final HierarchicalDurablePlanValidator planValidator =
+            new HierarchicalDurablePlanValidator();
 
     /** 固定纯规划器、确定性 key、job 仓储、ID 和 execution control 依赖。 */
     public HierarchicalCompactionPlanningTransaction(
@@ -141,6 +148,7 @@ public class HierarchicalCompactionPlanningTransaction {
         Map<RangeKey, PlannedCandidate> ordered = new LinkedHashMap<>();
         List<SummaryRange> targets = new ArrayList<>();
         targets.addAll(plan.coldPromotionRanges());
+        targets.addAll(plan.warmTargetRanges());
         targets.addAll(plan.frontier().ranges());
         targets.addAll(plan.frontier().missingRanges());
         targets.addAll(plan.hotDegradationRanges());
@@ -254,12 +262,29 @@ public class HierarchicalCompactionPlanningTransaction {
     }
 
     private DurablePlanDocument readPlan(String document) {
+        int schemaVersion = readPlanVersion(document);
+        if (schemaVersion == LEGACY_PLAN_SCHEMA_VERSION) {
+            throw new IllegalStateException(LEGACY_PLAN_REQUIRES_REPLAN);
+        }
+        if (schemaVersion != PLAN_SCHEMA_VERSION) {
+            throw new IllegalStateException(UNSUPPORTED_PLAN_VERSION_PREFIX + schemaVersion);
+        }
         try {
-            DurablePlanDocument durable = json.readValue(document, DurablePlanDocument.class);
-            if (durable.schemaVersion() != PLAN_SCHEMA_VERSION) {
+            return json.readValue(document, DurablePlanDocument.class);
+        } catch (RuntimeException failure) {
+            throw new IllegalStateException(INVALID_PLAN_DOCUMENT, failure);
+        }
+    }
+
+    private int readPlanVersion(String document) {
+        try {
+            tools.jackson.databind.JsonNode root = json.readTree(document);
+            tools.jackson.databind.JsonNode version =
+                    root == null ? null : root.get("schemaVersion");
+            if (version == null || !version.isIntegralNumber()) {
                 throw new IllegalArgumentException(INVALID_PLAN_DOCUMENT);
             }
-            return durable;
+            return version.asInt();
         } catch (RuntimeException failure) {
             throw new IllegalStateException(INVALID_PLAN_DOCUMENT, failure);
         }
@@ -276,57 +301,22 @@ public class HierarchicalCompactionPlanningTransaction {
         }
     }
 
-    private static void validateDurablePlan(
-            HierarchicalCompactionJob job, DurablePlanDocument document) {
+    private void validateDurablePlan(HierarchicalCompactionJob job, DurablePlanDocument document) {
         if (document.baseCheckpointVersion() != job.baseCheckpointVersion()
                 || document.baseStrategyGeneration() != job.baseStrategyGeneration()
                 || document.inputUpToMessageSequence() != job.inputUpToMessageSequence()
                 || document.targetInputTokens() < 0) {
             throw new IllegalStateException(INVALID_PLAN_DOCUMENT);
         }
-        validatePlanReferences(document);
-    }
-
-    private static void validatePlanReferences(DurablePlanDocument document) {
-        GenerationSettings settings = document.generationSettings();
-        for (PlannedCandidate candidate : document.candidates()) {
-            if (!settings.matches(candidate) || candidate.sourceKind() == SourceKind.COLD) {
-                throw new IllegalStateException(INVALID_PLAN_DOCUMENT);
-            }
+        try {
+            planValidator.validate(
+                    document.generationSettings(),
+                    document.plan(),
+                    document.candidates(),
+                    document.coldCandidate());
+        } catch (IllegalArgumentException failure) {
+            throw new IllegalStateException(INVALID_PLAN_DOCUMENT, failure);
         }
-        boolean coldRequired = !document.plan().coldPromotionRanges().isEmpty();
-        if (coldRequired != (document.coldCandidate() != null)
-                || document.coldCandidate() != null
-                        && (!settings.matches(document.coldCandidate())
-                                || document.coldCandidate().sourceKind() != SourceKind.COLD)) {
-            throw new IllegalStateException(INVALID_PLAN_DOCUMENT);
-        }
-        for (int index = 0; index < document.plan().frontier().nodeIds().size(); index++) {
-            String nodeId = document.plan().frontier().nodeIds().get(index);
-            SummaryRange range = document.plan().frontier().ranges().get(index);
-            if (!containsDescriptor(document.candidates(), nodeId, range)) {
-                throw new IllegalStateException(INVALID_PLAN_DOCUMENT);
-            }
-        }
-        List<SummaryRange> referencedRanges = new ArrayList<>();
-        referencedRanges.addAll(document.plan().coldPromotionRanges());
-        referencedRanges.addAll(document.plan().frontier().missingRanges());
-        referencedRanges.addAll(document.plan().hotDegradationRanges());
-        for (SummaryRange range : referencedRanges) {
-            if (!containsDescriptor(document.candidates(), null, range)) {
-                throw new IllegalStateException(INVALID_PLAN_DOCUMENT);
-            }
-        }
-    }
-
-    private static boolean containsDescriptor(
-            List<PlannedCandidate> candidates, String nodeId, SummaryRange range) {
-        GenerationRange expectedRange = generationRange(range);
-        return candidates.stream()
-                .anyMatch(
-                        candidate ->
-                                (nodeId == null || nodeId.equals(candidate.nodeId()))
-                                        && expectedRange.equals(candidate.range()));
     }
 
     private static HierarchicalSummaryNode existingNode(

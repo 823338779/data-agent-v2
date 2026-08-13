@@ -319,6 +319,88 @@ class HierarchicalCandidateGenerationServiceTest {
     }
 
     @Test
+    void rejectsWarmTargetThatDoesNotMatchOtherwiseValidSelectedFrontier() {
+        PlannedCompaction baseline = frontierWithDescriptor();
+        HierarchicalCompactionPlan tampered =
+                new HierarchicalCompactionPlan(
+                        1,
+                        Optional.empty(),
+                        TurnRange.EMPTY,
+                        new TurnRange(1, 1),
+                        TurnRange.EMPTY,
+                        List.of(),
+                        baseline.plan().warmTargetRanges(),
+                        baseline.plan().frontier(),
+                        List.of());
+        when(nodes.findByIds(eq(SESSION_ID), any()))
+                .thenReturn(List.of(node("frontier-parent", PARENT, "left", "right")));
+
+        assertThatThrownBy(() -> service.generate(withPlan(baseline, tampered)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Hierarchical candidates are incomplete");
+        verify(sources, never()).load(any());
+    }
+
+    @Test
+    void rejectsColdTargetThatDoesNotMatchCandidateAndPromotions() {
+        PlannedCompaction baseline = planned();
+        HierarchicalCompactionPlan tampered =
+                new HierarchicalCompactionPlan(
+                        1,
+                        Optional.empty(),
+                        new TurnRange(1, 1),
+                        TurnRange.EMPTY,
+                        TurnRange.EMPTY,
+                        baseline.plan().coldPromotionRanges(),
+                        List.of(),
+                        FrontierSelection.empty(),
+                        List.of());
+        when(nodes.findByIds(eq(SESSION_ID), any()))
+                .thenReturn(
+                        List.of(
+                                node("left", LEFT, null, null),
+                                node("right", RIGHT, null, null),
+                                node("parent", PARENT, "left", "right")));
+        coldCandidate.set(validColdCandidate());
+
+        assertThatThrownBy(() -> service.generate(withPlan(baseline, tampered)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Hierarchical candidates are incomplete");
+        verify(sources, never()).load(any());
+    }
+
+    @Test
+    void rejectsHotEmergencyDescriptorOutsideDeclaredHotTarget() {
+        PlannedCompaction baseline = leafOnlyPlanned();
+        HierarchicalCompactionPlan tampered =
+                new HierarchicalCompactionPlan(
+                        1,
+                        Optional.empty(),
+                        TurnRange.EMPTY,
+                        TurnRange.EMPTY,
+                        new TurnRange(1, 1),
+                        List.of(),
+                        List.of(),
+                        FrontierSelection.empty(),
+                        List.of(RIGHT));
+        PlannedCompaction tamperedCompaction =
+                new PlannedCompaction(
+                        baseline.job(),
+                        baseline.execution(),
+                        baseline.generationSettings(),
+                        tampered,
+                        List.of(plannedCandidate("right", RIGHT, SourceKind.LEAF, null, null)),
+                        null);
+        when(nodes.findByIds(eq(SESSION_ID), any()))
+                .thenReturn(List.of(node("right", RIGHT, null, null)));
+
+        assertThatThrownBy(() -> service.generate(tamperedCompaction))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Hierarchical candidates are incomplete");
+        verify(sources, never()).load(any());
+    }
+
+    @Test
     void rejectsSameIdDurableNodeWithMalformedRangeIdentityOrChildren() {
         HierarchicalSummaryNode malformed =
                 new HierarchicalSummaryNode(
@@ -479,7 +561,7 @@ class HierarchicalCandidateGenerationServiceTest {
                         plannedCandidate("left", LEFT, SourceKind.LEAF, null, null),
                         plannedCandidate("right", RIGHT, SourceKind.LEAF, null, null),
                         plannedCandidate("parent", PARENT, SourceKind.PARENT, "left", "right")),
-                plannedCandidate("cold", PARENT, SourceKind.COLD, null, null));
+                plannedColdCandidate());
     }
 
     private static PlannedCompaction leafOnlyPlanned() {
@@ -563,6 +645,22 @@ class HierarchicalCandidateGenerationServiceTest {
         return new PlannedCompaction(job, EXECUTION, generationSettings(), plan, candidates, null);
     }
 
+    private static PlannedCompaction withPlan(
+            PlannedCompaction baseline, HierarchicalCompactionPlan plan) {
+        return new PlannedCompaction(
+                baseline.job(),
+                baseline.execution(),
+                baseline.generationSettings(),
+                plan,
+                baseline.candidates(),
+                baseline.coldCandidate());
+    }
+
+    private static HierarchicalColdCandidate validColdCandidate() {
+        return new HierarchicalColdCandidate(
+                "cold", 1, 2, 1, 20, "{\"schemaVersion\":1}", 20, 1, 1, "provider", "model");
+    }
+
     private static GenerationSettings generationSettings() {
         return new GenerationSettings(POLICY, 256, 1, 1, "provider", "model");
     }
@@ -584,6 +682,19 @@ class HierarchicalCandidateGenerationServiceTest {
                 sourceKind,
                 leftChildNodeId,
                 rightChildNodeId,
+                POLICY.summarySchemaVersion(),
+                POLICY.summaryPromptVersion(),
+                "provider",
+                "model");
+    }
+
+    private static PlannedCandidate plannedColdCandidate() {
+        return new PlannedCandidate(
+                "cold",
+                new GenerationRange(1, 2, 1, 20, 0),
+                SourceKind.COLD,
+                null,
+                null,
                 POLICY.summarySchemaVersion(),
                 POLICY.summaryPromptVersion(),
                 "provider",

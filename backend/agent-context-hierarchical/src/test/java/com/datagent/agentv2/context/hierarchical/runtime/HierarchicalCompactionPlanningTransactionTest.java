@@ -55,6 +55,30 @@ class HierarchicalCompactionPlanningTransactionTest {
     private static final String JOB_ID = "job-1";
     private static final String LEAF_NODE_ID = "leaf-node-1";
     private static final String SECRET_BODY = "must-not-be-persisted";
+    private static final String LEGACY_V1_PLAN_DOCUMENT =
+            """
+            {
+              "schemaVersion": 1,
+              "baseCheckpointVersion": 7,
+              "baseStrategyGeneration": 5,
+              "inputUpToMessageSequence": 20,
+              "targetInputTokens": 700,
+              "maxSummaryTokens": 256,
+              "plan": {
+                "completedTurnBoundary": 1,
+                "currentIncompleteTurn": null,
+                "coldTarget": {"startTurn": 0, "endTurn": 0},
+                "warmTarget": {"startTurn": 1, "endTurn": 1},
+                "hotTarget": {"startTurn": 0, "endTurn": 0},
+                "coldPromotionRanges": [],
+                "warmTargetRanges": [{"startTurn":1,"endTurn":1,"startMessageSequence":10,"endMessageSequence":20,"level":0}],
+                "frontier": {"nodeIds":[],"ranges":[],"missingRanges":[{"startTurn":1,"endTurn":1,"startMessageSequence":10,"endMessageSequence":20,"level":0}],"estimatedTokenCount":0,"withinBudget":false,"satisfiable":true},
+                "hotDegradationRanges": []
+              },
+              "candidates": [{"nodeId":"leaf-node-1","range":{"startTurn":1,"endTurn":1,"startMessageSequence":10,"endMessageSequence":20,"level":0},"sourceKind":"LEAF","leftChildNodeId":null,"rightChildNodeId":null,"schemaVersion":1,"promptVersion":1,"modelProvider":"provider","modelName":"model"}],
+              "coldCandidate": null
+            }
+            """;
     private static final HierarchicalContextPolicySnapshot POLICY =
             new HierarchicalContextPolicySnapshot(1, 0.75d, 0.70d, 10, 100, 1, 1);
     private static final HierarchicalContextPolicySnapshot CHANGED_POLICY =
@@ -99,7 +123,7 @@ class HierarchicalCompactionPlanningTransactionTest {
         assertThat(job.getValue().baseStrategyGeneration()).isEqualTo(5L);
         assertThat(job.getValue().inputUpToMessageSequence()).isEqualTo(20L);
         assertThat(job.getValue().planDocument())
-                .contains(LEAF_NODE_ID, "\"targetInputTokens\":700")
+                .contains(LEAF_NODE_ID, "\"schemaVersion\":2", "\"targetInputTokens\":700")
                 .doesNotContain(SECRET_BODY);
         assertThat(planned.candidates())
                 .extracting(candidate -> candidate.nodeId())
@@ -131,6 +155,20 @@ class HierarchicalCompactionPlanningTransactionTest {
 
         assertThat(annotation).isNotNull();
         assertThat(annotation.propagation()).isEqualTo(Propagation.REQUIRES_NEW);
+    }
+
+    @Test
+    void priorV1PlanFailsWithStableReplanRequiredOutcome() {
+        assertPersistedPlanRejected(
+                LEGACY_V1_PLAN_DOCUMENT,
+                "Hierarchical plan version 1 is unsupported; replan required");
+    }
+
+    @Test
+    void unknownFuturePlanVersionIsRejectedExplicitly() {
+        assertPersistedPlanRejected(
+                LEGACY_V1_PLAN_DOCUMENT.replace("\"schemaVersion\": 1", "\"schemaVersion\": 3"),
+                "Unsupported hierarchical plan schema version: 3");
     }
 
     @Test
@@ -467,6 +505,42 @@ class HierarchicalCompactionPlanningTransactionTest {
     private static HierarchicalCompactionPlanningTransaction.CompactionRequest compactionRequest() {
         return new HierarchicalCompactionPlanningTransaction.CompactionRequest(
                 EXECUTION, POLICY, 256);
+    }
+
+    private static void assertPersistedPlanRejected(String planDocument, String expectedMessage) {
+        BinarySummaryTreePlanner planner = mock(BinarySummaryTreePlanner.class);
+        HierarchicalSummaryGenerator generator = mock(HierarchicalSummaryGenerator.class);
+        HierarchicalCompactionJobRepository jobs = mock(HierarchicalCompactionJobRepository.class);
+        IdGenerator ids = mock(IdGenerator.class);
+        ContextExecutionControlPort executions = mock(ContextExecutionControlPort.class);
+        PlanningInput input = planningInput();
+        stubGeneratorIdentity(generator);
+        when(planner.plan(input)).thenReturn(plan());
+        when(ids.next("hierarchical_compaction_job")).thenReturn(JOB_ID);
+        when(generator.nodeKey(SESSION_ID, generationRange(LEAF_RANGE), SourceKind.LEAF, POLICY))
+                .thenReturn(LEAF_NODE_ID);
+        when(jobs.insertOrSelect(any()))
+                .thenReturn(
+                        new HierarchicalCompactionJob(
+                                "persisted-job",
+                                SESSION_ID,
+                                EXECUTION.executionId(),
+                                EXECUTION.executionAttempt(),
+                                EXECUTION.ownerInstanceId(),
+                                EXECUTION.inputUpToMessageSequence(),
+                                7L,
+                                5L,
+                                planDocument,
+                                HierarchicalCompactionJob.Status.PLANNED,
+                                null,
+                                0L));
+        HierarchicalCompactionPlanningTransaction transaction =
+                new HierarchicalCompactionPlanningTransaction(
+                        planner, generator, jobs, ids, executions, JsonMapper.builder().build());
+
+        assertThatThrownBy(() -> transaction.plan(compactionRequest(), input))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage(expectedMessage);
     }
 
     private static void stubGeneratorIdentity(HierarchicalSummaryGenerator generator) {

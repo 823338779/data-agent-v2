@@ -168,3 +168,42 @@ git diff --check
 ```
 
 结果：`Tests run: 127, Failures: 0, Errors: 0, Skipped: 0`。
+
+## Fix round 3/5
+
+### RED
+
+本轮首先建立以下失败证据：
+
+- `warmTarget` 与 otherwise valid selected frontier 不一致时仍可进入 READY。
+- `coldTarget` 与 promotion ranges / Cold candidate 不一致时仍可进入 READY。
+- Hot emergency range 位于声明 `hotTarget` 外但 descriptor 完整时仍可进入 READY。
+- round 2 之前的真实 schema v1 JSON 因缺少 `GenerationSettings` 落入通用构造失败，没有稳定 replan outcome。
+- 未知未来 schema version 同样只返回通用 invalid document；新写文档仍错误标记为 v1。
+
+### 修复
+
+- 新增共享 `HierarchicalDurablePlanValidator`，plan decode 与 generation 入口使用同一不变量实现。
+- Cold/Warm/Hot 声明边界必须对 completed turns 无缺口、无重叠；`warmTargetRanges` 和已选择 frontier 必须精确覆盖 Warm，Cold promotions 必须形成以 Cold target 末尾结束的连续 suffix 且 Cold candidate 精确绑定 target，Hot emergency 非空时必须以 leaf ranges 精确覆盖 Hot。
+- 所有 canonical Warm ranges、frontier IDs/missing ranges、Cold promotions 和 Hot emergency ranges 都必须绑定唯一 descriptor；descriptor 的 ID、range 与 frozen generation identity 必须一一对应。
+- 新写 `plan_document` 升级为 schema v2。decode 先读取版本再反序列化：已识别的 v1 因未持久化完整 policy snapshot，稳定返回 `Hierarchical plan version 1 is unsupported; replan required`；未知版本返回带版本号的明确拒绝结果。
+
+### GREEN
+
+定向验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am `
+  '-Dtest=HierarchicalCompactionPlanningTransactionTest,HierarchicalCandidateGenerationServiceTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+结果：`Tests run: 24, Failures: 0, Errors: 0, Skipped: 0`。
+
+完整模块验证：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical test
+```
+
+结果：`Tests run: 132, Failures: 0, Errors: 0, Skipped: 0`。

@@ -23,7 +23,6 @@ import com.datagent.agentv2.context.hierarchical.summary.SummaryGenerationIdenti
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +44,8 @@ public class HierarchicalCandidateGenerationService {
     private final HierarchicalCompactionJobRepository jobs;
     private final ContextExecutionControlPort executions;
     private final HierarchicalGenerationSourceProvider sources;
+    private final HierarchicalDurablePlanValidator planValidator =
+            new HierarchicalDurablePlanValidator();
 
     /** 固定纯生成器、不可变节点仓储、job 仓储、execution control 和临时来源 provider。 */
     public HierarchicalCandidateGenerationService(
@@ -167,35 +168,11 @@ public class HierarchicalCandidateGenerationService {
     }
 
     private List<PlannedCandidate> requiredCandidates(PlannedCompaction planned) {
-        Map<String, PlannedCandidate> descriptors = new LinkedHashMap<>();
-        for (PlannedCandidate candidate : planned.candidates()) {
-            PlannedCandidate duplicate = descriptors.put(candidate.nodeId(), candidate);
-            if (duplicate != null
-                    || candidate.sourceKind() == SourceKind.COLD
-                    || !planned.generationSettings().matches(candidate)) {
-                throw new IllegalStateException(INCOMPLETE_CANDIDATES);
-            }
-        }
-        for (int index = 0; index < planned.plan().frontier().nodeIds().size(); index++) {
-            String nodeId = planned.plan().frontier().nodeIds().get(index);
-            SummaryRange range = planned.plan().frontier().ranges().get(index);
-            PlannedCandidate descriptor = descriptors.get(nodeId);
-            if (descriptor == null || !descriptor.range().equals(generationRange(range))) {
-                throw new IllegalStateException(INCOMPLETE_CANDIDATES);
-            }
-        }
-        List<SummaryRange> referencedRanges = new ArrayList<>();
-        referencedRanges.addAll(planned.plan().coldPromotionRanges());
-        referencedRanges.addAll(planned.plan().frontier().missingRanges());
-        referencedRanges.addAll(planned.plan().hotDegradationRanges());
-        for (SummaryRange range : referencedRanges) {
-            GenerationRange expected = generationRange(range);
-            if (descriptors.values().stream()
-                    .noneMatch(candidate -> candidate.range().equals(expected))) {
-                throw new IllegalStateException(INCOMPLETE_CANDIDATES);
-            }
-        }
-        return List.copyOf(descriptors.values());
+        return planValidator.validate(
+                planned.generationSettings(),
+                planned.plan(),
+                planned.candidates(),
+                planned.coldCandidate());
     }
 
     private Map<String, HierarchicalSummaryNode> loadAndValidateNodes(
