@@ -12,14 +12,19 @@ import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import tools.jackson.databind.node.ObjectNode;
 
 @ExtendWith(MockitoExtension.class)
 class ContextSummaryDocumentValidatorTest {
 
     private static final int NODE_TOKEN_LIMIT = 1_024;
     private static final int VALID_TOKEN_COUNT = 256;
+    private static final tools.jackson.databind.json.JsonMapper JSON =
+            tools.jackson.databind.json.JsonMapper.builder().build();
 
     @Mock private ConversationTokenEstimator estimator;
 
@@ -41,16 +46,48 @@ class ContextSummaryDocumentValidatorTest {
         assertThat(result.estimatedTokenCount()).isEqualTo(VALID_TOKEN_COUNT);
     }
 
-    @Test
-    void rejectsMissingRequiredFieldAndWrongFieldType() {
-        String missing = validSummary().replace(",\n  \"openQuestions\": []", "");
-        String wrongType =
-                validSummary().replace("\"workingHypotheses\": []", "\"workingHypotheses\": {}");
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "confirmedFacts",
+                "workingHypotheses",
+                "decisions",
+                "rejectedApproaches",
+                "toolFindings",
+                "nextSteps",
+                "openQuestions"
+            })
+    void requiresEveryStructuredField(String field) throws Exception {
+        ObjectNode missing = (ObjectNode) JSON.readTree(validSummary());
+        missing.remove(field);
 
-        assertThatThrownBy(() -> validator.validate(missing, NODE_TOKEN_LIMIT))
+        assertThatThrownBy(
+                        () ->
+                                validator.validate(
+                                        JSON.writeValueAsString(missing), NODE_TOKEN_LIMIT))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Invalid hierarchical context summary document");
-        assertThatThrownBy(() -> validator.validate(wrongType, NODE_TOKEN_LIMIT))
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "confirmedFacts",
+                "workingHypotheses",
+                "decisions",
+                "rejectedApproaches",
+                "toolFindings",
+                "nextSteps",
+                "openQuestions"
+            })
+    void requiresEveryStructuredFieldToBeAnArray(String field) throws Exception {
+        ObjectNode wrongType = (ObjectNode) JSON.readTree(validSummary());
+        wrongType.set(field, JSON.createObjectNode());
+
+        assertThatThrownBy(
+                        () ->
+                                validator.validate(
+                                        JSON.writeValueAsString(wrongType), NODE_TOKEN_LIMIT))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Invalid hierarchical context summary document");
     }

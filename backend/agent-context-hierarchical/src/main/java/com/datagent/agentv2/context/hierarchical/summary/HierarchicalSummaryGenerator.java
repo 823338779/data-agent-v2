@@ -63,9 +63,11 @@ public final class HierarchicalSummaryGenerator {
     /** 最多调用共享模型端口两次，第二次只追加稳定纠错指令。 */
     public GeneratedSummary generate(GenerationRequest generationRequest) {
         GenerationRequest request = Objects.requireNonNull(generationRequest, "generationRequest");
-        request.validateSource();
+        if (request.source() instanceof LeafSource leaf) {
+            request.validateLeaf(leaf);
+        }
         SummaryGenerationIdentity identity = generationIdentity(request);
-        String sourceDocument = sourceDocument(request.source());
+        String sourceDocument = sourceDocument(request, identity);
         String nodeKey = keyFactory.create(request, identity);
         RuntimeException lastFailure = null;
 
@@ -132,28 +134,156 @@ public final class HierarchicalSummaryGenerator {
         }
     }
 
-    private String sourceDocument(SummarySource source) {
+    private String sourceDocument(GenerationRequest request, SummaryGenerationIdentity identity) {
+        SummarySource source = request.source();
         if (source instanceof LeafSource leaf) {
             return json.writeValueAsString(leaf.turns());
         }
 
         // 父节点来源数组严格只含左摘要和右摘要，顺序不可由调用者改变。
         if (source instanceof ParentSource parent) {
-            return summaryArray(
-                    List.of(parent.left().summaryDocument(), parent.right().summaryDocument()));
+            return summaryArray(validatedParentDocuments(request, parent, identity));
         }
 
         // Cold 来源先保留旧 Cold（若有），再按消息范围升序追加所有迁移节点。
-        ColdSource cold = (ColdSource) source;
-        List<String> documents = new ArrayList<>();
-        if (!cold.oldColdSummaryDocument().isBlank()) {
-            documents.add(cold.oldColdSummaryDocument());
+        return summaryArray(validatedColdDocuments(request, (ColdSource) source, identity));
+    }
+
+    private List<String> validatedParentDocuments(
+            GenerationRequest request, ParentSource parent, SummaryGenerationIdentity identity) {
+        HierarchicalSummaryNode left = parent.left();
+        HierarchicalSummaryNode right = parent.right();
+        GenerationRange parentRange = request.range();
+        long childTurns = expectedNodeTurns(left.level());
+
+        // 可信节点元数据必须构成请求范围的精确二叉父节点，不允许缺口、部分覆盖或跨身份合并。
+        if (left.level() != right.level()
+                || parentRange.level() != left.level() + 1
+                || left.coveredCompletedTurnCount() != childTurns
+                || right.coveredCompletedTurnCount() != childTurns
+                || parentRange.endTurn() - parentRange.startTurn() + 1L != childTurns * 2L
+                || !isAligned(parentRange.startTurn(), parentRange.level())
+                || left.startConversationMessageSequence() != parentRange.startMessageSequence()
+                || right.startConversationMessageSequence()
+                        != left.endConversationMessageSequence() + 1L
+                || right.endConversationMessageSequence() != parentRange.endMessageSequence()) {
+            throw new IllegalArgumentException(INVALID_SOURCE);
         }
-        cold.promotedNodes().stream()
-                .sorted(NODE_ORDER)
-                .map(HierarchicalSummaryNode::summaryDocument)
-                .forEach(documents::add);
-        return summaryArray(documents);
+        validateNodeIdentity(left, identity);
+        validateNodeIdentity(right, identity);
+
+        // 子正文 coverage 只能与外部节点元数据推导出的左右范围比对，不能反向充当元数据。
+        GenerationRange leftRange =
+                new GenerationRange(
+                        parentRange.startTurn(),
+                        parentRange.startTurn() + childTurns - 1L,
+                        left.startConversationMessageSequence(),
+                        left.endConversationMessageSequence(),
+                        left.level());
+        GenerationRange rightRange =
+                new GenerationRange(
+                        leftRange.endTurn() + 1L,
+                        parentRange.endTurn(),
+                        right.startConversationMessageSequence(),
+                        right.endConversationMessageSequence(),
+                        right.level());
+        validateNodeDocument(left, leftRange);
+        validateNodeDocument(right, rightRange);
+        return List.of(left.summaryDocument(), right.summaryDocument());
+    }
+
+    private List<String> validatedColdDocuments(
+            GenerationRequest request, ColdSource cold, SummaryGenerationIdentity identity) {
+        GenerationRange requested = request.range();
+        if (requested.level() != 0) {
+            throw new IllegalArgumentException(INVALID_SOURCE);
+        }
+        long nextTurn = requested.startTurn();
+        long nextMessage = requested.startMessageSequence();
+        List<String> documents = new ArrayList<>();
+
+        // 旧 Cold 的范围与身份由 checkpoint 元数据提供；JSON 内 coverage 仅用于一致性校验。
+        ColdSummary oldCold = cold.oldColdSummary();
+        if (oldCold != null) {
+            validateColdIdentity(oldCold, identity);
+            GenerationRange oldRange = oldCold.range();
+            if (oldRange.level() != 0
+                    || oldRange.startTurn() != nextTurn
+                    || oldRange.startMessageSequence() != nextMessage) {
+                throw new IllegalArgumentException(INVALID_SOURCE);
+            }
+            validator.validate(oldCold.document(), oldCold.estimatedTokenCount(), oldCold.range());
+            documents.add(oldCold.document());
+            nextTurn = oldRange.endTurn() + 1L;
+            nextMessage = oldRange.endMessageSequence() + 1L;
+        }
+
+        // promotion 按可信消息范围排序，并逐节点要求与前一来源精确连续。
+        for (HierarchicalSummaryNode node :
+                cold.promotedNodes().stream().sorted(NODE_ORDER).toList()) {
+            validateNodeIdentity(node, identity);
+            long coveredTurns = expectedNodeTurns(node.level());
+            if (node.coveredCompletedTurnCount() != coveredTurns
+                    || !isAligned(nextTurn, node.level())
+                    || node.startConversationMessageSequence() != nextMessage) {
+                throw new IllegalArgumentException(INVALID_SOURCE);
+            }
+            GenerationRange nodeRange =
+                    new GenerationRange(
+                            nextTurn,
+                            nextTurn + coveredTurns - 1L,
+                            node.startConversationMessageSequence(),
+                            node.endConversationMessageSequence(),
+                            node.level());
+            validateNodeDocument(node, nodeRange);
+            documents.add(node.summaryDocument());
+            nextTurn = nodeRange.endTurn() + 1L;
+            nextMessage = nodeRange.endMessageSequence() + 1L;
+        }
+
+        // 最后一个来源也必须精确抵达请求末端，不能留下 turn 或 message 部分覆盖。
+        if (nextTurn != requested.endTurn() + 1L
+                || nextMessage != requested.endMessageSequence() + 1L) {
+            throw new IllegalArgumentException(INVALID_SOURCE);
+        }
+        return List.copyOf(documents);
+    }
+
+    private void validateNodeDocument(HierarchicalSummaryNode node, GenerationRange range) {
+        validator.validate(node.summaryDocument(), node.estimatedTokenCount(), range);
+    }
+
+    private static void validateNodeIdentity(
+            HierarchicalSummaryNode node, SummaryGenerationIdentity identity) {
+        if (!identity.conversationSessionId().equals(node.conversationSessionId())
+                || identity.schemaVersion() != node.summarySchemaVersion()
+                || identity.promptVersion() != node.summaryPromptVersion()
+                || !identity.modelIdentity().provider().equals(node.modelProvider())
+                || !identity.modelIdentity().model().equals(node.modelName())) {
+            throw new IllegalArgumentException(INVALID_SOURCE);
+        }
+    }
+
+    private static void validateColdIdentity(ColdSummary cold, SummaryGenerationIdentity identity) {
+        if (!identity.conversationSessionId().equals(cold.conversationSessionId())
+                || identity.schemaVersion() != cold.schemaVersion()
+                || identity.promptVersion() != cold.promptVersion()
+                || !identity.modelIdentity().provider().equals(cold.modelProvider())
+                || !identity.modelIdentity().model().equals(cold.modelName())) {
+            throw new IllegalArgumentException(INVALID_SOURCE);
+        }
+    }
+
+    private static long expectedNodeTurns(int level) {
+        if (level < 0 || level > 62) {
+            throw new IllegalArgumentException(INVALID_SOURCE);
+        }
+        return 1L << level;
+    }
+
+    private static boolean isAligned(long startTurn, int level) {
+        long coveredTurns = expectedNodeTurns(level);
+        return (startTurn - 1L) % coveredTurns == 0L;
     }
 
     private String summaryArray(List<String> documents) {
@@ -212,14 +342,12 @@ public final class HierarchicalSummaryGenerator {
         }
     }
 
-    /** Cold 固定保存可选旧摘要和待迁移的不可变节点。 */
+    /** Cold 固定保存可选旧摘要的可信元数据和待迁移的不可变节点。 */
     public record ColdSource(
-            String oldColdSummaryDocument, List<HierarchicalSummaryNode> promotedNodes)
+            ColdSummary oldColdSummary, List<HierarchicalSummaryNode> promotedNodes)
             implements SummarySource {
 
         public ColdSource {
-            oldColdSummaryDocument =
-                    Objects.requireNonNull(oldColdSummaryDocument, "oldColdSummaryDocument");
             promotedNodes = List.copyOf(Objects.requireNonNull(promotedNodes, "promotedNodes"));
             if (promotedNodes.isEmpty()) {
                 throw new IllegalArgumentException(INVALID_SOURCE);
@@ -229,6 +357,44 @@ public final class HierarchicalSummaryGenerator {
         @Override
         public SourceKind kind() {
             return SourceKind.COLD;
+        }
+    }
+
+    /** 旧 Cold 正文及其来自 checkpoint、不可由 JSON 正文声明替代的可信元数据。 */
+    public record ColdSummary(
+            /** Cold 所属会话。 */
+            String conversationSessionId,
+            /** Cold 已正式发布的 turn/message 覆盖范围。 */
+            GenerationRange range,
+            /** 已通过上次发布门禁的结构化摘要正文。 */
+            String document,
+            /** checkpoint 保存的正文 token 估算，也是本次复验上限。 */
+            int estimatedTokenCount,
+            /** checkpoint 保存的摘要 schema 版本。 */
+            int schemaVersion,
+            /** checkpoint 保存的摘要 prompt 版本。 */
+            int promptVersion,
+            /** checkpoint 保存的模型 provider。 */
+            String modelProvider,
+            /** checkpoint 保存的模型名称。 */
+            String modelName) {
+
+        public ColdSummary {
+            conversationSessionId =
+                    Objects.requireNonNull(conversationSessionId, "conversationSessionId");
+            range = Objects.requireNonNull(range, "range");
+            document = Objects.requireNonNull(document, "document");
+            modelProvider = Objects.requireNonNull(modelProvider, "modelProvider");
+            modelName = Objects.requireNonNull(modelName, "modelName");
+            if (conversationSessionId.isBlank()
+                    || document.isBlank()
+                    || estimatedTokenCount <= 0
+                    || schemaVersion <= 0
+                    || promptVersion <= 0
+                    || modelProvider.isBlank()
+                    || modelName.isBlank()) {
+                throw new IllegalArgumentException(INVALID_SOURCE);
+            }
         }
     }
 
@@ -315,14 +481,14 @@ public final class HierarchicalSummaryGenerator {
         public static GenerationRequest cold(
                 String conversationSessionId,
                 GenerationRange range,
-                String oldColdSummaryDocument,
+                ColdSummary oldColdSummary,
                 List<HierarchicalSummaryNode> promotedNodes,
                 HierarchicalContextPolicySnapshot policySnapshot,
                 int maxSummaryTokens) {
             return new GenerationRequest(
                     conversationSessionId,
                     range,
-                    new ColdSource(oldColdSummaryDocument, promotedNodes),
+                    new ColdSource(oldColdSummary, promotedNodes),
                     policySnapshot,
                     maxSummaryTokens);
         }
@@ -331,16 +497,6 @@ public final class HierarchicalSummaryGenerator {
         public GenerationRequest withRange(GenerationRange replacement) {
             return new GenerationRequest(
                     conversationSessionId, replacement, source, policySnapshot, maxSummaryTokens);
-        }
-
-        private void validateSource() {
-            if (source instanceof LeafSource leaf) {
-                validateLeaf(leaf);
-            } else if (source instanceof ParentSource parent) {
-                validateParent(parent);
-            } else {
-                validateCold((ColdSource) source);
-            }
         }
 
         private void validateLeaf(LeafSource leaf) {
@@ -359,32 +515,6 @@ public final class HierarchicalSummaryGenerator {
                 if (!turn.completed() || turn.ordinal() != range.startTurn() + index) {
                     throw new IllegalArgumentException(INVALID_SOURCE);
                 }
-            }
-        }
-
-        private void validateParent(ParentSource parent) {
-            HierarchicalSummaryNode left = parent.left();
-            HierarchicalSummaryNode right = parent.right();
-            if (!conversationSessionId.equals(left.conversationSessionId())
-                    || !conversationSessionId.equals(right.conversationSessionId())
-                    || left.level() != right.level()
-                    || left.startConversationMessageSequence() < range.startMessageSequence()
-                    || right.endConversationMessageSequence() > range.endMessageSequence()
-                    || left.endConversationMessageSequence()
-                            >= right.startConversationMessageSequence()) {
-                throw new IllegalArgumentException(INVALID_SOURCE);
-            }
-        }
-
-        private void validateCold(ColdSource cold) {
-            long previousEnd = 0L;
-            for (HierarchicalSummaryNode node :
-                    cold.promotedNodes().stream().sorted(NODE_ORDER).toList()) {
-                if (!conversationSessionId.equals(node.conversationSessionId())
-                        || node.startConversationMessageSequence() <= previousEnd) {
-                    throw new IllegalArgumentException(INVALID_SOURCE);
-                }
-                previousEnd = node.endConversationMessageSequence();
             }
         }
     }

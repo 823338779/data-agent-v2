@@ -61,3 +61,37 @@ git diff --check
 - `ContextSummaryDocumentValidator#validate(document, maxSummaryTokens)` 负责 schema 与本地估算上限；generator 另行校验共享端口返回的 provider token 数和 provider/model 身份，没有修改 `ContextSummaryModelPort` 契约。
 - `HierarchicalCompactionException` 按总计划属于 Task 8 的 runtime 文件。本任务不提前引入运行时类型，生成器暂以稳定消息 `FAILURE_CONTEXT_COMPACTION` 的 `IllegalStateException` 保持失败边界；Task 8 可在服务层转换为计划中的异常类型。
 - 完整 `-am test` 曾在无关的 `agent-persistence` 既有 `MybatisPlusAuditIntegrationTest` 时间精度断言失败：PostgreSQL 微秒值比测试纳秒下界早约 400ns，导致 hierarchical 模块被 reactor 跳过。本任务未修改或弱化该测试；随后安装已编译依赖并独立运行目标模块，62 tests 全部通过。
+
+## Fix round 1/5
+
+### 修复结果
+
+- 父节点的左右子摘要、旧 Cold 和每个 promoted 节点正文均在进入 source array 前重新经过 `ContextSummaryDocumentValidator`；校验使用外部可信元数据推导的 coverage 和该来源已记录的 token 上限，JSON 内部 coverage 不再充当元数据。
+- 新增 `ColdSummary`，显式携带 checkpoint 的 session、turn/message coverage、token、schema、prompt 和 provider/model，避免旧 Cold 继续以无法审计的裸字符串进入生成器。
+- 父节点严格要求左右同层、父层级等于子层级加一、全局二叉对齐、完整 turn 数为两个子树之和、消息范围精确连续且首尾等于请求范围。
+- 父节点和 Cold 的所有来源必须与当前生成身份在 session、schema、prompt、provider、model 五个维度一致。
+- Cold 严格按旧 Cold 在前、promoted 节点按可信消息范围升序处理；每段 turn/message 范围必须连续、二叉层级必须全局对齐，并且最终精确抵达请求末端，不允许重叠、缺口或部分覆盖。
+- key 编码从自由文本分隔符拼接改为固定宽度数值和 UTF-8 长度前缀文本，避免 provider/model 等字段包含分隔符时发生边界碰撞。
+- 七个结构化数组字段均以独立参数化用例验证 required 和 array type；malformed、未知版本、`rawReasoning` 和错误 coverage 也分别从与各自可信元数据一致的合法基线单点变异，避免假阳性。
+
+### TDD 证据
+
+RED：先增加可信旧 Cold、来源复验、严格范围/身份和 key 碰撞测试，运行聚焦命令后，目标模块在 `testCompile` 因缺少 `HierarchicalSummaryGenerator.ColdSummary` 失败。
+
+GREEN：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am `
+  '-Dtest=ContextSummaryDocumentValidatorTest,HierarchicalSummaryGeneratorTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+结果：41 tests，0 failures，0 errors。其中 validator 19 tests，generator 22 tests。
+
+完整目标模块：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical test
+```
+
+结果：90 tests，0 failures，0 errors；包含 Testcontainers PostgreSQL、planning、persistence 和全部 summary 回归。

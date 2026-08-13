@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -12,6 +13,7 @@ import com.datagent.agentv2.context.hierarchical.domain.ConversationTurn;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalSummaryNode;
 import com.datagent.agentv2.context.hierarchical.planning.ConversationTokenEstimator;
+import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.ColdSummary;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.GeneratedSummary;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.GenerationRange;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalSummaryGenerator.GenerationRequest;
@@ -26,6 +28,8 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -39,6 +43,7 @@ class HierarchicalSummaryGeneratorTest {
     private static final String PROVIDER = "test-provider";
     private static final String MODEL = "summary-model";
     private static final int MAX_SUMMARY_TOKENS = 1_024;
+    private static final int SOURCE_SUMMARY_TOKENS = 300;
     private static final HierarchicalContextPolicySnapshot POLICY =
             new HierarchicalContextPolicySnapshot(1, 0.75d, 0.70d, 10, 100, 1, 1);
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -53,7 +58,7 @@ class HierarchicalSummaryGeneratorTest {
         lenient()
                 .when(model.identity())
                 .thenReturn(new ContextSummaryModelIdentity(PROVIDER, MODEL));
-        lenient().when(estimator.estimateSummary(any())).thenReturn(300);
+        lenient().when(estimator.estimateSummary(any())).thenReturn(SOURCE_SUMMARY_TOKENS);
         generator =
                 new HierarchicalSummaryGenerator(
                         model,
@@ -64,11 +69,13 @@ class HierarchicalSummaryGeneratorTest {
     @Test
     void retriesOneInvalidDocumentWithCorrectionAndReturnsSecondValidDocument() {
         when(model.summarize(any()))
-                .thenReturn(result("{\"confirmedFacts\":{}}", 20), result(validSummary(), 300));
+                .thenReturn(
+                        result("{\"confirmedFacts\":{}}", 20),
+                        result(summary("metric m1 uses unit ms", 1, 2, 10, 20), 300));
 
         GeneratedSummary generated = generator.generate(leafRequest());
 
-        assertThat(generated.document()).isEqualTo(validSummary());
+        assertThat(generated.document()).isEqualTo(summary("metric m1 uses unit ms", 1, 2, 10, 20));
         assertThat(generated.estimatedTokenCount()).isEqualTo(300);
         ArgumentCaptor<ContextSummaryRequest> requests =
                 ArgumentCaptor.forClass(ContextSummaryRequest.class);
@@ -92,7 +99,8 @@ class HierarchicalSummaryGeneratorTest {
 
     @Test
     void sendsCompleteLeafMessageThinkingAndToolHistory() throws Exception {
-        when(model.summarize(any())).thenReturn(result(validSummary(), 300));
+        when(model.summarize(any()))
+                .thenReturn(result(summary("metric m1 uses unit ms", 1, 2, 10, 20), 300));
 
         generator.generate(leafRequest());
 
@@ -122,25 +130,11 @@ class HierarchicalSummaryGeneratorTest {
     }
 
     @Test
-    void parentSourceContainsOnlyLeftThenRightSummary() throws Exception {
-        when(model.summarize(any())).thenReturn(result(validSummary(), 300));
-        HierarchicalSummaryNode left = node("left", 1, 10, 10, summaryWithFact("left fact"));
-        HierarchicalSummaryNode right = node("right", 1, 20, 20, summaryWithFact("right fact"));
+    void parentSourceContainsOnlyValidatedContiguousLeftThenRightSummary() throws Exception {
+        when(model.summarize(any()))
+                .thenReturn(result(summary("parent", 1, 2, 10, 20), SOURCE_SUMMARY_TOKENS));
 
-        assertThat(left.conversationSessionId()).isEqualTo(SESSION_ID);
-        assertThat(right.conversationSessionId()).isEqualTo(SESSION_ID);
-        assertThat(left.level()).isEqualTo(right.level());
-        assertThat(left.startConversationMessageSequence()).isEqualTo(10);
-        assertThat(right.endConversationMessageSequence()).isEqualTo(20);
-
-        generator.generate(
-                GenerationRequest.parent(
-                        SESSION_ID,
-                        new GenerationRange(1, 2, 10, 20, 1),
-                        left,
-                        right,
-                        POLICY,
-                        MAX_SUMMARY_TOKENS));
+        generator.generate(validParentRequest());
 
         ArgumentCaptor<ContextSummaryRequest> request =
                 ArgumentCaptor.forClass(ContextSummaryRequest.class);
@@ -153,20 +147,124 @@ class HierarchicalSummaryGeneratorTest {
                 .isEqualTo("right fact");
     }
 
-    @Test
-    void coldSourcePlacesOldColdFirstThenPromotedNodesChronologically() throws Exception {
-        when(model.summarize(any())).thenReturn(result(validSummary(), 300));
-        HierarchicalSummaryNode older = node("older", 1, 10, 10, summaryWithFact("older"));
-        HierarchicalSummaryNode newer = node("newer", 1, 20, 20, summaryWithFact("newer"));
+    @ParameterizedTest(name = "rejects untrusted parent child source: {0}")
+    @ValueSource(strings = {"malformed", "unknown-version", "raw-reasoning", "wrong-coverage"})
+    void validatesEveryParentChildDocumentBeforeModelInvocation(String mutation) {
+        String invalidDocument = invalidSourceDocument(mutation, summary("left", 1, 1, 10, 14));
+        HierarchicalSummaryNode invalidLeft = node("left", 0, 10, 14, invalidDocument);
+        HierarchicalSummaryNode right = node("right", 0, 15, 20, summary("right", 2, 2, 15, 20));
 
-        generator.generate(
-                GenerationRequest.cold(
+        assertRejectedBeforeModel(
+                GenerationRequest.parent(
                         SESSION_ID,
-                        new GenerationRange(1, 2, 10, 20, 0),
-                        summaryWithFact("old cold"),
-                        List.of(newer, older),
+                        new GenerationRange(1, 2, 10, 20, 1),
+                        invalidLeft,
+                        right,
                         POLICY,
                         MAX_SUMMARY_TOKENS));
+    }
+
+    @Test
+    void rejectsParentGapsPartialCoverageWrongLevelsAndIncompatibleIdentities() {
+        HierarchicalSummaryNode left = node("left", 0, 10, 14, summary("left", 1, 1, 10, 14));
+        HierarchicalSummaryNode right = node("right", 0, 15, 20, summary("right", 2, 2, 15, 20));
+        List<GenerationRequest> invalidRequests =
+                List.of(
+                        parentRequest(
+                                left,
+                                node("gap", 0, 16, 20, summary("gap", 2, 2, 16, 20)),
+                                new GenerationRange(1, 2, 10, 20, 1)),
+                        parentRequest(left, right, new GenerationRange(1, 2, 9, 20, 1)),
+                        parentRequest(left, right, new GenerationRange(1, 3, 10, 20, 1)),
+                        parentRequest(left, right, new GenerationRange(1, 2, 10, 20, 0)),
+                        parentRequest(
+                                node("unaligned-left", 0, 10, 14, summary("left", 2, 2, 10, 14)),
+                                node("unaligned-right", 0, 15, 20, summary("right", 3, 3, 15, 20)),
+                                new GenerationRange(2, 3, 10, 20, 1)),
+                        parentRequest(
+                                left,
+                                node("wrong-level", 1, 15, 20, summary("level", 2, 3, 15, 20)),
+                                new GenerationRange(1, 2, 10, 20, 1)),
+                        parentRequest(
+                                nodeWithIdentity(
+                                        "session",
+                                        "other-session",
+                                        0,
+                                        10,
+                                        14,
+                                        summary("left", 1, 1, 10, 14),
+                                        1,
+                                        1,
+                                        PROVIDER,
+                                        MODEL),
+                                right,
+                                new GenerationRange(1, 2, 10, 20, 1)),
+                        parentRequest(
+                                nodeWithIdentity(
+                                        "schema",
+                                        SESSION_ID,
+                                        0,
+                                        10,
+                                        14,
+                                        summary("left", 1, 1, 10, 14),
+                                        2,
+                                        1,
+                                        PROVIDER,
+                                        MODEL),
+                                right,
+                                new GenerationRange(1, 2, 10, 20, 1)),
+                        parentRequest(
+                                nodeWithIdentity(
+                                        "prompt",
+                                        SESSION_ID,
+                                        0,
+                                        10,
+                                        14,
+                                        summary("left", 1, 1, 10, 14),
+                                        1,
+                                        2,
+                                        PROVIDER,
+                                        MODEL),
+                                right,
+                                new GenerationRange(1, 2, 10, 20, 1)),
+                        parentRequest(
+                                nodeWithIdentity(
+                                        "provider",
+                                        SESSION_ID,
+                                        0,
+                                        10,
+                                        14,
+                                        summary("left", 1, 1, 10, 14),
+                                        1,
+                                        1,
+                                        "other-provider",
+                                        MODEL),
+                                right,
+                                new GenerationRange(1, 2, 10, 20, 1)),
+                        parentRequest(
+                                nodeWithIdentity(
+                                        "model",
+                                        SESSION_ID,
+                                        0,
+                                        10,
+                                        14,
+                                        summary("left", 1, 1, 10, 14),
+                                        1,
+                                        1,
+                                        PROVIDER,
+                                        "other-model"),
+                                right,
+                                new GenerationRange(1, 2, 10, 20, 1)));
+
+        invalidRequests.forEach(this::assertRejectedBeforeModel);
+    }
+
+    @Test
+    void coldSourcePlacesValidatedOldColdFirstThenContiguousPromotions() throws Exception {
+        when(model.summarize(any()))
+                .thenReturn(result(summary("new cold", 1, 4, 1, 40), SOURCE_SUMMARY_TOKENS));
+
+        generator.generate(validColdRequest());
 
         ArgumentCaptor<ContextSummaryRequest> request =
                 ArgumentCaptor.forClass(ContextSummaryRequest.class);
@@ -179,6 +277,110 @@ class HierarchicalSummaryGeneratorTest {
                 .isEqualTo("older");
         assertThat(source.get(2).path("confirmedFacts").get(0).path("statement").asString())
                 .isEqualTo("newer");
+    }
+
+    @ParameterizedTest(name = "rejects untrusted old Cold source: {0}")
+    @ValueSource(strings = {"malformed", "unknown-version", "raw-reasoning", "wrong-coverage"})
+    void validatesOldColdDocumentAgainstTrustedMetadata(String mutation) {
+        String invalidDocument = invalidSourceDocument(mutation, summary("old cold", 1, 2, 1, 20));
+        ColdSummary invalidOld = coldSummary(new GenerationRange(1, 2, 1, 20, 0), invalidDocument);
+
+        assertRejectedBeforeModel(
+                coldRequest(
+                        invalidOld,
+                        List.of(
+                                node("older", 0, 21, 30, summary("older", 3, 3, 21, 30)),
+                                node("newer", 0, 31, 40, summary("newer", 4, 4, 31, 40))),
+                        new GenerationRange(1, 4, 1, 40, 0)));
+    }
+
+    @ParameterizedTest(name = "rejects untrusted promoted source: {0}")
+    @ValueSource(strings = {"malformed", "unknown-version", "raw-reasoning", "wrong-coverage"})
+    void validatesEveryPromotedDocumentAgainstTrustedNodeMetadata(String mutation) {
+        String invalidDocument = invalidSourceDocument(mutation, summary("older", 3, 3, 21, 30));
+        ColdSummary old =
+                coldSummary(new GenerationRange(1, 2, 1, 20, 0), summary("old cold", 1, 2, 1, 20));
+
+        assertRejectedBeforeModel(
+                coldRequest(
+                        old,
+                        List.of(
+                                node("older", 0, 21, 30, invalidDocument),
+                                node("newer", 0, 31, 40, summary("newer", 4, 4, 31, 40))),
+                        new GenerationRange(1, 4, 1, 40, 0)));
+    }
+
+    @Test
+    void rejectsColdGapsOverlapsPartialCoverageWrongLevelsAndIncompatibleIdentities() {
+        ColdSummary old =
+                coldSummary(new GenerationRange(1, 2, 1, 20, 0), summary("old cold", 1, 2, 1, 20));
+        HierarchicalSummaryNode older = node("older", 0, 21, 30, summary("older", 3, 3, 21, 30));
+        HierarchicalSummaryNode newer = node("newer", 0, 31, 40, summary("newer", 4, 4, 31, 40));
+        List<GenerationRequest> invalidRequests =
+                List.of(
+                        coldRequest(
+                                old,
+                                List.of(
+                                        node("gap", 0, 22, 30, summary("gap", 3, 3, 22, 30)),
+                                        newer),
+                                new GenerationRange(1, 4, 1, 40, 0)),
+                        coldRequest(
+                                old,
+                                List.of(
+                                        node(
+                                                "overlap",
+                                                0,
+                                                20,
+                                                30,
+                                                summary("overlap", 3, 3, 20, 30)),
+                                        newer),
+                                new GenerationRange(1, 4, 1, 40, 0)),
+                        coldRequest(
+                                coldSummary(
+                                        new GenerationRange(1, 3, 1, 30, 0),
+                                        summary("old cold", 1, 3, 1, 30)),
+                                List.of(
+                                        node(
+                                                "unaligned-level-one",
+                                                1,
+                                                31,
+                                                40,
+                                                summary("unaligned", 4, 5, 31, 40))),
+                                new GenerationRange(1, 5, 1, 40, 0)),
+                        coldRequest(
+                                old, List.of(older, newer), new GenerationRange(1, 4, 1, 41, 0)),
+                        coldRequest(
+                                old, List.of(older, newer), new GenerationRange(1, 5, 1, 40, 0)),
+                        coldRequest(
+                                old, List.of(older, newer), new GenerationRange(1, 4, 1, 40, 1)),
+                        coldRequest(
+                                coldSummaryWithIdentity(
+                                        new GenerationRange(1, 2, 1, 20, 0),
+                                        summary("old", 1, 2, 1, 20),
+                                        1,
+                                        1,
+                                        "other-provider",
+                                        MODEL),
+                                List.of(older, newer),
+                                new GenerationRange(1, 4, 1, 40, 0)),
+                        coldRequest(
+                                old,
+                                List.of(
+                                        nodeWithIdentity(
+                                                "schema",
+                                                SESSION_ID,
+                                                0,
+                                                21,
+                                                30,
+                                                summary("older", 3, 3, 21, 30),
+                                                2,
+                                                1,
+                                                PROVIDER,
+                                                MODEL),
+                                        newer),
+                                new GenerationRange(1, 4, 1, 40, 0)));
+
+        invalidRequests.forEach(this::assertRejectedBeforeModel);
     }
 
     @Test
@@ -218,16 +420,44 @@ class HierarchicalSummaryGeneratorTest {
     }
 
     @Test
+    void lengthPrefixesPreventDelimiterCollisionsAcrossIdentityFields() {
+        String separator = "\u001f";
+        HierarchicalNodeKeyFactory factory = new HierarchicalNodeKeyFactory();
+        SummaryGenerationIdentity first =
+                new SummaryGenerationIdentity(
+                        SESSION_ID,
+                        1,
+                        1,
+                        new ContextSummaryModelIdentity("provider" + separator + "model", "tail"));
+        SummaryGenerationIdentity second =
+                new SummaryGenerationIdentity(
+                        SESSION_ID,
+                        1,
+                        1,
+                        new ContextSummaryModelIdentity("provider", "model" + separator + "tail"));
+
+        assertThat(factory.create(leafRequest(), first))
+                .isNotEqualTo(factory.create(leafRequest(), second));
+    }
+
+    @Test
     void rejectsProviderTokenUsageOrReturnedModelAboveTheFrozenRequestContract() {
+        String valid = summary("metric m1 uses unit ms", 1, 2, 10, 20);
         when(model.summarize(any()))
                 .thenReturn(
-                        result(validSummary(), MAX_SUMMARY_TOKENS + 1),
-                        new ContextSummaryResult(validSummary(), 300, PROVIDER, "other-model"));
+                        result(valid, MAX_SUMMARY_TOKENS + 1),
+                        new ContextSummaryResult(valid, 300, PROVIDER, "other-model"));
 
         assertThatThrownBy(() -> generator.generate(leafRequest()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage(HierarchicalSummaryGenerator.FAILURE_CONTEXT_COMPACTION);
         verify(model, times(2)).summarize(any());
+    }
+
+    private void assertRejectedBeforeModel(GenerationRequest request) {
+        assertThatThrownBy(() -> generator.generate(request))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(model, never()).summarize(any());
     }
 
     private static GenerationRequest leafRequest() {
@@ -257,12 +487,77 @@ class HierarchicalSummaryGeneratorTest {
                 MAX_SUMMARY_TOKENS);
     }
 
+    private static GenerationRequest validParentRequest() {
+        return parentRequest(
+                node("left", 0, 10, 14, summary("left fact", 1, 1, 10, 14)),
+                node("right", 0, 15, 20, summary("right fact", 2, 2, 15, 20)),
+                new GenerationRange(1, 2, 10, 20, 1));
+    }
+
+    private static GenerationRequest parentRequest(
+            HierarchicalSummaryNode left, HierarchicalSummaryNode right, GenerationRange range) {
+        return GenerationRequest.parent(SESSION_ID, range, left, right, POLICY, MAX_SUMMARY_TOKENS);
+    }
+
+    private static GenerationRequest validColdRequest() {
+        ColdSummary old =
+                coldSummary(new GenerationRange(1, 2, 1, 20, 0), summary("old cold", 1, 2, 1, 20));
+        return coldRequest(
+                old,
+                List.of(
+                        node("newer", 0, 31, 40, summary("newer", 4, 4, 31, 40)),
+                        node("older", 0, 21, 30, summary("older", 3, 3, 21, 30))),
+                new GenerationRange(1, 4, 1, 40, 0));
+    }
+
+    private static GenerationRequest coldRequest(
+            ColdSummary old, List<HierarchicalSummaryNode> promoted, GenerationRange range) {
+        return GenerationRequest.cold(SESSION_ID, range, old, promoted, POLICY, MAX_SUMMARY_TOKENS);
+    }
+
+    private static ColdSummary coldSummary(GenerationRange range, String document) {
+        return coldSummaryWithIdentity(range, document, 1, 1, PROVIDER, MODEL);
+    }
+
+    private static ColdSummary coldSummaryWithIdentity(
+            GenerationRange range,
+            String document,
+            int schemaVersion,
+            int promptVersion,
+            String provider,
+            String model) {
+        return new ColdSummary(
+                SESSION_ID,
+                range,
+                document,
+                SOURCE_SUMMARY_TOKENS,
+                schemaVersion,
+                promptVersion,
+                provider,
+                model);
+    }
+
     private static HierarchicalSummaryNode node(
-            String id, long coveredTurns, long startMessage, long endMessage, String summary) {
-        int level = coveredTurns == 1 ? 0 : 1;
+            String id, int level, long startMessage, long endMessage, String summary) {
+        return nodeWithIdentity(
+                id, SESSION_ID, level, startMessage, endMessage, summary, 1, 1, PROVIDER, MODEL);
+    }
+
+    private static HierarchicalSummaryNode nodeWithIdentity(
+            String id,
+            String sessionId,
+            int level,
+            long startMessage,
+            long endMessage,
+            String summary,
+            int schemaVersion,
+            int promptVersion,
+            String provider,
+            String model) {
+        long coveredTurns = 1L << level;
         return new HierarchicalSummaryNode(
                 id,
-                SESSION_ID,
+                sessionId,
                 level,
                 coveredTurns,
                 startMessage,
@@ -270,34 +565,41 @@ class HierarchicalSummaryGeneratorTest {
                 level == 0 ? null : id + "-left",
                 level == 0 ? null : id + "-right",
                 summary,
-                100,
-                1,
-                1,
-                PROVIDER,
-                MODEL);
+                SOURCE_SUMMARY_TOKENS,
+                schemaVersion,
+                promptVersion,
+                provider,
+                model);
     }
 
     private static ContextSummaryResult result(String content, int tokenCount) {
         return new ContextSummaryResult(content, tokenCount, PROVIDER, MODEL);
     }
 
-    private static String summaryWithFact(String fact) {
-        return validSummary().replace("metric m1 uses unit ms", fact);
+    private static String invalidSourceDocument(String mutation, String valid) {
+        return switch (mutation) {
+            case "malformed" -> "{";
+            case "unknown-version" -> valid.replace("\"schemaVersion\": 1", "\"schemaVersion\": 2");
+            case "raw-reasoning" -> valid.replace("\n}", ",\n  \"rawReasoning\": \"hidden\"\n}");
+            case "wrong-coverage" -> valid.replaceFirst("\"startTurn\": \\d+", "\"startTurn\": 99");
+            default -> throw new IllegalArgumentException("Unknown test mutation");
+        };
     }
 
-    private static String validSummary() {
+    private static String summary(
+            String fact, long startTurn, long endTurn, long startMessage, long endMessage) {
         return """
                 {
                   "schemaVersion": 1,
                   "coverage": {
-                    "startTurn": 1,
-                    "endTurn": 2,
-                    "startMessageSequence": 10,
-                    "endMessageSequence": 20
+                    "startTurn": %d,
+                    "endTurn": %d,
+                    "startMessageSequence": %d,
+                    "endMessageSequence": %d
                   },
                   "confirmedFacts": [{
-                    "statement": "metric m1 uses unit ms",
-                    "sourceRanges": [{"startMessageSequence": 10, "endMessageSequence": 10}]
+                    "statement": "%s",
+                    "sourceRanges": [{"startMessageSequence": %d, "endMessageSequence": %d}]
                   }],
                   "workingHypotheses": [],
                   "decisions": [],
@@ -306,6 +608,14 @@ class HierarchicalSummaryGeneratorTest {
                   "nextSteps": [],
                   "openQuestions": []
                 }
-                """;
+                """
+                .formatted(
+                        startTurn,
+                        endTurn,
+                        startMessage,
+                        endMessage,
+                        fact,
+                        startMessage,
+                        startMessage);
     }
 }
