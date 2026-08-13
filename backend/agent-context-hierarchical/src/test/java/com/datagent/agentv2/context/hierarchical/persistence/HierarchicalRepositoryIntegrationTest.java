@@ -20,6 +20,7 @@ import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import com.datagent.agentv2.platform.id.PrefixedUuidIdGenerator;
 import java.time.LocalDateTime;
+import java.util.List;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -247,6 +248,27 @@ class HierarchicalRepositoryIntegrationTest {
         assertThat(repeated.nodeId()).isEqualTo(first.nodeId());
         assertThat(jdbc.queryForObject(COUNT_NODES_SQL, Integer.class, TENANT_A, SESSION_ID))
                 .isEqualTo(1);
+    }
+
+    @Test
+    void summaryNodeIdReadsStayInsideRequiredTenantAndConversationSession() {
+        HierarchicalSummaryNode persisted =
+                TenantContext.call(TENANT_A, () -> nodes.insertOrSelect(node("node_first")));
+
+        assertThat(
+                        TenantContext.call(
+                                TENANT_A,
+                                () ->
+                                        nodes.findByIds(
+                                                SESSION_ID,
+                                                List.of("missing", persisted.nodeId()))))
+                .extracting(HierarchicalSummaryNode::nodeId)
+                .containsExactly(persisted.nodeId());
+        assertThat(
+                        TenantContext.call(
+                                TENANT_B,
+                                () -> nodes.findByIds(SESSION_ID, List.of(persisted.nodeId()))))
+                .isEmpty();
     }
 
     @Test
