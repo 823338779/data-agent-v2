@@ -22,7 +22,8 @@ public final class ContextSummaryDocumentValidator {
     /** 当前支持的摘要正文 schema 版本。 */
     public static final int SCHEMA_VERSION = 1;
 
-    private static final String SCHEMA_RESOURCE = "/schema/context-summary-v1.schema.json";
+    private static final String SCHEMA_RESOURCE =
+            "/schema/hierarchical-context-summary-v1.schema.json";
     private static final String INVALID_DOCUMENT = "Invalid hierarchical context summary document";
     private static final String MISSING_SCHEMA = "Hierarchical context summary schema is missing";
 

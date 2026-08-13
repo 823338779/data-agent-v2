@@ -18,6 +18,12 @@ import org.testcontainers.utility.DockerImageName;
 
 class Phase1MigrationTest {
 
+    /** 会话表名，用于断言该表的业务标识采用租户复合唯一约束。 */
+    private static final String CONVERSATION_SESSION_TABLE = "conversation_session";
+
+    /** 会话业务标识在租户命名空间内保持唯一的数据库约束表达式。 */
+    private static final String TENANT_SCOPED_SESSION_UNIQUE =
+            "unique (tenant_id, conversation_session_id)";
     private static final List<String> TABLES =
             List.of(
                     "agent_execution",
@@ -96,7 +102,7 @@ class Phase1MigrationTest {
                                 POSTGRES.getPassword())
                         .locations("classpath:db/migration")
                         .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(16);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(17);
     }
 
     @AfterAll
@@ -138,6 +144,10 @@ class Phase1MigrationTest {
     void everyBusinessTableUsesIdentityPrimaryKeyAndDedicatedBusinessId() throws SQLException {
         for (String table : TABLES) {
             String businessIdColumn = BUSINESS_ID_COLUMNS.get(table);
+            String expectedUnique =
+                    CONVERSATION_SESSION_TABLE.equals(table)
+                            ? TENANT_SCOPED_SESSION_UNIQUE
+                            : "unique (" + businessIdColumn + ")";
             assertThat(primaryKey(table))
                     .as("primary key for %s", table)
                     .isEqualTo("primary key (id)");
@@ -147,7 +157,7 @@ class Phase1MigrationTest {
                     .isEqualTo("NO");
             assertThat(uniqueConstraints(table))
                     .as("unique business id for %s", table)
-                    .contains("unique (" + businessIdColumn + ")");
+                    .contains(expectedUnique);
         }
     }
 

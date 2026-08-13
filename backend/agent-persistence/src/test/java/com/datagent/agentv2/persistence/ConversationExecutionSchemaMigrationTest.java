@@ -132,7 +132,7 @@ class ConversationExecutionSchemaMigrationTest {
                         .load()
                         .migrate()
                         .migrationsExecuted;
-        assertThat(migratedToLatest).isEqualTo(9);
+        assertThat(migratedToLatest).isEqualTo(10);
     }
 
     @AfterAll

@@ -6,6 +6,7 @@ Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多�
 
 - `backend/agent-persistence`：数据库迁移、MyBatis-Plus、审计持久化，以及 ID、时钟和请求上下文基础能力
 - `backend/agent-context-lsm`：可插拔的 LSM 会话上下文压缩策略、独立持久化、迁移、恢复和指标
+- `backend/agent-context-hierarchical`：可插拔的 Hot/Warm/Cold 分层上下文策略、独立持久化、迁移、恢复和指标
 - `backend/agent-auth`：认证、登录会话与操作者上下文
 - `backend/agent-web`：REST/SSE 接口、BFF、认证安全链、会话编排与契约测试
 - `backend/agent-server`：唯一可执行模块，负责 Spring Boot 启动、服务级全局拦截器、异常边界与运行时装配
@@ -37,17 +38,21 @@ Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多�
 - Redis 默认连接 `localhost:6379`，用户名和密码为 `default/redis_local_dev`，可通过 `SPRING_DATA_REDIS_HOST`、`SPRING_DATA_REDIS_PORT`、`SPRING_DATA_REDIS_USERNAME`、`SPRING_DATA_REDIS_PASSWORD` 覆盖。
 - Ollama 默认使用 `qwen3.5:9b`。先执行 `ollama pull qwen3.5:9b`，再通过 `SPRING_AI_OLLAMA_BASE_URL` 指定服务地址；模型、超时和最大输出分别可由 `DATA_AGENT_MODEL_OLLAMA_MODEL`、`DATA_AGENT_MODEL_OLLAMA_TIMEOUT`、`DATA_AGENT_MODEL_OLLAMA_MAX_OUTPUT_TOKENS` 覆盖。
 
-### 会话上下文策略与 LSM 压缩
+### 会话上下文策略与分层压缩
 
-会话上下文默认使用 `raw` 策略；只有显式选择 `lsm` 时才装载 LSM 插件、执行插件迁移并启用历史摘要压缩。
+会话上下文默认使用 `raw` 策略。服务实例只能选择一个策略：`raw` 直接使用原始历史，`lsm` 使用 LSM 摘要树，`hierarchical` 使用 Hot/Warm/Cold 分层摘要。未知策略或重复注册相同策略 ID 都会使服务启动失败。
 
 | 环境变量 | 默认值 | 允许值或范围 | 说明 |
 | --- | --- | --- | --- |
-| `DATA_AGENT_CONTEXT_STRATEGY` | `raw` | `raw`、`lsm` | 选择服务实例使用的会话上下文策略；取值区分大小写，未知值会使服务启动失败。 |
+| `DATA_AGENT_CONTEXT_STRATEGY` | `raw` | `raw`、`lsm`、`hierarchical` | 选择服务实例唯一使用的会话上下文策略；取值区分大小写。 |
 | `DATA_AGENT_CONTEXT_COMPACTION_FANOUT` | `5` | `3`～`10` | LSM 同层普通节点达到该数量时执行层级合并；仅在 `lsm` 策略下校验和生效。 |
 | `DATA_AGENT_CONTEXT_COMPACTION_MAX_LEVEL` | `4` | `1`～`8` | LSM 摘要树的配置顶层，顶层 ROOT 始终最多保留一个活动节点；仅在 `lsm` 策略下校验和生效。 |
+| `DATA_AGENT_CONTEXT_HIERARCHICAL_TRIGGER_RATIO` | `0.75` | `0 < target < trigger < 1` | hierarchical 触发压缩的上下文窗口比例。 |
+| `DATA_AGENT_CONTEXT_HIERARCHICAL_TARGET_RATIO` | `0.70` | `0 < target < trigger < 1` | hierarchical 压缩后争取达到的上下文窗口比例。 |
+| `DATA_AGENT_CONTEXT_HIERARCHICAL_RECENT_RAW_TURNS` | `10` | 正整数且小于 Warm 窗口 | hierarchical 始终原样保护的最近完整对话轮数。 |
+| `DATA_AGENT_CONTEXT_HIERARCHICAL_WARM_WINDOW_TURNS` | `100` | 大于最近原始轮数 | hierarchical 用连续二进制摘要 frontier 保留的 Warm 对话轮数；更早历史汇入单调前进的 Cold 摘要。 |
 
-`fanout` 和 `max-level` 是服务级配置。一次执行首次进入 LSM 上下文流程时会冻结策略快照；该执行后续的重试、恢复和租约接管继续使用同一快照，不会被运行期间的服务配置变化改写。
+LSM 默认在输入超过窗口的 75% 时触发并争取压缩至 65%；hierarchical 默认在超过 75% 时触发并争取压缩至 70%，同时保护最近 10 轮 Hot、维护最多 100 轮连续 Warm，超出部分推进 Cold。两种压缩策略都会在 execution 首次进入上下文流程时冻结策略快照；后续重试、恢复和租约接管继续使用同一快照，不会被运行期间的服务配置变化改写。
 
 需要回滚到原始上下文行为时，应在所有实例中统一设置：
 
@@ -55,9 +60,17 @@ Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多�
 $env:DATA_AGENT_CONTEXT_STRATEGY = 'raw'
 ```
 
-随后重启所有后端实例。`raw` 模式不会装载 LSM 策略、不会运行插件 Flyway，也不会读取或写入 `conversation_context_lsm_*` 表。回滚不会删除已有的 LSM 表、摘要段、manifest 或 job；这些数据保持不变，可供问题分析或后续重新启用插件使用。
+随后重启所有后端实例。策略切换必须在全部实例上统一完成，避免同一服务集群使用不同上下文行为。`raw` 模式不会装载压缩插件策略、不会运行插件 Flyway，也不会读取或写入 `conversation_context_lsm_*` 或 `conversation_context_hierarchical_*` 表。回滚不会删除已有的摘要、checkpoint、manifest 或 job；数据保持不变，可供问题分析或后续重新启用相应插件使用。
 
-选择 `lsm` 时，主 Flyway 会先完成通用数据库迁移，插件随后从 `classpath:db/agent-context-lsm/migration` 执行迁移，并使用独立历史表 `flyway_agent_context_lsm_schema_history`。插件迁移只管理 `conversation_context_lsm_*` 对象，不污染主 Flyway 历史；`raw` 模式不会触发该迁移。
+选择 `lsm` 时，插件从 `classpath:db/agent-context-lsm/migration` 迁移，并使用独立历史表 `flyway_agent_context_lsm_schema_history`。选择 `hierarchical` 时，插件从 `classpath:db/agent-context-hierarchical/migration` 迁移，并使用独立历史表 `flyway_agent_context_hierarchical_schema_history`。主 Flyway 始终先完成通用迁移；插件迁移分别只管理 `conversation_context_lsm_*` 或 `conversation_context_hierarchical_*` 对象，不污染主 Flyway 历史。
+
+Hierarchical 上下文端到端验证命令：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am `
+  '-Dsurefire.failIfNoSpecifiedTests=false' `
+  '-Dtest=ContextStrategyIsolationIntegrationTest,HierarchicalContextCompactionIntegrationTest,HierarchicalContextCompactionRecoveryIntegrationTest,HierarchicalContextCompactionMultiTenantIntegrationTest' test
+```
 
 LSM 上下文端到端验证命令：
 
