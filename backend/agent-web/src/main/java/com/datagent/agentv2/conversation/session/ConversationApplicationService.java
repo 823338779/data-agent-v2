@@ -83,7 +83,7 @@ public class ConversationApplicationService {
                         OperatorContext.requiredUserId(),
                         Instant.now());
         conversationSessionService.save(session);
-        return snapshot(session);
+        return ConversationView.composeFromNewSession(session);
     }
 
     @Transactional(readOnly = true)
@@ -402,18 +402,8 @@ public class ConversationApplicationService {
                 executionEntities.isEmpty()
                         ? null
                         : executionViewsById.get(executionEntities.getFirst().getExecutionId());
-        return new ConversationView(
-                session.getConversationSessionId(),
-                session.getTitle(),
-                session.getTag() == null ? EMPTY_TEXT : session.getTag(),
-                ConversationSessionType.fromValue(session.getSessionType()),
-                session.getCreatedAt(),
-                session.getUpdatedAt(),
-                session.getVersion(),
-                0,
-                null,
-                messageViews,
-                latestAgentExecutionView);
+        return ConversationView.composeFromSession(
+                session, messageViews, latestAgentExecutionView);
     }
 
     /** 从已经批量读取的数据组装一个不含详情的会话摘要。 */

@@ -1,5 +1,6 @@
 package com.datagent.agentv2.conversation.session;
 
+import com.datagent.agentv2.conversation.domain.ConversationSession;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessItem;
 import com.datagent.agentv2.conversation.enums.ConversationSessionType;
 import com.datagent.agentv2.conversation.enums.ExecutionEventType;
@@ -24,6 +25,30 @@ public record ConversationView(
         Object metricPlatformCredential,
         List<MessageView> messages,
         AgentExecutionView execution) {
+
+    /** 从尚无消息和执行记录的新建会话组装完整接口投影。 */
+    public static ConversationView composeFromNewSession(ConversationSession session) {
+        return composeFromSession(session, List.of(), null);
+    }
+
+    /** 从会话及其已组装的关联视图生成完整接口投影。 */
+    public static ConversationView composeFromSession(
+            ConversationSession session,
+            List<MessageView> messages,
+            AgentExecutionView execution) {
+        return new ConversationView(
+                session.getConversationSessionId(),
+                session.getTitle(),
+                session.getTag() == null ? "" : session.getTag(),
+                ConversationSessionType.fromValue(session.getSessionType()),
+                session.getCreatedAt(),
+                session.getUpdatedAt(),
+                session.getVersion(),
+                0,
+                null,
+                messages,
+                execution);
+    }
 
     public record MessageView(
             String conversationMessageId,
