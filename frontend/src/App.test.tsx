@@ -55,7 +55,7 @@ function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient
         {
           conversationMessageId: 'message_1',
           role: 'user',
-          author: 'user_default',
+          author: 'user_admin',
           content: '分析订单延迟',
           timestamp: '2026-08-01T08:01:00Z',
           version: 0,

@@ -21,7 +21,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 class CodexAppServerClientTest {
 
-    private static final String TENANT_ID = "tenant_default";
+    private static final String TENANT_ID = "tenant_local";
     private static final String PROMPT = "conversation";
     private static final String FINAL_ANSWER = "answer";
     private static final String MODEL_NAME = "test-codex-model";

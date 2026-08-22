@@ -39,7 +39,7 @@ const narrowScreenQuery = '(max-width: 820px)';
 const TITLE_CONFLICT_MESSAGE = '标题已在其他位置更新，已加载最新标题。';
 const TITLE_SAVE_ERROR_MESSAGE = '标题保存失败，请稍后重试。';
 const STREAM_INTERRUPTED_MESSAGE = '实时状态连接已中断；会话内容仍可继续查看。';
-const FIXED_SUBJECT = 'local-user';
+const FIXED_SUBJECT = 'admin';
 export const BACKGROUND_POLL_INTERVAL_MS = 60_000;
 
 function isNarrowScreen(): boolean {

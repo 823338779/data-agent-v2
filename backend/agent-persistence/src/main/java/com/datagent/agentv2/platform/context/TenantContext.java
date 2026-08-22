@@ -7,7 +7,7 @@ import java.util.function.Supplier;
 public final class TenantContext {
 
     /** 当前单租户运行模式使用的固定租户标识。 */
-    public static final String TENANT_ID = "tenant_default";
+    public static final String TENANT_ID = "tenant_local";
 
     private static final ThreadLocal<String> CURRENT_TENANT = new ThreadLocal<>();
 

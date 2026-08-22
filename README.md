@@ -113,7 +113,7 @@ npm.cmd ci
 npm.cmd run dev
 ```
 
-打开 `http://127.0.0.1:5173` 即可进入工作区。当前阶段后端固定使用 `tenant_default` 租户和 `user_default` / `local-user` 身份，不提供登录、退出或租户切换；这些能力将在后续重新设计。当前可联调多会话未读与排序、执行取消/重试、Ollama answer 流以及 Redis 跨实例通知。
+打开 `http://127.0.0.1:5173` 即可进入工作区。当前阶段后端固定使用 `tenant_local` 租户和 `user_admin` / `admin` 身份，不提供登录、退出或租户切换；这些能力将在后续重新设计。当前可联调多会话未读与排序、执行取消/重试、Ollama answer 流以及 Redis 跨实例通知。
 
 ## 双实例运行与收敛参数
 

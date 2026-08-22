@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public final class FixedIdentityBootstrap implements ApplicationRunner {
 
-    private static final String TENANT_NAME = "Default";
+    private static final String TENANT_NAME = "Local";
     private static final String ACTIVE_STATUS = "active";
     private static final String UNUSED_PASSWORD_HASH = "not-used";
 
