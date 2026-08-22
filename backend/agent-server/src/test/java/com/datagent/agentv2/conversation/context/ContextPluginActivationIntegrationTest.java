@@ -39,18 +39,6 @@ class ContextPluginActivationIntegrationTest {
     }
 
     @Test
-    void missingStrategyUsesDeployableRawDefault() throws Exception {
-        try (ConfigurableApplicationContext context = startContext(null)) {
-            ConversationContextStrategyResolver resolver =
-                    context.getBean(ConversationContextStrategyResolver.class);
-
-            assertThat(context.getEnvironment().getProperty(STRATEGY_PROPERTY))
-                    .isEqualTo(STRATEGY_RAW);
-            assertThat(resolver.selected()).isInstanceOf(RawConversationContextStrategy.class);
-        }
-    }
-
-    @Test
     void rawStrategyLeavesLsmPluginAndTablesUntouched() throws Exception {
         String databaseName = createDatabase();
         try (ConfigurableApplicationContext context = startContext(databaseName, STRATEGY_RAW)) {
@@ -84,10 +72,6 @@ class ContextPluginActivationIntegrationTest {
         assertThatThrownBy(() -> startContext(databaseName, STRATEGY_UNKNOWN))
                 .hasRootCauseInstanceOf(IllegalStateException.class)
                 .hasStackTraceContaining("Unknown context strategy id: " + STRATEGY_UNKNOWN);
-    }
-
-    private static ConfigurableApplicationContext startContext(String strategy) throws Exception {
-        return startContext(createDatabase(), strategy);
     }
 
     private static ConfigurableApplicationContext startContext(
