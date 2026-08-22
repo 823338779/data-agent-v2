@@ -16,8 +16,6 @@ class ContractPathsTest {
     private static final String SUMMARY_EVENTS_PATH = "/api/v1/agent-sessions/summary-events";
     private static final String CONVERSATION_SESSION_PATH =
             "/api/v1/agent-sessions/{conversationSessionId}";
-    private static final String MARK_READ_PATH =
-            "/api/v1/agent-sessions/{conversationSessionId}:mark-read";
     private static final YAMLMapper YAML = new YAMLMapper();
     private static final Set<String> HTTP_METHODS =
             Set.of("get", "post", "put", "delete", "patch", "head", "options", "trace");
@@ -43,7 +41,7 @@ class ContractPathsTest {
     void openApiDeclaresEveryFrozenV1ControllerOperation() throws IOException {
         JsonNode paths = YAML.readTree(ContractFiles.openApi().toFile()).path("paths");
 
-        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(37);
+        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(36);
         assertThat(REQUIRED)
                 .allSatisfy(
                         (path, methods) -> {
@@ -168,23 +166,22 @@ class ContractPathsTest {
     }
 
     @Test
-    void openApiFreezesPerUserSummaryContracts() throws IOException {
+    void openApiFreezesSessionSummaryContracts() throws IOException {
         JsonNode api = YAML.readTree(ContractFiles.openApi().toFile());
         JsonNode schemas = api.path("components").path("schemas");
 
-        // 会话投影只携带跨设备未读游标，不再公开手工排序状态。
+        // 会话投影不再公开用户级已读状态或手工排序状态。
         JsonNode session = schemas.path("ConversationSession");
         assertThat(session.path("required").toString())
-                .contains("unread", "lastNotifiableEventSequence")
-                .doesNotContain("sortOrder", "orderingVersion");
-        assertThat(session.path("properties").path("unread").path("type").asText())
-                .isEqualTo("boolean");
-
-        // mark-read 只允许提交精确通知序号，避免客户端覆盖服务端状态。
-        JsonNode markReadRequest = schemas.path("MarkConversationSessionReadRequest");
-        assertThat(markReadRequest.path("additionalProperties").asBoolean()).isFalse();
-        assertThat(markReadRequest.path("required").toString()).contains("upToSequence");
-        assertThat(markReadRequest.path("properties").size()).isOne();
+                .doesNotContain(
+                        "unread", "lastNotifiableEventSequence", "sortOrder", "orderingVersion");
+        assertThat(session.path("properties").has("unread")).isFalse();
+        assertThat(session.path("properties").has("lastNotifiableEventSequence")).isFalse();
+        assertThat(schemas.has("MarkConversationSessionReadRequest")).isFalse();
+        assertThat(
+                        api.path("paths")
+                                .has("/api/v1/agent-sessions/{conversationSessionId}:mark-read"))
+                .isFalse();
 
         // 标题更新必须是带会话版本的局部写入，避免覆盖其他会话字段或并发更新。
         JsonNode rename = api.path("paths").path(CONVERSATION_SESSION_PATH).path("patch");
@@ -223,7 +220,6 @@ class ContractPathsTest {
         required.put("/api/v1/agent-sessions", Set.of("get", "post"));
         required.put(SUMMARY_EVENTS_PATH, Set.of("get"));
         required.put(CONVERSATION_SESSION_PATH, Set.of("get", "patch"));
-        required.put(MARK_READ_PATH, Set.of("post"));
         required.put(
                 "/api/v1/agent-sessions/{conversationSessionId}/metric-platform-credential",
                 Set.of("put"));

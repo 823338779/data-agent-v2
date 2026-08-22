@@ -209,7 +209,7 @@ describe('backend agent client', () => {
     expect(nextOperationKey).not.toBe(firstKey);
   });
 
-  it('calls control and read endpoints', async () => {
+  it('calls execution control endpoints', async () => {
     const execution = {
       executionId: 'execution_1',
       status: 'cancelled',
@@ -222,18 +222,15 @@ describe('backend agent client', () => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, json: async () => execution })
-      .mockResolvedValueOnce({ ok: true, json: async () => execution })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...session, unread: false }) });
+      .mockResolvedValueOnce({ ok: true, json: async () => execution });
     const client = createFetchAgentBackendClient({ fetchImpl });
 
     await client.cancelExecution('session_1', 'execution_1');
     await client.retryExecution('session_1', 'execution_1');
-    await client.markRead('session_1', 8);
 
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/agent-sessions/session_1/executions/execution_1:cancel',
       '/api/v1/agent-sessions/session_1/executions/execution_1:retry',
-      '/api/v1/agent-sessions/session_1:mark-read',
     ]);
   });
 
@@ -385,8 +382,6 @@ describe('backend agent client', () => {
   it('replaces a message only when message_update advances its version', () => {
     const current = {
       ...session,
-      unread: false,
-      lastNotifiableEventSequence: 0,
       messages: [
         {
           conversationMessageId: 'assistant_1',

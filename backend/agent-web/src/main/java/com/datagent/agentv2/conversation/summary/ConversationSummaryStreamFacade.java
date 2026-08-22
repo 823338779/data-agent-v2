@@ -22,7 +22,7 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-/** 用户级会话摘要 SSE：只发送数据库可重建的当前快照，不承诺永久事件历史。 */
+/** 会话摘要 SSE：只发送数据库可重建的当前快照，不承诺永久事件历史。 */
 @Service
 public final class ConversationSummaryStreamFacade {
 
@@ -60,7 +60,7 @@ public final class ConversationSummaryStreamFacade {
         return emitter;
     }
 
-    /** 固定用户的连接共享一次数据库快照，避免逐连接重复查询。 */
+    /** 所有连接共享一次数据库快照，避免逐连接重复查询。 */
     public void reconcileSubscribers() {
         if (subscriptions.isEmpty()) {
             return;
@@ -81,8 +81,6 @@ public final class ConversationSummaryStreamFacade {
                     new ConversationSummaryItem(
                             session.conversationSessionId(),
                             session.status(),
-                            session.unread(),
-                            session.lastNotifiableEventSequence(),
                             session.updatedAt()));
         }
         return new ConversationSummarySnapshot(
@@ -159,9 +157,5 @@ public final class ConversationSummaryStreamFacade {
             Instant snapshotAt) {}
 
     public record ConversationSummaryItem(
-            String conversationSessionId,
-            SessionExecutionStatus status,
-            boolean unread,
-            long lastNotifiableEventSequence,
-            LocalDateTime updatedAt) {}
+            String conversationSessionId, SessionExecutionStatus status, LocalDateTime updatedAt) {}
 }

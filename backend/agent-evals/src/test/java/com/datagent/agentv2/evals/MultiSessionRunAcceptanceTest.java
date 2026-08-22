@@ -11,8 +11,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Predicate;
@@ -38,15 +36,12 @@ class MultiSessionRunAcceptanceTest {
             HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
     @Test
-    void fourSessionsRespectUserConcurrencyAndShareUnreadOrderingAcrossInstances()
-            throws Exception {
+    void fourSessionsRespectUserConcurrencyAcrossInstances() throws Exception {
         URI instanceA = URI.create(property(INSTANCE_A_PROPERTY, DEFAULT_INSTANCE_A));
         URI instanceB = URI.create(property(INSTANCE_B_PROPERTY, DEFAULT_INSTANCE_B));
         // 四个独立用户操作通过实例 B 入队，随后从实例 A 的公开列表观察共享状态。
-        List<String> sessionIds = new ArrayList<>();
         for (int index = 1; index <= 4; index++) {
             String sessionId = createSession(instanceB, "双实例验收 " + index);
-            sessionIds.add(sessionId);
             submitMessage(instanceB, sessionId, "执行多轮分析场景 " + index);
         }
 
@@ -55,14 +50,6 @@ class MultiSessionRunAcceptanceTest {
         long queued = countStatuses(sessions, "queued");
         assertTrue(running <= 3, "同一用户最多只能有三个 running 执行");
         assertTrue(running + queued >= 4, "四个会话必须都已进入执行生命周期");
-
-        // 在另一实例精确推进已读，验证用户级状态跨实例可见。
-        JsonNode first = findSession(sessions, sessionIds.get(0));
-        long upToSequence = first.path("lastNotifiableEventSequence").asLong();
-        post(
-                instanceA.resolve(SESSIONS_PATH + "/" + sessionIds.get(0) + ":mark-read"),
-                Map.of("upToSequence", upToSequence),
-                null);
     }
 
     private boolean hasFourStartedSessions(JsonNode sessions) {
@@ -74,20 +61,11 @@ class MultiSessionRunAcceptanceTest {
     private long countStatuses(JsonNode sessions, String expected) {
         long count = 0;
         for (JsonNode session : sessions) {
-            if (expected.equals(session.path("execution").path("status").asText())) {
+            if (expected.equals(session.path("status").asText())) {
                 count++;
             }
         }
         return count;
-    }
-
-    private JsonNode findSession(JsonNode sessions, String sessionId) {
-        for (JsonNode session : sessions) {
-            if (sessionId.equals(session.path("conversationSessionId").asText())) {
-                return session;
-            }
-        }
-        throw new AssertionError("会话列表中缺少验收会话: " + sessionId);
     }
 
     private JsonNode await(URI baseUri, Predicate<JsonNode> condition) throws Exception {

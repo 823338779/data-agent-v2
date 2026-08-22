@@ -12,8 +12,6 @@ const sessions = [
     createdAt: '',
     updatedAt: '',
     version: 4,
-    unread: true,
-    lastNotifiableEventSequence: 4,
     messages: [],
     execution: null,
   },
@@ -24,8 +22,6 @@ const sessions = [
     createdAt: '',
     updatedAt: '',
     version: 4,
-    unread: false,
-    lastNotifiableEventSequence: 0,
     messages: [],
     execution: { status: 'running' },
   },
@@ -34,7 +30,7 @@ const sessions = [
 afterEach(cleanup);
 
 describe('ConversationList', () => {
-  it('shows compact unread and status indicators without manual reordering controls', () => {
+  it('shows compact status indicators without manual reordering controls', () => {
     render(
       <ConversationList
         sessions={sessions}
@@ -44,7 +40,6 @@ describe('ConversationList', () => {
       />,
     );
 
-    expect(screen.getByLabelText('未读')).toBeInTheDocument();
     expect(screen.getByText('处理中')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /第二个会话/ })).not.toHaveAttribute('draggable');
   });

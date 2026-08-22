@@ -115,13 +115,8 @@ export function ConversationList({
             onDoubleClick={() => startTitleEdit(session)}
           >
             <span className="session-link-title">{session.title}</span>
-            {session.unread ? (
-              <span className="unread-dot" aria-label="未读" />
-            ) : (
-              status &&
-              STATUS_LABELS[status] && (
-                <small className={`session-short-status ${status}`}>{STATUS_LABELS[status]}</small>
-              )
+            {status && STATUS_LABELS[status] && (
+              <small className={`session-short-status ${status}`}>{STATUS_LABELS[status]}</small>
             )}
           </button>
         );

@@ -119,8 +119,6 @@ interface BackendSessionSummary {
   createdAt: string;
   updatedAt: string;
   version: number;
-  unread?: boolean;
-  lastNotifiableEventSequence?: number;
   status?: string;
 }
 
@@ -193,7 +191,6 @@ export interface AgentBackendClient {
   submitMessage(conversationSessionId: string, content: string): Promise<ConversationSession>;
   cancelExecution(conversationSessionId: string, executionId: string): Promise<AgentExecution>;
   retryExecution(conversationSessionId: string, executionId: string): Promise<AgentExecution>;
-  markRead(conversationSessionId: string, upToSequence: number): Promise<ConversationSession>;
   subscribeSessionEvents(
     conversationSessionId: string,
     onEvent: (event: ConversationStreamEvent) => void,
@@ -391,8 +388,6 @@ function toSession(session: BackendSession | BackendSessionSummary): Conversatio
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     version: session.version,
-    unread: session.unread ?? false,
-    lastNotifiableEventSequence: session.lastNotifiableEventSequence ?? 0,
     latestExecutionStatus: session.status ? toStatus(session.status) : undefined,
     messages: detail.messages?.map(toMessage) ?? [],
     execution: detail.execution ? toExecution(detail.execution) : null,
@@ -487,12 +482,6 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
         { method: 'POST', headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey } },
         true,
       );
-    },
-    markRead(conversationSessionId, upToSequence) {
-      return sessionRequest(`/${encodeURIComponent(conversationSessionId)}:mark-read`, {
-        method: 'POST',
-        body: JSON.stringify({ upToSequence }),
-      });
     },
     subscribeSessionEvents(conversationSessionId, onEvent, onError) {
       const source = openSource(`/${encodeURIComponent(conversationSessionId)}/events`);

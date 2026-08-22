@@ -10,7 +10,6 @@ import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVE
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVENT_TITLE_EXECUTION_STARTED;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_CONVERSATION_SESSION;
 
-import com.datagent.agentv2.conversation.activity.SessionActivityService;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
@@ -23,13 +22,11 @@ import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.enums.MessageRole;
 import com.datagent.agentv2.conversation.enums.SessionExecutionStatus;
 import com.datagent.agentv2.conversation.execution.AgentExecutionSubmissionService;
-import com.datagent.agentv2.persistence.entity.ConversationSessionUserStateEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
-import com.datagent.agentv2.persistence.service.ConversationSessionUserStateService;
 import com.datagent.agentv2.platform.context.OperatorContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
@@ -55,8 +52,6 @@ public class ConversationApplicationService {
     private final AgentExecutionEventService agentExecutionEventService;
     private final AgentExecutionStreamCheckpointService agentExecutionStreamCheckpointService;
     private final AgentExecutionSubmissionService agentExecutionSubmissionService;
-    private final ConversationSessionUserStateService conversationSessionUserStateService;
-    private final SessionActivityService sessionActivityService;
     private final IdGenerator idGenerator;
 
     @Autowired
@@ -67,8 +62,6 @@ public class ConversationApplicationService {
             AgentExecutionEventService agentExecutionEventService,
             AgentExecutionStreamCheckpointService agentExecutionStreamCheckpointService,
             AgentExecutionSubmissionService agentExecutionSubmissionService,
-            ConversationSessionUserStateService conversationSessionUserStateService,
-            SessionActivityService sessionActivityService,
             IdGenerator idGenerator) {
         this.conversationSessionService = conversationSessionService;
         this.conversationMessageService = conversationMessageService;
@@ -76,8 +69,6 @@ public class ConversationApplicationService {
         this.agentExecutionEventService = agentExecutionEventService;
         this.agentExecutionStreamCheckpointService = agentExecutionStreamCheckpointService;
         this.agentExecutionSubmissionService = agentExecutionSubmissionService;
-        this.conversationSessionUserStateService = conversationSessionUserStateService;
-        this.sessionActivityService = sessionActivityService;
         this.idGenerator = idGenerator;
     }
 
@@ -92,28 +83,15 @@ public class ConversationApplicationService {
                         OperatorContext.requiredUserId(),
                         Instant.now());
         conversationSessionService.save(session);
-        List<ConversationSessionUserStateEntity> states = visibleStates();
-        return snapshot(session, stateFor(states, session.getConversationSessionId()));
+        return snapshot(session);
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public List<ConversationSummaryView> listSummaries() {
-        List<ConversationSessionUserStateEntity> states = visibleStates();
-        if (states.isEmpty()) {
+        List<ConversationSession> sessions = conversationSessionService.listByUpdatedAtDesc();
+        if (sessions.isEmpty()) {
             return List.of();
         }
-        Map<String, ConversationSessionUserStateEntity> statesBySessionId =
-                states.stream()
-                        .collect(
-                                Collectors.toMap(
-                                        ConversationSessionUserStateEntity
-                                                ::getConversationSessionId,
-                                        Function.identity()));
-        List<ConversationSession> sessions =
-                conversationSessionService.findByConversationSessionIds(
-                        states.stream()
-                                .map(ConversationSessionUserStateEntity::getConversationSessionId)
-                                .toList());
         // 每个会话只保留最新执行，摘要查询不再装配消息和历史事件。
         Map<String, AgentExecution> latestExecutions = new LinkedHashMap<>();
         agentExecutionService
@@ -129,29 +107,24 @@ public class ConversationApplicationService {
         return sessions.stream()
                 .map(
                         session -> {
-                            ConversationSessionUserStateEntity state =
-                                    statesBySessionId.get(session.getConversationSessionId());
                             AgentExecution execution =
                                     latestExecutions.get(session.getConversationSessionId());
-                            return summary(session, execution, state);
+                            return summary(session, execution);
                         })
                 .toList();
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public ConversationView get(String conversationSessionId) {
-        List<ConversationSessionUserStateEntity> states = visibleStates();
-        return snapshot(
-                requiredSession(conversationSessionId), stateFor(states, conversationSessionId));
+        return snapshot(requiredSession(conversationSessionId));
     }
 
     /** 为首次 SSE 连接读取一次权威会话投影及其持久事件水位。 */
-    @Transactional
+    @Transactional(readOnly = true)
     public SessionStreamBootstrapView streamBootstrap(String conversationSessionId) {
-        List<ConversationSessionUserStateEntity> states = visibleStates();
         ConversationSession session = requiredSession(conversationSessionId);
         return new SessionStreamBootstrapView(
-                snapshot(session, stateFor(states, conversationSessionId)),
+                snapshot(session),
                 session.getExecutionEventSequence() == null
                         ? 0L
                         : session.getExecutionEventSequence());
@@ -364,15 +337,7 @@ public class ConversationApplicationService {
         ConversationSession session =
                 agentExecutionSubmissionService.submit(
                         conversationSessionId, content, idempotencyKey, requestId);
-        List<ConversationSessionUserStateEntity> states = visibleStates();
-        return snapshot(session, stateFor(states, conversationSessionId));
-    }
-
-    @Transactional
-    public ConversationView markRead(String conversationSessionId, long upToSequence) {
-        requiredSession(conversationSessionId);
-        sessionActivityService.markRead(conversationSessionId, upToSequence);
-        return get(conversationSessionId);
+        return snapshot(session);
     }
 
     @Transactional(readOnly = true)
@@ -400,8 +365,7 @@ public class ConversationApplicationService {
         return session;
     }
 
-    private ConversationView snapshot(
-            ConversationSession session, ConversationSessionUserStateEntity state) {
+    private ConversationView snapshot(ConversationSession session) {
         // 先构建不含执行投影的消息视图，供每次 Agent 执行解析触发消息形成 objective。
         List<ConversationMessage> messageEntities =
                 conversationMessageService.findUserVisibleByConversationSessionId(
@@ -448,17 +412,13 @@ public class ConversationApplicationService {
                 session.getVersion(),
                 0,
                 null,
-                state.getLastReadEventSequence() < session.getLastNotifiableEventSequence(),
-                session.getLastNotifiableEventSequence(),
                 messageViews,
                 latestAgentExecutionView);
     }
 
     /** 从已经批量读取的数据组装一个不含详情的会话摘要。 */
     private static ConversationSummaryView summary(
-            ConversationSession session,
-            AgentExecution execution,
-            ConversationSessionUserStateEntity state) {
+            ConversationSession session, AgentExecution execution) {
         return new ConversationSummaryView(
                 session.getConversationSessionId(),
                 session.getTitle(),
@@ -466,30 +426,10 @@ public class ConversationApplicationService {
                 session.getCreatedAt(),
                 session.getUpdatedAt(),
                 session.getVersion(),
-                state.getLastReadEventSequence() < session.getLastNotifiableEventSequence(),
-                session.getLastNotifiableEventSequence(),
                 execution == null
                         ? SessionExecutionStatus.IDLE
                         : SessionExecutionStatus.fromExecutionStatus(
                                 ExecutionStatus.fromValue(execution.getStatus())));
-    }
-
-    private List<ConversationSessionUserStateEntity> visibleStates() {
-        String userId = OperatorContext.requiredUserId();
-        conversationSessionUserStateService.ensureVisible(userId);
-        return conversationSessionUserStateService.listByUserId(userId);
-    }
-
-    private static ConversationSessionUserStateEntity stateFor(
-            List<ConversationSessionUserStateEntity> states, String conversationSessionId) {
-        return states.stream()
-                .filter(state -> conversationSessionId.equals(state.getConversationSessionId()))
-                .findFirst()
-                .orElseThrow(
-                        () ->
-                                new ResponseStatusException(
-                                        HttpStatus.NOT_FOUND,
-                                        ERROR_CONVERSATION_SESSION_NOT_FOUND));
     }
 
     private ConversationView.MessageView messageView(

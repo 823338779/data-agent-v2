@@ -1,7 +1,6 @@
 package com.datagent.agentv2.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -34,7 +33,7 @@ class SessionUserActivityMigrationTest {
                 .load()
                 .migrate();
 
-        // 迁移前数据覆盖两租户和同租户两用户，用于验证每用户已读状态回填。
+        // 迁移前数据覆盖两租户和同租户两用户，确保删除旧用户状态时已有数据也可平滑升级。
         execute(
                 """
                 insert into tenant(tenant_id, name) values
@@ -64,7 +63,7 @@ class SessionUserActivityMigrationTest {
                         .load()
                         .migrate()
                         .migrationsExecuted;
-        assertThat(migrated).isEqualTo(9);
+        assertThat(migrated).isEqualTo(10);
     }
 
     @AfterAll
@@ -73,64 +72,37 @@ class SessionUserActivityMigrationTest {
     }
 
     @Test
-    void existingSessionsReceivePerUserReadState() throws SQLException {
+    void existingSessionsRetainActivityTimeWithoutUserReadState() throws SQLException {
         assertThat(
                         row(
                                 """
-                                select count(id), count(distinct id), min(id) > 0
-                                  from conversation_session_user_state
+                                select last_activity_at = updated_at
+                                  from conversation_session
+                                 where conversation_session_id = 'session_alpha_a'
                                 """))
-                .containsExactly("5", "5", "t");
-        assertThat(
-                        rows(
-                                """
-                                select user_id, conversation_session_id
-                                  from conversation_session_user_state
-                                 where tenant_id = 'tenant_alpha'
-                                 order by user_id, conversation_session_id
-                                """))
-                .containsExactly(
-                        List.of("user_alpha_a", "session_alpha_a"),
-                        List.of("user_alpha_a", "session_alpha_b"),
-                        List.of("user_alpha_b", "session_alpha_a"),
-                        List.of("user_alpha_b", "session_alpha_b"));
+                .containsExactly("t");
         assertThat(
                         row(
                                 """
-                                select last_activity_at = updated_at, last_notifiable_event_sequence
-                                  from conversation_session where conversation_session_id = 'session_alpha_a'
+                                select count(*) from information_schema.tables
+                                 where table_schema = 'public'
+                                   and table_name = 'conversation_session_user_state'
                                 """))
-                .containsExactly("t", "0");
+                .containsExactly("0");
     }
 
     @Test
-    void userReadStatesRemainTenantBound() throws SQLException {
-        // 复合外键拒绝把另一租户的用户和会话拼成状态记录。
-        assertThatThrownBy(
-                        () ->
-                                execute(
-                                        """
-                                        insert into conversation_session_user_state(
-                                            tenant_id, user_id, conversation_session_id)
-                                        values ('tenant_alpha', 'user_alpha_a', 'session_beta')
-                                        """))
-                .isInstanceOf(SQLException.class);
-    }
-
-    @Test
-    void activityTablesExposeOnlyReadAndReconciliationState() throws SQLException {
+    void activitySchemaKeepsOnlyReconciliationState() throws SQLException {
         assertThat(
                         row(
                                 "select count(*) from information_schema.tables where table_schema = 'public' and table_name = 'conversation_preference'"))
                 .containsExactly("0");
         assertThat(
                         row(
-                                "select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'conversation_session_user_state' and column_name = 'sort_order'"))
+                                "select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'conversation_session' and column_name = 'last_notifiable_event_sequence'"))
                 .containsExactly("0");
         assertThat(indexDefinition("ix_conversation_session_activity_reconciliation"))
                 .contains("tenant_id", "last_activity_at");
-        assertThat(indexDefinition("ix_conversation_session_user_unread"))
-                .contains("tenant_id", "user_id", "last_read_event_sequence");
     }
 
     private static void execute(String sql) throws SQLException {

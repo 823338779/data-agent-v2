@@ -22,8 +22,6 @@ public record ConversationView(
         long version,
         long metricPlatformCredentialBindingVersion,
         Object metricPlatformCredential,
-        boolean unread,
-        long lastNotifiableEventSequence,
         List<MessageView> messages,
         AgentExecutionView execution) {
 

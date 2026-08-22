@@ -8,10 +8,10 @@ paths:
   /api/v1/agent-sessions:
     get:
       operationId: listConversationSessions
-      description: Returns visible sessions ordered by updatedAt descending, with conversationSessionId descending as the deterministic tie-breaker.
+      description: Returns sessions ordered by updatedAt descending, with conversationSessionId descending as the deterministic tie-breaker.
       responses:
         '200':
-          description: Visible agent sessions
+          description: Agent sessions
           content:
             application/json:
               schema:
@@ -34,7 +34,7 @@ paths:
   /api/v1/agent-sessions/summary-events:
     get:
       operationId: streamConversationSummaries
-      description: Sends current per-user conversation summary snapshots and subsequent changes. Clients reconnect by listing sessions before reopening this stream; permanent event replay is not provided.
+      description: Sends current conversation summary snapshots and subsequent changes. Clients reconnect by listing sessions before reopening this stream; permanent event replay is not provided.
       responses:
         '200':
           description: Current conversation summary snapshot followed by changed snapshots
@@ -71,24 +71,6 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
-  /api/v1/agent-sessions/{conversationSessionId}:mark-read:
-    post:
-      operationId: markConversationSessionRead
-      parameters:
-        - { $ref: '#/components/parameters/ConversationSessionId' }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/MarkConversationSessionReadRequest' }
-      responses:
-        '200':
-          description: Session activity after advancing the per-user read cursor
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ConversationSession' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/agent-sessions/{conversationSessionId}/metric-platform-credential:
     put:
       operationId: bindConversationSessionMetricPlatformCredential
@@ -700,12 +682,6 @@ components:
       required: [content]
       properties:
         content: { type: string, minLength: 1, maxLength: 8000 }
-    MarkConversationSessionReadRequest:
-      type: object
-      additionalProperties: false
-      required: [upToSequence]
-      properties:
-        upToSequence: { type: integer, format: int64, minimum: 0 }
     ConfirmActionRequest:
       type: object
       required: [approved]
@@ -739,8 +715,6 @@ components:
         - updatedAt
         - version
         - metricPlatformCredentialBindingVersion
-        - unread
-        - lastNotifiableEventSequence
         - messages
       properties:
         conversationSessionId: { type: string }
@@ -751,8 +725,6 @@ components:
         updatedAt: { type: string, format: date-time }
         version: { type: integer, format: int64 }
         metricPlatformCredentialBindingVersion: { type: integer, format: int64 }
-        unread: { type: boolean }
-        lastNotifiableEventSequence: { type: integer, format: int64, minimum: 0 }
         metricPlatformCredential:
           oneOf:
             - { $ref: '#/components/schemas/MetricPlatformCredentialBinding' }
@@ -760,7 +732,7 @@ components:
     ConversationSessionSummary:
       type: object
       description: Lightweight session-list projection without messages, execution history, or answer content.
-      required: [conversationSessionId, title, tag, createdAt, updatedAt, version, unread, lastNotifiableEventSequence, status]
+      required: [conversationSessionId, title, tag, createdAt, updatedAt, version, status]
       properties:
         conversationSessionId: { type: string }
         title: { type: string }
@@ -768,8 +740,6 @@ components:
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         version: { type: integer, format: int64 }
-        unread: { type: boolean }
-        lastNotifiableEventSequence: { type: integer, format: int64, minimum: 0 }
         status:
           type: string
           enum: [idle, queued, running, waiting_for_user, waiting_confirmation, done, cancelled, failed, lost]
@@ -782,14 +752,12 @@ components:
             - { type: 'null' }
     ConversationSummaryStreamItem:
       type: object
-      required: [conversationSessionId, status, unread, lastNotifiableEventSequence, updatedAt]
+      required: [conversationSessionId, status, updatedAt]
       properties:
         conversationSessionId: { type: string }
         status:
           type: string
           enum: [idle, queued, running, waiting_for_user, waiting_confirmation, done, cancelled, failed]
-        unread: { type: boolean }
-        lastNotifiableEventSequence: { type: integer, format: int64, minimum: 0 }
         updatedAt: { type: string, format: date-time }
     ConversationSummarySnapshot:
       type: object

@@ -17,9 +17,5 @@ public record ConversationSummaryView(
         LocalDateTime updatedAt,
         /** 会话共享字段乐观锁版本。 */
         long version,
-        /** 当前用户是否存在未读通知。 */
-        boolean unread,
-        /** 最近一个可通知执行事件序号。 */
-        long lastNotifiableEventSequence,
         /** 会话最新执行状态，无执行时为 idle。 */
         SessionExecutionStatus status) {}

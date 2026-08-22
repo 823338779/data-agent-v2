@@ -18,9 +18,6 @@ public class ConversationSessionService
     private static final String LOCK_FOR_UPDATE = "FOR UPDATE";
     private static final String SET_LAST_ACTIVITY_AT =
             "last_activity_at = greatest(last_activity_at, {0})";
-    private static final String SET_LAST_NOTIFIABLE_EVENT_SEQUENCE =
-            "last_notifiable_event_sequence = greatest(last_notifiable_event_sequence, {0})";
-
     private final ConversationPersistenceMapper models;
 
     public ConversationSessionService(ConversationPersistenceMapper models) {
@@ -73,8 +70,7 @@ public class ConversationSessionService
                                 .eq(
                                         ConversationSessionEntity::getConversationSessionId,
                                         conversationSessionId)
-                                .setIncrBy(
-                                        ConversationSessionEntity::getExecutionEventSequence, 1)
+                                .setIncrBy(ConversationSessionEntity::getExecutionEventSequence, 1)
                                 .setIncrBy(ConversationSessionEntity::getVersion, 1));
         if (updated != 1) {
             throw new IllegalStateException("agent session not found: " + conversationSessionId);
@@ -136,10 +132,18 @@ public class ConversationSessionService
                         .list());
     }
 
-    /** 更新共享活动时间，并在需要时推进可通知事件水位。 */
-    public void recordActivity(
-            String conversationSessionId, Long notifiableSequence, Instant occurredAt) {
-        // greatest 保证乱序事件不会回退活动时间或可通知水位。
+    /** 按更新时间降序读取当前租户内的全部会话。 */
+    public List<ConversationSession> listByUpdatedAtDesc() {
+        return models.toSessionModels(
+                lambdaQuery()
+                        .orderByDesc(ConversationSessionEntity::getUpdatedAt)
+                        .orderByDesc(ConversationSessionEntity::getConversationSessionId)
+                        .list());
+    }
+
+    /** 更新共享活动时间，供会话摘要按最新活动收敛。 */
+    public void recordActivity(String conversationSessionId, Instant occurredAt) {
+        // greatest 保证乱序事件不会回退活动时间。
         int updated =
                 baseMapper.update(
                         new ConversationSessionEntity(),
@@ -148,10 +152,6 @@ public class ConversationSessionService
                                         ConversationSessionEntity::getConversationSessionId,
                                         conversationSessionId)
                                 .setSql(SET_LAST_ACTIVITY_AT, occurredAt)
-                                .setSql(
-                                        notifiableSequence != null,
-                                        SET_LAST_NOTIFIABLE_EVENT_SEQUENCE,
-                                        notifiableSequence)
                                 .setIncrBy(ConversationSessionEntity::getVersion, 1));
         if (updated != 1) {
             throw new IllegalStateException(

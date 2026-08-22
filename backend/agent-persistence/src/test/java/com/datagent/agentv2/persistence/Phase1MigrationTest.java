@@ -48,7 +48,6 @@ class Phase1MigrationTest {
                     "agent_execution_stream_checkpoint",
                     "conversation_message",
                     "conversation_session",
-                    "conversation_session_user_state",
                     "model_invocation",
                     "notification_outbox_message",
                     "tenant",
@@ -63,7 +62,6 @@ class Phase1MigrationTest {
                     "agent_execution_stream_checkpoint",
                     "conversation_message",
                     "conversation_session",
-                    "conversation_session_user_state",
                     "model_invocation",
                     "notification_outbox_message",
                     "tenant",
@@ -102,7 +100,7 @@ class Phase1MigrationTest {
                                 POSTGRES.getPassword())
                         .locations("classpath:db/migration")
                         .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(18);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(19);
     }
 
     @AfterAll
@@ -170,8 +168,6 @@ class Phase1MigrationTest {
                     .isEqualTo("primary key (id)");
             assertThat(identityFlag(table, "id")).as("identity id for %s", table).isEqualTo("YES");
         }
-        assertThat(uniqueConstraints("conversation_session_user_state"))
-                .contains("unique (tenant_id, user_id, conversation_session_id)");
     }
 
     @Test

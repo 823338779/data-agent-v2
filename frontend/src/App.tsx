@@ -74,7 +74,6 @@ export default function App({ client }: AppProps) {
   const [error, setError] = useState<string | null>(null);
   const [loadedDetailSessionId, setLoadedDetailSessionId] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
-  const readCursorRef = useRef<Record<string, number>>({});
 
   const active =
     route.kind === 'session'
@@ -260,18 +259,6 @@ export default function App({ client }: AppProps) {
     // 轮询只由是否存在后台处理中会话控制。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backend, hasBackgroundProcessingSession]);
-
-  // 当前会话的通知已提交到 DOM 后，按活动快照中的精确序号推进已读游标。
-  useEffect(() => {
-    if (!active?.unread || active.lastNotifiableEventSequence <= 0) return;
-    const sequence = active.lastNotifiableEventSequence;
-    if ((readCursorRef.current[active.conversationSessionId] ?? 0) >= sequence) return;
-    readCursorRef.current[active.conversationSessionId] = sequence;
-    void backend
-      .markRead(active.conversationSessionId, sequence)
-      .then(replaceSession)
-      .catch((failure) => handleFailure(failure, '无法更新会话已读状态。'));
-  }, [active?.conversationSessionId, active?.unread, active?.lastNotifiableEventSequence, backend]);
 
   useEffect(() => {
     const element = messagesRef.current;

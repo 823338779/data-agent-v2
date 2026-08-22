@@ -99,9 +99,8 @@ class ContractExamplesTest {
         assertThat(rest.path("value").has("orderingVersion")).isFalse();
         assertThat(snapshot.path("type").asString()).isEqualTo("conversation_summary_snapshot");
         assertThat(snapshot.has("orderingVersion")).isFalse();
-        assertThat(snapshot.path("sessions").path(0).path("unread").asBoolean()).isTrue();
-        assertThat(snapshot.path("sessions").path(0).path("lastNotifiableEventSequence").asLong())
-                .isEqualTo(12L);
+        assertThat(snapshot.path("sessions").path(0).has("unread")).isFalse();
+        assertThat(snapshot.path("sessions").path(0).has("lastNotifiableEventSequence")).isFalse();
     }
 
     @Test

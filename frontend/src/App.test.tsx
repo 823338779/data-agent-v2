@@ -11,8 +11,6 @@ const session: ConversationSession = {
   createdAt: '2026-08-01T08:00:00Z',
   updatedAt: '2026-08-01T08:00:00Z',
   version: 4,
-  unread: false,
-  lastNotifiableEventSequence: 0,
   messages: [],
   execution: null,
 };
@@ -73,7 +71,6 @@ function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient
     }),
     cancelExecution: vi.fn(),
     retryExecution: vi.fn(),
-    markRead: vi.fn().mockResolvedValue(session),
     subscribeSessionEvents: vi.fn().mockReturnValue(() => undefined),
     ...overrides,
   };
@@ -429,17 +426,6 @@ describe('server-backed conversation workspace', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(backend.cancelExecution).not.toHaveBeenCalled();
-  });
-
-  it('marks the current session read at the exact detail notification sequence', async () => {
-    const unread = { ...session, unread: true, lastNotifiableEventSequence: 7 };
-    const backend = client({
-      getSession: vi.fn().mockResolvedValue(unread),
-    });
-    render(<App client={backend} />);
-    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
-
-    await waitFor(() => expect(backend.markRead).toHaveBeenCalledWith('session_1', 7));
   });
 
   it('opens no SSE for a terminal current session', async () => {

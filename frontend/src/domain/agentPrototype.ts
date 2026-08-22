@@ -132,8 +132,6 @@ export interface ConversationSession {
   updatedAt: string;
   /** 会话共享字段更新使用的服务端乐观锁版本。 */
   version: number;
-  unread: boolean;
-  lastNotifiableEventSequence: number;
   /** 摘要轮询提供的轻量状态，可早于详细会话刷新到达。 */
   latestExecutionStatus?: AgentExecutionStatus;
   messages: ConversationMessage[];

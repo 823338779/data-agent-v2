@@ -3,7 +3,6 @@ package com.datagent.agentv2.conversation;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.servlet.http.Cookie;
@@ -27,8 +26,6 @@ import tools.jackson.databind.ObjectMapper;
 @AutoConfigureMockMvc
 class SessionActivityIntegrationTest {
 
-    private static final String TENANT_ID = "tenant_local";
-    private static final String USER_ID = "user_admin";
     private static final String REDIS_PASSWORD = "redis_test";
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
@@ -77,39 +74,12 @@ class SessionActivityIntegrationTest {
         assertThat(sessions.get(1).path("conversationSessionId").asString()).isEqualTo(second);
         assertThat(sessions.get(0).has("sortOrder")).isFalse();
         assertThat(sessions.get(0).has("orderingVersion")).isFalse();
-        assertThat(sessions.get(0).path("unread").asBoolean()).isFalse();
+        assertThat(sessions.get(0).has("unread")).isFalse();
+        assertThat(sessions.get(0).has("lastNotifiableEventSequence")).isFalse();
 
         setUpdatedAt(second, "2026-08-22T11:00:00Z");
         assertThat(listSessions(login).get(0).path("conversationSessionId").asString())
                 .isEqualTo(second);
-    }
-
-    @Test
-    void markReadIsMonotonic() throws Exception {
-        Cookie login = login();
-        String first = createSession(login, "ordering-first");
-
-        // 读游标最多推进到当前可通知水位，并保留随后到达的新通知。
-        setLastNotifiable(first, 5L);
-        markRead(login, first, 99L).andExpect(jsonPath("$.unread").value(false));
-        assertThat(lastRead(first)).isEqualTo(5L);
-        setLastNotifiable(first, 6L);
-        markRead(login, first, 5L)
-                .andExpect(jsonPath("$.unread").value(true))
-                .andExpect(jsonPath("$.lastNotifiableEventSequence").value(6));
-        assertThat(lastRead(first)).isEqualTo(5L);
-    }
-
-    private org.springframework.test.web.servlet.ResultActions markRead(
-            Cookie login, String conversationSessionId, long upToSequence) throws Exception {
-        return mvc.perform(
-                        post(
-                                        "/api/v1/agent-sessions/{conversationSessionId}:mark-read",
-                                        conversationSessionId)
-                                .cookie(login)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content("{\"upToSequence\":" + upToSequence + "}"))
-                .andExpect(status().isOk());
     }
 
     private String createSession(Cookie login, String title) throws Exception {
@@ -140,28 +110,10 @@ class SessionActivityIntegrationTest {
         return new Cookie("ignored", "ignored");
     }
 
-    private void setLastNotifiable(String conversationSessionId, long sequence) {
-        jdbc.update(
-                "update conversation_session set last_notifiable_event_sequence = ? where tenant_id = ? and conversation_session_id = ?",
-                sequence,
-                TENANT_ID,
-                conversationSessionId);
-    }
-
     private void setUpdatedAt(String conversationSessionId, String updatedAt) {
         jdbc.update(
                 "update conversation_session set updated_at = cast(? as timestamptz) where conversation_session_id = ?",
                 updatedAt,
                 conversationSessionId);
     }
-
-    private long lastRead(String conversationSessionId) {
-        return jdbc.queryForObject(
-                "select last_read_event_sequence from conversation_session_user_state where tenant_id = ? and user_id = ? and conversation_session_id = ?",
-                Long.class,
-                TENANT_ID,
-                USER_ID,
-                conversationSessionId);
-    }
-
 }

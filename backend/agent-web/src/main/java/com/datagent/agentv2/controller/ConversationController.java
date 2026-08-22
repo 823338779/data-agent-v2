@@ -35,7 +35,6 @@ public class ConversationController {
             "/{conversationSessionId}/executions/{executionId}:cancel";
     private static final String RETRY_EXECUTION_PATH =
             "/{conversationSessionId}/executions/{executionId}:retry";
-    private static final String MARK_READ_PATH = "/{conversationSessionId}:mark-read";
     private static final String SUMMARY_EVENTS_PATH = "/summary-events";
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 
@@ -76,13 +75,6 @@ public class ConversationController {
     @GetMapping(value = SUMMARY_EVENTS_PATH, produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     SseEmitter streamSummaries() {
         return summaryStream.open();
-    }
-
-    @PostMapping(MARK_READ_PATH)
-    ConversationView markRead(
-            @PathVariable String conversationSessionId,
-            @Valid @RequestBody MarkConversationSessionReadRequest request) {
-        return conversations.markRead(conversationSessionId, request.upToSequence());
     }
 
     @GetMapping(
@@ -142,7 +134,4 @@ public class ConversationController {
 
     /** 向指定对话会话提交用户消息的请求。 */
     record SubmitConversationMessageRequest(@NotBlank @Size(max = 8000) String content) {}
-
-    /** 精确推进当前用户对一个会话的已读游标。 */
-    record MarkConversationSessionReadRequest(@Min(0) long upToSequence) {}
 }

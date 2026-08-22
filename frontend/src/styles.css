@@ -246,14 +246,6 @@ textarea:focus-visible {
 .session-short-status.queued {
   color: #9a4e2d;
 }
-.unread-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: #b45f3d;
-  box-shadow: 0 0 0 3px rgb(180 95 61 / 12%);
-}
-
 .home-view,
 .not-found {
   flex: 1;

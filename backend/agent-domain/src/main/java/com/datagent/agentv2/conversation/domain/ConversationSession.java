@@ -36,9 +36,6 @@ public final class ConversationSession {
     /** 最近一次影响会话内容或列表状态的活动时间。 */
     private Instant lastActivityAt;
 
-    /** 最近一个会触发未读提示的执行事件序号。 */
-    private Long lastNotifiableEventSequence;
-
     /** 会话乐观锁版本。 */
     private Long version;
 
@@ -65,7 +62,6 @@ public final class ConversationSession {
         session.conversationMessageSequence = 0L;
         session.executionEventSequence = 0L;
         session.lastActivityAt = createdAt;
-        session.lastNotifiableEventSequence = 0L;
         session.version = 0L;
         return session;
     }
