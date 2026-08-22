@@ -15,7 +15,7 @@ data-agent:
       recent-raw-turns: ${DATA_AGENT_CONTEXT_HIERARCHICAL_RECENT_RAW_TURNS:10}
       warm-window-turns: ${DATA_AGENT_CONTEXT_HIERARCHICAL_WARM_WINDOW_TURNS:100}
   model:
-    provider: ${DATA_AGENT_MODEL_PROVIDER:ollama}
+    provider: ${DATA_AGENT_MODEL_PROVIDER:codex}
     codex:
       executable: ${DATA_AGENT_MODEL_CODEX_EXECUTABLE:codex}
       model: ${DATA_AGENT_MODEL_CODEX_MODEL:gpt-5.5}

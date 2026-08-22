@@ -1,6 +1,5 @@
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { AgentExecutionStreamCheckpoint } from '../domain/agentPrototype';
+import { MarkdownContent } from './MarkdownContent';
 
 interface RunStreamPanelProps {
   checkpoint: AgentExecutionStreamCheckpoint | null;
@@ -12,7 +11,7 @@ export function RunStreamPanel({ checkpoint }: RunStreamPanelProps) {
   return (
     <section className="run-stream-panel">
       <article className="stream-answer-content" aria-label="回答">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{checkpoint.answer}</ReactMarkdown>
+        <MarkdownContent content={checkpoint.answer} />
       </article>
     </section>
   );

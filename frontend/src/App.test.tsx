@@ -139,6 +139,42 @@ describe('server-backed conversation workspace', () => {
     expect(screen.getAllByText('第二条回答')).toHaveLength(1);
   });
 
+  it('renders assistant answers as GFM markdown while keeping user messages as plain text', async () => {
+    const history: ConversationSession = {
+      ...session,
+      messages: [
+        {
+          conversationMessageId: 'question_1',
+          role: 'user',
+          author: 'user_admin',
+          content: '**不要解析**',
+          timestamp: '2026-08-01T08:01:00Z',
+          version: 1,
+          thinkingProcess: [],
+          execution: null,
+        },
+        {
+          conversationMessageId: 'answer_1',
+          role: 'assistant',
+          author: 'assistant',
+          content: '# 期末试卷\n\n- 第一题\n\n| 题目 | 分值 |\n| --- | ---: |\n| 计算 | 10 |',
+          timestamp: '2026-08-01T08:02:00Z',
+          version: 1,
+          thinkingProcess: [],
+          execution: null,
+        },
+      ],
+    };
+
+    render(<App client={client({ listSessions: vi.fn().mockResolvedValue([history]) })} />);
+    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+
+    expect(screen.getByRole('heading', { name: '期末试卷' })).toBeInTheDocument();
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByText('**不要解析**').tagName).toBe('P');
+    expect(screen.queryByText('不要解析')).not.toBeInTheDocument();
+  });
+
   it('closes the previous detail stream before opening the viewed processing session', async () => {
     const running = {
       ...session,
@@ -438,5 +474,4 @@ describe('server-backed conversation workspace', () => {
     );
     expect(within(sidebar).getByRole('button', { name: /其他位置的标题/ })).toBeInTheDocument();
   });
-
 });

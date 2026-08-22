@@ -41,6 +41,10 @@ class OllamaAgentModelGatewayTest {
             """
             {"model":"test-model","created_at":"2026-08-01T00:00:00Z","message":{"role":"assistant","content":"","tool_calls":[{"id":"call-1","function":{"name":"lookup","arguments":{"q":"x"}}}]},"done":true,"done_reason":"stop"}
             """;
+    private static final String TOOL_STREAM_WITHOUT_ID =
+            """
+            {"model":"test-model","created_at":"2026-08-01T00:00:00Z","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"lookup","arguments":{"q":"x"}}}]},"done":true,"done_reason":"stop"}
+            """;
 
     private final AtomicReference<String> response = new AtomicReference<>(FINAL_STREAM);
     private final AtomicReference<String> request = new AtomicReference<>();
@@ -60,7 +64,8 @@ class OllamaAgentModelGatewayTest {
                 new OllamaAgentModelGateway(
                         api,
                         new OllamaModelProperties(MODEL_NAME, Duration.ofSeconds(3), 512),
-                        JsonMapper.builder().build());
+                        JsonMapper.builder().build(),
+                        prefix -> prefix + "_generated");
     }
 
     @AfterEach
@@ -113,6 +118,32 @@ class OllamaAgentModelGatewayTest {
                                 List.of(
                                         new com.datagent.agentv2.conversation.react.ModelToolCall(
                                                 "call-1",
+                                                "lookup",
+                                                JsonMapper.builder()
+                                                        .build()
+                                                        .readTree("{\"q\":\"x\"}")))));
+    }
+
+    @Test
+    void generatesInternalIdWhenOllamaOmitsOptionalToolCallId() {
+        response.set(TOOL_STREAM_WITHOUT_ID);
+
+        ModelInvocationResult result =
+                complete(
+                        List.of(ModelInputMessage.plain("user", "question")),
+                        List.of(
+                                new ModelToolDefinition(
+                                        "lookup",
+                                        "Lookup",
+                                        Map.of("type", "object", "properties", Map.of()))),
+                        ignored -> {});
+
+        assertThat(result)
+                .isEqualTo(
+                        new ModelInvocationResult.ToolCalls(
+                                List.of(
+                                        new com.datagent.agentv2.conversation.react.ModelToolCall(
+                                                "ollama_tool_call_generated",
                                                 "lookup",
                                                 JsonMapper.builder()
                                                         .build()

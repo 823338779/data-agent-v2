@@ -8,6 +8,7 @@ import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
 import com.datagent.agentv2.conversation.exception.ModelStreamInterruptedException;
 import com.datagent.agentv2.conversation.react.ModelInputMessage;
 import com.datagent.agentv2.conversation.react.ModelToolCall;
+import com.datagent.agentv2.platform.id.IdGenerator;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,6 +31,7 @@ import tools.jackson.databind.ObjectMapper;
 public final class OllamaAgentModelGateway implements AgentModelGateway {
 
     private static final String MODEL_PROVIDER = "ollama";
+    private static final String TOOL_CALL_ID_PREFIX = "ollama_tool_call";
     private static final String ERROR_INTERRUPTED =
             "Ollama stream ended before a complete model result";
     private static final String ERROR_AMBIGUOUS =
@@ -38,6 +40,7 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
     private final OllamaApi api;
     private final OllamaModelProperties properties;
     private final ObjectMapper json;
+    private final IdGenerator ids;
 
     @Override
     public ModelInvocationResult complete(
@@ -120,15 +123,19 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
                 return;
             }
             for (OllamaApi.Message.ToolCall call : calls) {
-                if (call.id() == null || call.id().isBlank() || call.function() == null) {
+                if (call.function() == null) {
                     throw new ModelStreamInterruptedException(ERROR_INTERRUPTED);
                 }
+                String toolCallId =
+                        call.id() == null || call.id().isBlank()
+                                ? ids.next(TOOL_CALL_ID_PREFIX)
+                                : call.id();
                 ModelToolCall document =
                         new ModelToolCall(
-                                call.id(),
+                                toolCallId,
                                 call.function().name(),
                                 json.valueToTree(call.function().arguments()));
-                ModelToolCall previous = toolCalls.putIfAbsent(call.id(), document);
+                ModelToolCall previous = toolCalls.putIfAbsent(toolCallId, document);
                 if (previous != null && !previous.equals(document)) {
                     throw new ModelStreamInterruptedException(ERROR_INTERRUPTED);
                 }

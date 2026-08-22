@@ -9,8 +9,6 @@ import {
   UserRound,
 } from 'lucide-react';
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import {
   AgentBackendClient,
   applyConversationStreamEvent,
@@ -26,6 +24,7 @@ import {
 } from './app/workspaceRoute';
 import { AppShell } from './components/shell/AppShell';
 import { ConversationList } from './components/ConversationList';
+import { MarkdownContent } from './components/MarkdownContent';
 import { MessageProcessTimeline } from './components/MessageProcessTimeline';
 import { ConversationStatus } from './components/ConversationStatus';
 import { RunStreamPanel } from './components/RunStreamPanel';
@@ -471,7 +470,11 @@ export default function App({ client }: AppProps) {
                     <strong>{message.role === 'user' ? FIXED_SUBJECT : message.author}</strong>
                     <time>{formatTimestamp(message.timestamp)}</time>
                   </header>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                  {message.role === 'assistant' ? (
+                    <MarkdownContent content={message.content} />
+                  ) : (
+                    <p className="plain-message-content">{message.content}</p>
+                  )}
                   {message.role === 'assistant' && (
                     <MessageProcessTimeline items={message.thinkingProcess} />
                   )}
