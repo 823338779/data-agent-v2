@@ -121,8 +121,6 @@ interface BackendSessionSummary {
   version: number;
   unread?: boolean;
   lastNotifiableEventSequence?: number;
-  sortOrder?: number;
-  orderingVersion?: number;
   status?: string;
 }
 
@@ -177,11 +175,6 @@ interface StreamCursor {
   outputDeltaSequence: number;
 }
 
-export interface ReorderSessionsResult {
-  orderingVersion: number;
-  sessions: ConversationSession[];
-}
-
 export class BackendApiError extends Error {
   constructor(readonly status: number) {
     super(`Backend request failed with status ${status}`);
@@ -201,10 +194,6 @@ export interface AgentBackendClient {
   cancelExecution(conversationSessionId: string, executionId: string): Promise<AgentExecution>;
   retryExecution(conversationSessionId: string, executionId: string): Promise<AgentExecution>;
   markRead(conversationSessionId: string, upToSequence: number): Promise<ConversationSession>;
-  reorderSessions(
-    conversationSessionIds: string[],
-    expectedOrderingVersion: number,
-  ): Promise<ReorderSessionsResult>;
   subscribeSessionEvents(
     conversationSessionId: string,
     onEvent: (event: ConversationStreamEvent) => void,
@@ -404,8 +393,6 @@ function toSession(session: BackendSession | BackendSessionSummary): Conversatio
     version: session.version,
     unread: session.unread ?? false,
     lastNotifiableEventSequence: session.lastNotifiableEventSequence ?? 0,
-    sortOrder: session.sortOrder ?? 0,
-    orderingVersion: session.orderingVersion ?? 0,
     activityStatus: session.status ? toStatus(session.status) : undefined,
     messages: detail.messages?.map(toMessage) ?? [],
     execution: detail.execution ? toExecution(detail.execution) : null,
@@ -506,18 +493,6 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
         method: 'POST',
         body: JSON.stringify({ upToSequence }),
       });
-    },
-    async reorderSessions(conversationSessionIds, expectedOrderingVersion) {
-      const response = await json<{ orderingVersion: number; sessions: BackendSessionSummary[] }>(
-        await fetchResponse(':reorder', {
-          method: 'POST',
-          body: JSON.stringify({ conversationSessionIds, expectedOrderingVersion }),
-        }),
-      );
-      return {
-        orderingVersion: response.orderingVersion,
-        sessions: response.sessions.map(toSession),
-      };
     },
     subscribeSessionEvents(conversationSessionId, onEvent, onError) {
       const source = openSource(`/${encodeURIComponent(conversationSessionId)}/events`);

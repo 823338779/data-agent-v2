@@ -34,7 +34,7 @@ class SessionUserActivityMigrationTest {
                 .load()
                 .migrate();
 
-        // 迁移前数据覆盖两租户、同租户两用户和创建时间相同的确定性排序边界。
+        // 迁移前数据覆盖两租户和同租户两用户，用于验证每用户已读状态回填。
         execute(
                 """
                 insert into tenant(tenant_id, name) values
@@ -64,7 +64,7 @@ class SessionUserActivityMigrationTest {
                         .load()
                         .migrate()
                         .migrationsExecuted;
-        assertThat(migrated).isEqualTo(8);
+        assertThat(migrated).isEqualTo(9);
     }
 
     @AfterAll
@@ -73,7 +73,7 @@ class SessionUserActivityMigrationTest {
     }
 
     @Test
-    void existingSessionsReceiveDeterministicPerUserOrdering() throws SQLException {
+    void existingSessionsReceivePerUserReadState() throws SQLException {
         assertThat(
                         row(
                                 """
@@ -84,16 +84,16 @@ class SessionUserActivityMigrationTest {
         assertThat(
                         rows(
                                 """
-                                select user_id, conversation_session_id, sort_order
+                                select user_id, conversation_session_id
                                   from conversation_session_user_state
                                  where tenant_id = 'tenant_alpha'
-                                 order by user_id, sort_order
+                                 order by user_id, conversation_session_id
                                 """))
                 .containsExactly(
-                        List.of("user_alpha_a", "session_alpha_b", "0"),
-                        List.of("user_alpha_a", "session_alpha_a", "1"),
-                        List.of("user_alpha_b", "session_alpha_b", "0"),
-                        List.of("user_alpha_b", "session_alpha_a", "1"));
+                        List.of("user_alpha_a", "session_alpha_a"),
+                        List.of("user_alpha_a", "session_alpha_b"),
+                        List.of("user_alpha_b", "session_alpha_a"),
+                        List.of("user_alpha_b", "session_alpha_b"));
         assertThat(
                         row(
                                 """
@@ -104,53 +104,29 @@ class SessionUserActivityMigrationTest {
     }
 
     @Test
-    void userOrdersAreIndependentAndTenantBoundariesAreEnforced() throws SQLException {
-        // 用户 A 的重排不得改变同租户用户 B 的顺序。
-        try (Connection connection = connection()) {
-            connection.setAutoCommit(false);
-            try (Statement statement = connection.createStatement()) {
-                statement.execute(
-                        """
-                        update conversation_session_user_state
-                           set sort_order = sort_order + 100
-                         where tenant_id = 'tenant_alpha' and user_id = 'user_alpha_a';
-                        update conversation_session_user_state
-                           set sort_order = case conversation_session_id
-                               when 'session_alpha_a' then 0 else 1 end
-                         where tenant_id = 'tenant_alpha' and user_id = 'user_alpha_a'
-                        """);
-            }
-            assertThat(
-                            rows(
-                                    connection,
-                                    """
-                                    select conversation_session_id, sort_order
-                                      from conversation_session_user_state
-                                     where tenant_id = 'tenant_alpha' and user_id = 'user_alpha_b'
-                                     order by sort_order
-                                    """))
-                    .containsExactly(
-                            List.of("session_alpha_b", "0"), List.of("session_alpha_a", "1"));
-            connection.rollback();
-        }
-
+    void userReadStatesRemainTenantBound() throws SQLException {
         // 复合外键拒绝把另一租户的用户和会话拼成状态记录。
         assertThatThrownBy(
                         () ->
                                 execute(
                                         """
                                         insert into conversation_session_user_state(
-                                            tenant_id, user_id, conversation_session_id, sort_order)
-                                        values ('tenant_alpha', 'user_alpha_a', 'session_beta', 9)
+                                            tenant_id, user_id, conversation_session_id)
+                                        values ('tenant_alpha', 'user_alpha_a', 'session_beta')
                                         """))
                 .isInstanceOf(SQLException.class);
     }
 
     @Test
-    void activityTablesExposeReconciliationIndexesAndOrderingVersions() throws SQLException {
-        assertThat(row("select count(*) from conversation_preference")).containsExactly("3");
-        assertThat(indexDefinition("ix_conversation_session_user_order"))
-                .contains("tenant_id", "user_id", "sort_order");
+    void activityTablesExposeOnlyReadAndReconciliationState() throws SQLException {
+        assertThat(
+                        row(
+                                "select count(*) from information_schema.tables where table_schema = 'public' and table_name = 'conversation_preference'"))
+                .containsExactly("0");
+        assertThat(
+                        row(
+                                "select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'conversation_session_user_state' and column_name = 'sort_order'"))
+                .containsExactly("0");
         assertThat(indexDefinition("ix_conversation_session_activity_reconciliation"))
                 .contains("tenant_id", "last_activity_at");
         assertThat(indexDefinition("ix_conversation_session_user_unread"))

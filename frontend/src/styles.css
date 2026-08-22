@@ -231,61 +231,6 @@ textarea:focus-visible {
   cursor: wait;
   opacity: 0.62;
 }
-.session-link.dragging {
-  opacity: 0.34;
-}
-.session-link.drop-before::before,
-.session-link.drop-after::after {
-  position: absolute;
-  right: 4px;
-  left: 4px;
-  z-index: 2;
-  height: 2px;
-  border-radius: 999px;
-  background: #4c72ff;
-  box-shadow: 0 0 0 1px rgb(76 114 255 / 8%);
-  content: '';
-  pointer-events: none;
-}
-.session-link.drop-before::before {
-  top: -2px;
-}
-.session-link.drop-after::after {
-  bottom: -2px;
-}
-.session-drag-preview {
-  position: fixed;
-  top: -1000px;
-  left: -1000px;
-  display: flex;
-  align-items: center;
-  max-width: 220px;
-  min-height: 34px;
-  padding: 7px 12px 7px 34px;
-  overflow: hidden;
-  border: 1px solid #e2ded6;
-  border-radius: 7px;
-  background: #fff;
-  box-shadow: 0 8px 24px rgb(43 38 31 / 18%);
-  color: #292724;
-  font-size: 12px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.session-drag-preview::before {
-  position: absolute;
-  left: 11px;
-  width: 13px;
-  height: 15px;
-  border-radius: 3px;
-  background: #4c72ff;
-  color: #fff;
-  content: '≡';
-  font-size: 10px;
-  line-height: 14px;
-  text-align: center;
-}
 .session-link-title {
   overflow: hidden;
   font-size: 13px;

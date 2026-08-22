@@ -18,7 +18,6 @@ class ContractPathsTest {
             "/api/v1/agent-sessions/{conversationSessionId}";
     private static final String MARK_READ_PATH =
             "/api/v1/agent-sessions/{conversationSessionId}:mark-read";
-    private static final String REORDER_PATH = "/api/v1/agent-sessions:reorder";
     private static final YAMLMapper YAML = new YAMLMapper();
     private static final Set<String> HTTP_METHODS =
             Set.of("get", "post", "put", "delete", "patch", "head", "options", "trace");
@@ -44,7 +43,7 @@ class ContractPathsTest {
     void openApiDeclaresEveryFrozenV1ControllerOperation() throws IOException {
         JsonNode paths = YAML.readTree(ContractFiles.openApi().toFile()).path("paths");
 
-        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(38);
+        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(37);
         assertThat(REQUIRED)
                 .allSatisfy(
                         (path, methods) -> {
@@ -169,14 +168,15 @@ class ContractPathsTest {
     }
 
     @Test
-    void openApiFreezesPerUserActivityAndOrderingContracts() throws IOException {
+    void openApiFreezesPerUserActivityContracts() throws IOException {
         JsonNode api = YAML.readTree(ContractFiles.openApi().toFile());
         JsonNode schemas = api.path("components").path("schemas");
 
-        // 会话投影必须携带跨设备未读游标和用户排序版本。
+        // 会话投影只携带跨设备未读游标，不再公开手工排序状态。
         JsonNode session = schemas.path("ConversationSession");
         assertThat(session.path("required").toString())
-                .contains("unread", "lastNotifiableEventSequence", "sortOrder", "orderingVersion");
+                .contains("unread", "lastNotifiableEventSequence")
+                .doesNotContain("sortOrder", "orderingVersion");
         assertThat(session.path("properties").path("unread").path("type").asText())
                 .isEqualTo("boolean");
 
@@ -200,29 +200,8 @@ class ContractPathsTest {
         assertThat(renameRequest.path("additionalProperties").asBoolean()).isFalse();
         assertThat(renameRequest.path("required").toString()).contains("title", "expectedVersion");
 
-        // reorder 必须提交完整可见集合及乐观锁版本，冲突码与执行冲突保持独立。
-        JsonNode reorderRequest = schemas.path("ReorderConversationSessionsRequest");
-        assertThat(reorderRequest.path("required").toString())
-                .contains("conversationSessionIds", "expectedOrderingVersion");
-        assertThat(
-                        api.path("paths")
-                                .path(REORDER_PATH)
-                                .path("post")
-                                .path("responses")
-                                .path("409")
-                                .path("$ref")
-                                .asText())
-                .isEqualTo("#/components/responses/SessionOrderConflict");
-        assertThat(
-                        api.path("components")
-                                .path("responses")
-                                .path("SessionOrderConflict")
-                                .path("content")
-                                .path("application/problem+json")
-                                .path("example")
-                                .path("code")
-                                .asText())
-                .isEqualTo("SESSION_ORDER_CONFLICT");
+        assertThat(api.path("paths").has("/api/v1/agent-sessions:reorder")).isFalse();
+        assertThat(schemas.has("ReorderConversationSessionsRequest")).isFalse();
 
         // Activity SSE 是可收敛快照流，不接收 Last-Event-ID 历史游标。
         JsonNode activityEvents = api.path("paths").path(ACTIVITY_EVENTS_PATH).path("get");
@@ -243,7 +222,6 @@ class ContractPathsTest {
         Map<String, Set<String>> required = new LinkedHashMap<>();
         required.put("/api/v1/agent-sessions", Set.of("get", "post"));
         required.put(ACTIVITY_EVENTS_PATH, Set.of("get"));
-        required.put(REORDER_PATH, Set.of("post"));
         required.put(CONVERSATION_SESSION_PATH, Set.of("get", "patch"));
         required.put(MARK_READ_PATH, Set.of("post"));
         required.put(

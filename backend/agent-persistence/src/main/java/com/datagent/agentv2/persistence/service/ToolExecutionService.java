@@ -1,5 +1,6 @@
 package com.datagent.agentv2.persistence.service;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.mapper.ToolExecutionMapper;
@@ -11,6 +12,21 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class ToolExecutionService extends ServiceImpl<ToolExecutionMapper, ToolExecutionEntity> {
+
+    private static final String STATUS_EXECUTING = "executing";
+    private static final String STATUS_PREPARED = "prepared";
+    private static final String STATUS_RUNNING = "running";
+    private static final String SET_IDEMPOTENCY_KEY_IF_ABSENT =
+            "idempotency_key = coalesce(idempotency_key, {0})";
+    private static final String EXISTS_OWNED_EXECUTION =
+            """
+            select 1 from agent_execution execution
+             where execution.tenant_id = tool_execution.tenant_id
+               and execution.execution_id = tool_execution.execution_id
+               and execution.status = {0}
+               and execution.owner_instance_id = {1}
+               and execution.execution_attempt_number = {2}
+            """;
 
     /** 读取 Agent 执行的全部工具执行，供上下文一致性校验和恢复规划使用。 */
     public List<ToolExecutionEntity> findByExecutionId(String executionId) {
@@ -44,14 +60,31 @@ public class ToolExecutionService extends ServiceImpl<ToolExecutionMapper, ToolE
             String idempotencyKey,
             String ownerInstanceId,
             long executionAttemptNumber) {
-        return baseMapper.startExecution(
-                        TenantContext.requiredTenantId(),
-                        toolExecutionId,
-                        expectedVersion,
-                        startedAt,
-                        idempotencyKey,
-                        ownerInstanceId,
-                        executionAttemptNumber)
+        // 原子状态迁移同时执行 execution owner fencing，避免旧 attempt 重放工具调用。
+        ToolExecutionEntity changes = new ToolExecutionEntity();
+        changes.setStatus(STATUS_EXECUTING);
+        changes.setExecutionAttemptNumber(executionAttemptNumber);
+        changes.setStartedAt(startedAt);
+        return baseMapper.update(
+                        changes,
+                        Wrappers.lambdaUpdate(ToolExecutionEntity.class)
+                                .eq(
+                                        ToolExecutionEntity::getTenantId,
+                                        TenantContext.requiredTenantId())
+                                .eq(ToolExecutionEntity::getToolExecutionId, toolExecutionId)
+                                .eq(ToolExecutionEntity::getVersion, expectedVersion)
+                                .in(
+                                        ToolExecutionEntity::getStatus,
+                                        STATUS_PREPARED,
+                                        STATUS_EXECUTING)
+                                .exists(
+                                        EXISTS_OWNED_EXECUTION,
+                                        STATUS_RUNNING,
+                                        ownerInstanceId,
+                                        executionAttemptNumber)
+                                .setIncrBy(ToolExecutionEntity::getExecutionCount, 1)
+                                .setSql(SET_IDEMPOTENCY_KEY_IF_ABSENT, idempotencyKey)
+                                .setIncrBy(ToolExecutionEntity::getVersion, 1))
                 == 1;
     }
 
@@ -64,15 +97,26 @@ public class ToolExecutionService extends ServiceImpl<ToolExecutionMapper, ToolE
             String failureCode,
             String ownerInstanceId,
             long executionAttemptNumber) {
-        return baseMapper.completeExecution(
-                        TenantContext.requiredTenantId(),
-                        toolExecutionId,
-                        expectedVersion,
-                        status,
-                        completedAt,
-                        failureCode,
-                        ownerInstanceId,
-                        executionAttemptNumber)
+        // 终态写入沿用相同 owner fencing，并通过期望版本拒绝并发完成。
+        ToolExecutionEntity changes = new ToolExecutionEntity();
+        changes.setStatus(status);
+        changes.setFailureCode(failureCode);
+        changes.setCompletedAt(completedAt);
+        return baseMapper.update(
+                        changes,
+                        Wrappers.lambdaUpdate(ToolExecutionEntity.class)
+                                .eq(
+                                        ToolExecutionEntity::getTenantId,
+                                        TenantContext.requiredTenantId())
+                                .eq(ToolExecutionEntity::getToolExecutionId, toolExecutionId)
+                                .eq(ToolExecutionEntity::getVersion, expectedVersion)
+                                .eq(ToolExecutionEntity::getStatus, STATUS_EXECUTING)
+                                .exists(
+                                        EXISTS_OWNED_EXECUTION,
+                                        STATUS_RUNNING,
+                                        ownerInstanceId,
+                                        executionAttemptNumber)
+                                .setIncrBy(ToolExecutionEntity::getVersion, 1))
                 == 1;
     }
 

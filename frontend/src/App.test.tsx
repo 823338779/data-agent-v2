@@ -13,8 +13,6 @@ const session: ConversationSession = {
   version: 4,
   unread: false,
   lastNotifiableEventSequence: 0,
-  sortOrder: 0,
-  orderingVersion: 0,
   messages: [],
   execution: null,
 };
@@ -76,7 +74,6 @@ function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient
     cancelExecution: vi.fn(),
     retryExecution: vi.fn(),
     markRead: vi.fn().mockResolvedValue(session),
-    reorderSessions: vi.fn().mockResolvedValue({ orderingVersion: 1, sessions: [session] }),
     subscribeSessionEvents: vi.fn().mockReturnValue(() => undefined),
     ...overrides,
   };
@@ -90,6 +87,26 @@ afterEach(() => {
 });
 
 describe('server-backed conversation workspace', () => {
+  it('orders session navigation by updated time descending', async () => {
+    const older = { ...session, title: '较早会话', updatedAt: '2026-08-01T08:00:00Z' };
+    const newer = {
+      ...session,
+      conversationSessionId: 'session_2',
+      title: '较新会话',
+      updatedAt: '2026-08-01T09:00:00Z',
+    };
+    const backend = client({ listSessions: vi.fn().mockResolvedValue([older, newer]) });
+
+    render(<App client={backend} />);
+
+    const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
+    const newerButton = within(sidebar).getByRole('button', { name: /较新会话/ });
+    const olderButton = within(sidebar).getByRole('button', { name: /较早会话/ });
+    expect(
+      newerButton.compareDocumentPosition(olderButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it('shows persisted sessions and submits a message through the backend', async () => {
     const backend = client();
     render(<App client={backend} />);
@@ -226,7 +243,6 @@ describe('server-backed conversation workspace', () => {
       ...running,
       conversationSessionId: 'session_2',
       title: '库存分析',
-      sortOrder: 1,
     };
     const closeFirst = vi.fn();
     const closeSecond = vi.fn();
@@ -460,7 +476,6 @@ describe('server-backed conversation workspace', () => {
       ...session,
       conversationSessionId: 'session_2',
       title: '后台分析',
-      sortOrder: 1,
       activityStatus: 'running' as const,
     };
     const listSessions = vi.fn().mockResolvedValue([viewed, background]);

@@ -46,6 +46,15 @@ function isNarrowScreen(): boolean {
   return window.matchMedia?.(narrowScreenQuery).matches ?? false;
 }
 
+/** 会话更新时间为权威顺序；业务标识只用于相同时间戳下保持稳定。 */
+function sortSessionsByUpdatedAt(sessions: ConversationSession[]): ConversationSession[] {
+  return [...sessions].sort(
+    (left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt) ||
+      right.conversationSessionId.localeCompare(left.conversationSessionId),
+  );
+}
+
 /** 只把成功完成识别为正常结束，失败和取消仍保留原有异常提示语义。 */
 function isCompletedStreamEvent(event: ConversationStreamEvent): boolean {
   if (event.type === 'session_snapshot') return event.session.execution?.status === 'done';
@@ -62,7 +71,6 @@ export default function App({ client }: AppProps) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [reordering, setReordering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadedDetailSessionId, setLoadedDetailSessionId] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -107,30 +115,34 @@ export default function App({ client }: AppProps) {
       const exists = current.some(
         (item) => item.conversationSessionId === session.conversationSessionId,
       );
-      return exists
-        ? current.map((item) =>
-            item.conversationSessionId === session.conversationSessionId ? session : item,
-          )
-        : [session, ...current];
+      return sortSessionsByUpdatedAt(
+        exists
+          ? current.map((item) =>
+              item.conversationSessionId === session.conversationSessionId ? session : item,
+            )
+          : [session, ...current],
+      );
     });
   }
 
   /** 摘要只能更新列表字段，不能覆盖当前页已经流式收敛的消息和执行详情。 */
   function mergeSessionSummaries(loaded: ConversationSession[]) {
     setSessions((current) =>
-      loaded.map((summary) => {
-        const detail = current.find(
-          (item) => item.conversationSessionId === summary.conversationSessionId,
-        );
-        return detail
-          ? {
-              ...detail,
-              ...summary,
-              messages: detail.messages,
-              execution: detail.execution,
-            }
-          : summary;
-      }),
+      sortSessionsByUpdatedAt(
+        loaded.map((summary) => {
+          const detail = current.find(
+            (item) => item.conversationSessionId === summary.conversationSessionId,
+          );
+          return detail
+            ? {
+                ...detail,
+                ...summary,
+                messages: detail.messages,
+                execution: detail.execution,
+              }
+            : summary;
+        }),
+      ),
     );
   }
 
@@ -221,10 +233,12 @@ export default function App({ client }: AppProps) {
           setError(null);
         }
         setSessions((current) =>
-          current.map((session) =>
-            session.conversationSessionId === conversationSessionId
-              ? applyConversationStreamEvent(session, event)
-              : session,
+          sortSessionsByUpdatedAt(
+            current.map((session) =>
+              session.conversationSessionId === conversationSessionId
+                ? applyConversationStreamEvent(session, event)
+                : session,
+            ),
           ),
         );
       },
@@ -309,50 +323,6 @@ export default function App({ client }: AppProps) {
   function openSession(conversationSessionId: string) {
     navigateWorkspace({ kind: 'session', conversationSessionId });
     if (isNarrowScreen()) setHistoryOpen(false);
-  }
-
-  async function reorderSessions(visibleIds: string[]) {
-    if (reordering) return;
-    const visible = new Set(visibleIds);
-    const completeIds = [
-      ...visibleIds,
-      ...sessions
-        .filter((item) => !visible.has(item.conversationSessionId))
-        .map((item) => item.conversationSessionId),
-    ];
-    const previous = sessions;
-    const byId = new Map(sessions.map((item) => [item.conversationSessionId, item]));
-    setSessions(completeIds.map((id, index) => ({ ...byId.get(id)!, sortOrder: index })));
-    setReordering(true);
-    try {
-      const result = await backend.reorderSessions(completeIds, sessions[0]?.orderingVersion ?? 0);
-      // 重排接口只返回摘要；保留已经加载的当前会话消息和执行详情。
-      setSessions((current) =>
-        result.sessions.map((summary) => {
-          const detail = current.find(
-            (item) => item.conversationSessionId === summary.conversationSessionId,
-          );
-          return detail
-            ? {
-                ...detail,
-                ...summary,
-                messages: detail.messages,
-                execution: detail.execution,
-              }
-            : summary;
-        }),
-      );
-    } catch (failure) {
-      if (failure instanceof BackendApiError && failure.status === 409) {
-        await loadSessions();
-        setError('会话顺序已在另一设备更新，已恢复服务端顺序。');
-      } else {
-        setSessions(previous);
-        handleFailure(failure, '会话排序失败，已恢复原顺序。');
-      }
-    } finally {
-      setReordering(false);
-    }
   }
 
   // 标题保存使用会话版本做乐观锁；冲突时刷新服务端最新会话，普通失败则保留编辑态。
@@ -440,7 +410,6 @@ export default function App({ client }: AppProps) {
             sessions={visibleSessions}
             activeSessionId={active?.conversationSessionId}
             onOpen={openSession}
-            onReorder={(ids) => void reorderSessions(ids)}
             onRename={renameSession}
           />
         </aside>

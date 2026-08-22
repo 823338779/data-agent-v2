@@ -96,9 +96,9 @@ class ContractExamplesTest {
 
         // REST 与 SSE 共享同一组会话活动字段，确保重连 GET 后可以直接收敛快照。
         assertThat(rest.path("schema").asText()).isEqualTo("ConversationActivitySnapshot");
-        assertThat(rest.path("value").path("orderingVersion").asLong()).isEqualTo(4L);
+        assertThat(rest.path("value").has("orderingVersion")).isFalse();
         assertThat(snapshot.path("type").asString()).isEqualTo("activity_snapshot");
-        assertThat(snapshot.path("orderingVersion").asLong()).isEqualTo(4L);
+        assertThat(snapshot.has("orderingVersion")).isFalse();
         assertThat(snapshot.path("sessions").path(0).path("unread").asBoolean()).isTrue();
         assertThat(snapshot.path("sessions").path(0).path("lastNotifiableEventSequence").asLong())
                 .isEqualTo(12L);

@@ -1,15 +1,18 @@
 package com.datagent.agentv2.persistence.entity;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
+import com.datagent.agentv2.persistence.typehandler.JsonbStringTypeHandler;
 import java.time.Instant;
 import lombok.Getter;
 import lombok.Setter;
+import org.apache.ibatis.type.JdbcType;
 
 /** 持久化等待发布或重试的跨实例通知消息。 */
 @Getter
 @Setter
-@TableName("notification_outbox_message")
+@TableName(value = "notification_outbox_message", autoResultMap = true)
 public final class NotificationOutboxMessageEntity extends TenantAuditedEntity {
 
     /** 通知消息的业务唯一标识，对应 notification_message_id 列。 */
@@ -28,6 +31,7 @@ public final class NotificationOutboxMessageEntity extends TenantAuditedEntity {
     private Long aggregateVersion;
 
     /** 待发布的 JSON 通知负载。 */
+    @TableField(jdbcType = JdbcType.OTHER, typeHandler = JsonbStringTypeHandler.class)
     private String payload;
 
     /** 通知首次成功发布的时间；未发布时为空。 */

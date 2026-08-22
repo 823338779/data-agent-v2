@@ -74,7 +74,6 @@ public final class ActivityEventStreamFacade {
 
     private ActivitySnapshot snapshot() {
         List<ConversationSummaryView> visible = conversations.listSummaries();
-        long orderingVersion = visible.isEmpty() ? 0L : visible.getFirst().orderingVersion();
         List<ActivityItem> items = new ArrayList<>(visible.size());
         for (ConversationSummaryView session : visible) {
             items.add(
@@ -83,11 +82,9 @@ public final class ActivityEventStreamFacade {
                             session.status(),
                             session.unread(),
                             session.lastNotifiableEventSequence(),
-                            session.sortOrder(),
                             session.updatedAt()));
         }
-        return new ActivitySnapshot(
-                ActivityEventType.SNAPSHOT, orderingVersion, List.copyOf(items), Instant.now());
+        return new ActivitySnapshot(ActivityEventType.SNAPSHOT, List.copyOf(items), Instant.now());
     }
 
     private void remove(Subscription subscription) {
@@ -112,8 +109,7 @@ public final class ActivityEventStreamFacade {
         }
 
         private synchronized void accept(ActivitySnapshot snapshot) {
-            Fingerprint fingerprint =
-                    new Fingerprint(snapshot.orderingVersion(), snapshot.sessions());
+            Fingerprint fingerprint = new Fingerprint(snapshot.sessions());
             if (fingerprint.equals(lastFingerprint) || closed.get()) {
                 return;
             }
@@ -153,19 +149,15 @@ public final class ActivityEventStreamFacade {
         }
     }
 
-    private record Fingerprint(long orderingVersion, List<ActivityItem> sessions) {}
+    private record Fingerprint(List<ActivityItem> sessions) {}
 
     public record ActivitySnapshot(
-            ActivityEventType type,
-            long orderingVersion,
-            List<ActivityItem> sessions,
-            Instant snapshotAt) {}
+            ActivityEventType type, List<ActivityItem> sessions, Instant snapshotAt) {}
 
     public record ActivityItem(
             String conversationSessionId,
             SessionActivityStatus status,
             boolean unread,
             long lastNotifiableEventSequence,
-            long sortOrder,
             LocalDateTime updatedAt) {}
 }

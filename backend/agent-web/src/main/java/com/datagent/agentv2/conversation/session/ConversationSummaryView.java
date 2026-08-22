@@ -21,9 +21,5 @@ public record ConversationSummaryView(
         boolean unread,
         /** 最近一个可通知执行事件序号。 */
         long lastNotifiableEventSequence,
-        /** 当前用户的会话排序位置。 */
-        long sortOrder,
-        /** 当前用户会话集合的排序版本。 */
-        long orderingVersion,
         /** 会话最新执行状态，无执行时为 idle。 */
         SessionActivityStatus status) {}

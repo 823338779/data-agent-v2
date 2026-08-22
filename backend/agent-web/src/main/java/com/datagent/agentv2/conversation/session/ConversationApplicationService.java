@@ -11,7 +11,6 @@ import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVE
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_CONVERSATION_SESSION;
 
 import com.datagent.agentv2.conversation.activity.SessionActivityService;
-import com.datagent.agentv2.conversation.activity.SessionOrderingService;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
@@ -30,6 +29,7 @@ import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
+import com.datagent.agentv2.persistence.service.ConversationSessionUserStateService;
 import com.datagent.agentv2.platform.context.OperatorContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
@@ -40,14 +40,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
-@RequiredArgsConstructor
 public class ConversationApplicationService {
 
     private final ConversationSessionService conversationSessionService;
@@ -56,9 +55,31 @@ public class ConversationApplicationService {
     private final AgentExecutionEventService agentExecutionEventService;
     private final AgentExecutionStreamCheckpointService agentExecutionStreamCheckpointService;
     private final AgentExecutionSubmissionService agentExecutionSubmissionService;
-    private final SessionOrderingService sessionOrderingService;
+    private final ConversationSessionUserStateService conversationSessionUserStateService;
     private final SessionActivityService sessionActivityService;
     private final IdGenerator idGenerator;
+
+    @Autowired
+    public ConversationApplicationService(
+            ConversationSessionService conversationSessionService,
+            ConversationMessageService conversationMessageService,
+            AgentExecutionService agentExecutionService,
+            AgentExecutionEventService agentExecutionEventService,
+            AgentExecutionStreamCheckpointService agentExecutionStreamCheckpointService,
+            AgentExecutionSubmissionService agentExecutionSubmissionService,
+            ConversationSessionUserStateService conversationSessionUserStateService,
+            SessionActivityService sessionActivityService,
+            IdGenerator idGenerator) {
+        this.conversationSessionService = conversationSessionService;
+        this.conversationMessageService = conversationMessageService;
+        this.agentExecutionService = agentExecutionService;
+        this.agentExecutionEventService = agentExecutionEventService;
+        this.agentExecutionStreamCheckpointService = agentExecutionStreamCheckpointService;
+        this.agentExecutionSubmissionService = agentExecutionSubmissionService;
+        this.conversationSessionUserStateService = conversationSessionUserStateService;
+        this.sessionActivityService = sessionActivityService;
+        this.idGenerator = idGenerator;
+    }
 
     @Transactional
     public ConversationView create(String title, String tag) {
@@ -71,75 +92,66 @@ public class ConversationApplicationService {
                         OperatorContext.requiredUserId(),
                         Instant.now());
         conversationSessionService.save(session);
-        SessionOrderingService.OrderedSessions ordered =
-                sessionOrderingService.initializeCreatedSession(session.getConversationSessionId());
-        return snapshot(
-                session,
-                stateFor(ordered, session.getConversationSessionId()),
-                ordered.orderingVersion());
+        List<ConversationSessionUserStateEntity> states = visibleStates();
+        return snapshot(session, stateFor(states, session.getConversationSessionId()));
     }
 
     @Transactional
     public List<ConversationSummaryView> listSummaries() {
-        SessionOrderingService.OrderedSessions ordered =
-                sessionOrderingService.ensureVisibleSessions();
-        if (ordered.states().isEmpty()) {
+        List<ConversationSessionUserStateEntity> states = visibleStates();
+        if (states.isEmpty()) {
             return List.of();
         }
-        Map<String, ConversationSession> sessionsById =
-                conversationSessionService
-                        .findByConversationSessionIds(
-                                ordered.states().stream()
-                                        .map(
-                                                ConversationSessionUserStateEntity
-                                                        ::getConversationSessionId)
-                                        .toList())
-                        .stream()
+        Map<String, ConversationSessionUserStateEntity> statesBySessionId =
+                states.stream()
                         .collect(
                                 Collectors.toMap(
-                                        ConversationSession::getConversationSessionId,
+                                        ConversationSessionUserStateEntity
+                                                ::getConversationSessionId,
                                         Function.identity()));
+        List<ConversationSession> sessions =
+                conversationSessionService.findByConversationSessionIds(
+                        states.stream()
+                                .map(ConversationSessionUserStateEntity::getConversationSessionId)
+                                .toList());
         // 每个会话只保留最新执行，摘要查询不再装配消息和历史事件。
         Map<String, AgentExecution> latestExecutions = new LinkedHashMap<>();
         agentExecutionService
-                .findByConversationSessionIdsOrderByCreatedAtDesc(sessionsById.keySet())
+                .findByConversationSessionIdsOrderByCreatedAtDesc(
+                        sessions.stream()
+                                .map(ConversationSession::getConversationSessionId)
+                                .toList())
                 .forEach(
                         execution ->
                                 latestExecutions.putIfAbsent(
                                         execution.getConversationSessionId(), execution));
-        return ordered.states().stream()
+        // 持久化查询已经按会话更新时间降序返回；业务标识仅作为同时间戳的稳定次序。
+        return sessions.stream()
                 .map(
-                        state -> {
-                            ConversationSession session =
-                                    sessionsById.get(state.getConversationSessionId());
+                        session -> {
+                            ConversationSessionUserStateEntity state =
+                                    statesBySessionId.get(session.getConversationSessionId());
                             AgentExecution execution =
-                                    latestExecutions.get(state.getConversationSessionId());
-                            return summary(session, execution, state, ordered.orderingVersion());
+                                    latestExecutions.get(session.getConversationSessionId());
+                            return summary(session, execution, state);
                         })
                 .toList();
     }
 
     @Transactional
     public ConversationView get(String conversationSessionId) {
-        SessionOrderingService.OrderedSessions ordered =
-                sessionOrderingService.ensureVisibleSessions();
+        List<ConversationSessionUserStateEntity> states = visibleStates();
         return snapshot(
-                requiredSession(conversationSessionId),
-                stateFor(ordered, conversationSessionId),
-                ordered.orderingVersion());
+                requiredSession(conversationSessionId), stateFor(states, conversationSessionId));
     }
 
     /** 为首次 SSE 连接读取一次权威会话投影及其持久事件水位。 */
     @Transactional
     public SessionStreamBootstrapView streamBootstrap(String conversationSessionId) {
-        SessionOrderingService.OrderedSessions ordered =
-                sessionOrderingService.ensureVisibleSessions();
+        List<ConversationSessionUserStateEntity> states = visibleStates();
         ConversationSession session = requiredSession(conversationSessionId);
         return new SessionStreamBootstrapView(
-                snapshot(
-                        session,
-                        stateFor(ordered, conversationSessionId),
-                        ordered.orderingVersion()),
+                snapshot(session, stateFor(states, conversationSessionId)),
                 session.getExecutionEventSequence() == null
                         ? 0L
                         : session.getExecutionEventSequence());
@@ -352,10 +364,8 @@ public class ConversationApplicationService {
         ConversationSession session =
                 agentExecutionSubmissionService.submit(
                         conversationSessionId, content, idempotencyKey, requestId);
-        SessionOrderingService.OrderedSessions ordered =
-                sessionOrderingService.ensureVisibleSessions();
-        return snapshot(
-                session, stateFor(ordered, conversationSessionId), ordered.orderingVersion());
+        List<ConversationSessionUserStateEntity> states = visibleStates();
+        return snapshot(session, stateFor(states, conversationSessionId));
     }
 
     @Transactional
@@ -363,12 +373,6 @@ public class ConversationApplicationService {
         requiredSession(conversationSessionId);
         sessionActivityService.markRead(conversationSessionId, upToSequence);
         return get(conversationSessionId);
-    }
-
-    @Transactional
-    public SessionOrderingService.OrderedSessions reorder(
-            List<String> conversationSessionIds, long expectedOrderingVersion) {
-        return sessionOrderingService.reorder(conversationSessionIds, expectedOrderingVersion);
     }
 
     @Transactional(readOnly = true)
@@ -397,9 +401,7 @@ public class ConversationApplicationService {
     }
 
     private ConversationView snapshot(
-            ConversationSession session,
-            ConversationSessionUserStateEntity state,
-            long orderingVersion) {
+            ConversationSession session, ConversationSessionUserStateEntity state) {
         // 先构建不含执行投影的消息视图，供每次 Agent 执行解析触发消息形成 objective。
         List<ConversationMessage> messageEntities =
                 conversationMessageService.findUserVisibleByConversationSessionId(
@@ -448,8 +450,6 @@ public class ConversationApplicationService {
                 null,
                 state.getLastReadEventSequence() < session.getLastNotifiableEventSequence(),
                 session.getLastNotifiableEventSequence(),
-                state.getSortOrder(),
-                orderingVersion,
                 messageViews,
                 latestAgentExecutionView);
     }
@@ -458,8 +458,7 @@ public class ConversationApplicationService {
     private static ConversationSummaryView summary(
             ConversationSession session,
             AgentExecution execution,
-            ConversationSessionUserStateEntity state,
-            long orderingVersion) {
+            ConversationSessionUserStateEntity state) {
         return new ConversationSummaryView(
                 session.getConversationSessionId(),
                 session.getTitle(),
@@ -469,17 +468,21 @@ public class ConversationApplicationService {
                 session.getVersion(),
                 state.getLastReadEventSequence() < session.getLastNotifiableEventSequence(),
                 session.getLastNotifiableEventSequence(),
-                state.getSortOrder(),
-                orderingVersion,
                 execution == null
                         ? SessionActivityStatus.IDLE
                         : SessionActivityStatus.fromExecutionStatus(
                                 ExecutionStatus.fromValue(execution.getStatus())));
     }
 
+    private List<ConversationSessionUserStateEntity> visibleStates() {
+        String userId = OperatorContext.requiredUserId();
+        conversationSessionUserStateService.ensureVisible(userId);
+        return conversationSessionUserStateService.listByUserId(userId);
+    }
+
     private static ConversationSessionUserStateEntity stateFor(
-            SessionOrderingService.OrderedSessions ordered, String conversationSessionId) {
-        return ordered.states().stream()
+            List<ConversationSessionUserStateEntity> states, String conversationSessionId) {
+        return states.stream()
                 .filter(state -> conversationSessionId.equals(state.getConversationSessionId()))
                 .findFirst()
                 .orElseThrow(

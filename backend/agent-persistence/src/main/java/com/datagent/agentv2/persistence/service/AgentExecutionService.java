@@ -1,5 +1,8 @@
 package com.datagent.agentv2.persistence.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.persistence.entity.AgentExecutionEntity;
@@ -13,11 +16,33 @@ import org.springframework.stereotype.Service;
 @Service
 public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, AgentExecutionEntity> {
 
+    private static final String COLUMN_OWNER_USER_ID = "owner_user_id";
+    private static final String COLUMN_QUEUED_AT_MIN = "min(queued_at)";
+    private static final String COLUMN_STATUS = "status";
+    private static final String FAILURE_CODE_DEADLINE_EXCEEDED =
+            "EXECUTION_DEADLINE_EXCEEDED";
+    private static final String FAILURE_CODE_RECOVERY_EXHAUSTED = "RECOVERY_EXHAUSTED";
+    private static final String LOCK_FOR_UPDATE = "FOR UPDATE";
+    private static final String LOCK_NEXT_AVAILABLE = "LIMIT 1 FOR UPDATE SKIP LOCKED";
+    private static final String QUERY_LIMIT_PREFIX = "LIMIT ";
+    private static final String PHASE_COMPLETED = "COMPLETED";
+    private static final String PHASE_FAILED = "FAILED";
+    private static final String PHASE_RECEIVED = "RECEIVED";
     private static final String STATUS_QUEUED = "queued";
     private static final String STATUS_RUNNING = "running";
     private static final String STATUS_CANCELLED = "cancelled";
+    private static final String STATUS_DONE = "done";
+    private static final String STATUS_FAILED = "failed";
     private static final String STATUS_WAITING_FOR_USER = "waiting_for_user";
     private static final String STATUS_WAITING_CONFIRMATION = "waiting_confirmation";
+    private static final String SET_ACTIVE_EXECUTION_DURATION =
+            """
+            active_execution_ms = active_execution_ms + greatest(0,
+                (extract(epoch from ({0} - active_segment_started_at)) * 1000)::bigint)
+            """;
+    private static final String SET_STARTED_AT_IF_ABSENT =
+            "started_at = coalesce(started_at, {0})";
+    private static final String TOUCH_UPDATED_AT = "updated_at = updated_at";
 
     private final ConversationPersistenceMapper models;
 
@@ -26,7 +51,11 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
     }
 
     public AgentExecution lockById(String executionId) {
-        return models.toModel(baseMapper.selectByIdForUpdate(executionId));
+        return models.toModel(
+                lambdaQuery()
+                        .eq(AgentExecutionEntity::getExecutionId, executionId)
+                        .last(LOCK_FOR_UPDATE)
+                        .one());
     }
 
     public AgentExecution findByExecutionId(String executionId) {
@@ -60,15 +89,33 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
     }
 
     public List<String> queuedOwnerUserIds(int limit) {
-        return baseMapper.selectQueuedOwnerUserIds(limit);
+        // 分组 Wrapper 只投影 owner，并按最早排队时间保持跨用户公平顺序。
+        QueryWrapper<AgentExecutionEntity> query = Wrappers.query();
+        query.select(COLUMN_OWNER_USER_ID)
+                .eq(COLUMN_STATUS, STATUS_QUEUED)
+                .groupBy(COLUMN_OWNER_USER_ID)
+                .orderByAsc(COLUMN_QUEUED_AT_MIN, COLUMN_OWNER_USER_ID)
+                .last(QUERY_LIMIT_PREFIX + Math.max(0, limit));
+        return baseMapper.selectObjs(query).stream().map(String.class::cast).toList();
     }
 
     public int countRunningExecutionsForUser(String userId) {
-        return baseMapper.countRunningExecutionsByOwnerUserId(userId);
+        return Math.toIntExact(
+                lambdaQuery()
+                        .eq(AgentExecutionEntity::getOwnerUserId, userId)
+                        .eq(AgentExecutionEntity::getStatus, STATUS_RUNNING)
+                        .count());
     }
 
     public AgentExecution lockOldestQueuedForUser(String userId) {
-        return models.toModel(baseMapper.selectOldestQueuedForUpdate(userId));
+        return models.toModel(
+                lambdaQuery()
+                        .eq(AgentExecutionEntity::getOwnerUserId, userId)
+                        .eq(AgentExecutionEntity::getStatus, STATUS_QUEUED)
+                        .orderByAsc(AgentExecutionEntity::getQueuedAt)
+                        .orderByAsc(AgentExecutionEntity::getId)
+                        .last(LOCK_NEXT_AVAILABLE)
+                        .one());
     }
 
     public boolean claimQueued(
@@ -78,14 +125,26 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
             Instant now,
             Instant leaseExpiresAt,
             Instant hardDeadlineAt) {
-        return baseMapper.claimQueued(
-                        execution.getExecutionId(),
-                        execution.getVersion(),
-                        executionAttemptNumber,
-                        ownerInstanceId,
-                        now,
-                        leaseExpiresAt,
-                        hardDeadlineAt)
+        // 领取通过 queued 状态和期望版本原子竞争，无需额外锁定状态迁移本身。
+        AgentExecutionEntity changes = new AgentExecutionEntity();
+        changes.setStatus(STATUS_RUNNING);
+        changes.setPhase(PHASE_RECEIVED);
+        changes.setExecutionAttemptNumber(executionAttemptNumber);
+        changes.setOwnerInstanceId(ownerInstanceId);
+        changes.setLeaseExpiresAt(leaseExpiresAt);
+        changes.setHeartbeatAt(now);
+        changes.setActiveSegmentStartedAt(now);
+        changes.setHardDeadlineAt(hardDeadlineAt);
+        return baseMapper.update(
+                        changes,
+                        Wrappers.lambdaUpdate(AgentExecutionEntity.class)
+                                .eq(
+                                        AgentExecutionEntity::getExecutionId,
+                                        execution.getExecutionId())
+                                .eq(AgentExecutionEntity::getStatus, STATUS_QUEUED)
+                                .eq(AgentExecutionEntity::getVersion, execution.getVersion())
+                                .setSql(SET_STARTED_AT_IF_ABSENT, now)
+                                .setIncrBy(AgentExecutionEntity::getVersion, 1))
                 == 1;
     }
 
@@ -95,38 +154,87 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
             long executionAttemptNumber,
             Instant now,
             Instant leaseExpiresAt) {
-        return baseMapper.renewLease(
-                        executionId, ownerInstanceId, executionAttemptNumber, now, leaseExpiresAt)
+        // owner、attempt 和硬截止时间共同构成续租 fencing 条件。
+        AgentExecutionEntity changes = new AgentExecutionEntity();
+        changes.setHeartbeatAt(now);
+        changes.setLeaseExpiresAt(leaseExpiresAt);
+        return baseMapper.update(
+                        changes,
+                        ownedExecutionUpdate(executionId, ownerInstanceId, executionAttemptNumber)
+                                .gt(AgentExecutionEntity::getHardDeadlineAt, now)
+                                .setIncrBy(AgentExecutionEntity::getVersion, 1))
                 == 1;
     }
 
     public boolean fenceOwned(
             String executionId, String ownerInstanceId, long executionAttemptNumber, Instant now) {
-        return baseMapper.fenceOwned(executionId, ownerInstanceId, executionAttemptNumber, now)
+        // no-op UPDATE 在当前事务内获取行写锁，并以相同条件验证 owner 尚未失效。
+        return baseMapper.update(
+                        null,
+                        ownedExecutionUpdate(executionId, ownerInstanceId, executionAttemptNumber)
+                                .gt(AgentExecutionEntity::getHardDeadlineAt, now)
+                                .setSql(TOUCH_UPDATED_AT))
                 == 1;
     }
 
     public boolean cancellationRequested(
             String executionId, String ownerInstanceId, long executionAttemptNumber) {
-        return baseMapper.countCancellationRequested(
-                        executionId, ownerInstanceId, executionAttemptNumber)
-                == 1;
+        return lambdaQuery()
+                        .eq(AgentExecutionEntity::getExecutionId, executionId)
+                        .eq(AgentExecutionEntity::getStatus, STATUS_RUNNING)
+                        .eq(AgentExecutionEntity::getOwnerInstanceId, ownerInstanceId)
+                        .eq(
+                                AgentExecutionEntity::getExecutionAttemptNumber,
+                                executionAttemptNumber)
+                        .isNotNull(AgentExecutionEntity::getCancellationRequestedAt)
+                        .count()
+                == 1L;
     }
 
     public boolean cancelOwnedIfRequested(
             String executionId, String ownerInstanceId, long executionAttemptNumber, Instant now) {
-        return baseMapper.cancelOwnedIfRequested(
-                        executionId, ownerInstanceId, executionAttemptNumber, now)
+        // 取消终态与活跃时长结算在同一条条件 UPDATE 内完成。
+        AgentExecutionEntity changes = new AgentExecutionEntity();
+        changes.setStatus(STATUS_CANCELLED);
+        changes.setCompletedAt(now);
+        LambdaUpdateWrapper<AgentExecutionEntity> update =
+                clearOwnership(
+                                ownedExecutionUpdate(
+                                        executionId, ownerInstanceId, executionAttemptNumber))
+                        .isNotNull(AgentExecutionEntity::getCancellationRequestedAt)
+                        .setSql(SET_ACTIVE_EXECUTION_DURATION, now)
+                        .setIncrBy(AgentExecutionEntity::getVersion, 1);
+        return baseMapper.update(changes, update)
                 == 1;
     }
 
     /** 显式清空未进入 worker 的执行租约字段，并用乐观锁提交直接取消。 */
     public boolean cancelLocked(AgentExecution execution, Instant now) {
+        // 非 running 状态以版本 fencing 直接转为 cancelled，并显式清空可能残留的租约字段。
+        AgentExecutionEntity changes = new AgentExecutionEntity();
+        changes.setStatus(STATUS_CANCELLED);
+        changes.setCompletedAt(now);
         boolean cancelled =
-                baseMapper.cancelLocked(execution.getExecutionId(), execution.getVersion(), now)
+                baseMapper.update(
+                                changes,
+                                clearOwnership(
+                                                Wrappers.lambdaUpdate(
+                                                                AgentExecutionEntity.class)
+                                                        .eq(
+                                                                AgentExecutionEntity::getExecutionId,
+                                                                execution.getExecutionId())
+                                                        .eq(
+                                                                AgentExecutionEntity::getVersion,
+                                                                execution.getVersion())
+                                                        .in(
+                                                                AgentExecutionEntity::getStatus,
+                                                                STATUS_QUEUED,
+                                                                STATUS_WAITING_FOR_USER,
+                                                                STATUS_WAITING_CONFIRMATION))
+                                        .setIncrBy(AgentExecutionEntity::getVersion, 1))
                         == 1;
         if (cancelled) {
-            // 显式 SQL 不会回填 MyBatis 实体；同步内存状态，确保当前事务响应返回取消终态。
+            // Wrapper UPDATE 不会回填业务模型；同步内存状态，确保当前事务响应返回取消终态。
             execution.cancelDirectly(STATUS_CANCELLED, now);
             execution.setVersion(execution.getVersion() + 1L);
         }
@@ -141,13 +249,15 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
             String failureCode,
             String failureDetail,
             Instant now) {
-        return baseMapper.failOwned(
-                        executionId,
-                        ownerInstanceId,
-                        executionAttemptNumber,
-                        failureCode,
-                        failureDetail,
-                        now)
+        // 运行中失败在 owner fencing 内结算活跃时长并清空租约。
+        AgentExecutionEntity changes = failedChanges(failureCode, failureDetail, now);
+        LambdaUpdateWrapper<AgentExecutionEntity> update =
+                clearOwnership(
+                                ownedExecutionUpdate(
+                                        executionId, ownerInstanceId, executionAttemptNumber))
+                        .setSql(SET_ACTIVE_EXECUTION_DURATION, now)
+                        .setIncrBy(AgentExecutionEntity::getVersion, 1);
+        return baseMapper.update(changes, update)
                 == 1;
     }
 
@@ -158,27 +268,48 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
             String failureDetail,
             long activeExecutionMs,
             Instant now) {
-        return baseMapper.failLocked(
-                        execution.getExecutionId(),
-                        execution.getVersion(),
-                        execution.getOwnerInstanceId(),
-                        execution.getExecutionAttemptNumber(),
-                        failureCode,
-                        failureDetail,
-                        activeExecutionMs,
-                        now)
+        // 已锁定恢复分支仍保留版本、旧 owner 和 attempt 条件，避免锁边界被误用。
+        AgentExecutionEntity changes = failedChanges(failureCode, failureDetail, now);
+        changes.setActiveExecutionMs(activeExecutionMs);
+        return baseMapper.update(
+                        changes,
+                        clearOwnership(
+                                        ownedExecutionUpdate(
+                                                        execution.getExecutionId(),
+                                                        execution.getOwnerInstanceId(),
+                                                        execution.getExecutionAttemptNumber())
+                                                .eq(
+                                                        AgentExecutionEntity::getVersion,
+                                                        execution.getVersion()))
+                                .setIncrBy(AgentExecutionEntity::getVersion, 1))
                 == 1;
     }
 
     public boolean failOwnedPastDeadline(
             String executionId, String ownerInstanceId, long executionAttemptNumber, Instant now) {
-        return baseMapper.failOwnedPastDeadline(
-                        executionId, ownerInstanceId, executionAttemptNumber, now)
+        // 仅硬截止时间已经到达的当前 owner 可以提交 deadline 失败终态。
+        AgentExecutionEntity changes =
+                failedChanges(FAILURE_CODE_DEADLINE_EXCEEDED, null, now);
+        LambdaUpdateWrapper<AgentExecutionEntity> update =
+                clearOwnership(
+                                ownedExecutionUpdate(
+                                        executionId, ownerInstanceId, executionAttemptNumber))
+                        .le(AgentExecutionEntity::getHardDeadlineAt, now)
+                        .setSql(SET_ACTIVE_EXECUTION_DURATION, now)
+                        .setIncrBy(AgentExecutionEntity::getVersion, 1);
+        return baseMapper.update(changes, update)
                 == 1;
     }
 
     public AgentExecution lockNextExpired(Instant now) {
-        return models.toModel(baseMapper.selectExpiredForUpdate(now));
+        return models.toModel(
+                lambdaQuery()
+                        .eq(AgentExecutionEntity::getStatus, STATUS_RUNNING)
+                        .le(AgentExecutionEntity::getLeaseExpiresAt, now)
+                        .orderByAsc(AgentExecutionEntity::getLeaseExpiresAt)
+                        .orderByAsc(AgentExecutionEntity::getId)
+                        .last(LOCK_NEXT_AVAILABLE)
+                        .one());
     }
 
     public boolean takeoverExpired(
@@ -189,29 +320,45 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
             Instant now,
             Instant leaseExpiresAt,
             Instant hardDeadlineAt) {
-        return baseMapper.takeoverExpired(
-                        execution.getExecutionId(),
-                        execution.getVersion(),
-                        execution.getOwnerInstanceId(),
-                        execution.getExecutionAttemptNumber(),
-                        newOwnerInstanceId,
-                        newExecutionAttemptNumber,
-                        activeExecutionMs,
-                        now,
-                        leaseExpiresAt,
-                        hardDeadlineAt)
+        // 接管在旧 owner/version/过期 lease 条件下原子安装新的 ownership。
+        AgentExecutionEntity changes = new AgentExecutionEntity();
+        changes.setOwnerInstanceId(newOwnerInstanceId);
+        changes.setExecutionAttemptNumber(newExecutionAttemptNumber);
+        changes.setActiveExecutionMs(activeExecutionMs);
+        changes.setActiveSegmentStartedAt(now);
+        changes.setHeartbeatAt(now);
+        changes.setLeaseExpiresAt(leaseExpiresAt);
+        changes.setHardDeadlineAt(hardDeadlineAt);
+        return baseMapper.update(
+                        changes,
+                        ownedExecutionUpdate(
+                                        execution.getExecutionId(),
+                                        execution.getOwnerInstanceId(),
+                                        execution.getExecutionAttemptNumber())
+                                .eq(AgentExecutionEntity::getVersion, execution.getVersion())
+                                .le(AgentExecutionEntity::getLeaseExpiresAt, now)
+                                .setIncrBy(AgentExecutionEntity::getRecoveryAttemptCount, 1)
+                                .setIncrBy(AgentExecutionEntity::getVersion, 1))
                 == 1;
     }
 
     public boolean failExpiredBudget(
             AgentExecution execution, long activeExecutionMs, Instant now) {
-        return baseMapper.failExpiredBudget(
-                        execution.getExecutionId(),
-                        execution.getVersion(),
-                        execution.getOwnerInstanceId(),
-                        execution.getExecutionAttemptNumber(),
-                        activeExecutionMs,
-                        now)
+        // 已锁定的过期执行按期望版本提交预算耗尽终态。
+        AgentExecutionEntity changes =
+                failedChanges(FAILURE_CODE_DEADLINE_EXCEEDED, null, now);
+        changes.setActiveExecutionMs(activeExecutionMs);
+        return baseMapper.update(
+                        changes,
+                        clearOwnership(
+                                        ownedExecutionUpdate(
+                                                        execution.getExecutionId(),
+                                                        execution.getOwnerInstanceId(),
+                                                        execution.getExecutionAttemptNumber())
+                                                .eq(
+                                                        AgentExecutionEntity::getVersion,
+                                                        execution.getVersion()))
+                                .setIncrBy(AgentExecutionEntity::getVersion, 1))
                 == 1;
     }
 
@@ -240,20 +387,74 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
 
     public boolean completeOwned(
             String executionId, String ownerInstanceId, long executionAttemptNumber, Instant now) {
-        return baseMapper.completeOwned(executionId, ownerInstanceId, executionAttemptNumber, now)
+        // 正常完成和活跃时长结算共享同一 owner-fenced Wrapper UPDATE。
+        AgentExecutionEntity changes = new AgentExecutionEntity();
+        changes.setStatus(STATUS_DONE);
+        changes.setPhase(PHASE_COMPLETED);
+        changes.setCompletedAt(now);
+        LambdaUpdateWrapper<AgentExecutionEntity> update =
+                clearOwnership(
+                                ownedExecutionUpdate(
+                                        executionId, ownerInstanceId, executionAttemptNumber))
+                        .setSql(SET_ACTIVE_EXECUTION_DURATION, now)
+                        .setIncrBy(AgentExecutionEntity::getVersion, 1);
+        return baseMapper.update(changes, update)
                 == 1;
     }
 
     public boolean failExpiredRecovery(
             AgentExecution execution, long activeExecutionMs, Instant now) {
-        return baseMapper.failExpiredRecovery(
-                        execution.getExecutionId(),
-                        execution.getVersion(),
-                        execution.getOwnerInstanceId(),
-                        execution.getExecutionAttemptNumber(),
-                        activeExecutionMs,
-                        now)
+        // 恢复次数耗尽只关闭仍由旧 owner 持有且 lease 已过期的执行。
+        AgentExecutionEntity changes =
+                failedChanges(FAILURE_CODE_RECOVERY_EXHAUSTED, null, now);
+        changes.setActiveExecutionMs(activeExecutionMs);
+        return baseMapper.update(
+                        changes,
+                        clearOwnership(
+                                        ownedExecutionUpdate(
+                                                        execution.getExecutionId(),
+                                                        execution.getOwnerInstanceId(),
+                                                        execution.getExecutionAttemptNumber())
+                                                .eq(
+                                                        AgentExecutionEntity::getVersion,
+                                                        execution.getVersion())
+                                                .le(
+                                                        AgentExecutionEntity::getLeaseExpiresAt,
+                                                        now))
+                                .setIncrBy(AgentExecutionEntity::getVersion, 1))
                 == 1;
+    }
+
+    /** 构造所有运行中 owner-fenced 更新共用的状态和所有权条件。 */
+    private static LambdaUpdateWrapper<AgentExecutionEntity> ownedExecutionUpdate(
+            String executionId, String ownerInstanceId, long executionAttemptNumber) {
+        return Wrappers.lambdaUpdate(AgentExecutionEntity.class)
+                .eq(AgentExecutionEntity::getExecutionId, executionId)
+                .eq(AgentExecutionEntity::getStatus, STATUS_RUNNING)
+                .eq(AgentExecutionEntity::getOwnerInstanceId, ownerInstanceId)
+                .eq(AgentExecutionEntity::getExecutionAttemptNumber, executionAttemptNumber);
+    }
+
+    /** 显式清空全部运行时 ownership 字段，避免终态残留可被误判为活跃租约。 */
+    private static LambdaUpdateWrapper<AgentExecutionEntity> clearOwnership(
+            LambdaUpdateWrapper<AgentExecutionEntity> update) {
+        return update.set(AgentExecutionEntity::getOwnerInstanceId, null)
+                .set(AgentExecutionEntity::getActiveSegmentStartedAt, null)
+                .set(AgentExecutionEntity::getHeartbeatAt, null)
+                .set(AgentExecutionEntity::getLeaseExpiresAt, null)
+                .set(AgentExecutionEntity::getHardDeadlineAt, null);
+    }
+
+    /** 构造失败终态的非空字段；租约清理由对应条件 Wrapper 统一处理。 */
+    private static AgentExecutionEntity failedChanges(
+            String failureCode, String failureDetail, Instant now) {
+        AgentExecutionEntity changes = new AgentExecutionEntity();
+        changes.setStatus(STATUS_FAILED);
+        changes.setPhase(PHASE_FAILED);
+        changes.setFailureCode(failureCode);
+        changes.setFailureDetail(failureDetail);
+        changes.setFailedAt(now);
+        return changes;
     }
 
     /** 按会话读取执行历史，最新执行排在最前。 */

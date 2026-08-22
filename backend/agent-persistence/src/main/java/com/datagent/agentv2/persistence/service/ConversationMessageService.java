@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 public class ConversationMessageService
         extends ServiceImpl<ConversationMessageMapper, ConversationMessageEntity> {
 
+    private static final String LOCK_FOR_UPDATE = "FOR UPDATE";
     private static final String ROLE_USER = "user";
     private static final String ROLE_ASSISTANT = "assistant";
 
@@ -81,7 +82,12 @@ public class ConversationMessageService
 
     /** 锁定一次执行的 assistant 中心消息，供正文和过程列表串行更新。 */
     public ConversationMessage lockAssistantByExecutionId(String executionId) {
-        return toModel(baseMapper.selectAssistantByExecutionIdForUpdate(executionId));
+        return toModel(
+                lambdaQuery()
+                        .eq(ConversationMessageEntity::getExecutionId, executionId)
+                        .eq(ConversationMessageEntity::getRole, ROLE_ASSISTANT)
+                        .last(LOCK_FOR_UPDATE)
+                        .one());
     }
 
     /** 按会话与序号边界读取真实 user/assistant 消息，用于构造模型上下文。 */

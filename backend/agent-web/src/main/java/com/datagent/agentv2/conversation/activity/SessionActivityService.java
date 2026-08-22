@@ -24,11 +24,10 @@ public class SessionActivityService {
 
     private final ConversationSessionService sessions;
     private final ConversationSessionUserStateService states;
-    private final SessionOrderingService ordering;
 
     @Transactional
     public void markRead(String conversationSessionId, long upToSequence) {
-        ordering.ensureVisibleSessions();
+        states.ensureVisible(OperatorContext.requiredUserId());
         states.advanceReadCursor(
                 OperatorContext.requiredUserId(), conversationSessionId, upToSequence);
     }

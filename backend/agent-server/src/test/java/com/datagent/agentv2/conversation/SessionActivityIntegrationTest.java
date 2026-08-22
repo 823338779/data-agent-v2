@@ -64,31 +64,30 @@ class SessionActivityIntegrationTest {
     @Autowired private ObjectMapper json;
 
     @Test
-    void newlyCreatedSessionsArePinnedWithoutActivityReordering() throws Exception {
+    void sessionsAreOrderedByUpdatedAtDescending() throws Exception {
         Cookie login = login();
         String first = createSession(login, "first");
         String second = createSession(login, "second");
 
+        // 列表顺序只由会话更新时间决定，不再暴露或保存用户手工排序状态。
+        setUpdatedAt(first, "2026-08-22T10:00:00Z");
+        setUpdatedAt(second, "2026-08-22T09:00:00Z");
         JsonNode sessions = listSessions(login);
-        assertThat(sessions.get(0).path("conversationSessionId").asString()).isEqualTo(second);
-        assertThat(sessions.get(1).path("conversationSessionId").asString()).isEqualTo(first);
-        assertThat(sessions.get(0).path("sortOrder").asLong()).isZero();
-        assertThat(sessions.get(0).path("orderingVersion").asLong()).isPositive();
+        assertThat(sessions.get(0).path("conversationSessionId").asString()).isEqualTo(first);
+        assertThat(sessions.get(1).path("conversationSessionId").asString()).isEqualTo(second);
+        assertThat(sessions.get(0).has("sortOrder")).isFalse();
+        assertThat(sessions.get(0).has("orderingVersion")).isFalse();
         assertThat(sessions.get(0).path("unread").asBoolean()).isFalse();
 
-        // 共享活动时间变化不允许隐式覆盖用户手工顺序。
-        jdbc.update(
-                "update conversation_session set last_activity_at = current_timestamp + interval '1 hour' where conversation_session_id = ?",
-                first);
-        JsonNode afterActivity = listSessions(login);
-        assertThat(afterActivity.get(0).path("conversationSessionId").asString()).isEqualTo(second);
+        setUpdatedAt(second, "2026-08-22T11:00:00Z");
+        assertThat(listSessions(login).get(0).path("conversationSessionId").asString())
+                .isEqualTo(second);
     }
 
     @Test
-    void markReadIsMonotonicAndReorderRejectsAStaleVersion() throws Exception {
+    void markReadIsMonotonic() throws Exception {
         Cookie login = login();
         String first = createSession(login, "ordering-first");
-        String second = createSession(login, "ordering-second");
 
         // 读游标最多推进到当前可通知水位，并保留随后到达的新通知。
         setLastNotifiable(first, 5L);
@@ -99,24 +98,6 @@ class SessionActivityIntegrationTest {
                 .andExpect(jsonPath("$.unread").value(true))
                 .andExpect(jsonPath("$.lastNotifiableEventSequence").value(6));
         assertThat(lastRead(first)).isEqualTo(5L);
-
-        // 完整重排递增版本；旧设备再次提交原版本时得到独立冲突码。
-        long expectedVersion = listSessions(login).get(0).path("orderingVersion").asLong();
-        String body = reorderBody(first, second, expectedVersion);
-        mvc.perform(
-                        post("/api/v1/agent-sessions:reorder")
-                                .cookie(login)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(body))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.orderingVersion").value(expectedVersion + 1));
-        mvc.perform(
-                        post("/api/v1/agent-sessions:reorder")
-                                .cookie(login)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(body))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("SESSION_ORDER_CONFLICT"));
     }
 
     private org.springframework.test.web.servlet.ResultActions markRead(
@@ -167,6 +148,13 @@ class SessionActivityIntegrationTest {
                 conversationSessionId);
     }
 
+    private void setUpdatedAt(String conversationSessionId, String updatedAt) {
+        jdbc.update(
+                "update conversation_session set updated_at = cast(? as timestamptz) where conversation_session_id = ?",
+                updatedAt,
+                conversationSessionId);
+    }
+
     private long lastRead(String conversationSessionId) {
         return jdbc.queryForObject(
                 "select last_read_event_sequence from conversation_session_user_state where tenant_id = ? and user_id = ? and conversation_session_id = ?",
@@ -176,13 +164,4 @@ class SessionActivityIntegrationTest {
                 conversationSessionId);
     }
 
-    private static String reorderBody(String first, String second, long expectedVersion) {
-        return "{\"conversationSessionIds\":[\""
-                + first
-                + "\",\""
-                + second
-                + "\"],\"expectedOrderingVersion\":"
-                + expectedVersion
-                + "}";
-    }
 }

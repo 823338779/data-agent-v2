@@ -78,7 +78,7 @@ class ActivitySseIntegrationTest {
                             String content = stream.getResponse().getContentAsString();
                             assertThat(content).contains("event:activity_snapshot");
                             assertThat(content).contains("conversationSessionId");
-                            assertThat(content).contains("orderingVersion");
+                            assertThat(content).doesNotContain("orderingVersion");
                         });
         stream.getRequest().getAsyncContext().complete();
     }

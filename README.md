@@ -113,7 +113,7 @@ npm.cmd ci
 npm.cmd run dev
 ```
 
-打开 `http://127.0.0.1:5173` 即可进入工作区。当前阶段后端固定使用 `tenant_local` 租户和 `user_admin` / `admin` 身份，不提供登录、退出或租户切换；这些能力将在后续重新设计。当前可联调多会话未读与排序、执行取消/重试、Ollama answer 流以及 Redis 跨实例通知。
+打开 `http://127.0.0.1:5173` 即可进入工作区。当前阶段后端固定使用 `tenant_local` 租户和 `user_admin` / `admin` 身份，不提供登录、退出或租户切换；这些能力将在后续重新设计。当前可联调按更新时间排序的多会话与未读状态、执行取消/重试、Ollama answer 流以及 Redis 跨实例通知。
 
 ## 双实例运行与收敛参数
 
@@ -144,7 +144,7 @@ npm.cmd run dev
   '-Ddata.agent.acceptance.instance-b=http://127.0.0.1:8081' test
 ```
 
-验收会通过实例 B 创建并提交 4 个不同会话，从实例 A 观察“最多 3 running、其余 queued”，并验证 mark-read 与乐观重排跨实例可见。故障注入验收（在第 3 个工具边界终止实例、Redis 断开/恢复及 Outbox 补发）需要部署环境提供进程和基础设施生命周期控制；产品正确性由 `agent-server` 中相应的双实例、恢复和 Redis 降级集成测试覆盖。
+验收会通过实例 B 创建并提交 4 个不同会话，从实例 A 观察“最多 3 running、其余 queued”，并验证 mark-read 跨实例可见。故障注入验收（在第 3 个工具边界终止实例、Redis 断开/恢复及 Outbox 补发）需要部署环境提供进程和基础设施生命周期控制；产品正确性由 `agent-server` 中相应的双实例、恢复和 Redis 降级集成测试覆盖。
 
 前端生产构建：
 

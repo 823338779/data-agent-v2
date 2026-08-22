@@ -2,7 +2,6 @@ package com.datagent.agentv2.server.web;
 
 import com.datagent.agentv2.conversation.exception.ActiveExecutionConflictException;
 import com.datagent.agentv2.conversation.exception.IdempotencyKeyReusedException;
-import com.datagent.agentv2.conversation.exception.SessionOrderConflictException;
 import com.datagent.agentv2.server.context.RequestContext;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
@@ -81,26 +80,6 @@ public final class ApiExceptionHandler {
                 "urn:data-agent:problem:idempotency-key-reused",
                 "Idempotency Key Reused",
                 "IDEMPOTENCY_KEY_REUSED",
-                exception.getMessage(),
-                request);
-    }
-
-    /**
-     * 处理会话消息顺序与服务端状态不一致的冲突。
-     *
-     * @param exception 会话顺序冲突异常
-     * @param request 当前 HTTP 请求
-     * @return HTTP 409 问题详情响应
-     */
-    @ExceptionHandler(SessionOrderConflictException.class)
-    ResponseEntity<ProblemDetail> handleSessionOrderConflict(
-            SessionOrderConflictException exception, HttpServletRequest request) {
-        // 将会话顺序冲突转换为调用方可识别的固定业务错误码。
-        return problem(
-                HttpStatus.CONFLICT,
-                "urn:data-agent:problem:session-order-conflict",
-                "Session Order Conflict",
-                "SESSION_ORDER_CONFLICT",
                 exception.getMessage(),
                 request);
     }

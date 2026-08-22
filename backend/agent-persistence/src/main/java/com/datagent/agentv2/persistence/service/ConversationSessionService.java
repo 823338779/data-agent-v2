@@ -1,10 +1,12 @@
 package com.datagent.agentv2.persistence.service;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.datagent.agentv2.conversation.domain.ConversationSession;
 import com.datagent.agentv2.persistence.entity.ConversationSessionEntity;
 import com.datagent.agentv2.persistence.mapping.ConversationPersistenceMapper;
 import com.datagent.agentv2.persistence.service.mapper.ConversationSessionMapper;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import org.springframework.stereotype.Service;
@@ -13,6 +15,12 @@ import org.springframework.stereotype.Service;
 public class ConversationSessionService
         extends ServiceImpl<ConversationSessionMapper, ConversationSessionEntity> {
 
+    private static final String LOCK_FOR_UPDATE = "FOR UPDATE";
+    private static final String SET_LAST_ACTIVITY_AT =
+            "last_activity_at = greatest(last_activity_at, {0})";
+    private static final String SET_LAST_NOTIFIABLE_EVENT_SEQUENCE =
+            "last_notifiable_event_sequence = greatest(last_notifiable_event_sequence, {0})";
+
     private final ConversationPersistenceMapper models;
 
     public ConversationSessionService(ConversationPersistenceMapper models) {
@@ -20,7 +28,13 @@ public class ConversationSessionService
     }
 
     public ConversationSession lockById(String conversationSessionId) {
-        return models.toModel(baseMapper.selectByIdForUpdate(conversationSessionId));
+        return models.toModel(
+                lambdaQuery()
+                        .eq(
+                                ConversationSessionEntity::getConversationSessionId,
+                                conversationSessionId)
+                        .last(LOCK_FOR_UPDATE)
+                        .one());
     }
 
     public boolean save(ConversationSession session) {
@@ -51,7 +65,18 @@ public class ConversationSessionService
     }
 
     public long nextExecutionEventSequence(String conversationSessionId) {
-        if (baseMapper.incrementExecutionEventSequence(conversationSessionId) != 1) {
+        // 以单条 Wrapper UPDATE 原子分配序号，同时维护乐观锁版本和审计时间。
+        int updated =
+                baseMapper.update(
+                        new ConversationSessionEntity(),
+                        Wrappers.lambdaUpdate(ConversationSessionEntity.class)
+                                .eq(
+                                        ConversationSessionEntity::getConversationSessionId,
+                                        conversationSessionId)
+                                .setIncrBy(
+                                        ConversationSessionEntity::getExecutionEventSequence, 1)
+                                .setIncrBy(ConversationSessionEntity::getVersion, 1));
+        if (updated != 1) {
             throw new IllegalStateException("agent session not found: " + conversationSessionId);
         }
         ConversationSessionEntity session =
@@ -65,7 +90,19 @@ public class ConversationSessionService
 
     /** 原子分配下一条不可变消息序号，供工具 Observation 和模型结果事务使用。 */
     public long nextConversationMessageSequence(String conversationSessionId) {
-        if (baseMapper.incrementConversationMessageSequence(conversationSessionId) != 1) {
+        // 消息序号和版本号必须在同一条 Wrapper UPDATE 中同步推进。
+        int updated =
+                baseMapper.update(
+                        new ConversationSessionEntity(),
+                        Wrappers.lambdaUpdate(ConversationSessionEntity.class)
+                                .eq(
+                                        ConversationSessionEntity::getConversationSessionId,
+                                        conversationSessionId)
+                                .setIncrBy(
+                                        ConversationSessionEntity::getConversationMessageSequence,
+                                        1)
+                                .setIncrBy(ConversationSessionEntity::getVersion, 1));
+        if (updated != 1) {
             throw new IllegalStateException("agent session not found: " + conversationSessionId);
         }
         ConversationSessionEntity session =
@@ -86,7 +123,7 @@ public class ConversationSessionService
                         .one());
     }
 
-    /** 按业务标识批量读取会话，并在持久化边界内完成模型转换。 */
+    /** 按业务标识批量读取会话，以更新时间降序返回，并在持久化边界内完成模型转换。 */
     public List<ConversationSession> findByConversationSessionIds(
             Collection<String> conversationSessionIds) {
         return models.toSessionModels(
@@ -94,13 +131,29 @@ public class ConversationSessionService
                         .in(
                                 ConversationSessionEntity::getConversationSessionId,
                                 conversationSessionIds)
+                        .orderByDesc(ConversationSessionEntity::getUpdatedAt)
+                        .orderByDesc(ConversationSessionEntity::getConversationSessionId)
                         .list());
     }
 
     /** 更新共享活动时间，并在需要时推进可通知事件水位。 */
     public void recordActivity(
-            String conversationSessionId, Long notifiableSequence, java.time.Instant occurredAt) {
-        if (baseMapper.recordActivity(conversationSessionId, notifiableSequence, occurredAt) != 1) {
+            String conversationSessionId, Long notifiableSequence, Instant occurredAt) {
+        // greatest 保证乱序事件不会回退活动时间或可通知水位。
+        int updated =
+                baseMapper.update(
+                        new ConversationSessionEntity(),
+                        Wrappers.lambdaUpdate(ConversationSessionEntity.class)
+                                .eq(
+                                        ConversationSessionEntity::getConversationSessionId,
+                                        conversationSessionId)
+                                .setSql(SET_LAST_ACTIVITY_AT, occurredAt)
+                                .setSql(
+                                        notifiableSequence != null,
+                                        SET_LAST_NOTIFIABLE_EVENT_SEQUENCE,
+                                        notifiableSequence)
+                                .setIncrBy(ConversationSessionEntity::getVersion, 1));
+        if (updated != 1) {
             throw new IllegalStateException(
                     "conversation session not found: " + conversationSessionId);
         }

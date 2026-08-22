@@ -8,7 +8,7 @@ import java.time.Instant;
 import lombok.Getter;
 import lombok.Setter;
 
-/** 保存单个用户对一个可见会话的已读游标和稳定排序位置。 */
+/** 保存单个用户对一个可见会话的已读游标。 */
 @Getter
 @Setter
 @TableName("conversation_session_user_state")
@@ -30,13 +30,10 @@ public final class ConversationSessionUserStateEntity {
     /** 用户已确认展示的最大可通知执行事件序号。 */
     private Long lastReadEventSequence;
 
-    /** 用户会话列表中的连续排序位置，数值越小越靠前。 */
-    private Long sortOrder;
-
     /** 用户状态首次建立的时间。 */
     private Instant createdAt;
 
-    /** 已读游标或排序最后变化的时间。 */
+    /** 已读游标最后变化的时间。 */
     private Instant updatedAt;
 
     /** 状态行乐观锁版本，防止并发更新相互覆盖。 */

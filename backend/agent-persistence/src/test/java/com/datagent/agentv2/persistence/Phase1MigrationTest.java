@@ -62,7 +62,6 @@ class Phase1MigrationTest {
                     "agent_execution_event",
                     "agent_execution_stream_checkpoint",
                     "conversation_message",
-                    "conversation_preference",
                     "conversation_session",
                     "conversation_session_user_state",
                     "model_invocation",
@@ -103,7 +102,7 @@ class Phase1MigrationTest {
                                 POSTGRES.getPassword())
                         .locations("classpath:db/migration")
                         .load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(17);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(18);
     }
 
     @AfterAll

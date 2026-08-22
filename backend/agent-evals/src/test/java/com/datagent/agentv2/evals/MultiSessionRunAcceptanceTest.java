@@ -1,6 +1,5 @@
 package com.datagent.agentv2.evals;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -57,26 +56,13 @@ class MultiSessionRunAcceptanceTest {
         assertTrue(running <= 3, "同一用户最多只能有三个 running 执行");
         assertTrue(running + queued >= 4, "四个会话必须都已进入执行生命周期");
 
-        // 在另一实例精确推进已读并重排，回读结果验证用户级状态跨实例可见。
+        // 在另一实例精确推进已读，验证用户级状态跨实例可见。
         JsonNode first = findSession(sessions, sessionIds.get(0));
         long upToSequence = first.path("lastNotifiableEventSequence").asLong();
         post(
                 instanceA.resolve(SESSIONS_PATH + "/" + sessionIds.get(0) + ":mark-read"),
                 Map.of("upToSequence", upToSequence),
                 null);
-        List<String> reversed = sessionIds.reversed();
-        long orderingVersion = first.path("orderingVersion").asLong();
-        JsonNode reordered =
-                post(
-                        instanceB.resolve(SESSIONS_PATH + ":reorder"),
-                        Map.of(
-                                "conversationSessionIds", reversed,
-                                "expectedOrderingVersion", orderingVersion),
-                        null);
-        assertEquals(orderingVersion + 1, reordered.path("orderingVersion").asLong());
-        assertEquals(
-                reversed.get(0),
-                reordered.path("sessions").get(0).path("conversationSessionId").asText());
     }
 
     private boolean hasFourStartedSessions(JsonNode sessions) {

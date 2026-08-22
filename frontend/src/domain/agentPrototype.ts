@@ -134,8 +134,6 @@ export interface ConversationSession {
   version: number;
   unread: boolean;
   lastNotifiableEventSequence: number;
-  sortOrder: number;
-  orderingVersion: number;
   /** 摘要轮询提供的轻量状态，可早于详细会话刷新到达。 */
   activityStatus?: AgentExecutionStatus;
   messages: ConversationMessage[];

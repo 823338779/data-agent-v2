@@ -209,7 +209,7 @@ describe('backend agent client', () => {
     expect(nextOperationKey).not.toBe(firstKey);
   });
 
-  it('calls control, read, and reorder endpoints', async () => {
+  it('calls control and read endpoints', async () => {
     const execution = {
       executionId: 'execution_1',
       status: 'cancelled',
@@ -223,30 +223,18 @@ describe('backend agent client', () => {
       .fn()
       .mockResolvedValueOnce({ ok: true, json: async () => execution })
       .mockResolvedValueOnce({ ok: true, json: async () => execution })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...session, unread: false }) })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ orderingVersion: 3, sessions: [] }),
-      });
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...session, unread: false }) });
     const client = createFetchAgentBackendClient({ fetchImpl });
 
     await client.cancelExecution('session_1', 'execution_1');
     await client.retryExecution('session_1', 'execution_1');
     await client.markRead('session_1', 8);
-    await client.reorderSessions(['session_2', 'session_1'], 2);
 
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
       '/api/v1/agent-sessions/session_1/executions/execution_1:cancel',
       '/api/v1/agent-sessions/session_1/executions/execution_1:retry',
       '/api/v1/agent-sessions/session_1:mark-read',
-      '/api/v1/agent-sessions:reorder',
     ]);
-    expect(fetchImpl.mock.calls[3][1]?.body).toBe(
-      JSON.stringify({
-        conversationSessionIds: ['session_2', 'session_1'],
-        expectedOrderingVersion: 2,
-      }),
-    );
   });
 
   it('opens only the selected session detail stream', () => {
@@ -399,8 +387,6 @@ describe('backend agent client', () => {
       ...session,
       unread: false,
       lastNotifiableEventSequence: 0,
-      sortOrder: 0,
-      orderingVersion: 0,
       messages: [
         {
           conversationMessageId: 'assistant_1',
