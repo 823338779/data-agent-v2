@@ -4,10 +4,6 @@ import static com.datagent.agentv2.conversation.execution.ExecutionConstants.DEF
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EMPTY_TEXT;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_AGENT_EXECUTION_NOT_FOUND;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_CONVERSATION_SESSION_NOT_FOUND;
-import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVENT_DETAIL_EXECUTION_QUEUED;
-import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVENT_DETAIL_EXECUTION_STARTED;
-import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVENT_TITLE_EXECUTION_QUEUED;
-import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVENT_TITLE_EXECUTION_STARTED;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_CONVERSATION_SESSION;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
@@ -16,11 +12,9 @@ import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.domain.ConversationSession;
 import com.datagent.agentv2.conversation.enums.ConversationSessionType;
-import com.datagent.agentv2.conversation.enums.ExecutionEventType;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.enums.MessageRole;
-import com.datagent.agentv2.conversation.enums.SessionExecutionStatus;
 import com.datagent.agentv2.conversation.execution.AgentExecutionSubmissionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
@@ -37,13 +31,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
+@RequiredArgsConstructor
 public class ConversationApplicationService {
 
     private final ConversationSessionService conversationSessionService;
@@ -53,24 +48,6 @@ public class ConversationApplicationService {
     private final AgentExecutionStreamCheckpointService agentExecutionStreamCheckpointService;
     private final AgentExecutionSubmissionService agentExecutionSubmissionService;
     private final IdGenerator idGenerator;
-
-    @Autowired
-    public ConversationApplicationService(
-            ConversationSessionService conversationSessionService,
-            ConversationMessageService conversationMessageService,
-            AgentExecutionService agentExecutionService,
-            AgentExecutionEventService agentExecutionEventService,
-            AgentExecutionStreamCheckpointService agentExecutionStreamCheckpointService,
-            AgentExecutionSubmissionService agentExecutionSubmissionService,
-            IdGenerator idGenerator) {
-        this.conversationSessionService = conversationSessionService;
-        this.conversationMessageService = conversationMessageService;
-        this.agentExecutionService = agentExecutionService;
-        this.agentExecutionEventService = agentExecutionEventService;
-        this.agentExecutionStreamCheckpointService = agentExecutionStreamCheckpointService;
-        this.agentExecutionSubmissionService = agentExecutionSubmissionService;
-        this.idGenerator = idGenerator;
-    }
 
     @Transactional
     public ConversationView create(String title, String tag) {
@@ -109,7 +86,7 @@ public class ConversationApplicationService {
                         session -> {
                             AgentExecution execution =
                                     latestExecutions.get(session.getConversationSessionId());
-                            return summary(session, execution);
+                            return ConversationSummaryView.composeFromSession(session, execution);
                         })
                 .toList();
     }
@@ -123,7 +100,7 @@ public class ConversationApplicationService {
     @Transactional(readOnly = true)
     public SessionStreamBootstrapView streamBootstrap(String conversationSessionId) {
         ConversationSession session = requiredSession(conversationSessionId);
-        return new SessionStreamBootstrapView(
+        return SessionStreamBootstrapView.composeFromSession(
                 snapshot(session),
                 session.getExecutionEventSequence() == null
                         ? 0L
@@ -156,13 +133,13 @@ public class ConversationApplicationService {
         if (stream == null) {
             return null;
         }
-        return streamCheckpointView(run, stream);
+        return ExecutionStreamCheckpointView.composeFromStream(run, stream);
     }
 
     @Transactional(readOnly = true)
     public SessionStreamRecoveryView reconcileStreams(Map<String, Long> afterSequenceBySession) {
         if (afterSequenceBySession.isEmpty()) {
-            return new SessionStreamRecoveryView(Map.of(), Map.of(), Map.of(), Map.of());
+            return SessionStreamRecoveryView.empty();
         }
         Set<String> conversationSessionIds = afterSequenceBySession.keySet();
         long minimumSequence =
@@ -239,7 +216,8 @@ public class ConversationApplicationService {
                             streamsByExecutionId.get(run.getExecutionId());
                     if (stream != null) {
                         snapshotsBySession.put(
-                                conversationSessionId, streamCheckpointView(run, stream));
+                                conversationSessionId,
+                                ExecutionStreamCheckpointView.composeFromStream(run, stream));
                     }
                 });
 
@@ -252,8 +230,9 @@ public class ConversationApplicationService {
                         message ->
                                 assistantMessagesBySession.put(
                                         message.getConversationSessionId(),
-                                        messageView(message, null)));
-        return new SessionStreamRecoveryView(
+                                        ConversationView.MessageView.composeFromMessage(
+                                                message, null)));
+        return SessionStreamRecoveryView.composeFromReconciliation(
                 immutableEventMap(eventsBySession),
                 Map.copyOf(snapshotsBySession),
                 Map.copyOf(assistantMessagesBySession),
@@ -282,7 +261,7 @@ public class ConversationApplicationService {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, ERROR_AGENT_EXECUTION_NOT_FOUND);
         }
-        return eventView(event, run);
+        return ConversationView.AgentExecutionEventView.composeFromEvent(event, run);
     }
 
     /** 将持久执行事件转换为前端可直接幂等归约的轻量更新。 */
@@ -298,7 +277,10 @@ public class ConversationApplicationService {
                 conversationMessageService
                         .findUserVisibleByExecutionId(run.getExecutionId())
                         .stream()
-                        .map(message -> messageView(message, null))
+                        .map(
+                                message ->
+                                        ConversationView.MessageView.composeFromMessage(
+                                                message, null))
                         .toList();
         String objective =
                 relatedMessages.stream()
@@ -311,11 +293,8 @@ public class ConversationApplicationService {
                         .orElse(EMPTY_TEXT);
         AgentExecutionStreamCheckpoint stream =
                 agentExecutionStreamCheckpointService.findByExecutionId(run.getExecutionId());
-        return new ConversationView.AgentExecutionUpdateView(
-                run.getConversationSessionId(),
-                executionStateView(run, objective, stream),
-                eventView(event, run),
-                relatedMessages);
+        return ConversationView.AgentExecutionUpdateView.composeFromEvent(
+                run, event, objective, stream, relatedMessages);
     }
 
     /** 按会话和消息标识返回权威完整消息投影，拒绝跨会话读取。 */
@@ -329,7 +308,7 @@ public class ConversationApplicationService {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, ERROR_CONVERSATION_SESSION_NOT_FOUND);
         }
-        return messageView(message, null);
+        return ConversationView.MessageView.composeFromMessage(message, null);
     }
 
     public ConversationView submitMessage(
@@ -351,7 +330,10 @@ public class ConversationApplicationService {
                 conversationMessageService
                         .findUserVisibleByConversationSessionId(conversationSessionId)
                         .stream()
-                        .map(message -> messageView(message, null))
+                        .map(
+                                message ->
+                                        ConversationView.MessageView.composeFromMessage(
+                                                message, null))
                         .toList();
         return executionView(run, messageViews);
     }
@@ -371,7 +353,9 @@ public class ConversationApplicationService {
                 conversationMessageService.findUserVisibleByConversationSessionId(
                         session.getConversationSessionId());
         List<ConversationView.MessageView> baseMessageViews =
-                messageEntities.stream().map(message -> messageView(message, null)).toList();
+                messageEntities.stream()
+                        .map(message -> ConversationView.MessageView.composeFromMessage(message, null))
+                        .toList();
         List<AgentExecution> executionEntities =
                 agentExecutionService.findByConversationSessionIdOrderByCreatedAtDesc(
                         session.getConversationSessionId());
@@ -389,7 +373,7 @@ public class ConversationApplicationService {
                 messageEntities.stream()
                         .map(
                                 message ->
-                                        messageView(
+                                        ConversationView.MessageView.composeFromMessage(
                                                 message,
                                                 MessageRole.ASSISTANT
                                                                 .value()
@@ -406,44 +390,11 @@ public class ConversationApplicationService {
                 session, messageViews, latestAgentExecutionView);
     }
 
-    /** 从已经批量读取的数据组装一个不含详情的会话摘要。 */
-    private static ConversationSummaryView summary(
-            ConversationSession session, AgentExecution execution) {
-        return new ConversationSummaryView(
-                session.getConversationSessionId(),
-                session.getTitle(),
-                session.getTag() == null ? EMPTY_TEXT : session.getTag(),
-                session.getCreatedAt(),
-                session.getUpdatedAt(),
-                session.getVersion(),
-                execution == null
-                        ? SessionExecutionStatus.IDLE
-                        : SessionExecutionStatus.fromExecutionStatus(
-                                ExecutionStatus.fromValue(execution.getStatus())));
-    }
-
-    private ConversationView.MessageView messageView(
-            ConversationMessage message, ConversationView.AgentExecutionView run) {
-        String author =
-                message.getAuthorUserId() == null ? message.getRole() : message.getAuthorUserId();
-        return new ConversationView.MessageView(
-                message.getConversationMessageId(),
-                message.getExecutionId(),
-                MessageRole.fromValue(message.getRole()),
-                author,
-                message.getContent(),
-                java.util.Objects.requireNonNullElse(message.getVersion(), 0L),
-                message.getThinkingProcess(),
-                message.getCreatedAt(),
-                List.of(),
-                run);
-    }
-
     private ConversationView.AgentExecutionView executionView(
             AgentExecution run, List<ConversationView.MessageView> messageViews) {
         List<ConversationView.AgentExecutionEventView> eventViews =
                 agentExecutionEventService.findByExecutionId(run.getExecutionId()).stream()
-                        .map(event -> eventView(event, run))
+                        .map(event -> ConversationView.AgentExecutionEventView.composeFromEvent(event, run))
                         .toList();
         AgentExecutionStreamCheckpoint stream =
                 agentExecutionStreamCheckpointService.findByExecutionId(run.getExecutionId());
@@ -456,99 +407,12 @@ public class ConversationApplicationService {
                         .map(ConversationView.MessageView::content)
                         .findFirst()
                         .orElse(EMPTY_TEXT);
-        return new ConversationView.AgentExecutionView(
-                run.getExecutionId(),
-                ExecutionStatus.fromValue(run.getStatus()),
-                progress(run.getPhase()),
-                objective,
-                run.getCancellationRequestedAt(),
-                eventViews,
-                null,
-                null,
-                stream == null
-                        ? null
-                        : new ConversationView.AgentExecutionStreamCheckpointView(
-                                stream.getExecutionAttemptNumber(),
-                                stream.getModelInvocationSequence(),
-                                ExecutionPhase.fromValue(stream.getPhase()),
-                                stream.getOutputDeltaSequence(),
-                                stream.getAnswer()));
-    }
-
-    /** 将执行实体及最新回答检查点压缩为 SSE 更新使用的轻量状态。 */
-    private static ConversationView.AgentExecutionStateView executionStateView(
-            AgentExecution run, String objective, AgentExecutionStreamCheckpoint stream) {
-        return new ConversationView.AgentExecutionStateView(
-                run.getExecutionId(),
-                ExecutionStatus.fromValue(run.getStatus()),
-                progress(run.getPhase()),
-                objective,
-                run.getCancellationRequestedAt(),
-                stream == null
-                        ? null
-                        : new ConversationView.AgentExecutionStreamCheckpointView(
-                                stream.getExecutionAttemptNumber(),
-                                stream.getModelInvocationSequence(),
-                                ExecutionPhase.fromValue(stream.getPhase()),
-                                stream.getOutputDeltaSequence(),
-                                stream.getAnswer()));
-    }
-
-    private ConversationView.AgentExecutionEventView eventView(
-            AgentExecutionEvent event, AgentExecution run) {
-        return new ConversationView.AgentExecutionEventView(
-                event.getExecutionEventId(),
-                event.getExecutionEventSequence(),
-                ExecutionEventType.fromValue(event.getType()),
-                event.getOccurredAt(),
-                event.getExecutionId(),
-                run.getTriggeringConversationMessageId(),
-                ExecutionEventType.QUEUED.value().equals(event.getType())
-                        ? EVENT_TITLE_EXECUTION_QUEUED
-                        : EVENT_TITLE_EXECUTION_STARTED,
-                ExecutionEventType.QUEUED.value().equals(event.getType())
-                        ? EVENT_DETAIL_EXECUTION_QUEUED
-                        : EVENT_DETAIL_EXECUTION_STARTED,
-                null,
-                Map.of(),
-                Map.of(),
-                null,
-                null,
-                ExecutionStatus.fromValue(run.getStatus()));
-    }
-
-    private static int progress(String phase) {
-        ExecutionPhase executionPhase;
-        try {
-            executionPhase = ExecutionPhase.fromValue(phase);
-        } catch (IllegalArgumentException ignored) {
-            return 0;
-        }
-        return switch (executionPhase) {
-            case QUEUED -> 0;
-            case RECEIVED -> 5;
-            case PREPARING_CONTEXT -> 15;
-            case CONNECTING_MODEL -> 25;
-            case ANSWERING -> 70;
-            case PERSISTING -> 90;
-            case COMPLETED -> 100;
-        };
+        return ConversationView.AgentExecutionView.composeFromExecution(
+                run, objective, eventViews, stream);
     }
 
     private static String normalizedTitle(String title) {
         return title == null || title.isBlank() ? DEFAULT_CONVERSATION_TITLE : title.trim();
-    }
-
-    private static ExecutionStreamCheckpointView streamCheckpointView(
-            AgentExecution run, AgentExecutionStreamCheckpoint stream) {
-        return new ExecutionStreamCheckpointView(
-                run.getExecutionId(),
-                stream.getExecutionAttemptNumber(),
-                stream.getModelInvocationSequence(),
-                ExecutionPhase.fromValue(stream.getPhase()),
-                stream.getOutputDeltaSequence(),
-                stream.getAnswer(),
-                stream.getCheckpointedAt());
     }
 
     private static Map<String, List<ConversationView.AgentExecutionUpdateView>> immutableEventMap(
@@ -568,19 +432,55 @@ public class ConversationApplicationService {
             ExecutionPhase phase,
             long outputDeltaSequence,
             String answer,
-            java.time.Instant checkpointedAt) {}
+            java.time.Instant checkpointedAt) {
+
+        public static ExecutionStreamCheckpointView composeFromStream(
+                AgentExecution execution, AgentExecutionStreamCheckpoint stream) {
+            return new ExecutionStreamCheckpointView(
+                    execution.getExecutionId(),
+                    stream.getExecutionAttemptNumber(),
+                    stream.getModelInvocationSequence(),
+                    ExecutionPhase.fromValue(stream.getPhase()),
+                    stream.getOutputDeltaSequence(),
+                    stream.getAnswer(),
+                    stream.getCheckpointedAt());
+        }
+    }
 
     /** 一次租户级 reconciliation 查询返回的持久事件和最新流投影。 */
     public record SessionStreamRecoveryView(
             Map<String, List<ConversationView.AgentExecutionUpdateView>> eventsBySession,
             Map<String, ExecutionStreamCheckpointView> snapshotsBySession,
             Map<String, ConversationView.MessageView> assistantMessagesBySession,
-            Map<String, Boolean> activeBySession) {}
+            Map<String, Boolean> activeBySession) {
+
+        public static SessionStreamRecoveryView empty() {
+            return new SessionStreamRecoveryView(Map.of(), Map.of(), Map.of(), Map.of());
+        }
+
+        public static SessionStreamRecoveryView composeFromReconciliation(
+                Map<String, List<ConversationView.AgentExecutionUpdateView>> eventsBySession,
+                Map<String, ExecutionStreamCheckpointView> snapshotsBySession,
+                Map<String, ConversationView.MessageView> assistantMessagesBySession,
+                Map<String, Boolean> activeBySession) {
+            return new SessionStreamRecoveryView(
+                    eventsBySession,
+                    snapshotsBySession,
+                    assistantMessagesBySession,
+                    activeBySession);
+        }
+    }
 
     /** 首次详情流握手使用的权威会话快照及持久事件高水位。 */
     public record SessionStreamBootstrapView(
             /** 当前完整会话投影。 */
             ConversationView session,
             /** 快照已经覆盖的最大持久执行事件序号。 */
-            long executionEventSequence) {}
+            long executionEventSequence) {
+
+        public static SessionStreamBootstrapView composeFromSession(
+                ConversationView session, long executionEventSequence) {
+            return new SessionStreamBootstrapView(session, executionEventSequence);
+        }
+    }
 }

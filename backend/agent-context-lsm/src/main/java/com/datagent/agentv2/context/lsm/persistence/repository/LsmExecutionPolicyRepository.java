@@ -8,10 +8,12 @@ import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.LocalDateTime;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /** 封装执行策略快照的一次创建、多次读取语义。 */
 @Repository
+@RequiredArgsConstructor
 public class LsmExecutionPolicyRepository {
 
     private static final String ID_PREFIX_EXECUTION_POLICY = "context_execution_policy";
@@ -23,13 +25,6 @@ public class LsmExecutionPolicyRepository {
     private final LsmExecutionPolicyMapper mapper;
     private final LsmDocumentCodec documents;
     private final IdGenerator ids;
-
-    public LsmExecutionPolicyRepository(
-            LsmExecutionPolicyMapper mapper, LsmDocumentCodec documents, IdGenerator ids) {
-        this.mapper = mapper;
-        this.documents = documents;
-        this.ids = ids;
-    }
 
     /** 返回已冻结策略；缺失时以唯一键幂等写入本次 execution 的配置快照。 */
     public LsmContextPolicySnapshot findOrCreateExecutionPolicy(

@@ -7,9 +7,9 @@ import com.datagent.agentv2.conversation.context.ConversationContextStrategyReso
 import com.datagent.agentv2.conversation.context.PreparedConversationContext;
 import com.datagent.agentv2.conversation.exception.ModelStreamInterruptedException;
 import com.datagent.agentv2.conversation.exception.ReactLimitExceededException;
-import com.datagent.agentv2.conversation.model.AgentModelGateway;
-import com.datagent.agentv2.conversation.model.ModelInvocationResult;
-import com.datagent.agentv2.conversation.model.ModelToolDefinition;
+import com.datagent.agentv2.conversation.model.api.AgentModelGateway;
+import com.datagent.agentv2.conversation.model.api.ModelInvocationResult;
+import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.tool.AgentToolRegistry;

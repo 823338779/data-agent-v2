@@ -7,8 +7,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotificationMapper;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
-import com.datagent.agentv2.conversation.model.ModelOutputDelta;
+import com.datagent.agentv2.conversation.model.api.ModelOutputDelta;
 import com.datagent.agentv2.conversation.process.ConversationProcessCoordinator;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.stream.ExecutionStreamCheckpointCoordinator;
@@ -25,6 +26,7 @@ import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mapstruct.factory.Mappers;
 import org.springframework.context.ApplicationEventPublisher;
 
 class ModelThinkingProcessTest {
@@ -83,6 +85,7 @@ class ModelThinkingProcessTest {
                         stream,
                         processes,
                         mock(ApplicationEventPublisher.class),
+                        Mappers.getMapper(AgentExecutionDeltaNotificationMapper.class),
                         mock(AgentExecutionEventService.class),
                         mock(AgentExecutionAttemptService.class),
                         mock(IdGenerator.class));

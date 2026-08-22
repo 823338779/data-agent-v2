@@ -1,6 +1,9 @@
-package com.datagent.agentv2.conversation.model;
+package com.datagent.agentv2.conversation.model.codex;
 
 import com.datagent.agentv2.conversation.exception.ModelStreamInterruptedException;
+import com.datagent.agentv2.conversation.model.api.ModelInvocationResult;
+import com.datagent.agentv2.conversation.model.api.ModelOutputDelta;
+import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
 import com.datagent.agentv2.conversation.react.ModelToolCall;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;

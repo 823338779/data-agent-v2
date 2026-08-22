@@ -29,6 +29,7 @@ import com.datagent.agentv2.platform.context.OperatorContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
 import org.springframework.http.HttpStatus;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +37,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 /** 承载消息提交中的独立事务边界，避免冲突重放加入已经失败的创建事务。 */
 @Service
+@RequiredArgsConstructor
 public class AgentExecutionSubmissionTransactionService {
 
     private static final ExecutionRequestType REQUEST_TYPE =
@@ -48,21 +50,6 @@ public class AgentExecutionSubmissionTransactionService {
     private final AgentExecutionEventService events;
     private final AgentExecutionStreamCheckpointService streamCheckpoints;
     private final IdGenerator ids;
-
-    public AgentExecutionSubmissionTransactionService(
-            ConversationSessionService sessions,
-            ConversationMessageService messages,
-            AgentExecutionService agentExecutions,
-            AgentExecutionEventService events,
-            AgentExecutionStreamCheckpointService streamCheckpoints,
-            IdGenerator ids) {
-        this.sessions = sessions;
-        this.messages = messages;
-        this.agentExecutions = agentExecutions;
-        this.events = events;
-        this.streamCheckpoints = streamCheckpoints;
-        this.ids = ids;
-    }
 
     /** 在独立事务内创建提交记录，或者返回已经存在的幂等提交。 */
     @Transactional(propagation = Propagation.REQUIRES_NEW)

@@ -7,11 +7,13 @@ import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.persistence.service.AgentExecutionAttemptService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import java.time.Instant;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /** 在同一数据库事务中收敛执行终态及其 assistant 中心消息中的全部开放过程节点。 */
 @Service
+@RequiredArgsConstructor
 public class AgentExecutionProcessTerminationService {
 
     private static final String CANCELLATION_PROCESS_CODE = "EXECUTION_CANCELLED";
@@ -21,17 +23,6 @@ public class AgentExecutionProcessTerminationService {
     private final AgentExecutionAttemptService attempts;
     private final ConversationProcessCoordinator processes;
     private final ProcessPayloadSanitizer sanitizer;
-
-    public AgentExecutionProcessTerminationService(
-            AgentExecutionService executions,
-            AgentExecutionAttemptService attempts,
-            ConversationProcessCoordinator processes,
-            ProcessPayloadSanitizer sanitizer) {
-        this.executions = executions;
-        this.attempts = attempts;
-        this.processes = processes;
-        this.sanitizer = sanitizer;
-    }
 
     /** 响应已持久化的取消请求；只有当前 owner 能关闭节点并提交取消终态。 */
     @Transactional

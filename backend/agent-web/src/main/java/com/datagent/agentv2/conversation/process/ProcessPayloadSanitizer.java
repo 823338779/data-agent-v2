@@ -4,6 +4,7 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -12,6 +13,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 /** 在计算大小、哈希、持久化和审计前递归清除工具载荷中的敏感字段。 */
 @Component
+@RequiredArgsConstructor
 public final class ProcessPayloadSanitizer {
 
     public static final String REDACTED_VALUE = "[REDACTED]";
@@ -35,10 +37,6 @@ public final class ProcessPayloadSanitizer {
                     "(?i)([\\\"']?(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|authorization|cookie|set[_-]?cookie|connection[_-]?string|jdbc[_-]?url)[\\\"']?\\s*[:=]\\s*)(\\\"(?:\\\\.|[^\\\"])*\\\"|'(?:\\\\.|[^'])*'|[^,;\\r\\n&}]+)");
 
     private final ObjectMapper json;
-
-    public ProcessPayloadSanitizer(ObjectMapper json) {
-        this.json = json;
-    }
 
     /** 返回与输入结构等价但敏感值已替换的新 JSON tree。 */
     public JsonNode sanitizeJson(JsonNode source) {

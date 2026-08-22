@@ -1,4 +1,4 @@
-package com.datagent.agentv2.conversation.model;
+package com.datagent.agentv2.conversation.model.api;
 
 import java.util.Map;
 import java.util.Objects;

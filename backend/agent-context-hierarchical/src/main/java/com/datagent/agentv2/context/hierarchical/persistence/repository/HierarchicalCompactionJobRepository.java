@@ -5,11 +5,14 @@ import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCompactionJo
 import com.datagent.agentv2.context.hierarchical.persistence.entity.HierarchicalCompactionJobEntity;
 import com.datagent.agentv2.context.hierarchical.persistence.json.HierarchicalDocumentCodec;
 import com.datagent.agentv2.context.hierarchical.persistence.mapper.HierarchicalCompactionJobMapper;
+import com.datagent.agentv2.context.hierarchical.persistence.mapping.HierarchicalPersistenceStructMapper;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.LocalDateTime;
+import lombok.RequiredArgsConstructor;
 
 /** 封装可恢复 job 的幂等创建、读取和联合 fencing 状态转换。 */
+@RequiredArgsConstructor
 public class HierarchicalCompactionJobRepository {
 
     /** 新计划只允许当前完整冻结 publication 预算与 generation settings 的 schema v3。 */
@@ -26,17 +29,13 @@ public class HierarchicalCompactionJobRepository {
 
     private final HierarchicalDocumentCodec documents;
 
-    public HierarchicalCompactionJobRepository(
-            HierarchicalCompactionJobMapper mapper, HierarchicalDocumentCodec documents) {
-        this.mapper = mapper;
-        this.documents = documents;
-    }
-
     /** 按业务标识读取当前租户作业，缺失时返回 null。 */
     public HierarchicalCompactionJob findJob(String jobId) {
         HierarchicalCompactionJobEntity entity =
                 mapper.selectJob(TenantContext.requiredTenantId(), jobId);
-        return entity == null ? null : toDomain(entity);
+        return entity == null
+                ? null
+                : HierarchicalPersistenceStructMapper.INSTANCE.toDomain(entity);
     }
 
     /** 读取当前 attempt 自然边界上的任意状态作业，供 takeover 冲突检查。 */
@@ -49,7 +48,9 @@ public class HierarchicalCompactionJobRepository {
                         execution.executionId(),
                         execution.executionAttempt(),
                         execution.inputUpToMessageSequence());
-        return entity == null ? null : toDomain(entity);
+        return entity == null
+                ? null
+                : HierarchicalPersistenceStructMapper.INSTANCE.toDomain(entity);
     }
 
     /** 读取固定会话、execution、输入和 checkpoint 边界上可接管的非终态作业。 */
@@ -65,7 +66,9 @@ public class HierarchicalCompactionJobRepository {
                         execution.inputUpToMessageSequence(),
                         baseVersion,
                         baseGeneration);
-        return entity == null ? null : toDomain(entity);
+        return entity == null
+                ? null
+                : HierarchicalPersistenceStructMapper.INSTANCE.toDomain(entity);
     }
 
     /** 查找已与给定 checkpoint 原子完成的作业，供 caller 崩溃后幂等恢复。 */
@@ -81,7 +84,9 @@ public class HierarchicalCompactionJobRepository {
                         execution.inputUpToMessageSequence(),
                         checkpointVersion,
                         checkpointGeneration);
-        return entity == null ? null : toDomain(entity);
+        return entity == null
+                ? null
+                : HierarchicalPersistenceStructMapper.INSTANCE.toDomain(entity);
     }
 
     /** CAS 更新 owner、attempt 和 version；计划、候选和状态保持不变。 */
@@ -142,7 +147,7 @@ public class HierarchicalCompactionJobRepository {
         if (persisted == null) {
             throw new IllegalStateException(JOB_NOT_PERSISTED);
         }
-        return toDomain(persisted);
+        return HierarchicalPersistenceStructMapper.INSTANCE.toDomain(persisted);
     }
 
     /** 以读取到的乐观锁版本和调用方 execution fence 推动作业状态。 */
@@ -218,45 +223,18 @@ public class HierarchicalCompactionJobRepository {
     private HierarchicalCompactionJobEntity toEntity(
             HierarchicalCompactionJob job, String tenantId) {
         LocalDateTime now = LocalDateTime.now();
-        HierarchicalCompactionJobEntity entity = new HierarchicalCompactionJobEntity();
-        entity.setHierarchicalCompactionJobId(job.jobId());
+        HierarchicalCompactionJobEntity entity =
+                HierarchicalPersistenceStructMapper.INSTANCE.toEntity(job);
         entity.setTenantId(tenantId);
-        entity.setConversationSessionId(job.conversationSessionId());
-        entity.setExecutionId(job.executionId());
-        entity.setExecutionAttempt(job.executionAttempt());
-        entity.setOwnerInstanceId(job.ownerInstanceId());
-        entity.setInputUpToMessageSequence(job.inputUpToMessageSequence());
-        entity.setBaseCheckpointVersion(job.baseCheckpointVersion());
-        entity.setBaseStrategyGeneration(job.baseStrategyGeneration());
         entity.setPlanDocument(
                 documents.canonicalizeVersionedDocument(
                         job.planDocument(), WRITABLE_PLAN_SCHEMA_VERSION));
-        entity.setStatus(job.status().name());
-        entity.setFailureCode(job.failureCode());
         entity.setCreatedAt(now);
         entity.setCreatedBy(SYSTEM_OPERATOR);
         entity.setUpdatedAt(now);
         entity.setUpdatedBy(SYSTEM_OPERATOR);
         entity.setDeleted(false);
-        entity.setVersion(job.version());
         return entity;
-    }
-
-    /** 恢复插件私有 job 生命周期和 fencing 字段。 */
-    private static HierarchicalCompactionJob toDomain(HierarchicalCompactionJobEntity entity) {
-        return new HierarchicalCompactionJob(
-                entity.getHierarchicalCompactionJobId(),
-                entity.getConversationSessionId(),
-                entity.getExecutionId(),
-                entity.getExecutionAttempt(),
-                entity.getOwnerInstanceId(),
-                entity.getInputUpToMessageSequence(),
-                entity.getBaseCheckpointVersion(),
-                entity.getBaseStrategyGeneration(),
-                entity.getPlanDocument(),
-                HierarchicalCompactionJob.Status.valueOf(entity.getStatus()),
-                entity.getFailureCode(),
-                entity.getVersion());
     }
 
     /** 终态转换原子写入完成时间。 */

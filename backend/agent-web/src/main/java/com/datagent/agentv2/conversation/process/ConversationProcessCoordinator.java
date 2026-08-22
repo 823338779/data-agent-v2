@@ -23,6 +23,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.Function;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +34,7 @@ import tools.jackson.databind.JsonNode;
 /** 以执行 fencing 和 assistant 行锁串行化 ProcessItem 的唯一写入协调器。 */
 @Service
 @Transactional
+@RequiredArgsConstructor
 public class ConversationProcessCoordinator {
 
     private static final int THINKING_CHECKPOINT_CHARACTERS = 512;
@@ -73,21 +75,6 @@ public class ConversationProcessCoordinator {
     /** 保存当前 owner attempt 的完整安全工具入参，供后续状态审计关联。 */
     private final ConcurrentMap<ProcessBufferKey, JsonNode> toolInputBuffers =
             new ConcurrentHashMap<>();
-
-    public ConversationProcessCoordinator(
-            AgentExecutionService agentExecutions,
-            ConversationMessageService messages,
-            ProcessPayloadSanitizer sanitizer,
-            ProcessPayloadLimiter limiter,
-            ConversationProcessProperties properties,
-            ApplicationEventPublisher applicationEvents) {
-        this.agentExecutions = agentExecutions;
-        this.messages = messages;
-        this.sanitizer = sanitizer;
-        this.limiter = limiter;
-        this.properties = properties;
-        this.applicationEvents = applicationEvents;
-    }
 
     /** 创建 RUNNING thinking 节点并返回稳定 UUID。 */
     public UUID startThinking(

@@ -4,6 +4,7 @@ import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
+import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeStructMapper;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnerRegistry;
 import com.datagent.agentv2.conversation.runtime.ExecutionWorkerIdentity;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
@@ -79,11 +80,7 @@ public final class RedisExecutionCancellationListener implements AutoCloseable {
             return false;
         }
         AgentExecutionPort.ClaimedAgentExecution owned =
-                new AgentExecutionPort.ClaimedAgentExecution(
-                        envelope.tenantId(),
-                        envelope.executionId(),
-                        envelope.ownerInstanceId(),
-                        envelope.executionAttemptNumber());
+                AgentExecutionRuntimeStructMapper.INSTANCE.toClaimedExecution(envelope);
         if (!leases.cancelIfRequested(owned)) {
             return false;
         }

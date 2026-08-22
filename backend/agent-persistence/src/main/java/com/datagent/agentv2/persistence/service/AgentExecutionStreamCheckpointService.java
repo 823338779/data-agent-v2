@@ -9,9 +9,11 @@ import com.datagent.agentv2.persistence.service.mapper.AgentExecutionStreamCheck
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class AgentExecutionStreamCheckpointService
         extends ServiceImpl<
                 AgentExecutionStreamCheckpointMapper, AgentExecutionStreamCheckpointEntity> {
@@ -31,10 +33,6 @@ public class AgentExecutionStreamCheckpointService
             """;
 
     private final ConversationPersistenceMapper models;
-
-    public AgentExecutionStreamCheckpointService(ConversationPersistenceMapper models) {
-        this.models = models;
-    }
 
     public boolean save(AgentExecutionStreamCheckpoint checkpoint) {
         return super.save(models.toEntity(checkpoint));

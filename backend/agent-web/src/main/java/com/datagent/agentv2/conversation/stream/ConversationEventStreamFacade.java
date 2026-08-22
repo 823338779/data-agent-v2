@@ -27,6 +27,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.event.TransactionPhase;
@@ -35,6 +36,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /** 详细会话 SSE：持久事件可重放，瞬时 delta 由 Redis 与 checkpoint 共同收敛。 */
 @Service
+@RequiredArgsConstructor
 public final class ConversationEventStreamFacade {
 
     /** 单连接异步发送队列允许积压的最大事件数。 */
@@ -55,16 +57,6 @@ public final class ConversationEventStreamFacade {
     /** tenant/session 到当前实例详细 SSE subscriptions 的并发映射。 */
     private final ConcurrentMap<SessionKey, Set<Subscription>> subscriptions =
             new ConcurrentHashMap<>();
-
-    /** 创建会话 SSE facade 并注入查询、连接 registry 和运行时配置。 */
-    public ConversationEventStreamFacade(
-            ConversationApplicationService conversations,
-            LocalSseRegistry localStreams,
-            AgentExecutionRuntimeProperties runtime) {
-        this.conversations = conversations;
-        this.localStreams = localStreams;
-        this.runtime = runtime;
-    }
 
     /**
      * 打开一个经过会话鉴权的详细 SSE 连接，并完成权威 snapshot 与实时流握手。

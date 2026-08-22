@@ -1,5 +1,6 @@
 package com.datagent.agentv2.conversation.execution;
 
+import static com.datagent.agentv2.conversation.execution.ExecutionConstants.CARRIAGE_RETURN;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_HASH_ALGORITHM_UNAVAILABLE_SUFFIX;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_IDEMPOTENCY_KEY_BLANK;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.HASH_ALGORITHM_SHA_256;
@@ -12,20 +13,17 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.text.Normalizer;
 import java.util.HexFormat;
+import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
+@RequiredArgsConstructor
 public final class AgentExecutionSubmissionService {
 
     private final AgentExecutionSubmissionTransactionService submissionTransactions;
-
-    public AgentExecutionSubmissionService(
-            AgentExecutionSubmissionTransactionService submissionTransactions) {
-        this.submissionTransactions = submissionTransactions;
-    }
 
     public ConversationSession submit(
             String conversationSessionId, String content, String idempotencyKey, String requestId) {
@@ -52,7 +50,9 @@ public final class AgentExecutionSubmissionService {
     static String payloadHash(String content) {
         String normalized =
                 Normalizer.normalize(
-                        content.replace(WINDOWS_LINE_SEPARATOR, LINE_SEPARATOR).replace('\r', '\n'),
+                        content
+                                .replace(WINDOWS_LINE_SEPARATOR, LINE_SEPARATOR)
+                                .replace(CARRIAGE_RETURN, LINE_SEPARATOR),
                         Normalizer.Form.NFC);
         try {
             byte[] digest =

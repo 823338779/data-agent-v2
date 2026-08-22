@@ -18,12 +18,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /** 会话摘要 SSE：只发送数据库可重建的当前快照，不承诺永久事件历史。 */
 @Service
+@RequiredArgsConstructor
 public final class ConversationSummaryStreamFacade {
 
     private static final String ERROR_CONNECTION_LIMIT =
@@ -37,10 +39,6 @@ public final class ConversationSummaryStreamFacade {
     private final ConversationApplicationService conversations;
     private final Set<Subscription> subscriptions = new CopyOnWriteArraySet<>();
     private final AtomicInteger connectionCount = new AtomicInteger();
-
-    public ConversationSummaryStreamFacade(ConversationApplicationService conversations) {
-        this.conversations = conversations;
-    }
 
     public SseEmitter open() {
         if (connectionCount.incrementAndGet() > MAX_CONNECTIONS) {

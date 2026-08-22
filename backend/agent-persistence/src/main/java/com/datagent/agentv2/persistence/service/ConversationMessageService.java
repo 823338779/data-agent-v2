@@ -3,14 +3,15 @@ package com.datagent.agentv2.persistence.service;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.persistence.entity.ConversationMessageEntity;
-import com.datagent.agentv2.persistence.json.ConversationProcessDocumentCodec;
 import com.datagent.agentv2.persistence.mapping.ConversationPersistenceMapper;
 import com.datagent.agentv2.persistence.service.mapper.ConversationMessageMapper;
 import java.util.Collection;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class ConversationMessageService
         extends ServiceImpl<ConversationMessageMapper, ConversationMessageEntity> {
 
@@ -19,18 +20,9 @@ public class ConversationMessageService
     private static final String ROLE_ASSISTANT = "assistant";
 
     private final ConversationPersistenceMapper models;
-    private final ConversationProcessDocumentCodec processDocuments;
-
-    public ConversationMessageService(
-            ConversationPersistenceMapper models,
-            ConversationProcessDocumentCodec processDocuments) {
-        this.models = models;
-        this.processDocuments = processDocuments;
-    }
 
     public boolean save(ConversationMessage message) {
         ConversationMessageEntity entity = models.toEntity(message);
-        entity.setThinkingProcess(processDocuments.write(message.getThinkingProcess()));
         boolean saved = super.save(entity);
         if (saved) {
             models.updateModel(entity, message);
@@ -49,7 +41,6 @@ public class ConversationMessageService
             return false;
         }
         models.updateEntity(message, entity);
-        entity.setThinkingProcess(processDocuments.write(message.getThinkingProcess()));
         boolean updated = super.updateById(entity);
         if (updated) {
             models.updateModel(entity, message);
@@ -152,18 +143,13 @@ public class ConversationMessageService
                         .list());
     }
 
-    /** 读取 Entity 并在唯一 codec 边界恢复强类型 ProcessItem 列表。 */
+    /** 读取 Entity 并恢复领域消息。 */
     private ConversationMessage toModel(ConversationMessageEntity entity) {
-        if (entity == null) {
-            return null;
-        }
-        ConversationMessage message = models.toModel(entity);
-        message.setThinkingProcess(processDocuments.read(entity.getThinkingProcess()));
-        return message;
+        return models.toModel(entity);
     }
 
-    /** 保持数据库查询顺序批量恢复强类型 ProcessItem 列表。 */
+    /** 保持数据库查询顺序批量恢复领域消息。 */
     private List<ConversationMessage> toModels(List<ConversationMessageEntity> entities) {
-        return entities.stream().map(this::toModel).toList();
+        return models.toMessageModels(entities);
     }
 }

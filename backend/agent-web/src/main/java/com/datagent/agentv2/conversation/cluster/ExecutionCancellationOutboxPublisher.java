@@ -6,6 +6,8 @@ import com.datagent.agentv2.persistence.entity.NotificationOutboxMessageEntity;
 import com.datagent.agentv2.persistence.service.NotificationOutboxMessageService;
 import java.time.Duration;
 import java.time.Instant;
+
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -13,6 +15,7 @@ import tools.jackson.databind.ObjectMapper;
 
 /** 扫描取消 Outbox 并发布低延迟唤醒；失败只更新独立重试状态。 */
 @Component
+@RequiredArgsConstructor
 public final class ExecutionCancellationOutboxPublisher {
 
     /** 分发跨实例执行取消请求的 Redis Pub/Sub 通道。 */
@@ -27,17 +30,6 @@ public final class ExecutionCancellationOutboxPublisher {
     private final StringRedisTemplate redis;
     private final ObjectMapper json;
     private final AgentExecutionRuntimeProperties runtime;
-
-    public ExecutionCancellationOutboxPublisher(
-            NotificationOutboxMessageService outbox,
-            StringRedisTemplate redis,
-            ObjectMapper json,
-            AgentExecutionRuntimeProperties runtime) {
-        this.outbox = outbox;
-        this.redis = redis;
-        this.json = json;
-        this.runtime = runtime;
-    }
 
     @Scheduled(fixedDelayString = "${data-agent.runtime.control-outbox-poll-interval:250ms}")
     public void publishDue() {

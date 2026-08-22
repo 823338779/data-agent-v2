@@ -6,6 +6,7 @@ import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmCompactionJobEntity;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmSummarySegmentEntity;
 import com.datagent.agentv2.context.lsm.persistence.json.LsmDocumentCodec;
+import com.datagent.agentv2.context.lsm.persistence.mapping.LsmPersistenceStructMapper;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmCompactionJobRepository;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmSummarySegmentRepository;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.CandidateInput;
@@ -135,7 +136,7 @@ public class LsmCompactionRecoveryService {
             }
             resolvedIds.put(operation.targetId(), persisted.getSummarySegmentId());
             generatedDocuments.put(operation.targetId(), persisted.getSummaryDocument());
-            candidates.add(toDomain(persisted));
+            candidates.add(LsmPersistenceStructMapper.INSTANCE.toDomain(persisted, documents));
             executions.assertOwnedAndWithinBudget(execution);
             if (executions.cancelIfRequested(execution)) {
                 markCancelled(job, execution.ownerInstanceId());
@@ -380,18 +381,6 @@ public class LsmCompactionRecoveryService {
 
     private static String resolve(String id, Map<String, String> resolvedIds) {
         return id == null ? null : resolvedIds.getOrDefault(id, id);
-    }
-
-    private static LsmSummarySegment toDomain(LsmSummarySegmentEntity entity) {
-        return new LsmSummarySegment(
-                entity.getSummarySegmentId(),
-                LsmSummarySegment.SegmentKind.valueOf(entity.getKind()),
-                entity.getLevel(),
-                new LsmSummarySegment.Coverage(
-                        entity.getStartTurnSequence(), entity.getEndTurnSequence()),
-                entity.getEstimatedTokenCount(),
-                List.of(),
-                entity.isPartialSegment());
     }
 
     private static String sha256(String value) {

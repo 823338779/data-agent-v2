@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 /**
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
  * <p>该类型负责运行时 fencing 和检查点时机，不承担通用持久化 CRUD；数据库访问由 {@code AgentExecutionStreamCheckpointService} 提供。
  */
 @Service
+@RequiredArgsConstructor
 public final class ExecutionStreamCheckpointCoordinator {
 
     /** 提供带 owner fencing 和乐观锁的 checkpoint 数据库更新。 */
@@ -34,13 +36,6 @@ public final class ExecutionStreamCheckpointCoordinator {
     private final ConcurrentMap<String, String> conversationSessionIds = new ConcurrentHashMap<>();
 
     /** 创建 checkpoint 协调器并注入权威持久化服务。 */
-    public ExecutionStreamCheckpointCoordinator(
-            AgentExecutionStreamCheckpointService streamCheckpoints,
-            AgentExecutionService agentExecutions) {
-        this.streamCheckpoints = streamCheckpoints;
-        this.agentExecutions = agentExecutions;
-    }
-
     /**
      * 切换模型调用时持久化空投影，并清理该执行的旧本地累计。
      *

@@ -1,4 +1,9 @@
-package com.datagent.agentv2.conversation.model;
+package com.datagent.agentv2.conversation.model.ollama;
+
+import com.datagent.agentv2.conversation.model.api.AgentModelGateway;
+import com.datagent.agentv2.conversation.model.api.ModelInvocationResult;
+import com.datagent.agentv2.conversation.model.api.ModelOutputDelta;
+import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
 
 import com.datagent.agentv2.conversation.exception.ModelStreamInterruptedException;
 import com.datagent.agentv2.conversation.react.ModelInputMessage;
@@ -8,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import lombok.RequiredArgsConstructor;
 import org.springframework.ai.ollama.api.OllamaApi;
 import org.springframework.ai.ollama.api.OllamaChatOptions;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -20,6 +26,7 @@ import tools.jackson.databind.ObjectMapper;
         name = "provider",
         havingValue = "ollama",
         matchIfMissing = true)
+@RequiredArgsConstructor
 public final class OllamaAgentModelGateway implements AgentModelGateway {
 
     private static final String MODEL_PROVIDER = "ollama";
@@ -32,13 +39,6 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
     private final OllamaModelProperties properties;
     private final ObjectMapper json;
 
-    public OllamaAgentModelGateway(
-            OllamaApi api, OllamaModelProperties properties, ObjectMapper json) {
-        this.api = api;
-        this.properties = properties;
-        this.json = json;
-    }
-
     @Override
     public ModelInvocationResult complete(
             List<ModelInputMessage> messages,
@@ -46,8 +46,14 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
             Consumer<ModelOutputDelta> outputDeltaConsumer) {
         OllamaApi.ChatRequest request =
                 OllamaApi.ChatRequest.builder(properties.getModel())
-                        .messages(messages.stream().map(this::toProviderMessage).toList())
-                        .tools(toProviderTools(tools))
+                        .messages(
+                                messages.stream()
+                                        .map(
+                                                message ->
+                                                        OllamaModelStructMapper.INSTANCE
+                                                                .toProviderMessage(message, json))
+                                        .toList())
+                        .tools(OllamaModelStructMapper.INSTANCE.toProviderTools(tools))
                         .options(
                                 OllamaChatOptions.builder()
                                         .numCtx(properties.getContextWindowTokens())
@@ -68,48 +74,6 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
             throw new ModelStreamInterruptedException(ERROR_INTERRUPTED, failure);
         }
         return accumulator.result();
-    }
-
-    private OllamaApi.Message toProviderMessage(ModelInputMessage message) {
-        OllamaApi.Message.Role role = OllamaApi.Message.Role.valueOf(message.role().name());
-        OllamaApi.Message.Builder builder =
-                OllamaApi.Message.builder(role).content(message.content());
-        if (message.thinking() != null) {
-            builder.thinking(message.thinking());
-        }
-        if (!message.toolCalls().isEmpty()) {
-            builder.toolCalls(
-                    message.toolCalls().stream()
-                            .map(
-                                    call ->
-                                            new OllamaApi.Message.ToolCall(
-                                                    call.toolCallId(),
-                                                    new OllamaApi.Message.ToolCallFunction(
-                                                            call.name(), toMap(call.arguments()))))
-                            .toList());
-        }
-        if (message.toolName() != null) {
-            builder.toolName(message.toolName());
-        }
-        return builder.build();
-    }
-
-    private static List<OllamaApi.ChatRequest.Tool> toProviderTools(
-            List<ModelToolDefinition> tools) {
-        return tools.stream()
-                .map(
-                        tool ->
-                                new OllamaApi.ChatRequest.Tool(
-                                        new OllamaApi.ChatRequest.Tool.Function(
-                                                tool.name(),
-                                                tool.description(),
-                                                tool.parameters())))
-                .toList();
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> toMap(tools.jackson.databind.JsonNode node) {
-        return json.convertValue(node, Map.class);
     }
 
     private final class ExecutionStreamAccumulator {

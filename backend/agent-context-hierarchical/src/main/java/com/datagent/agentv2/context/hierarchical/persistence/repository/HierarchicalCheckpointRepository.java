@@ -5,12 +5,15 @@ import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolic
 import com.datagent.agentv2.context.hierarchical.persistence.entity.HierarchicalCheckpointEntity;
 import com.datagent.agentv2.context.hierarchical.persistence.json.HierarchicalDocumentCodec;
 import com.datagent.agentv2.context.hierarchical.persistence.mapper.HierarchicalCheckpointMapper;
+import com.datagent.agentv2.context.hierarchical.persistence.mapping.HierarchicalPersistenceStructMapper;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.LocalDateTime;
+import lombok.RequiredArgsConstructor;
 
 /** 封装每个会话唯一 checkpoint 的创建、读取和 fenced CAS 发布。 */
+@RequiredArgsConstructor
 public class HierarchicalCheckpointRepository {
 
     private static final int FRONTIER_SCHEMA_VERSION = 1;
@@ -27,17 +30,13 @@ public class HierarchicalCheckpointRepository {
 
     private final HierarchicalDocumentCodec documents;
 
-    public HierarchicalCheckpointRepository(
-            HierarchicalCheckpointMapper mapper, HierarchicalDocumentCodec documents) {
-        this.mapper = mapper;
-        this.documents = documents;
-    }
-
     /** 读取当前租户会话的唯一有效 checkpoint，缺失时返回 null。 */
     public HierarchicalCheckpoint findCheckpoint(String conversationSessionId) {
         HierarchicalCheckpointEntity entity =
                 mapper.selectCheckpoint(TenantContext.requiredTenantId(), conversationSessionId);
-        return entity == null ? null : toDomain(entity);
+        return entity == null
+                ? null
+                : HierarchicalPersistenceStructMapper.INSTANCE.toDomain(entity);
     }
 
     /** 幂等创建初始 checkpoint，并返回唯一键竞争后的持久化记录。 */
@@ -138,54 +137,25 @@ public class HierarchicalCheckpointRepository {
     private HierarchicalCheckpointEntity toEntity(
             HierarchicalCheckpoint checkpoint, String tenantId, boolean creating) {
         LocalDateTime now = LocalDateTime.now();
-        HierarchicalCheckpointEntity entity = new HierarchicalCheckpointEntity();
-        entity.setHierarchicalCheckpointId(checkpoint.checkpointId());
+        HierarchicalCheckpointEntity entity =
+                HierarchicalPersistenceStructMapper.INSTANCE.toEntity(checkpoint);
         entity.setTenantId(tenantId);
-        entity.setConversationSessionId(checkpoint.conversationSessionId());
         entity.setColdSummaryDocument(
                 documents.canonicalizeVersionedDocument(
                         checkpoint.coldSummaryDocument(), checkpoint.summarySchemaVersion()));
-        entity.setSummarizedUpToConversationMessageSequence(
-                checkpoint.summarizedUpToConversationMessageSequence());
-        entity.setSummarizedCompletedTurnCount(checkpoint.summarizedCompletedTurnCount());
-        entity.setEstimatedTokenCount(checkpoint.estimatedTokenCount());
-        entity.setSummarySchemaVersion(checkpoint.summarySchemaVersion());
-        entity.setSummaryPromptVersion(checkpoint.summaryPromptVersion());
-        entity.setModelProvider(checkpoint.modelProvider());
-        entity.setModelName(checkpoint.modelName());
         entity.setActiveFrontierDocument(
                 documents.canonicalizeVersionedDocument(
                         checkpoint.activeFrontierDocument(), FRONTIER_SCHEMA_VERSION));
-        entity.setStrategyGeneration(checkpoint.strategyGeneration());
         entity.setCreatedAt(now);
         entity.setCreatedBy(SYSTEM_OPERATOR);
         entity.setUpdatedAt(now);
         entity.setUpdatedBy(SYSTEM_OPERATOR);
         entity.setDeleted(false);
-        entity.setVersion(checkpoint.version());
         if (!creating) {
             entity.setCreatedAt(null);
             entity.setCreatedBy(null);
         }
         return entity;
-    }
-
-    /** 将持久化记录恢复为不携带租户和审计细节的领域 checkpoint。 */
-    private static HierarchicalCheckpoint toDomain(HierarchicalCheckpointEntity entity) {
-        return new HierarchicalCheckpoint(
-                entity.getHierarchicalCheckpointId(),
-                entity.getConversationSessionId(),
-                entity.getColdSummaryDocument(),
-                entity.getSummarizedUpToConversationMessageSequence(),
-                entity.getSummarizedCompletedTurnCount(),
-                entity.getEstimatedTokenCount(),
-                entity.getSummarySchemaVersion(),
-                entity.getSummaryPromptVersion(),
-                entity.getModelProvider(),
-                entity.getModelName(),
-                entity.getActiveFrontierDocument(),
-                entity.getStrategyGeneration(),
-                entity.getVersion());
     }
 
     /** 防止跨租户、跨会话的 replacement 参与 checkpoint CAS。 */

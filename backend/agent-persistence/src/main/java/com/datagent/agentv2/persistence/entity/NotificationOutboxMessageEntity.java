@@ -15,6 +15,26 @@ import org.apache.ibatis.type.JdbcType;
 @TableName(value = "notification_outbox_message", autoResultMap = true)
 public final class NotificationOutboxMessageEntity extends TenantAuditedEntity {
 
+    public static NotificationOutboxMessageEntity compose(
+            String notificationMessageId,
+            String notificationType,
+            String aggregateType,
+            String aggregateId,
+            Long aggregateVersion,
+            String payload,
+            Instant nextAttemptAt) {
+        NotificationOutboxMessageEntity notification = new NotificationOutboxMessageEntity();
+        notification.notificationMessageId = notificationMessageId;
+        notification.notificationType = notificationType;
+        notification.aggregateType = aggregateType;
+        notification.aggregateId = aggregateId;
+        notification.aggregateVersion = aggregateVersion;
+        notification.payload = payload;
+        notification.nextAttemptAt = nextAttemptAt;
+        notification.version = 0L;
+        return notification;
+    }
+
     /** 通知消息的业务唯一标识，对应 notification_message_id 列。 */
     private String notificationMessageId;
 

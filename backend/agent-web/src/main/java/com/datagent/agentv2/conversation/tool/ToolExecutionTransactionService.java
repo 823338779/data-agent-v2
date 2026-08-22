@@ -11,6 +11,7 @@ import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import java.time.Instant;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +20,7 @@ import tools.jackson.databind.ObjectMapper;
 
 /** 承载工具调用前后的独立短事务，确保外部工具执行期间不持有数据库事务。 */
 @Service
+@RequiredArgsConstructor
 public class ToolExecutionTransactionService {
 
     private static final String IDEMPOTENCY_PREFIX = "tool";
@@ -31,19 +33,6 @@ public class ToolExecutionTransactionService {
     private final ConversationMessageService messages;
     private final ConversationProcessCoordinator conversationProcesses;
     private final ObjectMapper json;
-
-    public ToolExecutionTransactionService(
-            AgentToolRegistry registry,
-            ToolExecutionService toolExecutions,
-            ConversationMessageService messages,
-            ConversationProcessCoordinator conversationProcesses,
-            ObjectMapper json) {
-        this.registry = registry;
-        this.toolExecutions = toolExecutions;
-        this.messages = messages;
-        this.conversationProcesses = conversationProcesses;
-        this.json = json;
-    }
 
     /** 在独立事务中把 prepared 工具执行推进为 executing，并返回不可变调用输入。 */
     @Transactional(propagation = Propagation.REQUIRES_NEW)

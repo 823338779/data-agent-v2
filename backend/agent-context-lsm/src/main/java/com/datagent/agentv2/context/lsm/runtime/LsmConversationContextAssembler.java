@@ -10,6 +10,7 @@ import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmContextManifestEntity;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmSummarySegmentEntity;
 import com.datagent.agentv2.context.lsm.persistence.json.LsmDocumentCodec;
+import com.datagent.agentv2.context.lsm.persistence.mapping.LsmPersistenceStructMapper;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmContextManifestRepository;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmSummarySegmentRepository;
 import com.datagent.agentv2.context.lsm.planning.ConversationTokenEstimator;
@@ -578,36 +579,11 @@ public class LsmConversationContextAssembler {
     }
 
     private LsmContextManifest toManifest(LsmContextManifestEntity entity) {
-        Long warmEnd =
-                entity.getWarmCutoffTurnSequence() == 0L
-                        ? null
-                        : entity.getWarmCutoffTurnSequence();
-        Long warmStart =
-                warmEnd == null
-                        ? null
-                        : Math.max(1L, warmEnd - (100L + Math.floorMod(warmEnd - 100L, 10L)) + 1L);
-        return new LsmContextManifest(
-                entity.getActiveRootSegmentId(),
-                documents.readStringList(entity.getActiveSegmentIds()),
-                entity.getPendingRawStartTurnSequence(),
-                entity.getPendingRawEndTurnSequence(),
-                warmStart,
-                warmEnd,
-                entity.getGeneration(),
-                entity.getEffectiveFanout(),
-                entity.getEffectiveMaxLevel());
+        return LsmPersistenceStructMapper.INSTANCE.toDomain(entity, documents);
     }
 
     private LsmSummarySegment toDomainSegment(LsmSummarySegmentEntity entity) {
-        return new LsmSummarySegment(
-                entity.getSummarySegmentId(),
-                LsmSummarySegment.SegmentKind.valueOf(entity.getKind()),
-                entity.getLevel(),
-                new LsmSummarySegment.Coverage(
-                        entity.getStartTurnSequence(), entity.getEndTurnSequence()),
-                entity.getEstimatedTokenCount(),
-                documents.readStringList(entity.getSourceSegmentIds()),
-                entity.isPartialSegment());
+        return LsmPersistenceStructMapper.INSTANCE.toDomain(entity, documents);
     }
 
     private List<TurnSource> toTurns(List<ConversationMessage> rows) {

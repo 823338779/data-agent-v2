@@ -8,8 +8,10 @@ import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.LocalDateTime;
+import lombok.RequiredArgsConstructor;
 
 /** 封装 execution 策略快照的一次创建、多次读取语义。 */
+@RequiredArgsConstructor
 public class HierarchicalExecutionPolicyRepository {
 
     private static final String ID_PREFIX = "hierarchical_execution_policy";
@@ -24,15 +26,6 @@ public class HierarchicalExecutionPolicyRepository {
 
     private final HierarchicalDocumentCodec documents;
     private final IdGenerator ids;
-
-    public HierarchicalExecutionPolicyRepository(
-            HierarchicalExecutionPolicyMapper mapper,
-            HierarchicalDocumentCodec documents,
-            IdGenerator ids) {
-        this.mapper = mapper;
-        this.documents = documents;
-        this.ids = ids;
-    }
 
     /** 返回首次冻结策略；唯一键竞争时读取首个成功写入的快照。 */
     public HierarchicalContextPolicySnapshot findOrCreate(

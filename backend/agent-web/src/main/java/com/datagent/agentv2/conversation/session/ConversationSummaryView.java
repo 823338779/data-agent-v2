@@ -1,5 +1,8 @@
 package com.datagent.agentv2.conversation.session;
 
+import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.domain.ConversationSession;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.enums.SessionExecutionStatus;
 import java.time.LocalDateTime;
 
@@ -18,4 +21,21 @@ public record ConversationSummaryView(
         /** 会话共享字段乐观锁版本。 */
         long version,
         /** 会话最新执行状态，无执行时为 idle。 */
-        SessionExecutionStatus status) {}
+        SessionExecutionStatus status) {
+
+    /** 从会话及其最新执行组装列表投影。 */
+    public static ConversationSummaryView composeFromSession(
+            ConversationSession session, AgentExecution latestExecution) {
+        return new ConversationSummaryView(
+                session.getConversationSessionId(),
+                session.getTitle(),
+                session.getTag() == null ? "" : session.getTag(),
+                session.getCreatedAt(),
+                session.getUpdatedAt(),
+                session.getVersion(),
+                latestExecution == null
+                        ? SessionExecutionStatus.IDLE
+                        : SessionExecutionStatus.fromExecutionStatus(
+                                ExecutionStatus.fromValue(latestExecution.getStatus())));
+    }
+}

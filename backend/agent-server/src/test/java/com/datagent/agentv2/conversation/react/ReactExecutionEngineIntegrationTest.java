@@ -20,8 +20,9 @@ import com.datagent.agentv2.conversation.context.ConversationContextRequestFacto
 import com.datagent.agentv2.conversation.context.ConversationContextStrategy;
 import com.datagent.agentv2.conversation.context.ConversationContextStrategyResolver;
 import com.datagent.agentv2.conversation.context.PreparedConversationContext;
-import com.datagent.agentv2.conversation.model.AgentModelGateway;
-import com.datagent.agentv2.conversation.model.ModelInvocationResult;
+import com.datagent.agentv2.conversation.model.api.AgentModelGateway;
+import com.datagent.agentv2.conversation.model.api.ModelInvocationResult;
+import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.tool.AgentToolRegistry;
@@ -221,7 +222,7 @@ class ReactExecutionEngineIntegrationTest {
     private static ConversationContextRequest request(
             AgentExecutionPort.ClaimedAgentExecution run,
             long inputBoundary,
-            List<com.datagent.agentv2.conversation.model.ModelToolDefinition> tools) {
+            List<ModelToolDefinition> tools) {
         return new ConversationContextRequest(
                 new ContextExecutionRef(
                         run.tenantId(),

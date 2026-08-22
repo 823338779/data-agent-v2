@@ -6,8 +6,10 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 
 /** 加载本地标准语料或 LongMemEval 官方 JSON，不依赖产品运行时模块。 */
+@RequiredArgsConstructor
 public final class CompactEvalCorpusLoader {
 
     private static final String SCHEMA_VERSION = "compact-eval/v1";
@@ -37,10 +39,6 @@ public final class CompactEvalCorpusLoader {
     private static final String CONTENT_FIELD = "content";
 
     private final ObjectMapper json;
-
-    public CompactEvalCorpusLoader(ObjectMapper json) {
-        this.json = json;
-    }
 
     /** 根据根节点形态自动识别标准语料或 LongMemEval 数据文件。 */
     public CompactEvalCorpus load(Path path) throws IOException {

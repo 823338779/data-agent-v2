@@ -1,4 +1,4 @@
-package com.datagent.agentv2.conversation.model;
+package com.datagent.agentv2.conversation.model.ollama;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

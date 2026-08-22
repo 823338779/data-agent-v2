@@ -4,17 +4,15 @@ import com.datagent.agentv2.context.lsm.persistence.entity.LsmContextManifestEnt
 import com.datagent.agentv2.context.lsm.persistence.mapper.LsmContextManifestMapper;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /** 封装每个会话唯一 manifest 的读取和版本加代次 CAS 发布。 */
 @Repository
+@RequiredArgsConstructor
 public class LsmContextManifestRepository {
 
     private final LsmContextManifestMapper mapper;
-
-    public LsmContextManifestRepository(LsmContextManifestMapper mapper) {
-        this.mapper = mapper;
-    }
 
     /** 读取当前租户会话的唯一 manifest。 */
     public Optional<LsmContextManifestEntity> findManifest(String sessionId) {

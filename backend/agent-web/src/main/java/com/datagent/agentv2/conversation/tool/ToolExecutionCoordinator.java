@@ -15,10 +15,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 
 @Service
+@RequiredArgsConstructor
 public final class ToolExecutionCoordinator implements AutoCloseable {
 
     private static final String ERROR_INVALID_ASSISTANT_CALL =
@@ -29,17 +31,6 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
     private final ToolExecutionTransactionService transactionOperations;
     private final ToolFailureSanitizer failures;
     private final ExecutorService toolExecutor = Executors.newVirtualThreadPerTaskExecutor();
-
-    public ToolExecutionCoordinator(
-            ToolExecutionService toolExecutions,
-            AgentExecutionLeaseService leases,
-            ToolExecutionTransactionService transactionOperations,
-            ToolFailureSanitizer failures) {
-        this.toolExecutions = toolExecutions;
-        this.leases = leases;
-        this.transactionOperations = transactionOperations;
-        this.failures = failures;
-    }
 
     public List<ToolExecutionResult> executeModelInvocationTools(
             AgentExecutionPort.ClaimedAgentExecution run, long modelInvocationSequence) {

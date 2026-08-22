@@ -1,6 +1,5 @@
 package com.datagent.agentv2.conversation.cluster;
 
-import com.datagent.agentv2.conversation.stream.ExecutionStreamCheckpointCoordinator;
 import java.time.Instant;
 import java.util.Objects;
 
@@ -39,19 +38,5 @@ public record AgentExecutionDeltaNotification(
         if (executionAttemptNumber < 1 || modelInvocationSequence < 1 || outputDeltaSequence < 1) {
             throw new IllegalArgumentException("invalid Agent execution delta notification");
         }
-    }
-
-    /** 将 checkpoint 协调器产生的内部回答增量映射为跨节点通知。 */
-    public static AgentExecutionDeltaNotification from(
-            ExecutionStreamCheckpointCoordinator.AnswerDelta published) {
-        return new AgentExecutionDeltaNotification(
-                published.tenantId(),
-                published.conversationSessionId(),
-                published.executionId(),
-                published.executionAttemptNumber(),
-                published.modelInvocationSequence(),
-                published.outputDeltaSequence(),
-                published.answerDelta(),
-                published.occurredAt());
     }
 }

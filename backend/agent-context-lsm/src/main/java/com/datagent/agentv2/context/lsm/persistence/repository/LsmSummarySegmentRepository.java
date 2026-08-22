@@ -7,20 +7,18 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /** 封装不可变摘要段的插件私有 Mapper 访问和租户边界。 */
 @Repository
+@RequiredArgsConstructor
 public class LsmSummarySegmentRepository {
 
     private static final String ERROR_MANIFEST_INCONSISTENT =
             "LSM manifest active segment set is inconsistent";
 
     private final LsmSummarySegmentMapper mapper;
-
-    public LsmSummarySegmentRepository(LsmSummarySegmentMapper mapper) {
-        this.mapper = mapper;
-    }
 
     /** 按当前租户的会话和确定性段键读取摘要段。 */
     public Optional<LsmSummarySegmentEntity> findBySegmentKey(String sessionId, String segmentKey) {

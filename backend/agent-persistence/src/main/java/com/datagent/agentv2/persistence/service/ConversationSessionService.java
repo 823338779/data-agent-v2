@@ -9,9 +9,11 @@ import com.datagent.agentv2.persistence.service.mapper.ConversationSessionMapper
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class ConversationSessionService
         extends ServiceImpl<ConversationSessionMapper, ConversationSessionEntity> {
 
@@ -19,10 +21,6 @@ public class ConversationSessionService
     private static final String SET_LAST_ACTIVITY_AT =
             "last_activity_at = greatest(last_activity_at, {0})";
     private final ConversationPersistenceMapper models;
-
-    public ConversationSessionService(ConversationPersistenceMapper models) {
-        this.models = models;
-    }
 
     public ConversationSession lockById(String conversationSessionId) {
         return models.toModel(

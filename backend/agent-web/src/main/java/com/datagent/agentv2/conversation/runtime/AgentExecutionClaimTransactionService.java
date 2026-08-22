@@ -15,12 +15,14 @@ import com.datagent.agentv2.persistence.service.UserAccountService;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /** 承载执行领取的短事务，确保数据库提交完成后才注册本地 owner 并启动 worker。 */
 @Service
+@RequiredArgsConstructor
 public class AgentExecutionClaimTransactionService {
 
     private static final int MAX_CONCURRENT_EXECUTIONS_PER_USER = 3;
@@ -33,25 +35,6 @@ public class AgentExecutionClaimTransactionService {
     private final IdGenerator ids;
     private final AgentExecutionRuntimeProperties properties;
     private final ExecutionWorkerIdentity identity;
-
-    public AgentExecutionClaimTransactionService(
-            AgentExecutionService agentExecutions,
-            AgentExecutionAttemptService attempts,
-            AgentExecutionEventService events,
-            ConversationSessionService sessions,
-            UserAccountService users,
-            IdGenerator ids,
-            AgentExecutionRuntimeProperties properties,
-            ExecutionWorkerIdentity identity) {
-        this.agentExecutions = agentExecutions;
-        this.attempts = attempts;
-        this.events = events;
-        this.sessions = sessions;
-        this.users = users;
-        this.ids = ids;
-        this.properties = properties;
-        this.identity = identity;
-    }
 
     /** 锁定用户容量并领取其最早排队执行，所有领取记录在同一独立事务中提交。 */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -107,9 +90,9 @@ public class AgentExecutionClaimTransactionService {
                         null,
                         now));
 
-        return new AgentExecutionPort.ClaimedAgentExecution(
+        return AgentExecutionPort.ClaimedAgentExecution.composeFromLease(
                 TenantContext.requiredTenantId(),
-                run.getExecutionId(),
+                run,
                 identity.workerInstanceId(),
                 executionAttemptNumber);
     }

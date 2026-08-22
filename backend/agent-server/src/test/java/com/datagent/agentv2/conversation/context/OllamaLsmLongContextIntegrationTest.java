@@ -11,8 +11,8 @@ import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.Generate
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GenerationRequest;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.MessageCoverage;
 import com.datagent.agentv2.context.lsm.summary.LsmSegmentKeyFactory;
-import com.datagent.agentv2.conversation.model.OllamaContextSummaryModelAdapter;
-import com.datagent.agentv2.conversation.model.OllamaModelProperties;
+import com.datagent.agentv2.conversation.model.ollama.OllamaContextSummaryModelAdapter;
+import com.datagent.agentv2.conversation.model.ollama.OllamaModelProperties;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;

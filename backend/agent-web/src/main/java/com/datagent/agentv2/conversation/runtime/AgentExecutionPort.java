@@ -1,5 +1,7 @@
 package com.datagent.agentv2.conversation.runtime;
 
+import com.datagent.agentv2.conversation.domain.AgentExecution;
+
 /** 将已经领取并带有 fencing 信息的 Agent 执行交给具体执行引擎。 */
 public interface AgentExecutionPort {
 
@@ -19,5 +21,19 @@ public interface AgentExecutionPort {
             String tenantId,
             String executionId,
             String ownerInstanceId,
-            long executionAttemptNumber) {}
+            long executionAttemptNumber) {
+
+        /** 从租户、持久执行和本次 lease 信息组装执行认领。 */
+        public static ClaimedAgentExecution composeFromLease(
+                String tenantId,
+                AgentExecution execution,
+                String ownerInstanceId,
+                long executionAttemptNumber) {
+            return new ClaimedAgentExecution(
+                    tenantId,
+                    execution.getExecutionId(),
+                    ownerInstanceId,
+                    executionAttemptNumber);
+        }
+    }
 }

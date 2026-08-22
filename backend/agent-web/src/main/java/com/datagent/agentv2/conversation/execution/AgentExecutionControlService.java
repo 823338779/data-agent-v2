@@ -43,12 +43,14 @@ import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
 import java.util.Set;
 import org.springframework.http.HttpStatus;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
+@RequiredArgsConstructor
 public class AgentExecutionControlService {
 
     private static final Set<String> DIRECT_CANCELLATION_STATUSES =
@@ -72,29 +74,6 @@ public class AgentExecutionControlService {
     private final AgentExecutionProcessTerminationService termination;
     private final IdGenerator ids;
     private final ObjectMapper json;
-
-    public AgentExecutionControlService(
-            ConversationSessionService sessions,
-            ConversationMessageService messages,
-            AgentExecutionService agentExecutions,
-            AgentExecutionEventService events,
-            AgentExecutionAttemptService attempts,
-            AgentExecutionStreamCheckpointService streamCheckpoints,
-            NotificationOutboxMessageService outbox,
-            AgentExecutionProcessTerminationService termination,
-            IdGenerator ids,
-            ObjectMapper json) {
-        this.sessions = sessions;
-        this.messages = messages;
-        this.agentExecutions = agentExecutions;
-        this.events = events;
-        this.attempts = attempts;
-        this.streamCheckpoints = streamCheckpoints;
-        this.outbox = outbox;
-        this.termination = termination;
-        this.ids = ids;
-        this.json = json;
-    }
 
     @Transactional
     public AgentExecution cancel(String conversationSessionId, String executionId) {
@@ -233,15 +212,15 @@ public class AgentExecutionControlService {
                         run.getVersion(),
                         requestedAt,
                         ExecutionControlType.CANCEL);
-        NotificationOutboxMessageEntity notification = new NotificationOutboxMessageEntity();
-        notification.setNotificationType(ExecutionNotificationType.CANCELLATION_REQUESTED.value());
-        notification.setAggregateType(ExecutionAggregateType.AGENT_EXECUTION.value());
-        notification.setNotificationMessageId(notificationMessageId);
-        notification.setAggregateId(run.getExecutionId());
-        notification.setAggregateVersion(run.getVersion());
-        notification.setPayload(json.writeValueAsString(payload));
-        notification.setNextAttemptAt(requestedAt);
-        notification.setVersion(0L);
+        NotificationOutboxMessageEntity notification =
+                NotificationOutboxMessageEntity.compose(
+                        notificationMessageId,
+                        ExecutionNotificationType.CANCELLATION_REQUESTED.value(),
+                        ExecutionAggregateType.AGENT_EXECUTION.value(),
+                        run.getExecutionId(),
+                        run.getVersion(),
+                        json.writeValueAsString(payload),
+                        requestedAt);
         outbox.insertControl(notification);
     }
 }

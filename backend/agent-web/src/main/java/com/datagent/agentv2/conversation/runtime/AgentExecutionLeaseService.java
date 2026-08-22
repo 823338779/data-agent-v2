@@ -12,10 +12,12 @@ import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.Duration;
 import java.time.Instant;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class AgentExecutionLeaseService {
 
     private static final int MAX_INFRASTRUCTURE_RECOVERY_ATTEMPTS = 3;
@@ -27,17 +29,6 @@ public class AgentExecutionLeaseService {
     private final AgentExecutionAttemptService attempts;
     private final AgentExecutionRuntimeProperties properties;
     private final AgentExecutionProcessTerminationService termination;
-
-    public AgentExecutionLeaseService(
-            AgentExecutionService agentExecutions,
-            AgentExecutionAttemptService attempts,
-            AgentExecutionRuntimeProperties properties,
-            AgentExecutionProcessTerminationService termination) {
-        this.agentExecutions = agentExecutions;
-        this.attempts = attempts;
-        this.properties = properties;
-        this.termination = termination;
-    }
 
     public boolean heartbeat(AgentExecutionPort.ClaimedAgentExecution run) {
         Instant now = Instant.now();
@@ -130,9 +121,9 @@ public class AgentExecutionLeaseService {
         attempt.setVersion(0L);
         attempts.insert(attempt);
         return RecoveryResult.claimed(
-                new AgentExecutionPort.ClaimedAgentExecution(
+                AgentExecutionPort.ClaimedAgentExecution.composeFromLease(
                         TenantContext.requiredTenantId(),
-                        run.getExecutionId(),
+                        run,
                         newOwnerInstanceId,
                         nextAttempt));
     }

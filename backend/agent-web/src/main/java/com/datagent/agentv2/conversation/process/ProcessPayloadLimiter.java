@@ -9,22 +9,20 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Objects;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /** 对单个安全 ProcessItem 载荷执行 UTF-8 字节计数、哈希和有界预览。 */
 @Component
+@RequiredArgsConstructor
 public final class ProcessPayloadLimiter {
 
     private static final String SHA_256 = "SHA-256";
     private static final String CONTENT_TYPE_JSON = "application/json";
 
     private final ObjectMapper json;
-
-    public ProcessPayloadLimiter(ObjectMapper json) {
-        this.json = json;
-    }
 
     /** 按规范 JSON 的 UTF-8 字节大小决定保存结构化值还是安全预览。 */
     public BoundedProcessPayload boundJson(JsonNode sanitizedValue, int maxBytes) {

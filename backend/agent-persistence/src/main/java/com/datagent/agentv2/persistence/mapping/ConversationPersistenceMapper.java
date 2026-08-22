@@ -10,6 +10,7 @@ import com.datagent.agentv2.persistence.entity.AgentExecutionEventEntity;
 import com.datagent.agentv2.persistence.entity.AgentExecutionStreamCheckpointEntity;
 import com.datagent.agentv2.persistence.entity.ConversationMessageEntity;
 import com.datagent.agentv2.persistence.entity.ConversationSessionEntity;
+import com.datagent.agentv2.persistence.json.ConversationProcessDocumentCodec;
 import java.util.List;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
@@ -17,7 +18,10 @@ import org.mapstruct.MappingTarget;
 import org.mapstruct.ReportingPolicy;
 
 /** 会话执行域业务模型与持久化 Entity 之间的唯一映射边界。 */
-@Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.IGNORE)
+@Mapper(
+        componentModel = "spring",
+        uses = ConversationProcessDocumentCodec.class,
+        unmappedTargetPolicy = ReportingPolicy.IGNORE)
 public interface ConversationPersistenceMapper {
 
     ConversationSession toModel(ConversationSessionEntity entity);
@@ -36,10 +40,8 @@ public interface ConversationPersistenceMapper {
 
     List<ConversationSession> toSessionModels(List<ConversationSessionEntity> entities);
 
-    @Mapping(target = "thinkingProcess", ignore = true)
     ConversationMessage toModel(ConversationMessageEntity entity);
 
-    @Mapping(target = "thinkingProcess", ignore = true)
     ConversationMessageEntity toEntity(ConversationMessage model);
 
     @Mapping(target = "id", ignore = true)
@@ -48,7 +50,6 @@ public interface ConversationPersistenceMapper {
     @Mapping(target = "updatedAt", ignore = true)
     @Mapping(target = "deletedAt", ignore = true)
     @Mapping(target = "deleted", ignore = true)
-    @Mapping(target = "thinkingProcess", ignore = true)
     void updateEntity(ConversationMessage model, @MappingTarget ConversationMessageEntity entity);
 
     @Mapping(target = "thinkingProcess", ignore = true)

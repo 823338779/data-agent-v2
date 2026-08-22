@@ -16,4 +16,14 @@ public record ConversationContextRequest(
         fixedSystemMessages = List.copyOf(fixedSystemMessages);
         toolDefinitions = List.copyOf(toolDefinitions);
     }
+
+    /** 从一次 invocation 的执行边界、预算和固定协议数据组装策略请求。 */
+    public static ConversationContextRequest composeForInvocation(
+            ContextExecutionRef execution,
+            ContextBudget budget,
+            List<ContextMessage> fixedSystemMessages,
+            List<ContextToolDefinition> toolDefinitions) {
+        return new ConversationContextRequest(
+                execution, budget, fixedSystemMessages, toolDefinitions);
+    }
 }

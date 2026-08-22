@@ -1,4 +1,4 @@
-package com.datagent.agentv2.conversation.model;
+package com.datagent.agentv2.conversation.model.codex;
 
 import java.time.Duration;
 import lombok.Getter;

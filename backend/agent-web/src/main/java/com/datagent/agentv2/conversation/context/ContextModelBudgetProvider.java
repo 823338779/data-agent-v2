@@ -1,6 +1,6 @@
 package com.datagent.agentv2.conversation.context;
 
-import com.datagent.agentv2.conversation.model.OllamaModelProperties;
+import com.datagent.agentv2.conversation.model.ollama.OllamaModelProperties;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 

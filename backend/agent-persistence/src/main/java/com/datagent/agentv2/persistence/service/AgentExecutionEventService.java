@@ -7,10 +7,12 @@ import com.datagent.agentv2.persistence.mapping.ConversationPersistenceMapper;
 import com.datagent.agentv2.persistence.service.mapper.AgentExecutionEventMapper;
 import java.util.Collection;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class AgentExecutionEventService
         extends ServiceImpl<AgentExecutionEventMapper, AgentExecutionEventEntity> {
 
@@ -18,12 +20,6 @@ public class AgentExecutionEventService
     private final ApplicationEventPublisher applicationEvents;
 
     private final ConversationPersistenceMapper models;
-
-    public AgentExecutionEventService(
-            ApplicationEventPublisher applicationEvents, ConversationPersistenceMapper models) {
-        this.applicationEvents = applicationEvents;
-        this.models = models;
-    }
 
     public boolean save(AgentExecutionEvent event) {
         // Publish only successful writes; transaction-aware listeners defer delivery until commit.

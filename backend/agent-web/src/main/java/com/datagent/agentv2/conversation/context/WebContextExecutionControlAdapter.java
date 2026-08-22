@@ -8,17 +8,20 @@ import com.datagent.agentv2.conversation.exception.ExecutionDeadlineExceededExce
 import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
 import com.datagent.agentv2.conversation.process.AgentExecutionProcessTerminationService;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
+import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeStructMapper;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /** 以共享数据库行锁实现 LSM execution fencing、取消、事件和失败收敛。 */
 @Component
+@RequiredArgsConstructor
 public class WebContextExecutionControlAdapter implements ContextExecutionControlPort {
 
     private static final String EVENT_ID_PREFIX = "execution_event";
@@ -29,19 +32,6 @@ public class WebContextExecutionControlAdapter implements ContextExecutionContro
     private final ConversationSessionService sessions;
     private final AgentExecutionEventService events;
     private final IdGenerator ids;
-
-    public WebContextExecutionControlAdapter(
-            AgentExecutionService executions,
-            AgentExecutionProcessTerminationService termination,
-            ConversationSessionService sessions,
-            AgentExecutionEventService events,
-            IdGenerator ids) {
-        this.executions = executions;
-        this.termination = termination;
-        this.sessions = sessions;
-        this.events = events;
-        this.ids = ids;
-    }
 
     @Override
     public void assertOwnedAndWithinBudget(ContextExecutionRef execution) {
@@ -118,10 +108,6 @@ public class WebContextExecutionControlAdapter implements ContextExecutionContro
     }
 
     private static AgentExecutionPort.ClaimedAgentExecution run(ContextExecutionRef execution) {
-        return new AgentExecutionPort.ClaimedAgentExecution(
-                execution.tenantId(),
-                execution.executionId(),
-                execution.ownerInstanceId(),
-                execution.executionAttempt());
+        return AgentExecutionRuntimeStructMapper.INSTANCE.toClaimedExecution(execution);
     }
 }

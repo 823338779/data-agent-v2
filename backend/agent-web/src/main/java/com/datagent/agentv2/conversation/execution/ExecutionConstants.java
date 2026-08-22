@@ -38,6 +38,8 @@ public final class ExecutionConstants {
     public static final String EVENT_TITLE_EXECUTION_STARTED = "Agent execution started";
     public static final String EVENT_DETAIL_EXECUTION_QUEUED = "Waiting for execution capacity";
     public static final String EVENT_DETAIL_EXECUTION_STARTED = "Preparing the model request";
+    /** 用于把单独的回车符统一归一化为换行符。 */
+    public static final String CARRIAGE_RETURN = "\r";
     public static final String WINDOWS_LINE_SEPARATOR = "\r\n";
     public static final String LINE_SEPARATOR = "\n";
     public static final String INSTANCE_ID_PREFIX = "instance_";

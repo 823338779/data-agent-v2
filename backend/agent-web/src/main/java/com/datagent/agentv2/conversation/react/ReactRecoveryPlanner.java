@@ -17,10 +17,12 @@ import com.datagent.agentv2.persistence.service.ModelInvocationService;
 import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import java.time.Instant;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@RequiredArgsConstructor
 public class ReactRecoveryPlanner {
 
     private static final String ERROR_TERMINAL_PROCESS_ITEM =
@@ -30,17 +32,6 @@ public class ReactRecoveryPlanner {
     private final ModelInvocationService modelInvocations;
     private final ToolExecutionService toolExecutions;
     private final ConversationMessageService messages;
-
-    public ReactRecoveryPlanner(
-            AgentExecutionService agentExecutions,
-            ModelInvocationService modelInvocations,
-            ToolExecutionService toolExecutions,
-            ConversationMessageService messages) {
-        this.agentExecutions = agentExecutions;
-        this.modelInvocations = modelInvocations;
-        this.toolExecutions = toolExecutions;
-        this.messages = messages;
-    }
 
     @Transactional
     public RecoveryPlan recover(AgentExecutionPort.ClaimedAgentExecution run) {

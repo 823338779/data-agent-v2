@@ -1,6 +1,6 @@
 package com.datagent.agentv2.conversation.tool;
 
-import com.datagent.agentv2.conversation.model.ModelToolDefinition;
+import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;

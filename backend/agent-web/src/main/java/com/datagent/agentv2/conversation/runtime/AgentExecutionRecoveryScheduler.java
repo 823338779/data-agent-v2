@@ -3,10 +3,12 @@ package com.datagent.agentv2.conversation.runtime;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_EXECUTION_ALREADY_OWNED_PREFIX;
 
 import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
+import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
+@RequiredArgsConstructor
 public final class AgentExecutionRecoveryScheduler {
 
     private final AgentExecutionLeaseService leases;
@@ -15,21 +17,6 @@ public final class AgentExecutionRecoveryScheduler {
     private final AgentExecutionPort execution;
     private final AgentExecutionRuntimeProperties properties;
     private final ExecutionWorkerIdentity identity;
-
-    public AgentExecutionRecoveryScheduler(
-            AgentExecutionLeaseService leases,
-            ExecutionWorkerCapacity capacity,
-            ExecutionOwnerRegistry owners,
-            AgentExecutionPort execution,
-            AgentExecutionRuntimeProperties properties,
-            ExecutionWorkerIdentity identity) {
-        this.leases = leases;
-        this.capacity = capacity;
-        this.owners = owners;
-        this.execution = execution;
-        this.properties = properties;
-        this.identity = identity;
-    }
 
     public boolean recoverNext() {
         ExecutionWorkerCapacity.Permit permit = capacity.tryAcquire().orElse(null);

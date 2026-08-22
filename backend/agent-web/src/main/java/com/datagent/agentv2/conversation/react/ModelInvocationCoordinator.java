@@ -3,6 +3,7 @@ package com.datagent.agentv2.conversation.react;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_EXECUTION_EVENT;
 
 import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotification;
+import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotificationMapper;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
@@ -12,7 +13,7 @@ import com.datagent.agentv2.conversation.enums.ExecutionEventType;
 import com.datagent.agentv2.conversation.enums.ModelInvocationStatus;
 import com.datagent.agentv2.conversation.enums.ToolExecutionStatus;
 import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
-import com.datagent.agentv2.conversation.model.ModelOutputDelta;
+import com.datagent.agentv2.conversation.model.api.ModelOutputDelta;
 import com.datagent.agentv2.conversation.process.ConversationProcessCoordinator;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.stream.ExecutionStreamCheckpointCoordinator;
@@ -32,6 +33,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,6 +42,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 /** 协调模型调用、流式 checkpoint、工具归档和最终回答落库的事务边界。 */
 @Service
+@RequiredArgsConstructor
 public class ModelInvocationCoordinator {
 
     /** 模型调用业务主键使用的统一前缀。 */
@@ -75,6 +78,9 @@ public class ModelInvocationCoordinator {
     /** 在当前事务提交后触发本地与 Redis 回答增量通知。 */
     private final ApplicationEventPublisher applicationEvents;
 
+    /** 将内部回答增量转换为跨实例通知。 */
+    private final AgentExecutionDeltaNotificationMapper deltaNotifications;
+
     /** 保存会话级执行生命周期事件。 */
     private final AgentExecutionEventService events;
 
@@ -89,33 +95,6 @@ public class ModelInvocationCoordinator {
             new ConcurrentHashMap<>();
 
     /** 装配模型调用事务所需的持久化服务、流协调器和事件发布器。 */
-    public ModelInvocationCoordinator(
-            ModelInvocationService modelInvocations,
-            ToolExecutionService toolExecutions,
-            ConversationMessageService messages,
-            ConversationSessionService sessions,
-            AgentExecutionService agentExecutions,
-            AgentExecutionStreamCheckpointService persistedStreamCheckpoints,
-            ExecutionStreamCheckpointCoordinator streamCheckpointCoordinator,
-            ConversationProcessCoordinator conversationProcesses,
-            ApplicationEventPublisher applicationEvents,
-            AgentExecutionEventService events,
-            AgentExecutionAttemptService attempts,
-            IdGenerator ids) {
-        this.modelInvocations = modelInvocations;
-        this.toolExecutions = toolExecutions;
-        this.messages = messages;
-        this.sessions = sessions;
-        this.agentExecutions = agentExecutions;
-        this.persistedStreamCheckpoints = persistedStreamCheckpoints;
-        this.streamCheckpointCoordinator = streamCheckpointCoordinator;
-        this.conversationProcesses = conversationProcesses;
-        this.applicationEvents = applicationEvents;
-        this.events = events;
-        this.attempts = attempts;
-        this.ids = ids;
-    }
-
     /**
      * 使用当前会话消息上界开始一次新的模型调用。
      *
@@ -209,7 +188,8 @@ public class ModelInvocationCoordinator {
                         run, boundary.modelInvocationSequence(), outputDelta.content(), now);
 
         // Spring 事务事件在提交后进入本地 SSE 与 Redis bridge，避免发布未提交状态。
-        applicationEvents.publishEvent(AgentExecutionDeltaNotification.from(published));
+        AgentExecutionDeltaNotification notification = deltaNotifications.toNotification(published);
+        applicationEvents.publishEvent(notification);
     }
 
     /** 首个 thinking 增量创建 UUID，后续增量始终追加到同一节点。 */

@@ -1,5 +1,6 @@
 package com.datagent.agentv2.conversation.process;
 
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -9,6 +10,7 @@ import tools.jackson.databind.ObjectMapper;
 
 /** 在业务事务提交后输出独立的完整安全 ProcessItem 审计文档。 */
 @Component
+@RequiredArgsConstructor
 public final class ThinkingProcessAuditLogger {
 
     private static final Logger AUDIT = LoggerFactory.getLogger("agent.conversation.process.audit");
@@ -17,10 +19,6 @@ public final class ThinkingProcessAuditLogger {
             "Conversation process audit logging failed errorType={}";
 
     private final ObjectMapper json;
-
-    public ThinkingProcessAuditLogger(ObjectMapper json) {
-        this.json = json;
-    }
 
     /** 审计设施失败不得反向影响已经提交的业务事务。 */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)

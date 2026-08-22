@@ -4,9 +4,12 @@ import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERR
 
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import java.util.Optional;
+
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public final class AgentExecutionClaimService {
 
     private static final int USER_SCAN_LIMIT = 256;
@@ -17,21 +20,6 @@ public final class AgentExecutionClaimService {
     private final ExecutionOwnerRegistry owners;
     private final AgentExecutionPort execution;
     private final ExecutionWorkerIdentity identity;
-
-    public AgentExecutionClaimService(
-            AgentExecutionService agentExecutions,
-            AgentExecutionClaimTransactionService claimTransactions,
-            ExecutionWorkerCapacity capacity,
-            ExecutionOwnerRegistry owners,
-            AgentExecutionPort execution,
-            ExecutionWorkerIdentity identity) {
-        this.agentExecutions = agentExecutions;
-        this.claimTransactions = claimTransactions;
-        this.capacity = capacity;
-        this.owners = owners;
-        this.execution = execution;
-        this.identity = identity;
-    }
 
     public boolean claimNext() {
         for (String userId : agentExecutions.queuedOwnerUserIds(USER_SCAN_LIMIT)) {

@@ -11,9 +11,11 @@ import com.datagent.agentv2.persistence.service.mapper.AgentExecutionMapper;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, AgentExecutionEntity> {
 
     private static final String COLUMN_OWNER_USER_ID = "owner_user_id";
@@ -45,10 +47,6 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
     private static final String TOUCH_UPDATED_AT = "updated_at = updated_at";
 
     private final ConversationPersistenceMapper models;
-
-    public AgentExecutionService(ConversationPersistenceMapper models) {
-        this.models = models;
-    }
 
     public AgentExecution lockById(String executionId) {
         return models.toModel(
