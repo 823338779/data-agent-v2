@@ -50,29 +50,29 @@ import org.springframework.web.server.ResponseStatusException;
 @RequiredArgsConstructor
 public class ConversationApplicationService {
 
-    private final ConversationSessionService sessions;
-    private final ConversationMessageService messages;
-    private final AgentExecutionService agentExecutions;
-    private final AgentExecutionEventService events;
-    private final AgentExecutionStreamCheckpointService streamCheckpoints;
-    private final AgentExecutionSubmissionService submissions;
-    private final SessionOrderingService ordering;
-    private final SessionActivityService activity;
-    private final IdGenerator ids;
+    private final ConversationSessionService conversationSessionService;
+    private final ConversationMessageService conversationMessageService;
+    private final AgentExecutionService agentExecutionService;
+    private final AgentExecutionEventService agentExecutionEventService;
+    private final AgentExecutionStreamCheckpointService agentExecutionStreamCheckpointService;
+    private final AgentExecutionSubmissionService agentExecutionSubmissionService;
+    private final SessionOrderingService sessionOrderingService;
+    private final SessionActivityService sessionActivityService;
+    private final IdGenerator idGenerator;
 
     @Transactional
     public ConversationView create(String title, String tag) {
         ConversationSession session =
                 ConversationSession.create(
-                        ids.next(ID_PREFIX_CONVERSATION_SESSION),
+                        idGenerator.next(ID_PREFIX_CONVERSATION_SESSION),
                         normalizedTitle(title),
                         tag,
                         ConversationSessionType.INTERACTIVE.value(),
                         OperatorContext.requiredUserId(),
                         Instant.now());
-        sessions.save(session);
+        conversationSessionService.save(session);
         SessionOrderingService.OrderedSessions ordered =
-                ordering.initializeCreatedSession(session.getConversationSessionId());
+                sessionOrderingService.initializeCreatedSession(session.getConversationSessionId());
         return snapshot(
                 session,
                 stateFor(ordered, session.getConversationSessionId()),
@@ -81,12 +81,13 @@ public class ConversationApplicationService {
 
     @Transactional
     public List<ConversationSummaryView> listSummaries() {
-        SessionOrderingService.OrderedSessions ordered = ordering.ensureVisibleSessions();
+        SessionOrderingService.OrderedSessions ordered =
+                sessionOrderingService.ensureVisibleSessions();
         if (ordered.states().isEmpty()) {
             return List.of();
         }
         Map<String, ConversationSession> sessionsById =
-                sessions
+                conversationSessionService
                         .findByConversationSessionIds(
                                 ordered.states().stream()
                                         .map(
@@ -100,7 +101,7 @@ public class ConversationApplicationService {
                                         Function.identity()));
         // 每个会话只保留最新执行，摘要查询不再装配消息和历史事件。
         Map<String, AgentExecution> latestExecutions = new LinkedHashMap<>();
-        agentExecutions
+        agentExecutionService
                 .findByConversationSessionIdsOrderByCreatedAtDesc(sessionsById.keySet())
                 .forEach(
                         execution ->
@@ -120,7 +121,8 @@ public class ConversationApplicationService {
 
     @Transactional
     public ConversationView get(String conversationSessionId) {
-        SessionOrderingService.OrderedSessions ordered = ordering.ensureVisibleSessions();
+        SessionOrderingService.OrderedSessions ordered =
+                sessionOrderingService.ensureVisibleSessions();
         return snapshot(
                 requiredSession(conversationSessionId),
                 stateFor(ordered, conversationSessionId),
@@ -130,7 +132,8 @@ public class ConversationApplicationService {
     /** 为首次 SSE 连接读取一次权威会话投影及其持久事件水位。 */
     @Transactional
     public SessionStreamBootstrapView streamBootstrap(String conversationSessionId) {
-        SessionOrderingService.OrderedSessions ordered = ordering.ensureVisibleSessions();
+        SessionOrderingService.OrderedSessions ordered =
+                sessionOrderingService.ensureVisibleSessions();
         ConversationSession session = requiredSession(conversationSessionId);
         return new SessionStreamBootstrapView(
                 snapshot(
@@ -146,7 +149,7 @@ public class ConversationApplicationService {
     public List<ConversationView.AgentExecutionUpdateView> replayEvents(
             String conversationSessionId, long afterSequence) {
         requiredSession(conversationSessionId);
-        return events
+        return agentExecutionEventService
                 .findByConversationSessionIdAfter(conversationSessionId, afterSequence)
                 .stream()
                 .map(this::executionUpdate)
@@ -157,14 +160,14 @@ public class ConversationApplicationService {
     public ExecutionStreamCheckpointView currentStream(String conversationSessionId) {
         requiredSession(conversationSessionId);
         List<AgentExecution> sessionExecutions =
-                agentExecutions.findByConversationSessionIdOrderByCreatedAtDesc(
+                agentExecutionService.findByConversationSessionIdOrderByCreatedAtDesc(
                         conversationSessionId);
         if (sessionExecutions.isEmpty()) {
             return null;
         }
         AgentExecution run = sessionExecutions.getFirst();
         AgentExecutionStreamCheckpoint stream =
-                streamCheckpoints.findByExecutionId(run.getExecutionId());
+                agentExecutionStreamCheckpointService.findByExecutionId(run.getExecutionId());
         if (stream == null) {
             return null;
         }
@@ -182,7 +185,8 @@ public class ConversationApplicationService {
 
         // 一次读取租户内所有活跃 session 的增量事件，再按各连接最小 cursor 过滤。
         List<AgentExecutionEvent> pendingEvents =
-                events.findByConversationSessionIdsAfter(conversationSessionIds, minimumSequence);
+                agentExecutionEventService.findByConversationSessionIdsAfter(
+                        conversationSessionIds, minimumSequence);
         Set<String> eventExecutionIds =
                 pendingEvents.stream()
                         .map(AgentExecutionEvent::getExecutionId)
@@ -190,7 +194,7 @@ public class ConversationApplicationService {
         Map<String, AgentExecution> eventExecutions =
                 eventExecutionIds.isEmpty()
                         ? Map.of()
-                        : agentExecutions.findByExecutionIds(eventExecutionIds).stream()
+                        : agentExecutionService.findByExecutionIds(eventExecutionIds).stream()
                                 .collect(
                                         Collectors.toMap(
                                                 AgentExecution::getExecutionId,
@@ -215,7 +219,7 @@ public class ConversationApplicationService {
 
         // 每个活跃会话只选择最新 Agent 执行，并一次读取对应检查点投影。
         Map<String, AgentExecution> latestExecutions = new LinkedHashMap<>();
-        agentExecutions
+        agentExecutionService
                 .findByConversationSessionIdsOrderByCreatedAtDesc(conversationSessionIds)
                 .forEach(run -> latestExecutions.putIfAbsent(run.getConversationSessionId(), run));
         Set<String> latestExecutionIds =
@@ -225,7 +229,9 @@ public class ConversationApplicationService {
         Map<String, AgentExecutionStreamCheckpoint> streamsByExecutionId =
                 latestExecutionIds.isEmpty()
                         ? Map.of()
-                        : streamCheckpoints.findByExecutionIds(latestExecutionIds).stream()
+                        : agentExecutionStreamCheckpointService
+                                .findByExecutionIds(latestExecutionIds)
+                                .stream()
                                 .collect(
                                         Collectors.toMap(
                                                 AgentExecutionStreamCheckpoint::getExecutionId,
@@ -255,7 +261,8 @@ public class ConversationApplicationService {
         // 同一批查询读取各活跃会话最新 assistant，用消息 ID/version 驱动跨实例全量替换。
         Map<String, ConversationView.MessageView> assistantMessagesBySession =
                 new LinkedHashMap<>();
-        messages.findAssistantsByConversationSessionIds(conversationSessionIds)
+        conversationMessageService
+                .findAssistantsByConversationSessionIds(conversationSessionIds)
                 .forEach(
                         message ->
                                 assistantMessagesBySession.put(
@@ -278,13 +285,13 @@ public class ConversationApplicationService {
     @Transactional(readOnly = true)
     public boolean hasActiveExecution(String conversationSessionId) {
         requiredSession(conversationSessionId);
-        return agentExecutions.hasActiveExecution(conversationSessionId);
+        return agentExecutionService.hasActiveExecution(conversationSessionId);
     }
 
     @Transactional(readOnly = true)
     public ConversationView.AgentExecutionEventView eventView(AgentExecutionEvent event) {
         // 重新读取已提交的 Agent 执行，确保实时事件与重放事件使用相同公开结构。
-        AgentExecution run = agentExecutions.findByExecutionId(event.getExecutionId());
+        AgentExecution run = agentExecutionService.findByExecutionId(event.getExecutionId());
         if (run == null
                 || !event.getConversationSessionId().equals(run.getConversationSessionId())) {
             throw new ResponseStatusException(
@@ -296,14 +303,16 @@ public class ConversationApplicationService {
     /** 将持久执行事件转换为前端可直接幂等归约的轻量更新。 */
     @Transactional(readOnly = true)
     public ConversationView.AgentExecutionUpdateView executionUpdate(AgentExecutionEvent event) {
-        AgentExecution run = agentExecutions.findByExecutionId(event.getExecutionId());
+        AgentExecution run = agentExecutionService.findByExecutionId(event.getExecutionId());
         if (run == null
                 || !event.getConversationSessionId().equals(run.getConversationSessionId())) {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, ERROR_AGENT_EXECUTION_NOT_FOUND);
         }
         List<ConversationView.MessageView> relatedMessages =
-                messages.findUserVisibleByExecutionId(run.getExecutionId()).stream()
+                conversationMessageService
+                        .findUserVisibleByExecutionId(run.getExecutionId())
+                        .stream()
                         .map(message -> messageView(message, null))
                         .toList();
         String objective =
@@ -316,7 +325,7 @@ public class ConversationApplicationService {
                         .findFirst()
                         .orElse(EMPTY_TEXT);
         AgentExecutionStreamCheckpoint stream =
-                streamCheckpoints.findByExecutionId(run.getExecutionId());
+                agentExecutionStreamCheckpointService.findByExecutionId(run.getExecutionId());
         return new ConversationView.AgentExecutionUpdateView(
                 run.getConversationSessionId(),
                 executionStateView(run, objective, stream),
@@ -329,7 +338,8 @@ public class ConversationApplicationService {
     public ConversationView.MessageView messageViewById(
             String conversationSessionId, String conversationMessageId) {
         requiredSession(conversationSessionId);
-        ConversationMessage message = messages.findByConversationMessageId(conversationMessageId);
+        ConversationMessage message =
+                conversationMessageService.findByConversationMessageId(conversationMessageId);
         if (message == null || !conversationSessionId.equals(message.getConversationSessionId())) {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, ERROR_CONVERSATION_SESSION_NOT_FOUND);
@@ -340,8 +350,10 @@ public class ConversationApplicationService {
     public ConversationView submitMessage(
             String conversationSessionId, String content, String idempotencyKey, String requestId) {
         ConversationSession session =
-                submissions.submit(conversationSessionId, content, idempotencyKey, requestId);
-        SessionOrderingService.OrderedSessions ordered = ordering.ensureVisibleSessions();
+                agentExecutionSubmissionService.submit(
+                        conversationSessionId, content, idempotencyKey, requestId);
+        SessionOrderingService.OrderedSessions ordered =
+                sessionOrderingService.ensureVisibleSessions();
         return snapshot(
                 session, stateFor(ordered, conversationSessionId), ordered.orderingVersion());
     }
@@ -349,14 +361,14 @@ public class ConversationApplicationService {
     @Transactional
     public ConversationView markRead(String conversationSessionId, long upToSequence) {
         requiredSession(conversationSessionId);
-        activity.markRead(conversationSessionId, upToSequence);
+        sessionActivityService.markRead(conversationSessionId, upToSequence);
         return get(conversationSessionId);
     }
 
     @Transactional
     public SessionOrderingService.OrderedSessions reorder(
             List<String> conversationSessionIds, long expectedOrderingVersion) {
-        return ordering.reorder(conversationSessionIds, expectedOrderingVersion);
+        return sessionOrderingService.reorder(conversationSessionIds, expectedOrderingVersion);
     }
 
     @Transactional(readOnly = true)
@@ -367,14 +379,16 @@ public class ConversationApplicationService {
                     HttpStatus.NOT_FOUND, ERROR_AGENT_EXECUTION_NOT_FOUND);
         }
         List<ConversationView.MessageView> messageViews =
-                messages.findUserVisibleByConversationSessionId(conversationSessionId).stream()
+                conversationMessageService
+                        .findUserVisibleByConversationSessionId(conversationSessionId)
+                        .stream()
                         .map(message -> messageView(message, null))
                         .toList();
         return executionView(run, messageViews);
     }
 
     private ConversationSession requiredSession(String conversationSessionId) {
-        ConversationSession session = sessions.findByUuid(conversationSessionId);
+        ConversationSession session = conversationSessionService.findByUuid(conversationSessionId);
         if (session == null) {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, ERROR_CONVERSATION_SESSION_NOT_FOUND);
@@ -388,11 +402,12 @@ public class ConversationApplicationService {
             long orderingVersion) {
         // 先构建不含执行投影的消息视图，供每次 Agent 执行解析触发消息形成 objective。
         List<ConversationMessage> messageEntities =
-                messages.findUserVisibleByConversationSessionId(session.getConversationSessionId());
+                conversationMessageService.findUserVisibleByConversationSessionId(
+                        session.getConversationSessionId());
         List<ConversationView.MessageView> baseMessageViews =
                 messageEntities.stream().map(message -> messageView(message, null)).toList();
         List<AgentExecution> executionEntities =
-                agentExecutions.findByConversationSessionIdOrderByCreatedAtDesc(
+                agentExecutionService.findByConversationSessionIdOrderByCreatedAtDesc(
                         session.getConversationSessionId());
 
         // 将全部历史 Agent 执行按 executionId 关联回 assistant 消息，同时保留最新执行作为会话级实时状态。
@@ -494,11 +509,11 @@ public class ConversationApplicationService {
     private ConversationView.AgentExecutionView executionView(
             AgentExecution run, List<ConversationView.MessageView> messageViews) {
         List<ConversationView.AgentExecutionEventView> eventViews =
-                events.findByExecutionId(run.getExecutionId()).stream()
+                agentExecutionEventService.findByExecutionId(run.getExecutionId()).stream()
                         .map(event -> eventView(event, run))
                         .toList();
         AgentExecutionStreamCheckpoint stream =
-                streamCheckpoints.findByExecutionId(run.getExecutionId());
+                agentExecutionStreamCheckpointService.findByExecutionId(run.getExecutionId());
         String objective =
                 messageViews.stream()
                         .filter(
