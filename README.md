@@ -39,11 +39,11 @@ Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多�
 
 ### 会话上下文策略与分层压缩
 
-会话上下文默认使用 `raw` 策略。服务实例只能选择一个策略：`raw` 直接使用原始历史，`lsm` 使用 LSM 摘要树，`hierarchical` 使用 Hot/Warm/Cold 分层摘要。未知策略或重复注册相同策略 ID 都会使服务启动失败。
+会话上下文默认使用 `hierarchical` 策略。服务实例只能选择一个策略：`raw` 直接使用原始历史，`lsm` 使用 LSM 摘要树，`hierarchical` 使用 Hot/Warm/Cold 分层摘要。未知策略或重复注册相同策略 ID 都会使服务启动失败。
 
 | 环境变量 | 默认值 | 允许值或范围 | 说明 |
 | --- | --- | --- | --- |
-| `DATA_AGENT_CONTEXT_STRATEGY` | `raw` | `raw`、`lsm`、`hierarchical` | 选择服务实例唯一使用的会话上下文策略；取值区分大小写。 |
+| `DATA_AGENT_CONTEXT_STRATEGY` | `hierarchical` | `raw`、`lsm`、`hierarchical` | 选择服务实例唯一使用的会话上下文策略；取值区分大小写。 |
 | `DATA_AGENT_CONTEXT_COMPACTION_FANOUT` | `5` | `3`～`10` | LSM 同层普通节点达到该数量时执行层级合并；仅在 `lsm` 策略下校验和生效。 |
 | `DATA_AGENT_CONTEXT_COMPACTION_MAX_LEVEL` | `4` | `1`～`8` | LSM 摘要树的配置顶层，顶层 ROOT 始终最多保留一个活动节点；仅在 `lsm` 策略下校验和生效。 |
 | `DATA_AGENT_CONTEXT_HIERARCHICAL_TRIGGER_RATIO` | `0.75` | `0 < target < trigger < 1` | hierarchical 触发压缩的上下文窗口比例。 |

@@ -1,9 +1,19 @@
 data-agent:
   context:
-    strategy: ${DATA_AGENT_CONTEXT_STRATEGY:lsm}
+    # 会话上下文策略：raw 不压缩，lsm 使用 LSM 摘要树，hierarchical 使用 Hot/Warm/Cold 分层摘要。
+    # 当前默认启用 hierarchical；可通过 DATA_AGENT_CONTEXT_STRATEGY 在所有服务实例上统一覆盖。
+    strategy: ${DATA_AGENT_CONTEXT_STRATEGY:hierarchical}
+    # 以下参数仅在 strategy=lsm 时生效。
     compaction:
       fanout: ${DATA_AGENT_CONTEXT_COMPACTION_FANOUT:5}
       max-level: ${DATA_AGENT_CONTEXT_COMPACTION_MAX_LEVEL:4}
+    # 以下参数仅在 strategy=hierarchical 时生效：超过 75% 触发压缩，目标压缩至 70%。
+    hierarchical:
+      trigger-ratio: ${DATA_AGENT_CONTEXT_HIERARCHICAL_TRIGGER_RATIO:0.75}
+      target-ratio: ${DATA_AGENT_CONTEXT_HIERARCHICAL_TARGET_RATIO:0.70}
+      # 保留最近 10 轮原始对话，并维护包含 Hot 数据在内的 100 轮 Hot/Warm 窗口。
+      recent-raw-turns: ${DATA_AGENT_CONTEXT_HIERARCHICAL_RECENT_RAW_TURNS:10}
+      warm-window-turns: ${DATA_AGENT_CONTEXT_HIERARCHICAL_WARM_WINDOW_TURNS:100}
   model:
     provider: ${DATA_AGENT_MODEL_PROVIDER:ollama}
     codex:
