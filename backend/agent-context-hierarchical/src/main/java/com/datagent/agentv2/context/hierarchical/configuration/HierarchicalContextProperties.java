@@ -2,10 +2,14 @@ package com.datagent.agentv2.context.hierarchical.configuration;
 
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
 import jakarta.validation.constraints.AssertTrue;
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
 /** Hierarchical 上下文压缩的服务级参数。 */
+@Getter
+@Setter
 @Validated
 @ConfigurationProperties("data-agent.context.hierarchical")
 public class HierarchicalContextProperties {
@@ -30,38 +34,6 @@ public class HierarchicalContextProperties {
 
     /** 分层摘要覆盖的暖数据对话轮次数。 */
     private int warmWindowTurns = 100;
-
-    public double getTriggerRatio() {
-        return triggerRatio;
-    }
-
-    public void setTriggerRatio(double triggerRatio) {
-        this.triggerRatio = triggerRatio;
-    }
-
-    public double getTargetRatio() {
-        return targetRatio;
-    }
-
-    public void setTargetRatio(double targetRatio) {
-        this.targetRatio = targetRatio;
-    }
-
-    public int getRecentRawTurns() {
-        return recentRawTurns;
-    }
-
-    public void setRecentRawTurns(int recentRawTurns) {
-        this.recentRawTurns = recentRawTurns;
-    }
-
-    public int getWarmWindowTurns() {
-        return warmWindowTurns;
-    }
-
-    public void setWarmWindowTurns(int warmWindowTurns) {
-        this.warmWindowTurns = warmWindowTurns;
-    }
 
     /** Ensures the configured watermarks and turn windows define a usable policy. */
     @AssertTrue(message = "Hierarchical context ratios and turn windows are invalid")

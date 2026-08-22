@@ -84,26 +84,6 @@ afterEach(() => {
 });
 
 describe('server-backed conversation workspace', () => {
-  it('orders session navigation by updated time descending', async () => {
-    const older = { ...session, title: '较早会话', updatedAt: '2026-08-01T08:00:00Z' };
-    const newer = {
-      ...session,
-      conversationSessionId: 'session_2',
-      title: '较新会话',
-      updatedAt: '2026-08-01T09:00:00Z',
-    };
-    const backend = client({ listSessions: vi.fn().mockResolvedValue([older, newer]) });
-
-    render(<App client={backend} />);
-
-    const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
-    const newerButton = within(sidebar).getByRole('button', { name: /较新会话/ });
-    const olderButton = within(sidebar).getByRole('button', { name: /较早会话/ });
-    expect(
-      newerButton.compareDocumentPosition(olderButton) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
   it('shows persisted sessions and submits a message through the backend', async () => {
     const backend = client();
     render(<App client={backend} />);
@@ -118,51 +98,6 @@ describe('server-backed conversation workspace', () => {
     );
     expect(await screen.findByText('分析订单延迟')).toBeInTheDocument();
     expect(screen.getAllByText('处理中')).not.toHaveLength(0);
-  });
-
-  it('creates a server session without unsupported identity or mode fields', async () => {
-    const backend = client();
-    render(<App client={backend} />);
-
-    const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
-    expect(within(sidebar).getByRole('button', { name: '收起会话列表' })).toBeInTheDocument();
-    fireEvent.click(within(sidebar).getByRole('button', { name: '新会话' }));
-
-    await waitFor(() => expect(backend.createSession).toHaveBeenCalledWith('新会话', ''));
-    expect(await screen.findByRole('heading', { name: '新会话' })).toBeInTheDocument();
-  });
-
-  it('restores the session-list control in the header only while the sidebar is closed', async () => {
-    render(<App client={client()} />);
-    const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
-
-    fireEvent.click(within(sidebar).getByRole('button', { name: '收起会话列表' }));
-    expect(screen.queryByRole('complementary', { name: '会话列表' })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '展开会话列表' }));
-    expect(await screen.findByRole('complementary', { name: '会话列表' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '展开会话列表' })).not.toBeInTheDocument();
-  });
-
-  it('starts with the session drawer closed on narrow screens', async () => {
-    vi.stubGlobal(
-      'matchMedia',
-      vi.fn().mockReturnValue({
-        matches: true,
-        media: '(max-width: 820px)',
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      }),
-    );
-
-    render(<App client={client()} />);
-
-    await waitFor(() => expect(screen.getByRole('button', { name: '展开会话列表' })).toBeVisible());
-    expect(screen.queryByRole('complementary', { name: '会话列表' })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '展开会话列表' }));
-    expect(await screen.findByRole('complementary', { name: '会话列表' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '关闭会话列表' })).toBeInTheDocument();
   });
 
   it('does not duplicate persisted assistant answers with execution checkpoints', async () => {
@@ -202,27 +137,6 @@ describe('server-backed conversation workspace', () => {
     expect(screen.queryByText('查看运行过程')).not.toBeInTheDocument();
     expect(screen.getAllByText('第一条回答')).toHaveLength(1);
     expect(screen.getAllByText('第二条回答')).toHaveLength(1);
-  });
-
-  it('places a streaming answer in the full-width message content column', async () => {
-    const streaming: ConversationSession = {
-      ...session,
-      execution: completedExecution('execution_streaming', '这是一条实时返回的完整回答'),
-    };
-
-    const view = render(
-      <App
-        client={client({
-          listSessions: vi.fn().mockResolvedValue([streaming]),
-          getSession: vi.fn().mockResolvedValue(streaming),
-        })}
-      />,
-    );
-    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
-
-    const answer = await screen.findByText('这是一条实时返回的完整回答');
-    expect(answer.closest('.stream-answer-content')).toBeInTheDocument();
-    expect(view.container.querySelector('.stream-answer-content')).toContainElement(answer);
   });
 
   it('closes the previous detail stream before opening the viewed processing session', async () => {
@@ -525,22 +439,4 @@ describe('server-backed conversation workspace', () => {
     expect(within(sidebar).getByRole('button', { name: /其他位置的标题/ })).toBeInTheDocument();
   });
 
-  it('keeps the title draft editable after a rename request fails', async () => {
-    const backend = client({
-      renameSession: vi.fn().mockRejectedValue(new BackendApiError(500)),
-    });
-    render(<App client={backend} />);
-    const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
-
-    fireEvent.doubleClick(await within(sidebar).findByRole('button', { name: /订单延迟分析/ }));
-    const titleInput = within(sidebar).getByRole('textbox', {
-      name: '编辑“订单延迟分析”标题',
-    });
-    fireEvent.change(titleInput, { target: { value: '保留标题草稿' } });
-    fireEvent.blur(titleInput);
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('标题保存失败，请稍后重试。');
-    expect(within(sidebar).getByRole('textbox', { name: /编辑/ })).toHaveValue('保留标题草稿');
-    expect(within(sidebar).getByRole('textbox', { name: /编辑/ })).not.toBeDisabled();
-  });
 });

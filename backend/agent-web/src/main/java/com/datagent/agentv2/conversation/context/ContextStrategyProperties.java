@@ -11,12 +11,4 @@ import org.springframework.stereotype.Component;
 public class ContextStrategyProperties {
 
     private String strategy = RawConversationContextStrategy.STRATEGY_ID;
-
-//    public String getStrategy() {
-//        return strategy;
-//    }
-//
-//    public void setStrategy(String strategy) {
-//        this.strategy = strategy;
-//    }
 }

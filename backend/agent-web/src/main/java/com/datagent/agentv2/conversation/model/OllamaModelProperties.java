@@ -1,9 +1,13 @@
 package com.datagent.agentv2.conversation.model;
 
 import java.time.Duration;
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+@Getter
+@Setter
 @Component
 @ConfigurationProperties(prefix = "data-agent.model.ollama")
 public class OllamaModelProperties {
@@ -39,46 +43,6 @@ public class OllamaModelProperties {
         this.timeout = timeout;
         this.maxOutputTokens = maxOutputTokens;
         this.contextWindowTokens = contextWindowTokens;
-        this.safetyReserveTokens = safetyReserveTokens;
-    }
-
-    public String getModel() {
-        return model;
-    }
-
-    public void setModel(String model) {
-        this.model = model;
-    }
-
-    public Duration getTimeout() {
-        return timeout;
-    }
-
-    public void setTimeout(Duration timeout) {
-        this.timeout = timeout;
-    }
-
-    public int getMaxOutputTokens() {
-        return maxOutputTokens;
-    }
-
-    public void setMaxOutputTokens(int maxOutputTokens) {
-        this.maxOutputTokens = maxOutputTokens;
-    }
-
-    public int getContextWindowTokens() {
-        return contextWindowTokens;
-    }
-
-    public void setContextWindowTokens(int contextWindowTokens) {
-        this.contextWindowTokens = contextWindowTokens;
-    }
-
-    public int getSafetyReserveTokens() {
-        return safetyReserveTokens;
-    }
-
-    public void setSafetyReserveTokens(int safetyReserveTokens) {
         this.safetyReserveTokens = safetyReserveTokens;
     }
 }

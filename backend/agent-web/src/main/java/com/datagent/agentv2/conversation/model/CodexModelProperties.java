@@ -1,10 +1,14 @@
 package com.datagent.agentv2.conversation.model;
 
 import java.time.Duration;
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /** 通过本机 Codex 登录会话调用 OpenAI 模型时使用的运行参数。 */
+@Getter
+@Setter
 @Component
 @ConfigurationProperties(prefix = "data-agent.model.codex")
 public class CodexModelProperties {
@@ -23,44 +27,4 @@ public class CodexModelProperties {
 
     /** 隔离的只读工作目录；留空时为每次调用创建临时空目录。 */
     private String workingDirectory = "";
-
-    public String getExecutable() {
-        return executable;
-    }
-
-    public void setExecutable(String executable) {
-        this.executable = executable;
-    }
-
-    public String getModel() {
-        return model;
-    }
-
-    public void setModel(String model) {
-        this.model = model;
-    }
-
-    public String getEffort() {
-        return effort;
-    }
-
-    public void setEffort(String effort) {
-        this.effort = effort;
-    }
-
-    public Duration getTimeout() {
-        return timeout;
-    }
-
-    public void setTimeout(Duration timeout) {
-        this.timeout = timeout;
-    }
-
-    public String getWorkingDirectory() {
-        return workingDirectory;
-    }
-
-    public void setWorkingDirectory(String workingDirectory) {
-        this.workingDirectory = workingDirectory;
-    }
 }

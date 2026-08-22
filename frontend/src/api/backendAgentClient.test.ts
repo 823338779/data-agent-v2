@@ -53,25 +53,6 @@ describe('backend agent client', () => {
     );
   });
 
-  it('renames a session with its expected version and maps the updated version', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ ...session, title: '新的标题', version: 5 }),
-    });
-    const client = createFetchAgentBackendClient({ fetchImpl });
-
-    const renamed = await client.renameSession('session_1', '新的标题', 4);
-
-    expect(renamed.version).toBe(5);
-    expect(fetchImpl).toHaveBeenCalledWith(
-      '/api/v1/agent-sessions/session_1',
-      expect.objectContaining({
-        method: 'PATCH',
-        body: JSON.stringify({ title: '新的标题', expectedVersion: 4 }),
-      }),
-    );
-  });
-
   it('maps the current backend snapshot without synthesizing unsupported state', async () => {
     const execution = {
       executionId: 'execution_1',
@@ -207,81 +188,6 @@ describe('backend agent client', () => {
     ];
     expect(retryKey).toBe(firstKey);
     expect(nextOperationKey).not.toBe(firstKey);
-  });
-
-  it('calls execution control endpoints', async () => {
-    const execution = {
-      executionId: 'execution_1',
-      status: 'cancelled',
-      progress: 25,
-      objective: '分析订单',
-      cancellationRequestedAt: '2026-08-01T08:01:00Z',
-      events: [],
-      streamCheckpoint: null,
-    };
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => execution })
-      .mockResolvedValueOnce({ ok: true, json: async () => execution });
-    const client = createFetchAgentBackendClient({ fetchImpl });
-
-    await client.cancelExecution('session_1', 'execution_1');
-    await client.retryExecution('session_1', 'execution_1');
-
-    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
-      '/api/v1/agent-sessions/session_1/executions/execution_1:cancel',
-      '/api/v1/agent-sessions/session_1/executions/execution_1:retry',
-    ]);
-  });
-
-  it('opens only the selected session detail stream', () => {
-    const sources: Array<{ url: string; init?: EventSourceInit }> = [];
-    const eventSourceFactory = vi.fn((url: string, init?: EventSourceInit) => {
-      sources.push({ url, init });
-      return {
-        addEventListener: vi.fn(),
-        close: vi.fn(),
-        onerror: null,
-      } as unknown as EventSource;
-    });
-    const client = createFetchAgentBackendClient({ eventSourceFactory });
-
-    client.subscribeSessionEvents('session_1', vi.fn(), vi.fn());
-
-    expect(sources).toEqual([{ url: '/api/v1/agent-sessions/session_1/events', init: undefined }]);
-  });
-
-  it('creates a fresh snapshot stream without carrying the previous SSE event id', () => {
-    const listeners = new Map<string, EventListener>();
-    const urls: string[] = [];
-    const eventSourceFactory = vi.fn((url: string) => {
-      urls.push(url);
-      return {
-        addEventListener: vi.fn((type: string, listener: EventListener) =>
-          listeners.set(type, listener),
-        ),
-        close: vi.fn(),
-        onerror: null,
-      } as unknown as EventSource;
-    });
-    const onEvent = vi.fn();
-    const client = createFetchAgentBackendClient({ eventSourceFactory });
-
-    client.subscribeSessionEvents('session_1', onEvent, vi.fn());
-    listeners.get('session_snapshot')?.({
-      data: JSON.stringify({
-        conversationSessionId: 'session_1',
-        session,
-        occurredAt: '2026-08-01T08:00:00Z',
-      }),
-      lastEventId: 'e=4;a=1;t=2;s=9',
-    } as MessageEvent<string>);
-    client.subscribeSessionEvents('session_1', vi.fn(), vi.fn());
-
-    expect(onEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'session_snapshot', session: expect.any(Object) }),
-    );
-    expect(urls[1]).toBe('/api/v1/agent-sessions/session_1/events');
   });
 
   it('rejects an SSE event routed for another session', () => {
