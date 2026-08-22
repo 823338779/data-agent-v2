@@ -2,7 +2,7 @@ package com.datagent.agentv2.server.web;
 
 import com.datagent.agentv2.conversation.exception.ActiveExecutionConflictException;
 import com.datagent.agentv2.conversation.exception.IdempotencyKeyReusedException;
-import com.datagent.agentv2.server.context.RequestContext;
+import com.datagent.agentv2.http.RequestContext;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.util.List;

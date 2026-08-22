@@ -76,6 +76,34 @@ class AgentExecutionSubmissionIntegrationTest {
     }
 
     @Test
+    void messageSubmissionPersistsResolvedRequestIdWhenHeaderIsAbsent() throws Exception {
+        Cookie login = login();
+        String conversationSessionId = createSession(login, "generated-request-id");
+
+        String requestId =
+                mvc.perform(
+                                post(
+                                                "/api/v1/agent-sessions/{conversationSessionId}/messages",
+                                                conversationSessionId)
+                                        .cookie(login)
+                                        .header("Idempotency-Key", "key-generated-request-id")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"content\":\"hello\"}"))
+                        .andExpect(status().isAccepted())
+                        .andReturn()
+                        .getResponse()
+                        .getHeader("X-Request-Id");
+
+        assertThat(requestId).isNotBlank().isNotEqualTo("request_unknown");
+        assertThat(
+                        jdbc.queryForObject(
+                                "select request_id from agent_execution where conversation_session_id = ?",
+                                String.class,
+                                conversationSessionId))
+                .isEqualTo(requestId);
+    }
+
+    @Test
     void serialReplayReturnsOriginalQueuedExecutionWithoutDuplicateMessage() throws Exception {
         Cookie login = login();
         String conversationSessionId = createSession(login, "serial-replay");

@@ -7,6 +7,7 @@ import com.datagent.agentv2.conversation.session.ConversationTitleService;
 import com.datagent.agentv2.conversation.session.ConversationView;
 import com.datagent.agentv2.conversation.stream.ConversationEventStreamFacade;
 import com.datagent.agentv2.conversation.summary.ConversationSummaryStreamFacade;
+import com.datagent.agentv2.http.RequestContext;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -31,10 +33,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @RequiredArgsConstructor
 public class ConversationController {
 
-    private static final String CANCEL_EXECUTION_PATH =
-            "/{conversationSessionId}/executions/{executionId}:cancel";
-    private static final String RETRY_EXECUTION_PATH =
-            "/{conversationSessionId}/executions/{executionId}:retry";
     private static final String SUMMARY_EVENTS_PATH = "/summary-events";
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 
@@ -90,8 +88,7 @@ public class ConversationController {
             @PathVariable String conversationSessionId,
             @Valid @RequestBody SubmitConversationMessageRequest request,
             @RequestHeader(IDEMPOTENCY_KEY_HEADER) String idempotencyKey,
-            @RequestHeader(value = "X-Request-Id", defaultValue = "request_unknown")
-                    String requestId) {
+            @RequestAttribute(RequestContext.ATTRIBUTE_REQUEST_ID) String requestId) {
         return ResponseEntity.accepted()
                 .body(
                         conversations.submitMessage(
@@ -101,7 +98,7 @@ public class ConversationController {
                                 requestId));
     }
 
-    @PostMapping(CANCEL_EXECUTION_PATH)
+    @PostMapping("/{conversationSessionId}/executions/{executionId}:cancel")
     ResponseEntity<ConversationView.AgentExecutionView> cancelExecution(
             @PathVariable String conversationSessionId, @PathVariable String executionId) {
         return ResponseEntity.accepted()
@@ -111,7 +108,7 @@ public class ConversationController {
                                 controls.cancel(conversationSessionId, executionId)));
     }
 
-    @PostMapping(RETRY_EXECUTION_PATH)
+    @PostMapping("/{conversationSessionId}/executions/{executionId}:retry")
     ResponseEntity<ConversationView.AgentExecutionView> retryExecution(
             @PathVariable String conversationSessionId,
             @PathVariable String executionId,

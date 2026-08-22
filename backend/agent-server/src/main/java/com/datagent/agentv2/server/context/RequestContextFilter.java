@@ -1,5 +1,6 @@
 package com.datagent.agentv2.server.context;
 
+import com.datagent.agentv2.http.RequestContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
