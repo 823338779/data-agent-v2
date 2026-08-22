@@ -72,12 +72,13 @@ class OllamaContextSummaryModelAdapterTest {
                 .contains(
                         "\"model\":\"summary-model\"",
                         "\"stream\":false",
+                        "\"think\":false",
                         "\"num_ctx\":65536",
                         "\"num_predict\":2048",
                         "\"format\":{\"type\":\"object\"}",
                         "summary system prompt",
                         "source data")
-                .doesNotContain("\"tools\"");
+                .doesNotContain("\"tools\"", "\"model\":\"mistral\"");
     }
 
     @Test

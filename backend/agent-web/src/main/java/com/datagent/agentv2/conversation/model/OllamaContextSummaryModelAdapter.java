@@ -55,6 +55,7 @@ public final class OllamaContextSummaryModelAdapter implements ContextSummaryMod
                 OllamaChatOptions.builder()
                         .numCtx(properties.getContextWindowTokens())
                         .numPredict(request.maxOutputTokens())
+                        .disableThinking()
                         .build();
         JsonNode outputSchema = parseOutputSchema(request.outputSchema());
         OllamaApi.ChatRequest providerRequest =
@@ -65,8 +66,8 @@ public final class OllamaContextSummaryModelAdapter implements ContextSummaryMod
                         outputSchema,
                         null,
                         null,
-                        options.toMap(),
-                        null);
+                        OllamaChatOptions.filterNonSupportedFields(options.toMap()),
+                        options.getThinkOption());
 
         // provider 错误使用不含请求或响应正文的稳定边界，防止摘要来源泄漏。
         try {

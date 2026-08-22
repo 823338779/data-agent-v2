@@ -3,7 +3,7 @@ package com.datagent.agentv2.context.lsm.summary;
 /** 固定摘要协议版本及其抗提示注入、思路携带规则。 */
 public final class ContextSummaryPrompt {
 
-    public static final int PROMPT_VERSION = 1;
+    public static final int PROMPT_VERSION = 4;
 
     private static final String SYSTEM_PROMPT_TEMPLATE =
             """

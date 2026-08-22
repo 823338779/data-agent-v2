@@ -1,0 +1,21 @@
+[
+  {
+    "question_id": "sample-001",
+    "question_type": "knowledge-update",
+    "question": "What stopped working after the service?",
+    "answer": "GPS system",
+    "question_date": "2023/04/10",
+    "haystack_dates": ["2023/03/15", "2023/03/16"],
+    "haystack_session_ids": ["session-1", "session-2"],
+    "haystack_sessions": [
+      [
+        {"role": "user", "content": "The first service went well.", "has_answer": false},
+        {"role": "assistant", "content": "Glad to hear it.", "has_answer": false}
+      ],
+      [
+        {"role": "user", "content": "Afterwards the GPS system stopped working.", "has_answer": true},
+        {"role": "assistant", "content": "You should ask the service center to inspect it.", "has_answer": false}
+      ]
+    ]
+  }
+]

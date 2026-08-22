@@ -63,7 +63,8 @@ public final class ContextSummaryGenerator {
                                 request.messageCoverage().startMessageSequence(),
                                 request.messageCoverage().endMessageSequence()),
                         request.sourceDocument(),
-                        validator.schemaDocument(),
+                        validator.schemaDocumentFor(
+                                request.turnCoverage(), request.messageCoverage()),
                         maxTokens);
         String segmentKey = keyFactory.create(request, identity);
 
@@ -86,9 +87,11 @@ public final class ContextSummaryGenerator {
                                 request.turnCoverage(),
                                 request.messageCoverage());
                 int localEstimate = estimator.estimateSummaryDocument(result.content());
-                if (result.estimatedTokenCount() > maxTokens || localEstimate > maxTokens) {
+                if (result.estimatedTokenCount() > maxTokens) {
                     continue;
                 }
+                // provider usage 和保守的字符级上下文估值不是同一单位；生成上限只校验前者，
+                // 后者取较大值持久化，继续用于后续装配和水位规划的安全预算。
                 int persistedEstimate = Math.max(result.estimatedTokenCount(), localEstimate);
                 // 指标只保存层级和数值，不携带来源文档、摘要正文或会话标识。
                 metrics.recordSummary(

@@ -1,6 +1,6 @@
 data-agent:
   context:
-    strategy: ${DATA_AGENT_CONTEXT_STRATEGY:raw}
+    strategy: ${DATA_AGENT_CONTEXT_STRATEGY:lsm}
     compaction:
       fanout: ${DATA_AGENT_CONTEXT_COMPACTION_FANOUT:5}
       max-level: ${DATA_AGENT_CONTEXT_COMPACTION_MAX_LEVEL:4}

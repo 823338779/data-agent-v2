@@ -13,6 +13,7 @@ import java.util.Objects;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /** 对 provider 摘要执行 JSON Schema、精确覆盖范围和来源范围校验。 */
 public final class ContextSummaryDocumentValidator {
@@ -23,6 +24,17 @@ public final class ContextSummaryDocumentValidator {
     private static final String SCHEMA_RESOURCE = "/schema/context-summary-v1.schema.json";
     private static final String INVALID_DOCUMENT = "Invalid context summary document";
     private static final String MISSING_SCHEMA = "Context summary schema resource is missing";
+    private static final String KEY_DEFINITIONS = "$defs";
+    private static final String KEY_COVERAGE = "coverage";
+    private static final String KEY_SOURCE_RANGE = "sourceRange";
+    private static final String KEY_PROPERTIES = "properties";
+    private static final String KEY_START_TURN_SEQUENCE = "startTurnSequence";
+    private static final String KEY_END_TURN_SEQUENCE = "endTurnSequence";
+    private static final String KEY_START_MESSAGE_SEQUENCE = "startMessageSequence";
+    private static final String KEY_END_MESSAGE_SEQUENCE = "endMessageSequence";
+    private static final String KEY_CONST = "const";
+    private static final String KEY_MINIMUM = "minimum";
+    private static final String KEY_MAXIMUM = "maximum";
 
     private final ObjectMapper json;
     private final String schemaDocument;
@@ -44,6 +56,46 @@ public final class ContextSummaryDocumentValidator {
     /** 返回发送给 provider 的原始固定 schema。 */
     public String schemaDocument() {
         return schemaDocument;
+    }
+
+    /** 为当前候选收紧 provider 输出 schema，使 coverage 和来源范围在解码阶段即受约束。 */
+    public String schemaDocumentFor(
+            LsmSummarySegment.Coverage expectedTurnCoverage,
+            ContextSummaryGenerator.MessageCoverage expectedMessageCoverage) {
+        Objects.requireNonNull(expectedTurnCoverage, "expectedTurnCoverage");
+        Objects.requireNonNull(expectedMessageCoverage, "expectedMessageCoverage");
+
+        // coverage 是规划器给出的可信边界，provider 只能逐字段原样输出。
+        ObjectNode constrained = (ObjectNode) json.readTree(schemaDocument).deepCopy();
+        JsonNode definitions = constrained.path(KEY_DEFINITIONS);
+        JsonNode coverageProperties =
+                definitions.path(KEY_COVERAGE).path(KEY_PROPERTIES);
+        putConst(
+                coverageProperties,
+                KEY_START_TURN_SEQUENCE,
+                expectedTurnCoverage.startTurnSequence());
+        putConst(
+                coverageProperties,
+                KEY_END_TURN_SEQUENCE,
+                expectedTurnCoverage.endTurnSequence());
+        putConst(
+                coverageProperties,
+                KEY_START_MESSAGE_SEQUENCE,
+                expectedMessageCoverage.startMessageSequence());
+        putConst(
+                coverageProperties,
+                KEY_END_MESSAGE_SEQUENCE,
+                expectedMessageCoverage.endMessageSequence());
+
+        // 每条事实的来源序号必须落在当前候选的消息闭区间内。
+        JsonNode sourceRangeProperties =
+                definitions.path(KEY_SOURCE_RANGE).path(KEY_PROPERTIES);
+        putRange(
+                sourceRangeProperties.path(KEY_START_MESSAGE_SEQUENCE),
+                expectedMessageCoverage);
+        putRange(
+                sourceRangeProperties.path(KEY_END_MESSAGE_SEQUENCE), expectedMessageCoverage);
+        return json.writeValueAsString(constrained);
     }
 
     /** 校验并转换摘要，任何失败只返回稳定无正文异常。 */
@@ -92,6 +144,17 @@ public final class ContextSummaryDocumentValidator {
                 }
             }
         }
+    }
+
+    private static void putConst(JsonNode properties, String field, long value) {
+        ((ObjectNode) properties.path(field)).put(KEY_CONST, value);
+    }
+
+    private static void putRange(
+            JsonNode property, ContextSummaryGenerator.MessageCoverage expectedCoverage) {
+        ObjectNode range = (ObjectNode) property;
+        range.put(KEY_MINIMUM, expectedCoverage.startMessageSequence());
+        range.put(KEY_MAXIMUM, expectedCoverage.endMessageSequence());
     }
 
     private static String readSchema() {

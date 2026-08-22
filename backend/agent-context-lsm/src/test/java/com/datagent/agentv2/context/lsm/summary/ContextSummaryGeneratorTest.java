@@ -31,6 +31,8 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 @ExtendWith(MockitoExtension.class)
 class ContextSummaryGeneratorTest {
@@ -177,6 +179,33 @@ class ContextSummaryGeneratorTest {
     }
 
     @Test
+    void constrainsProviderSchemaToThePlannedCoverage() {
+        when(model.summarize(any())).thenReturn(result(validSummaryJson(1, 2, 10, 20), 100));
+
+        generator.generate(requestForLevel(1), POLICY);
+
+        ArgumentCaptor<ContextSummaryRequest> request =
+                ArgumentCaptor.forClass(ContextSummaryRequest.class);
+        verify(model).summarize(request.capture());
+        JsonNode schema = JsonMapper.builder().build().readTree(request.getValue().outputSchema());
+        JsonNode definitions = schema.path("$defs");
+        JsonNode coverage = definitions.path("coverage").path("properties");
+        JsonNode sourceRange = definitions.path("sourceRange").path("properties");
+        assertThat(coverage.path("startTurnSequence").path("const").asLong()).isEqualTo(1L);
+        assertThat(coverage.path("endTurnSequence").path("const").asLong()).isEqualTo(2L);
+        assertThat(coverage.path("startMessageSequence").path("const").asLong()).isEqualTo(10L);
+        assertThat(coverage.path("endMessageSequence").path("const").asLong()).isEqualTo(20L);
+        assertThat(sourceRange.path("startMessageSequence").path("minimum").asLong())
+                .isEqualTo(10L);
+        assertThat(sourceRange.path("startMessageSequence").path("maximum").asLong())
+                .isEqualTo(20L);
+        assertThat(sourceRange.path("endMessageSequence").path("minimum").asLong())
+                .isEqualTo(10L);
+        assertThat(sourceRange.path("endMessageSequence").path("maximum").asLong())
+                .isEqualTo(20L);
+    }
+
+    @Test
     void reusesTheDeterministicKeyForTheSameSourcesAndCoverage() {
         when(model.summarize(any()))
                 .thenReturn(
@@ -239,7 +268,7 @@ class ContextSummaryGeneratorTest {
     }
 
     @Test
-    void rejectsProviderAndLocallyEstimatedOutputAboveTheLayerCap() {
+    void rejectsProviderOutputAboveTheLayerCap() {
         when(model.summarize(any()))
                 .thenReturn(
                         result(validSummaryJson(1, 2, 10, 20), 2_049),
@@ -251,16 +280,14 @@ class ContextSummaryGeneratorTest {
     }
 
     @Test
-    void rejectsTheLocalEstimateAboveTheLayerCapEvenWhenProviderUsageFits() {
+    void persistsTheConservativeLocalEstimateWhenProviderUsageFitsTheLayerCap() {
         when(estimator.estimateSummaryDocument(any())).thenReturn(2_049);
-        when(model.summarize(any()))
-                .thenReturn(
-                        result(validSummaryJson(1, 2, 10, 20), 100),
-                        result(validSummaryJson(1, 2, 10, 20), 100));
+        when(model.summarize(any())).thenReturn(result(validSummaryJson(1, 2, 10, 20), 100));
 
-        assertThatThrownBy(() -> generator.generate(requestForLevel(1), POLICY))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("Summary model returned no valid document");
+        GeneratedSummary summary = generator.generate(requestForLevel(1), POLICY);
+
+        assertThat(summary.estimatedTokenCount()).isEqualTo(2_049);
+        verify(model).summarize(any());
     }
 
     @Test
