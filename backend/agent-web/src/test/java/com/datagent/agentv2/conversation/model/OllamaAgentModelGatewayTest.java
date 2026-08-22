@@ -26,7 +26,7 @@ import tools.jackson.databind.json.JsonMapper;
 class OllamaAgentModelGatewayTest {
 
     private static final String MODEL_NAME = "test-model";
-    private static final String TENANT_ID = "tenant-model-test";
+    private static final String TENANT_ID = "tenant_default";
     private static final String FINAL_STREAM =
             """
             {"model":"test-model","created_at":"2026-08-01T00:00:00Z","message":{"role":"assistant","thinking":"inspect","content":""},"done":false}

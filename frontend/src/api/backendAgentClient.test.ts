@@ -36,7 +36,7 @@ describe('backend agent client', () => {
     expect(fetchImpl).toHaveBeenNthCalledWith(
       2,
       '/api/v1/agent-sessions/session_1',
-      expect.objectContaining({ credentials: 'include' }),
+      expect.any(Object),
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
       3,
@@ -67,7 +67,6 @@ describe('backend agent client', () => {
       '/api/v1/agent-sessions/session_1',
       expect.objectContaining({
         method: 'PATCH',
-        credentials: 'include',
         body: JSON.stringify({ title: '新的标题', expectedVersion: 4 }),
       }),
     );
@@ -91,7 +90,7 @@ describe('backend agent client', () => {
             {
               conversationMessageId: 'message_1',
               role: 'user',
-              author: 'admin',
+              author: 'user_default',
               content: '分析订单延迟',
               createdAt: '2026-08-01T08:01:00Z',
               version: 0,
@@ -210,7 +209,7 @@ describe('backend agent client', () => {
     expect(nextOperationKey).not.toBe(firstKey);
   });
 
-  it('calls control, read, and reorder endpoints with cookie authentication', async () => {
+  it('calls control, read, and reorder endpoints', async () => {
     const execution = {
       executionId: 'execution_1',
       status: 'cancelled',
@@ -242,7 +241,6 @@ describe('backend agent client', () => {
       '/api/v1/agent-sessions/session_1:mark-read',
       '/api/v1/agent-sessions:reorder',
     ]);
-    expect(fetchImpl.mock.calls.every(([, init]) => init?.credentials === 'include')).toBe(true);
     expect(fetchImpl.mock.calls[3][1]?.body).toBe(
       JSON.stringify({
         conversationSessionIds: ['session_2', 'session_1'],
@@ -251,7 +249,7 @@ describe('backend agent client', () => {
     );
   });
 
-  it('opens only the selected session detail stream with credentials', () => {
+  it('opens only the selected session detail stream', () => {
     const sources: Array<{ url: string; init?: EventSourceInit }> = [];
     const eventSourceFactory = vi.fn((url: string, init?: EventSourceInit) => {
       sources.push({ url, init });
@@ -265,9 +263,7 @@ describe('backend agent client', () => {
 
     client.subscribeSessionEvents('session_1', vi.fn(), vi.fn());
 
-    expect(sources).toEqual([
-      { url: '/api/v1/agent-sessions/session_1/events', init: { withCredentials: true } },
-    ]);
+    expect(sources).toEqual([{ url: '/api/v1/agent-sessions/session_1/events', init: undefined }]);
   });
 
   it('creates a fresh snapshot stream without carrying the previous SSE event id', () => {

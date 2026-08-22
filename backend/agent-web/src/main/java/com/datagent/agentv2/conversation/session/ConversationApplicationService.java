@@ -68,7 +68,7 @@ public class ConversationApplicationService {
                         normalizedTitle(title),
                         tag,
                         ConversationSessionType.INTERACTIVE.value(),
-                        OperatorContext.requiredOperator().userId(),
+                        OperatorContext.requiredUserId(),
                         Instant.now());
         sessions.save(session);
         SessionOrderingService.OrderedSessions ordered =

@@ -12,7 +12,7 @@ value:
   messages:
     - conversationMessageId: message_demo
       role: user
-      author: user_admin
+      author: user_default
       content: Summarize local revenue by month
       createdAt: 2026-08-01T08:01:00Z
       citations: []

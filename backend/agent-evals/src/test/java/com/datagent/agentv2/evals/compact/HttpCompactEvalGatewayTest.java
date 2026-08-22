@@ -16,12 +16,9 @@ import org.junit.jupiter.api.Test;
 
 class HttpCompactEvalGatewayTest {
 
-    private static final String LOGIN_PATH = "/api/v1/auth/login";
     private static final String SESSIONS_PATH = "/api/v1/agent-sessions";
     private static final String MESSAGE_PATH = "/api/v1/agent-sessions/session-1/messages";
     private static final String SESSION_PATH = "/api/v1/agent-sessions/session-1";
-    private static final String COOKIE_HEADER = "Set-Cookie";
-    private static final String COOKIE_VALUE = "DATA_AGENT_SESSION=test; Path=/; HttpOnly";
     private static final String JSON_CONTENT_TYPE = "application/json";
 
     private HttpServer server;
@@ -37,14 +34,12 @@ class HttpCompactEvalGatewayTest {
     void usesPublicSessionContractAndReturnsCurrentExecutionAnswer() throws Exception {
         AtomicInteger sessionReads = new AtomicInteger();
         server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext(LOGIN_PATH, exchange -> login(exchange));
         server.createContext(SESSIONS_PATH, exchange -> sessions(exchange, sessionReads));
         server.start();
 
-        // 测试服务完整覆盖登录、建会话、提交消息和终态轮询四个公开契约边界。
+        // 测试服务完整覆盖建会话、提交消息和终态轮询三个公开契约边界。
         URI baseUri = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
-        HttpCompactEvalGateway gateway =
-                new HttpCompactEvalGateway(baseUri, "admin", "admin", new ObjectMapper());
+        HttpCompactEvalGateway gateway = new HttpCompactEvalGateway(baseUri, new ObjectMapper());
         String sessionId = gateway.createSession("test");
         CompactEvalGateway.TurnResult result =
                 gateway.submitAndAwait(sessionId, "question", Duration.ofSeconds(3));
@@ -54,12 +49,6 @@ class HttpCompactEvalGatewayTest {
         assertEquals("done", result.status());
         assertEquals("current answer", result.assistantAnswer());
         assertEquals(1, result.compactionCompletedCount());
-    }
-
-    /** 登录端点签发 Cookie，后续请求由 JDK CookieManager 自动携带。 */
-    private void login(HttpExchange exchange) throws IOException {
-        exchange.getResponseHeaders().add(COOKIE_HEADER, COOKIE_VALUE);
-        respond(exchange, 204, "");
     }
 
     /** 单一前缀上下文按照 HTTP 方法和精确路径模拟会话控制器。 */

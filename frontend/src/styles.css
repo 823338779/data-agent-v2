@@ -74,8 +74,7 @@ textarea:focus-visible {
   font-weight: 700;
   letter-spacing: -0.01em;
 }
-.brand-mark,
-.account-trigger {
+.brand-mark {
   display: grid;
   place-items: center;
   width: 32px;
@@ -105,44 +104,6 @@ textarea:focus-visible {
 }
 .header-sidebar-toggle {
   margin-left: 4px;
-}
-.account {
-  position: relative;
-  justify-self: end;
-}
-.account-trigger {
-  border: 0;
-  background: #ded7cc;
-  color: #514a42;
-}
-.account-menu {
-  position: absolute;
-  top: 42px;
-  right: 0;
-  display: grid;
-  min-width: 190px;
-  padding: 8px;
-  border: 1px solid #ddd8ce;
-  border-radius: 13px;
-  background: #fff;
-  box-shadow: 0 16px 40px rgb(58 48 36 / 12%);
-}
-.account-menu span {
-  padding: 9px 10px;
-  color: #777066;
-  font-size: 12px;
-}
-.account-menu button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 10px;
-  border-radius: 8px;
-  background: transparent;
-  text-align: left;
-}
-.account-menu button:hover {
-  background: #f4f1eb;
 }
 .workspace {
   display: flex;

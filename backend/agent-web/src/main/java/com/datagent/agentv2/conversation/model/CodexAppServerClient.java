@@ -2,7 +2,6 @@ package com.datagent.agentv2.conversation.model;
 
 import com.datagent.agentv2.conversation.exception.ModelStreamInterruptedException;
 import com.datagent.agentv2.conversation.react.ModelToolCall;
-import com.datagent.agentv2.platform.context.TenantContext;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -151,22 +150,11 @@ final class CodexAppServerClient {
             String prompt,
             List<ModelToolDefinition> tools,
             Consumer<ModelOutputDelta> outputDeltaConsumer) {
-        String tenantId = TenantContext.requiredTenantId();
-
         // 子进程阻塞读取放入虚拟线程；超时关闭连接会同步解除 readLine 阻塞。
         try (Connection connection = connectionFactory.open()) {
             ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
             Future<ModelInvocationResult> invocation =
-                    executor.submit(
-                            () ->
-                                    TenantContext.call(
-                                            tenantId,
-                                            () ->
-                                                    exchange(
-                                                            connection,
-                                                            prompt,
-                                                            tools,
-                                                            outputDeltaConsumer)));
+                    executor.submit(() -> exchange(connection, prompt, tools, outputDeltaConsumer));
             try {
                 return invocation.get(properties.getTimeout().toMillis(), TimeUnit.MILLISECONDS);
             } finally {

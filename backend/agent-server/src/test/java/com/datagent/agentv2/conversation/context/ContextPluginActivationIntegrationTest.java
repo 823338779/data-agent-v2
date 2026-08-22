@@ -102,7 +102,6 @@ class ContextPluginActivationIntegrationTest {
         arguments.add("--spring.main.banner-mode=off");
         arguments.add("--server.port=0");
         arguments.add("--data-agent.runtime.scheduling-enabled=false");
-        arguments.add("--data-agent.auth.bootstrap.enabled=false");
         if (strategy != null) {
             arguments.add("--" + STRATEGY_PROPERTY + "=" + strategy);
         }

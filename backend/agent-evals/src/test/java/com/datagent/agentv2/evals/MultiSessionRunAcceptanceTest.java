@@ -6,8 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
-import java.net.CookieManager;
-import java.net.CookiePolicy;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -28,34 +26,23 @@ class MultiSessionRunAcceptanceTest {
 
     private static final String INSTANCE_A_PROPERTY = "data.agent.acceptance.instance-a";
     private static final String INSTANCE_B_PROPERTY = "data.agent.acceptance.instance-b";
-    private static final String USERNAME_PROPERTY = "data.agent.acceptance.username";
-    private static final String PASSWORD_PROPERTY = "data.agent.acceptance.password";
     private static final String DEFAULT_INSTANCE_A = "http://127.0.0.1:8080";
     private static final String DEFAULT_INSTANCE_B = "http://127.0.0.1:8081";
-    private static final String DEFAULT_USERNAME = "admin";
-    private static final String DEFAULT_PASSWORD = "admin";
     private static final String CONTENT_TYPE = "Content-Type";
     private static final String APPLICATION_JSON = "application/json";
     private static final String IDEMPOTENCY_KEY = "Idempotency-Key";
-    private static final String LOGIN_PATH = "/api/v1/auth/login";
     private static final String SESSIONS_PATH = "/api/v1/agent-sessions";
     private static final Duration TIMEOUT = Duration.ofMinutes(3);
 
     private final ObjectMapper json = new ObjectMapper();
     private final HttpClient http =
-            HttpClient.newBuilder()
-                    .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL))
-                    .connectTimeout(Duration.ofSeconds(5))
-                    .build();
+            HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
     @Test
     void fourSessionsRespectUserConcurrencyAndShareUnreadOrderingAcrossInstances()
             throws Exception {
         URI instanceA = URI.create(property(INSTANCE_A_PROPERTY, DEFAULT_INSTANCE_A));
         URI instanceB = URI.create(property(INSTANCE_B_PROPERTY, DEFAULT_INSTANCE_B));
-        login(instanceA);
-        login(instanceB);
-
         // 四个独立用户操作通过实例 B 入队，随后从实例 A 的公开列表观察共享状态。
         List<String> sessionIds = new ArrayList<>();
         for (int index = 1; index <= 4; index++) {
@@ -128,15 +115,6 @@ class MultiSessionRunAcceptanceTest {
             Thread.sleep(500L);
         }
         throw new AssertionError("等待公开会话状态收敛超时: " + latest);
-    }
-
-    private void login(URI baseUri) throws Exception {
-        post(
-                baseUri.resolve(LOGIN_PATH),
-                Map.of(
-                        "username", property(USERNAME_PROPERTY, DEFAULT_USERNAME),
-                        "password", property(PASSWORD_PROPERTY, DEFAULT_PASSWORD)),
-                null);
     }
 
     private String createSession(URI baseUri, String title) throws Exception {

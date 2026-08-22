@@ -3,8 +3,6 @@ package com.datagent.agentv2.conversation.runtime;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_EXECUTION_ALREADY_OWNED_PREFIX;
 
 import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
-import com.datagent.agentv2.persistence.service.TenantService;
-import com.datagent.agentv2.platform.context.TenantContext;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -15,7 +13,6 @@ public final class AgentExecutionRecoveryScheduler {
     private final ExecutionWorkerCapacity capacity;
     private final ExecutionOwnerRegistry owners;
     private final AgentExecutionPort execution;
-    private final TenantService tenants;
     private final AgentExecutionRuntimeProperties properties;
     private final ExecutionWorkerIdentity identity;
 
@@ -24,14 +21,12 @@ public final class AgentExecutionRecoveryScheduler {
             ExecutionWorkerCapacity capacity,
             ExecutionOwnerRegistry owners,
             AgentExecutionPort execution,
-            TenantService tenants,
             AgentExecutionRuntimeProperties properties,
             ExecutionWorkerIdentity identity) {
         this.leases = leases;
         this.capacity = capacity;
         this.owners = owners;
         this.execution = execution;
-        this.tenants = tenants;
         this.properties = properties;
         this.identity = identity;
     }
@@ -72,7 +67,7 @@ public final class AgentExecutionRecoveryScheduler {
             return;
         }
         for (AgentExecutionPort.ClaimedAgentExecution run : owners.ownedExecutions()) {
-            boolean renewed = TenantContext.call(run.tenantId(), () -> leases.heartbeat(run));
+            boolean renewed = leases.heartbeat(run);
             if (!renewed) {
                 owners.release(run.executionId());
             }
@@ -91,7 +86,7 @@ public final class AgentExecutionRecoveryScheduler {
         for (AgentExecutionPort.ClaimedAgentExecution run : owners.ownedExecutions()) {
             boolean cancelled;
             try {
-                cancelled = TenantContext.call(run.tenantId(), () -> leases.cancelIfRequested(run));
+                cancelled = leases.cancelIfRequested(run);
             } catch (ExecutionOwnershipLostException ignored) {
                 // 执行可能在 owner 快照生成后并发完成；释放过期本地句柄并继续轮询。
                 owners.release(run.executionId());
@@ -112,13 +107,8 @@ public final class AgentExecutionRecoveryScheduler {
         if (!properties.schedulingEnabled()) {
             return;
         }
-        for (String tenantId : tenants.activeTenantIds()) {
-            while (capacity.available() > 0 && TenantContext.call(tenantId, this::recoverNext)) {
-                // Continue until this tenant has no expired executions or the instance is full.
-            }
-            if (capacity.available() == 0) {
-                return;
-            }
+        while (capacity.available() > 0 && recoverNext()) {
+            // Continue until the fixed tenant has no expired executions or the instance is full.
         }
     }
 }

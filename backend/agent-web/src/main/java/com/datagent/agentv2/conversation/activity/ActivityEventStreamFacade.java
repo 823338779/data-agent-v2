@@ -4,9 +4,6 @@ import com.datagent.agentv2.conversation.enums.ActivityEventType;
 import com.datagent.agentv2.conversation.enums.SessionActivityStatus;
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
 import com.datagent.agentv2.conversation.session.ConversationSummaryView;
-import com.datagent.agentv2.platform.context.OperatorContext;
-import com.datagent.agentv2.platform.context.OperatorIdentity;
-import com.datagent.agentv2.platform.context.TenantContext;
 import java.io.IOException;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -14,8 +11,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -39,8 +34,7 @@ public final class ActivityEventStreamFacade {
     private static final AtomicLong CONNECTION_SEQUENCE = new AtomicLong();
 
     private final ConversationApplicationService conversations;
-    private final ConcurrentMap<UserKey, Set<Subscription>> subscriptions =
-            new ConcurrentHashMap<>();
+    private final Set<Subscription> subscriptions = new CopyOnWriteArraySet<>();
     private final AtomicInteger connectionCount = new AtomicInteger();
 
     public ActivityEventStreamFacade(ConversationApplicationService conversations) {
@@ -48,49 +42,34 @@ public final class ActivityEventStreamFacade {
     }
 
     public SseEmitter open() {
-        OperatorIdentity operator = OperatorContext.requiredOperator();
         if (connectionCount.incrementAndGet() > MAX_CONNECTIONS) {
             connectionCount.decrementAndGet();
             throw new IllegalStateException(ERROR_CONNECTION_LIMIT);
         }
 
         SseEmitter emitter = new SseEmitter(0L);
-        Subscription subscription = new Subscription(operator, emitter);
-        UserKey key = new UserKey(operator.tenantId(), operator.userId());
-        subscriptions
-                .computeIfAbsent(key, ignored -> new CopyOnWriteArraySet<>())
-                .add(subscription);
-        emitter.onCompletion(() -> remove(key, subscription));
-        emitter.onTimeout(() -> remove(key, subscription));
-        emitter.onError(ignored -> remove(key, subscription));
+        Subscription subscription = new Subscription(emitter);
+        subscriptions.add(subscription);
+        emitter.onCompletion(() -> remove(subscription));
+        emitter.onTimeout(() -> remove(subscription));
+        emitter.onError(ignored -> remove(subscription));
 
         // 注册完成后读取数据库快照，避免初始读取与后续 reconciliation 之间出现空窗。
         subscription.accept(snapshot());
         return emitter;
     }
 
-    /** 每轮只遍历本实例仍有连接的用户，并在其租户/操作者上下文中读取数据库。 */
+    /** 固定用户的连接共享一次数据库快照，避免逐连接重复查询。 */
     public void reconcileActiveUsers() {
-        subscriptions.forEach(
-                (key, values) -> {
-                    if (values.isEmpty()) {
-                        return;
-                    }
-                    OperatorIdentity operator = values.iterator().next().operator;
-                    TenantContext.run(
-                            key.tenantId(),
-                            () ->
-                                    OperatorContext.run(
-                                            operator,
-                                            () -> {
-                                                ActivitySnapshot snapshot = snapshot();
-                                                values.forEach(value -> value.accept(snapshot));
-                                            }));
-                });
+        if (subscriptions.isEmpty()) {
+            return;
+        }
+        ActivitySnapshot snapshot = snapshot();
+        subscriptions.forEach(subscription -> subscription.accept(snapshot));
     }
 
     int activeUserCount() {
-        return subscriptions.size();
+        return subscriptions.isEmpty() ? 0 : 1;
     }
 
     private ActivitySnapshot snapshot() {
@@ -111,30 +90,23 @@ public final class ActivityEventStreamFacade {
                 ActivityEventType.SNAPSHOT, orderingVersion, List.copyOf(items), Instant.now());
     }
 
-    private void remove(UserKey key, Subscription subscription) {
+    private void remove(Subscription subscription) {
         if (!subscription.closed.compareAndSet(false, true)) {
             return;
         }
-        subscriptions.computeIfPresent(
-                key,
-                (ignored, values) -> {
-                    values.remove(subscription);
-                    return values.isEmpty() ? null : values;
-                });
+        subscriptions.remove(subscription);
         subscription.sender.shutdownNow();
         connectionCount.decrementAndGet();
     }
 
     private final class Subscription {
 
-        private final OperatorIdentity operator;
         private final SseEmitter emitter;
         private final ThreadPoolExecutor sender;
         private final AtomicBoolean closed = new AtomicBoolean();
         private volatile Fingerprint lastFingerprint;
 
-        private Subscription(OperatorIdentity operator, SseEmitter emitter) {
-            this.operator = operator;
+        private Subscription(SseEmitter emitter) {
             this.emitter = emitter;
             this.sender = sender();
         }
@@ -155,11 +127,11 @@ public final class ActivityEventStreamFacade {
                                                 .name(ActivityEventType.SNAPSHOT.value())
                                                 .data(snapshot, MediaType.APPLICATION_JSON));
                             } catch (IOException | IllegalStateException failure) {
-                                remove(new UserKey(operator.tenantId(), operator.userId()), this);
+                                remove(this);
                             }
                         });
             } catch (RejectedExecutionException failure) {
-                remove(new UserKey(operator.tenantId(), operator.userId()), this);
+                remove(this);
                 emitter.completeWithError(new IllegalStateException(ERROR_SLOW_CLIENT));
             }
         }
@@ -180,8 +152,6 @@ public final class ActivityEventStreamFacade {
                     new ThreadPoolExecutor.AbortPolicy());
         }
     }
-
-    private record UserKey(String tenantId, String userId) {}
 
     private record Fingerprint(long orderingVersion, List<ActivityItem> sessions) {}
 

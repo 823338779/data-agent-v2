@@ -1,11 +1,10 @@
 ﻿import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { AuthenticatedApp } from './AuthenticatedApp';
+import App from './App';
 import './styles.css';
-import './auth.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <AuthenticatedApp />
+    <App />
   </React.StrictMode>,
 );

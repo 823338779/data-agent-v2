@@ -29,8 +29,7 @@ import org.springframework.context.annotation.Import;
         classes = HierarchicalContextCompactionIntegrationTest.TestApplication.class,
         properties = {
             "data-agent.context.strategy=hierarchical",
-            "data-agent.runtime.scheduling-enabled=false",
-            "data-agent.auth.bootstrap.enabled=false"
+            "data-agent.runtime.scheduling-enabled=false"
         })
 @Import(HierarchicalContextCompactionRecoveryIntegrationTest.FailpointConfiguration.class)
 class HierarchicalContextCompactionRecoveryIntegrationTest

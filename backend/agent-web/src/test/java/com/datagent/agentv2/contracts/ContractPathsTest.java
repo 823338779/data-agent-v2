@@ -44,7 +44,7 @@ class ContractPathsTest {
     void openApiDeclaresEveryFrozenV1ControllerOperation() throws IOException {
         JsonNode paths = YAML.readTree(ContractFiles.openApi().toFile()).path("paths");
 
-        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(44);
+        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(38);
         assertThat(REQUIRED)
                 .allSatisfy(
                         (path, methods) -> {
@@ -59,7 +59,7 @@ class ContractPathsTest {
     }
 
     @Test
-    void openApiDeclaresOperationMetadataCookieAndCoreDtos() throws IOException {
+    void openApiDeclaresOperationMetadataAndCoreDtos() throws IOException {
         JsonNode api = YAML.readTree(ContractFiles.openApi().toFile());
 
         REQUIRED.forEach(
@@ -70,19 +70,14 @@ class ContractPathsTest {
                                     assertThat(operation.path("operationId").asText())
                                             .as("operationId for %s %s", method, path)
                                             .isNotBlank();
-                                    assertThat(operation.path("security").isArray())
-                                            .as("security for %s %s", method, path)
-                                            .isTrue();
+                                    assertThat(operation.has("security"))
+                                            .as("security omitted for %s %s", method, path)
+                                            .isFalse();
                                     assertThat(operation.path("responses").fieldNames())
                                             .toIterable()
                                             .as("successful response for %s %s", method, path)
                                             .anyMatch(status -> status.startsWith("2"));
                                 }));
-
-        JsonNode cookie = api.path("components").path("securitySchemes").path("sessionCookie");
-        assertThat(cookie.path("type").asText()).isEqualTo("apiKey");
-        assertThat(cookie.path("in").asText()).isEqualTo("cookie");
-        assertThat(cookie.path("name").asText()).isEqualTo("DATA_AGENT_SESSION");
 
         JsonNode schemas = api.path("components").path("schemas");
         assertThat(schemas.fieldNames())
@@ -246,9 +241,6 @@ class ContractPathsTest {
 
     private static Map<String, Set<String>> requiredOperations() {
         Map<String, Set<String>> required = new LinkedHashMap<>();
-        required.put("/api/v1/auth/login", Set.of("post"));
-        required.put("/api/v1/auth/session", Set.of("get"));
-        required.put("/api/v1/auth/logout", Set.of("post"));
         required.put("/api/v1/agent-sessions", Set.of("get", "post"));
         required.put(ACTIVITY_EVENTS_PATH, Set.of("get"));
         required.put(REORDER_PATH, Set.of("post"));
@@ -281,8 +273,6 @@ class ContractPathsTest {
         required.put("/api/v1/metric-platform-credentials/{id}:replace-password", Set.of("post"));
         required.put("/api/v1/metric-platform-credentials/{id}:deactivate", Set.of("post"));
         required.put("/api/v1/metric-platform-credentials:rotate-secrets", Set.of("post"));
-        required.put("/api/v1/tenants", Set.of("post"));
-        required.put("/api/v1/tenants/{tenantId}/members", Set.of("get", "post"));
         required.put("/api/v1/query-result-artifacts/{queryResultArtifactId}", Set.of("get"));
         required.put(
                 "/api/v1/query-result-artifacts/{queryResultArtifactId}/preview", Set.of("get"));

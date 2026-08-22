@@ -7,7 +7,6 @@ import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostExcepti
 import com.datagent.agentv2.conversation.process.AgentExecutionProcessTerminationService;
 import com.datagent.agentv2.conversation.react.ReactExecutionEngine;
 import com.datagent.agentv2.conversation.react.ReactRecoveryPlanner;
-import com.datagent.agentv2.platform.context.TenantContext;
 import jakarta.annotation.PreDestroy;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,9 +33,7 @@ public final class ReactExecutionAdapter implements AgentExecutionPort {
                 workers.submit(
                         () -> {
                             try {
-                                TenantContext.run(
-                                        run.tenantId(),
-                                        () -> executor.execute(run, recovery.recover(run)));
+                                executor.execute(run, recovery.recover(run));
                             } catch (ExecutionOwnershipLostException ignored) {
                                 // 接管后的旧 worker 必须静默退出，不能修改新 owner 的中心消息或执行终态。
                             } catch (ExecutionDeadlineExceededException ignored) {
@@ -44,14 +41,11 @@ public final class ReactExecutionAdapter implements AgentExecutionPort {
                             } catch (ContextPreparationException ignored) {
                                 // 上下文策略已经通过 execution control 端口提交稳定失败终态。
                             } catch (RuntimeException failure) {
-                                TenantContext.run(
-                                        run.tenantId(),
-                                        () ->
-                                                termination.failOwned(
-                                                        run,
-                                                        ExecutionFailureCode.INTERNAL_ERROR.value(),
-                                                        failure.getMessage(),
-                                                        Instant.now()));
+                                termination.failOwned(
+                                        run,
+                                        ExecutionFailureCode.INTERNAL_ERROR.value(),
+                                        failure.getMessage(),
+                                        Instant.now());
                             } finally {
                                 active.remove(run.executionId());
                                 onTerminated.run();

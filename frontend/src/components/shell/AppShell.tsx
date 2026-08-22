@@ -1,23 +1,13 @@
-import { LogOut, PanelLeftOpen } from 'lucide-react';
-import { ReactNode, useState } from 'react';
+import { PanelLeftOpen } from 'lucide-react';
+import { ReactNode } from 'react';
 
 interface AppShellProps {
-  subject: string;
   historyOpen: boolean;
   onToggleHistory: () => void;
-  onLogout: () => Promise<void>;
   children: ReactNode;
 }
 
-export function AppShell({
-  subject,
-  historyOpen,
-  onToggleHistory,
-  onLogout,
-  children,
-}: AppShellProps) {
-  const [accountOpen, setAccountOpen] = useState(false);
-
+export function AppShell({ historyOpen, onToggleHistory, children }: AppShellProps) {
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -33,25 +23,6 @@ export function AppShell({
             >
               <PanelLeftOpen size={18} />
             </button>
-          )}
-        </div>
-        <div className="account">
-          <button
-            className="account-trigger"
-            type="button"
-            aria-label="账户菜单"
-            onClick={() => setAccountOpen((open) => !open)}
-          >
-            {subject.slice(0, 1).toUpperCase()}
-          </button>
-          {accountOpen && (
-            <div className="account-menu" role="menu">
-              <span>{subject}</span>
-              <button type="button" role="menuitem" onClick={() => void onLogout()}>
-                <LogOut size={15} />
-                退出登录
-              </button>
-            </div>
           )}
         </div>
       </header>

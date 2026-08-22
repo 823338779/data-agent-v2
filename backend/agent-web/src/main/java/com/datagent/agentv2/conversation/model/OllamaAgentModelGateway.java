@@ -3,7 +3,6 @@ package com.datagent.agentv2.conversation.model;
 import com.datagent.agentv2.conversation.exception.ModelStreamInterruptedException;
 import com.datagent.agentv2.conversation.react.ModelInputMessage;
 import com.datagent.agentv2.conversation.react.ModelToolCall;
-import com.datagent.agentv2.platform.context.TenantContext;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,7 +44,6 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
             List<ModelInputMessage> messages,
             List<ModelToolDefinition> tools,
             Consumer<ModelOutputDelta> outputDeltaConsumer) {
-        String tenantId = TenantContext.requiredTenantId();
         OllamaApi.ChatRequest request =
                 OllamaApi.ChatRequest.builder(properties.getModel())
                         .messages(messages.stream().map(this::toProviderMessage).toList())
@@ -59,7 +57,7 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
                         .stream(true)
                         .build();
         ExecutionStreamAccumulator accumulator =
-                new ExecutionStreamAccumulator(outputDeltaConsumer, tenantId);
+                new ExecutionStreamAccumulator(outputDeltaConsumer);
 
         // 只有 provider 明确返回 done 后才允许把累积内容提升为完整 ModelInvocationResult。
         try {
@@ -118,19 +116,12 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
 
         private final Consumer<ModelOutputDelta> outputDeltaConsumer;
 
-        /**
-         * Tenant restored around callbacks that Reactor dispatches on provider event-loop threads.
-         */
-        private final String tenantId;
-
         private final StringBuilder answer = new StringBuilder();
         private final Map<String, ModelToolCall> toolCalls = new LinkedHashMap<>();
         private boolean done;
 
-        private ExecutionStreamAccumulator(
-                Consumer<ModelOutputDelta> outputDeltaConsumer, String tenantId) {
+        private ExecutionStreamAccumulator(Consumer<ModelOutputDelta> outputDeltaConsumer) {
             this.outputDeltaConsumer = outputDeltaConsumer;
-            this.tenantId = tenantId;
         }
 
         private void accept(OllamaApi.ChatResponse response) {
@@ -157,8 +148,7 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
         }
 
         private void emit(ModelOutputDelta outputDelta) {
-            // Persistence checkpoints require the request tenant even on Reactor callback threads.
-            TenantContext.run(tenantId, () -> outputDeltaConsumer.accept(outputDelta));
+            outputDeltaConsumer.accept(outputDelta);
         }
 
         private void appendToolCalls(List<OllamaApi.Message.ToolCall> calls) {

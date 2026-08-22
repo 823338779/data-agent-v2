@@ -32,9 +32,6 @@ import { RunStreamPanel } from './components/RunStreamPanel';
 import { ConversationSession, formatTimestamp, isProcessingStatus } from './domain/agentPrototype';
 
 interface AppProps {
-  subject?: string;
-  onLogout?: () => Promise<void>;
-  onAuthenticationRequired?: () => void;
   client?: AgentBackendClient;
 }
 
@@ -42,6 +39,7 @@ const narrowScreenQuery = '(max-width: 820px)';
 const TITLE_CONFLICT_MESSAGE = '标题已在其他位置更新，已加载最新标题。';
 const TITLE_SAVE_ERROR_MESSAGE = '标题保存失败，请稍后重试。';
 const STREAM_INTERRUPTED_MESSAGE = '实时状态连接已中断；会话内容仍可继续查看。';
+const FIXED_SUBJECT = 'local-user';
 export const BACKGROUND_POLL_INTERVAL_MS = 60_000;
 
 function isNarrowScreen(): boolean {
@@ -54,12 +52,7 @@ function isCompletedStreamEvent(event: ConversationStreamEvent): boolean {
   return event.type === 'execution_update' && event.execution.status === 'done';
 }
 
-export default function App({
-  subject = 'admin',
-  onLogout = async () => undefined,
-  onAuthenticationRequired = () => undefined,
-  client,
-}: AppProps) {
+export default function App({ client }: AppProps) {
   const backend = useMemo(() => client ?? createFetchAgentBackendClient(), [client]);
   const [route, setRoute] = useState<WorkspaceRoute>(parseWorkspaceRoute);
   const [sessions, setSessions] = useState<ConversationSession[]>([]);
@@ -106,10 +99,6 @@ export default function App({
   );
 
   function handleFailure(failure: unknown, message: string) {
-    if (failure instanceof BackendApiError && failure.status === 401) {
-      onAuthenticationRequired();
-      return;
-    }
     setError(message);
   }
 
@@ -412,12 +401,7 @@ export default function App({
   }
 
   return (
-    <AppShell
-      subject={subject}
-      historyOpen={historyOpen}
-      onToggleHistory={() => setHistoryOpen((open) => !open)}
-      onLogout={onLogout}
-    >
+    <AppShell historyOpen={historyOpen} onToggleHistory={() => setHistoryOpen((open) => !open)}>
       {historyOpen && (
         <aside className="session-sidebar" aria-label="会话列表">
           <div className="session-sidebar-heading">
@@ -528,7 +512,7 @@ export default function App({
                 </div>
                 <div className="message-content">
                   <header>
-                    <strong>{message.role === 'user' ? subject : message.author}</strong>
+                    <strong>{message.role === 'user' ? FIXED_SUBJECT : message.author}</strong>
                     <time>{formatTimestamp(message.timestamp)}</time>
                   </header>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>

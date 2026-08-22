@@ -15,7 +15,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -32,7 +31,6 @@ import tools.jackson.databind.ObjectMapper;
 class ContentCenteredMessageIntegrationTest {
 
     private static final String TENANT_ID = "tenant_local";
-    private static final String SESSION_COOKIE = "DATA_AGENT_SESSION";
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
     private static final GenericContainer<?> REDIS =
@@ -199,18 +197,7 @@ class ContentCenteredMessageIntegrationTest {
         return json.readTree(body).path("conversationSessionId").asString();
     }
 
-    private Cookie login() throws Exception {
-        String setCookie =
-                mvc.perform(
-                                post("/api/v1/auth/login")
-                                        .contentType(MediaType.APPLICATION_JSON)
-                                        .content("{\"username\":\"admin\",\"password\":\"admin\"}"))
-                        .andExpect(status().isNoContent())
-                        .andReturn()
-                        .getResponse()
-                        .getHeader(HttpHeaders.SET_COOKIE);
-        return new Cookie(
-                SESSION_COOKIE,
-                setCookie.substring((SESSION_COOKIE + "=").length(), setCookie.indexOf(';')));
+    private Cookie login() {
+        return new Cookie("ignored", "ignored");
     }
 }

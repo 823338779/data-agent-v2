@@ -7,8 +7,7 @@ Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多�
 - `backend/agent-persistence`：数据库迁移、MyBatis-Plus、审计持久化，以及 ID、时钟和请求上下文基础能力
 - `backend/agent-context-lsm`：可插拔的 LSM 会话上下文压缩策略、独立持久化、迁移、恢复和指标
 - `backend/agent-context-hierarchical`：可插拔的 Hot/Warm/Cold 分层上下文策略、独立持久化、迁移、恢复和指标
-- `backend/agent-auth`：认证、登录会话与操作者上下文
-- `backend/agent-web`：REST/SSE 接口、BFF、认证安全链、会话编排与契约测试
+- `backend/agent-web`：REST/SSE 接口、BFF、会话编排与契约测试
 - `backend/agent-server`：唯一可执行模块，负责 Spring Boot 启动、服务级全局拦截器、异常边界与运行时装配
 - `backend/agent-evals`：独立评测模块
 - `contracts`：REST、SSE、示例与完整性清单
@@ -30,7 +29,7 @@ Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多�
 
 ## 本地前后端联调
 
-本地开发使用 Vite 同源代理：浏览器只访问前端域名，`/api`（包括 SSE）由 Vite 转发到 V2 后端，因此 HttpOnly Cookie 可以正常工作。默认后端地址是 `http://127.0.0.1:8080`；需要切换实例或 Nginx 时，将 `frontend/.env.example` 复制为 `frontend/.env.local` 并修改 `VITE_BACKEND_ORIGIN`。
+本地开发使用 Vite 同源代理：浏览器只访问前端域名，`/api`（包括 SSE）由 Vite 转发到 V2 后端。默认后端地址是 `http://127.0.0.1:8080`；需要切换实例或 Nginx 时，将 `frontend/.env.example` 复制为 `frontend/.env.local` 并修改 `VITE_BACKEND_ORIGIN`。
 
 先准备 PostgreSQL 数据库 `data_agent_v2`、Redis 和 Ollama。两个后端实例必须连接同一 PostgreSQL 与 Redis：
 
@@ -69,7 +68,7 @@ Hierarchical 上下文端到端验证命令：
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am `
   '-Dsurefire.failIfNoSpecifiedTests=false' `
-  '-Dtest=ContextStrategyIsolationIntegrationTest,HierarchicalContextCompactionIntegrationTest,HierarchicalContextCompactionRecoveryIntegrationTest,HierarchicalContextCompactionMultiTenantIntegrationTest' test
+  '-Dtest=ContextStrategyIsolationIntegrationTest,HierarchicalContextCompactionIntegrationTest,HierarchicalContextCompactionRecoveryIntegrationTest' test
 ```
 
 LSM 上下文端到端验证命令：
@@ -77,7 +76,7 @@ LSM 上下文端到端验证命令：
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am `
   '-Dsurefire.failIfNoSpecifiedTests=false' `
-  '-Dtest=LsmContextCompactionIntegrationTest,LsmContextCompactionRecoveryIntegrationTest,LsmContextCompactionMultiTenantIntegrationTest' test
+  '-Dtest=LsmContextCompactionIntegrationTest,LsmContextCompactionRecoveryIntegrationTest' test
 ```
 
 ### 使用本机 Codex 登录态
@@ -94,7 +93,7 @@ codex login status
 $env:DATA_AGENT_MODEL_PROVIDER = 'codex'
 ```
 
-该模式不读取或保存 OpenAI API key。每次模型调用使用临时、只读、禁止审批的 Codex thread；Codex 仅能选择 V2 注册的领域工具，真正的工具执行、持久化和租户隔离仍由 V2 ReAct 执行器完成。可选配置包括 `DATA_AGENT_MODEL_CODEX_EXECUTABLE`、`DATA_AGENT_MODEL_CODEX_MODEL`、`DATA_AGENT_MODEL_CODEX_EFFORT`、`DATA_AGENT_MODEL_CODEX_TIMEOUT` 和 `DATA_AGENT_MODEL_CODEX_WORKING_DIRECTORY`。部署到服务器或容器时，必须在运行后端的同一系统用户和环境中单独完成 Codex 登录；个人 ChatGPT 登录态不应复制到共享服务。
+该模式不读取或保存 OpenAI API key。每次模型调用使用临时、只读、禁止审批的 Codex thread；Codex 仅能选择 V2 注册的领域工具，真正的工具执行和持久化仍由 V2 ReAct 执行器完成。可选配置包括 `DATA_AGENT_MODEL_CODEX_EXECUTABLE`、`DATA_AGENT_MODEL_CODEX_MODEL`、`DATA_AGENT_MODEL_CODEX_EFFORT`、`DATA_AGENT_MODEL_CODEX_TIMEOUT` 和 `DATA_AGENT_MODEL_CODEX_WORKING_DIRECTORY`。部署到服务器或容器时，必须在运行后端的同一系统用户和环境中单独完成 Codex 登录；个人 ChatGPT 登录态不应复制到共享服务。
 
 ### 内置 ReAct 验证工具
 
@@ -114,7 +113,7 @@ npm.cmd ci
 npm.cmd run dev
 ```
 
-打开 `http://127.0.0.1:5173`，使用本地初始化账号 `admin/admin` 登录。当前可联调认证、多会话未读与排序、执行取消/重试、Ollama answer 流以及 Redis 跨实例通知。
+打开 `http://127.0.0.1:5173` 即可进入工作区。当前阶段后端固定使用 `tenant_default` 租户和 `user_default` / `local-user` 身份，不提供登录、退出或租户切换；这些能力将在后续重新设计。当前可联调多会话未读与排序、执行取消/重试、Ollama answer 流以及 Redis 跨实例通知。
 
 ## 双实例运行与收敛参数
 

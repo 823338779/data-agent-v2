@@ -10,7 +10,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import jakarta.servlet.http.Cookie;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterAll;
@@ -71,22 +70,11 @@ class AgentV2ApplicationTest {
     @Autowired private MockMvc mvc;
 
     @Test
-    void authenticationFailureUsesCorrelatedProblemDetail() throws Exception {
-        mvc.perform(get("/api/v1/auth/session").header("X-Request-Id", "request_auth_test"))
-                .andExpect(status().isUnauthorized())
-                .andExpect(header().string("X-Request-Id", "request_auth_test"))
-                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"))
-                .andExpect(jsonPath("$.requestId").value("request_auth_test"));
-    }
-
-    @Test
-    void authenticatedUserCanCreateListAndReadConversation() throws Exception {
-        Cookie session = login();
+    void fixedUserCanCreateListAndReadConversation() throws Exception {
 
         String conversationSessionId =
                 mvc.perform(
                                 post("/api/v1/agent-sessions")
-                                        .cookie(session)
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content("{\"title\":\"First chat\",\"tag\":\"local\"}"))
                         .andExpect(status().isCreated())
@@ -100,26 +88,22 @@ class AgentV2ApplicationTest {
                         .getContentAsString()
                         .replaceAll(".*\\\"conversationSessionId\\\":\\\"([^\\\"]+)\\\".*", "$1");
 
-        mvc.perform(get("/api/v1/agent-sessions").cookie(session))
+        mvc.perform(get("/api/v1/agent-sessions"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].conversationSessionId").value(conversationSessionId))
                 .andExpect(jsonPath("$[0].status").value("idle"))
                 .andExpect(jsonPath("$[0].messages").doesNotExist())
                 .andExpect(jsonPath("$[0].execution").doesNotExist());
-        mvc.perform(
-                        get("/api/v1/agent-sessions/{conversationSessionId}", conversationSessionId)
-                                .cookie(session))
+        mvc.perform(get("/api/v1/agent-sessions/{conversationSessionId}", conversationSessionId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.conversationSessionId").value(conversationSessionId));
     }
 
     @Test
-    void authenticatedUserCanRenameConversationWithOptimisticLocking() throws Exception {
-        Cookie session = login();
+    void fixedUserCanRenameConversationWithOptimisticLocking() throws Exception {
         MvcResult created =
                 mvc.perform(
                                 post("/api/v1/agent-sessions")
-                                        .cookie(session)
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content("{\"title\":\"" + ORIGINAL_TITLE + "\"}"))
                         .andExpect(status().isCreated())
@@ -137,7 +121,6 @@ class AgentV2ApplicationTest {
                         patch(
                                         "/api/v1/agent-sessions/{conversationSessionId}",
                                         conversationSessionId)
-                                .cookie(session)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
                                         "{\"title\":\"  "
@@ -154,7 +137,6 @@ class AgentV2ApplicationTest {
                         patch(
                                         "/api/v1/agent-sessions/{conversationSessionId}",
                                         conversationSessionId)
-                                .cookie(session)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
                                         "{\"title\":\""
@@ -163,20 +145,16 @@ class AgentV2ApplicationTest {
                                                 + version
                                                 + "}"))
                 .andExpect(status().isConflict());
-        mvc.perform(
-                        get("/api/v1/agent-sessions/{conversationSessionId}", conversationSessionId)
-                                .cookie(session))
+        mvc.perform(get("/api/v1/agent-sessions/{conversationSessionId}", conversationSessionId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value(RENAMED_TITLE));
     }
 
     @Test
     void conversationRenameRejectsInvalidTitlesWithoutChangingStoredTitle() throws Exception {
-        Cookie session = login();
         String createdBody =
                 mvc.perform(
                                 post("/api/v1/agent-sessions")
-                                        .cookie(session)
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content("{\"title\":\"" + ORIGINAL_TITLE + "\"}"))
                         .andExpect(status().isCreated())
@@ -195,7 +173,6 @@ class AgentV2ApplicationTest {
                         patch(
                                         "/api/v1/agent-sessions/{conversationSessionId}",
                                         conversationSessionId)
-                                .cookie(session)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
                                         "{\"title\":\""
@@ -208,7 +185,6 @@ class AgentV2ApplicationTest {
                         patch(
                                         "/api/v1/agent-sessions/{conversationSessionId}",
                                         conversationSessionId)
-                                .cookie(session)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
                                         "{\"title\":\""
@@ -217,20 +193,16 @@ class AgentV2ApplicationTest {
                                                 + version
                                                 + "}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(
-                        get("/api/v1/agent-sessions/{conversationSessionId}", conversationSessionId)
-                                .cookie(session))
+        mvc.perform(get("/api/v1/agent-sessions/{conversationSessionId}", conversationSessionId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value(ORIGINAL_TITLE));
     }
 
     @Test
     void submittingMessagePersistsUserMessageAndStartsExecutionInSameRequest() throws Exception {
-        Cookie session = login();
         String body =
                 mvc.perform(
                                 post("/api/v1/agent-sessions")
-                                        .cookie(session)
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content("{\"title\":\"Streaming chat\"}"))
                         .andExpect(status().isCreated())
@@ -244,7 +216,6 @@ class AgentV2ApplicationTest {
                         post(
                                         "/api/v1/agent-sessions/{conversationSessionId}/messages",
                                         conversationSessionId)
-                                .cookie(session)
                                 .header("Idempotency-Key", "message-test")
                                 .header("X-Request-Id", "request_message_test")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -259,11 +230,9 @@ class AgentV2ApplicationTest {
 
     @Test
     void eventStreamStartsWithOneAuthoritativeSessionSnapshotAndStaysOpen() throws Exception {
-        Cookie session = login();
         String created =
                 mvc.perform(
                                 post("/api/v1/agent-sessions")
-                                        .cookie(session)
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content("{\"title\":\"SSE replay\"}"))
                         .andExpect(status().isCreated())
@@ -276,7 +245,6 @@ class AgentV2ApplicationTest {
                         post(
                                         "/api/v1/agent-sessions/{conversationSessionId}/messages",
                                         conversationSessionId)
-                                .cookie(session)
                                 .header("Idempotency-Key", "stream-test")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"content\":\"stream this\"}"))
@@ -286,7 +254,6 @@ class AgentV2ApplicationTest {
                         get(
                                         "/api/v1/agent-sessions/{conversationSessionId}/events",
                                         conversationSessionId)
-                                .cookie(session)
                                 .accept(MediaType.TEXT_EVENT_STREAM))
                 .andExpect(status().isOk())
                 .andExpect(header().string(HttpHeaders.CONTENT_TYPE, "text/event-stream"))
@@ -309,7 +276,6 @@ class AgentV2ApplicationTest {
                                         "/api/v1/agent-sessions/{conversationSessionId}/events",
                                         conversationSessionId)
                                 .queryParam("cursor", "e=0;a=0;t=0;s=0")
-                                .cookie(session)
                                 .accept(MediaType.TEXT_EVENT_STREAM))
                 .andExpect(status().isOk())
                 .andExpect(
@@ -328,11 +294,9 @@ class AgentV2ApplicationTest {
 
     @Test
     void idleEventStreamDoesNotFollowAnExecutionStartedAfterItCloses() throws Exception {
-        Cookie session = login();
         String created =
                 mvc.perform(
                                 post("/api/v1/agent-sessions")
-                                        .cookie(session)
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content("{\"title\":\"SSE live\"}"))
                         .andExpect(status().isCreated())
@@ -348,7 +312,6 @@ class AgentV2ApplicationTest {
                                 get(
                                                 "/api/v1/agent-sessions/{conversationSessionId}/events",
                                                 conversationSessionId)
-                                        .cookie(session)
                                         .accept(MediaType.TEXT_EVENT_STREAM))
                         .andExpect(status().isOk())
                         .andExpect(request().asyncStarted())
@@ -357,7 +320,6 @@ class AgentV2ApplicationTest {
                         post(
                                         "/api/v1/agent-sessions/{conversationSessionId}/messages",
                                         conversationSessionId)
-                                .cookie(session)
                                 .header("Idempotency-Key", "stream-live-test")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"content\":\"stream live\"}"))
@@ -366,19 +328,5 @@ class AgentV2ApplicationTest {
         assertThat(stream.getResponse().getContentAsString())
                 .contains("event:session_snapshot")
                 .doesNotContain("event:execution_update");
-    }
-
-    private Cookie login() throws Exception {
-        String setCookie =
-                mvc.perform(
-                                post("/api/v1/auth/login")
-                                        .contentType(MediaType.APPLICATION_JSON)
-                                        .content("{\"username\":\"admin\",\"password\":\"admin\"}"))
-                        .andExpect(status().isNoContent())
-                        .andReturn()
-                        .getResponse()
-                        .getHeader(HttpHeaders.SET_COOKIE);
-        String token = setCookie.substring("DATA_AGENT_SESSION=".length(), setCookie.indexOf(';'));
-        return new Cookie("DATA_AGENT_SESSION", token);
     }
 }

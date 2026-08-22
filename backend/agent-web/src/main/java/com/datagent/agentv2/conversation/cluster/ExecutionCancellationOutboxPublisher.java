@@ -4,8 +4,6 @@ import com.datagent.agentv2.conversation.enums.ExecutionNotificationType;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeProperties;
 import com.datagent.agentv2.persistence.entity.NotificationOutboxMessageEntity;
 import com.datagent.agentv2.persistence.service.NotificationOutboxMessageService;
-import com.datagent.agentv2.persistence.service.TenantService;
-import com.datagent.agentv2.platform.context.TenantContext;
 import java.time.Duration;
 import java.time.Instant;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -26,19 +24,16 @@ public final class ExecutionCancellationOutboxPublisher {
     private static final Duration MAX_BACKOFF = Duration.ofSeconds(30);
 
     private final NotificationOutboxMessageService outbox;
-    private final TenantService tenants;
     private final StringRedisTemplate redis;
     private final ObjectMapper json;
     private final AgentExecutionRuntimeProperties runtime;
 
     public ExecutionCancellationOutboxPublisher(
             NotificationOutboxMessageService outbox,
-            TenantService tenants,
             StringRedisTemplate redis,
             ObjectMapper json,
             AgentExecutionRuntimeProperties runtime) {
         this.outbox = outbox;
-        this.tenants = tenants;
         this.redis = redis;
         this.json = json;
         this.runtime = runtime;
@@ -52,11 +47,7 @@ public final class ExecutionCancellationOutboxPublisher {
     }
 
     public int publishDueNow() {
-        int published = 0;
-        for (String tenantId : tenants.activeTenantIds()) {
-            published += TenantContext.call(tenantId, this::publishTenantDue);
-        }
-        return published;
+        return publishTenantDue();
     }
 
     private int publishTenantDue() {

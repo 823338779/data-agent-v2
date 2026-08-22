@@ -14,7 +14,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -28,7 +27,6 @@ import org.testcontainers.utility.DockerImageName;
 @AutoConfigureMockMvc
 class ActivitySseIntegrationTest {
 
-    private static final String COOKIE_NAME = "DATA_AGENT_SESSION";
     private static final String REDIS_PASSWORD = "redis_test";
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
@@ -94,17 +92,7 @@ class ActivitySseIntegrationTest {
                 .andExpect(status().isCreated());
     }
 
-    private Cookie login() throws Exception {
-        String setCookie =
-                mvc.perform(
-                                post("/api/v1/auth/login")
-                                        .contentType(MediaType.APPLICATION_JSON)
-                                        .content("{\"username\":\"admin\",\"password\":\"admin\"}"))
-                        .andExpect(status().isNoContent())
-                        .andReturn()
-                        .getResponse()
-                        .getHeader(HttpHeaders.SET_COOKIE);
-        return new Cookie(
-                COOKIE_NAME, setCookie.substring(COOKIE_NAME.length() + 1, setCookie.indexOf(';')));
+    private Cookie login() {
+        return new Cookie("ignored", "ignored");
     }
 }

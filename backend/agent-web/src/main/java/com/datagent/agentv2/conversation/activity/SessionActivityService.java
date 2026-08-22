@@ -30,7 +30,7 @@ public class SessionActivityService {
     public void markRead(String conversationSessionId, long upToSequence) {
         ordering.ensureVisibleSessions();
         states.advanceReadCursor(
-                OperatorContext.requiredOperator().userId(), conversationSessionId, upToSequence);
+                OperatorContext.requiredUserId(), conversationSessionId, upToSequence);
     }
 
     @EventListener

@@ -3,8 +3,6 @@ package com.datagent.agentv2.evals.compact;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
-import java.net.CookieManager;
-import java.net.CookiePolicy;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -21,14 +19,11 @@ public final class HttpCompactEvalGateway implements CompactEvalGateway {
     private static final String CONTENT_TYPE_HEADER = "Content-Type";
     private static final String APPLICATION_JSON = "application/json";
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
-    private static final String LOGIN_PATH = "/api/v1/auth/login";
     private static final String SESSIONS_PATH = "/api/v1/agent-sessions";
     private static final String MESSAGE_PATH_SUFFIX = "/messages";
     private static final String EVAL_TAG = "context-compact-eval";
     private static final String TITLE_FIELD = "title";
     private static final String TAG_FIELD = "tag";
-    private static final String USERNAME_FIELD = "username";
-    private static final String PASSWORD_FIELD = "password";
     private static final String CONTENT_FIELD = "content";
     private static final String SESSION_ID_FIELD = "conversationSessionId";
     private static final String EXECUTION_FIELD = "execution";
@@ -59,16 +54,10 @@ public final class HttpCompactEvalGateway implements CompactEvalGateway {
     private final ObjectMapper json;
     private final HttpClient http;
 
-    public HttpCompactEvalGateway(URI baseUri, String username, String password, ObjectMapper json)
-            throws Exception {
+    public HttpCompactEvalGateway(URI baseUri, ObjectMapper json) {
         this.baseUri = baseUri;
         this.json = json;
-        this.http =
-                HttpClient.newBuilder()
-                        .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL))
-                        .connectTimeout(CONNECT_TIMEOUT)
-                        .build();
-        login(username, password);
+        this.http = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
     }
 
     /** 每个场景创建独立会话，避免不同语料之间共享 Compact 状态。 */
@@ -104,11 +93,6 @@ public final class HttpCompactEvalGateway implements CompactEvalGateway {
         }
         throw new IllegalStateException(
                 "Timed out waiting for execution " + executionId + ": " + latest);
-    }
-
-    /** 登录 Cookie 由该网关私有持有，避免不同服务实例间串用认证状态。 */
-    private void login(String username, String password) throws Exception {
-        post(LOGIN_PATH, Map.of(USERNAME_FIELD, username, PASSWORD_FIELD, password), null);
     }
 
     /** 优先选择当前 execution 的回答，失败场景再退回最新 assistant 正文。 */

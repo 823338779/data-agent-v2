@@ -97,7 +97,7 @@ public class AgentExecutionSubmissionTransactionService {
         }
 
         // 先持久化用户消息，因为执行记录需要引用该触发消息。
-        String operatorUserId = OperatorContext.requiredOperator().userId();
+        String operatorUserId = OperatorContext.requiredUserId();
         ConversationMessage message =
                 ConversationMessage.user(
                         ids.next(ID_PREFIX_CONVERSATION_MESSAGE),

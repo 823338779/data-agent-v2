@@ -10,8 +10,6 @@ import com.datagent.agentv2.platform.id.PrefixedUuidIdGenerator;
 import com.datagent.agentv2.server.context.RequestContextFilter;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.security.autoconfigure.SecurityAutoConfiguration;
-import org.springframework.boot.security.autoconfigure.web.servlet.ServletWebSecurityAutoConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ContextConfiguration;
@@ -20,12 +18,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 
-@WebMvcTest(
-        controllers = ApiExceptionHandlerTest.FailureFixtureController.class,
-        excludeAutoConfiguration = {
-            SecurityAutoConfiguration.class,
-            ServletWebSecurityAutoConfiguration.class
-        })
+@WebMvcTest(controllers = ApiExceptionHandlerTest.FailureFixtureController.class)
 @Import({ApiExceptionHandler.class, RequestContextFilter.class, PrefixedUuidIdGenerator.class})
 @ContextConfiguration(classes = ApiExceptionHandlerTest.FailureFixtureController.class)
 class ApiExceptionHandlerTest {

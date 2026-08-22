@@ -35,8 +35,7 @@ import org.springframework.test.context.DynamicPropertySource;
         classes = LsmContextCompactionIntegrationTest.TestApplication.class,
         properties = {
             "data-agent.context.strategy=lsm",
-            "data-agent.runtime.scheduling-enabled=false",
-            "data-agent.auth.bootstrap.enabled=false"
+            "data-agent.runtime.scheduling-enabled=false"
         })
 class LsmContextCompactionIntegrationTest {
 

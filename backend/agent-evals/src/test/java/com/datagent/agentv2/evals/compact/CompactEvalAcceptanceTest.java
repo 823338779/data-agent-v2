@@ -18,13 +18,9 @@ class CompactEvalAcceptanceTest {
     private static final String TARGET_PROPERTY = "data.agent.compact-eval.target";
     private static final String MECHANISM_PROPERTY = "data.agent.compact-eval.mechanism";
     private static final String OUTPUT_PROPERTY = "data.agent.compact-eval.output";
-    private static final String USERNAME_PROPERTY = "data.agent.compact-eval.username";
-    private static final String PASSWORD_PROPERTY = "data.agent.compact-eval.password";
     private static final String TURN_TIMEOUT_PROPERTY = "data.agent.compact-eval.turn-timeout";
     private static final String MAX_SCENARIOS_PROPERTY = "data.agent.compact-eval.max-scenarios";
     private static final String DEFAULT_TARGET = "http://127.0.0.1:8080";
-    private static final String DEFAULT_USERNAME = "admin";
-    private static final String DEFAULT_PASSWORD = "admin";
     private static final String DEFAULT_TURN_TIMEOUT = "PT10M";
     private static final String DEFAULT_OUTPUT_PREFIX = "target/compact-eval/";
     private static final String JSON_SUFFIX = ".json";
@@ -48,10 +44,7 @@ class CompactEvalAcceptanceTest {
         CompactEvalCorpus corpus = new CompactEvalCorpusLoader(json).load(corpusPath);
         CompactEvalGateway gateway =
                 new HttpCompactEvalGateway(
-                        URI.create(System.getProperty(TARGET_PROPERTY, DEFAULT_TARGET)),
-                        System.getProperty(USERNAME_PROPERTY, DEFAULT_USERNAME),
-                        System.getProperty(PASSWORD_PROPERTY, DEFAULT_PASSWORD),
-                        json);
+                        URI.create(System.getProperty(TARGET_PROPERTY, DEFAULT_TARGET)), json);
         CompactEvalRunArtifact artifact =
                 new CompactEvalRunner().run(mechanism, corpus, gateway, turnTimeout, maxScenarios);
 

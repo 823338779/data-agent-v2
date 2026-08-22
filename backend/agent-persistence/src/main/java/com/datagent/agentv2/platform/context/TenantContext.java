@@ -6,13 +6,15 @@ import java.util.function.Supplier;
 
 public final class TenantContext {
 
+    /** 当前单租户运行模式使用的固定租户标识。 */
+    public static final String TENANT_ID = "tenant_default";
+
     private static final ThreadLocal<String> CURRENT_TENANT = new ThreadLocal<>();
 
     private TenantContext() {}
 
     public static String requiredTenantId() {
-        return Optional.ofNullable(CURRENT_TENANT.get())
-                .orElseThrow(() -> new IllegalStateException("tenant context is required"));
+        return Optional.ofNullable(CURRENT_TENANT.get()).orElse(TENANT_ID);
     }
 
     public static void run(String tenantId, Runnable action) {

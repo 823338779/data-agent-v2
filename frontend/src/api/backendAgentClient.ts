@@ -425,10 +425,9 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
     (typeof EventSource === 'undefined'
       ? undefined
       : (url: string, init?: EventSourceInit) => new EventSource(url, init));
-  // 所有 HTTP 调用统一携带 cookie；只有拥有幂等键的操作才自动重试网络故障。
+  // 只有拥有幂等键的操作才自动重试网络故障。
   async function fetchResponse(path: string, init?: RequestInit, retryNetwork = false) {
     const requestInit: RequestInit = {
-      credentials: 'include',
       ...init,
       headers: init?.body ? { 'Content-Type': JSON_CONTENT_TYPE, ...init.headers } : init?.headers,
     };
@@ -451,7 +450,7 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
   }
 
   function openSource(path: string): EventSource | undefined {
-    return eventSourceFactory?.(`${baseUrl}${path}`, { withCredentials: true });
+    return eventSourceFactory?.(`${baseUrl}${path}`);
   }
 
   function listenJson<T>(source: EventSource, type: string, listener: (value: T) => void) {

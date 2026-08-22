@@ -12,7 +12,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -28,7 +27,6 @@ import tools.jackson.databind.ObjectMapper;
 @AutoConfigureMockMvc
 class SessionActivityIntegrationTest {
 
-    private static final String SESSION_COOKIE = "DATA_AGENT_SESSION";
     private static final String TENANT_ID = "tenant_local";
     private static final String USER_ID = "user_admin";
     private static final String REDIS_PASSWORD = "redis_test";
@@ -157,19 +155,8 @@ class SessionActivityIntegrationTest {
         return json.readTree(body);
     }
 
-    private Cookie login() throws Exception {
-        String setCookie =
-                mvc.perform(
-                                post("/api/v1/auth/login")
-                                        .contentType(MediaType.APPLICATION_JSON)
-                                        .content("{\"username\":\"admin\",\"password\":\"admin\"}"))
-                        .andExpect(status().isNoContent())
-                        .andReturn()
-                        .getResponse()
-                        .getHeader(HttpHeaders.SET_COOKIE);
-        return new Cookie(
-                SESSION_COOKIE,
-                setCookie.substring(SESSION_COOKIE.length() + 1, setCookie.indexOf(';')));
+    private Cookie login() {
+        return new Cookie("ignored", "ignored");
     }
 
     private void setLastNotifiable(String conversationSessionId, long sequence) {

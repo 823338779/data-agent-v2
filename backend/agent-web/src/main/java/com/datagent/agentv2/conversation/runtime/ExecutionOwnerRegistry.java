@@ -2,7 +2,6 @@ package com.datagent.agentv2.conversation.runtime;
 
 import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
 import com.datagent.agentv2.conversation.stream.ExecutionStreamCheckpointCoordinator;
-import com.datagent.agentv2.platform.context.TenantContext;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;
 import java.time.Instant;
@@ -65,12 +64,7 @@ public final class ExecutionOwnerRegistry {
         if (ownership != null) {
             // flush 是尽力而为的清理步骤，任何所有权丢失都不能阻止 permit 释放。
             try {
-                // checkpoint 写入需要租户上下文，因此在 owner 保存的租户范围内执行。
-                TenantContext.run(
-                        ownership.execution().tenantId(),
-                        () ->
-                                checkpoints.flushExecutionAndRelease(
-                                        ownership.execution(), Instant.now()));
+                checkpoints.flushExecutionAndRelease(ownership.execution(), Instant.now());
             } catch (ExecutionOwnershipLostException ignored) {
                 // Lease 已被接管或执行已终态化时，新的 owner/终态投影是权威结果。
             } finally {

@@ -1,6 +1,0 @@
-schema: AuthSession
-value:
-  tenantId: tenant_local
-  subject: user_admin
-  roles:
-    - TENANT_ADMIN

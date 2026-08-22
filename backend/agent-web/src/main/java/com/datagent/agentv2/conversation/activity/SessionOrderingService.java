@@ -24,7 +24,7 @@ public class SessionOrderingService {
 
     @Transactional
     public OrderedSessions ensureVisibleSessions() {
-        String userId = OperatorContext.requiredOperator().userId();
+        String userId = OperatorContext.requiredUserId();
         preferences.ensure(userId);
         int inserted = states.ensureVisible(userId);
         ConversationPreferenceEntity preference = preferences.lockByUserId(userId);
@@ -37,7 +37,7 @@ public class SessionOrderingService {
 
     @Transactional
     public OrderedSessions initializeCreatedSession(String conversationSessionId) {
-        String userId = OperatorContext.requiredOperator().userId();
+        String userId = OperatorContext.requiredUserId();
         preferences.ensure(userId);
         ConversationPreferenceEntity preference = preferences.lockByUserId(userId);
         states.insertCreatedSession(userId, conversationSessionId);
@@ -51,7 +51,7 @@ public class SessionOrderingService {
     public OrderedSessions reorder(
             List<String> conversationSessionIds, long expectedOrderingVersion) {
         OrderedSessions visible = ensureVisibleSessions();
-        String userId = OperatorContext.requiredOperator().userId();
+        String userId = OperatorContext.requiredUserId();
         ConversationPreferenceEntity preference = preferences.lockByUserId(userId);
         if (preference.getOrderingVersion() != expectedOrderingVersion) {
             throw new SessionOrderConflictException();

@@ -1,4 +1,0 @@
-schema: LoginRequest
-value:
-  username: user_admin
-  password: password_local

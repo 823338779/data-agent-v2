@@ -7,7 +7,6 @@ import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.conversation.runtime.ExecutionOwnerRegistry;
 import com.datagent.agentv2.conversation.runtime.ExecutionWorkerIdentity;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
-import com.datagent.agentv2.platform.context.TenantContext;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.nio.charset.StandardCharsets;
@@ -66,7 +65,7 @@ public final class RedisExecutionCancellationListener implements AutoCloseable {
                 || !processed.add(idempotencyKey)) {
             return false;
         }
-        return TenantContext.call(envelope.tenantId(), () -> handleOwned(envelope));
+        return handleOwned(envelope);
     }
 
     private boolean handleOwned(AgentExecutionCancellationSignal envelope) {

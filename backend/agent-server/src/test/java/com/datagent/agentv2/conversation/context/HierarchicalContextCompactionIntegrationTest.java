@@ -49,8 +49,7 @@ import tools.jackson.databind.ObjectMapper;
         classes = HierarchicalContextCompactionIntegrationTest.TestApplication.class,
         properties = {
             "data-agent.context.strategy=hierarchical",
-            "data-agent.runtime.scheduling-enabled=false",
-            "data-agent.auth.bootstrap.enabled=false"
+            "data-agent.runtime.scheduling-enabled=false"
         })
 class HierarchicalContextCompactionIntegrationTest extends HierarchicalContextIntegrationSupport {
 

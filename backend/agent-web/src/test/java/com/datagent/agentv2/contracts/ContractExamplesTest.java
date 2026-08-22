@@ -43,8 +43,6 @@ class ContractExamplesTest {
     @ParameterizedTest
     @ValueSource(
             strings = {
-                "auth-login-failed.yaml",
-                "auth-session.yaml",
                 "session-create.yaml",
                 "session-activity.yaml",
                 "session-queued.yaml",

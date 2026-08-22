@@ -79,8 +79,7 @@ public final class ConversationEventStreamFacade {
 
         SseEmitter emitter = new SseEmitter(0L);
         Subscription subscription =
-                new Subscription(
-                        tenantId, conversationSessionId, emitter, CompositeSseCursor.ZERO);
+                new Subscription(tenantId, conversationSessionId, emitter, CompositeSseCursor.ZERO);
 
         // 先建立本地缓冲与 Redis 动态订阅，再读取持久化 replay，消除 subscribe gap。
         LocalSseRegistry.Registration localRegistration =
@@ -166,19 +165,8 @@ public final class ConversationEventStreamFacade {
         // 同一轮扫描共用时间，确保所有连接的 gap 超时判断口径一致。
         Instant now = Instant.now();
 
-        // 先按租户分组，后续数据库查询在正确 TenantContext 中批量执行。
-        Map<String, Map<SessionKey, Set<Subscription>>> subscriptionsByTenant = new HashMap<>();
-        subscriptions.forEach(
-                (key, values) ->
-                        subscriptionsByTenant
-                                .computeIfAbsent(key.tenantId(), ignored -> new HashMap<>())
-                                .put(key, values));
-
-        // 每个租户只执行一次批量 replay/snapshot 查询，避免逐连接访问数据库。
-        subscriptionsByTenant.forEach(
-                (tenantId, tenantSubscriptions) ->
-                        TenantContext.run(
-                                tenantId, () -> reconcileTenant(tenantSubscriptions, now)));
+        // 固定租户的连接共享一次批量 replay/snapshot 查询，避免逐连接访问数据库。
+        reconcileTenant(subscriptions, now);
     }
 
     /** 为同一租户的活跃会话批量查询最小 replay 位置和最新流 snapshot。 */
