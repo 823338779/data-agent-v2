@@ -21,7 +21,7 @@ import com.datagent.agentv2.conversation.enums.ExecutionEventType;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.enums.MessageRole;
-import com.datagent.agentv2.conversation.enums.SessionActivityStatus;
+import com.datagent.agentv2.conversation.enums.SessionExecutionStatus;
 import com.datagent.agentv2.conversation.execution.AgentExecutionSubmissionService;
 import com.datagent.agentv2.persistence.entity.ConversationSessionUserStateEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
@@ -469,8 +469,8 @@ public class ConversationApplicationService {
                 state.getLastReadEventSequence() < session.getLastNotifiableEventSequence(),
                 session.getLastNotifiableEventSequence(),
                 execution == null
-                        ? SessionActivityStatus.IDLE
-                        : SessionActivityStatus.fromExecutionStatus(
+                        ? SessionExecutionStatus.IDLE
+                        : SessionExecutionStatus.fromExecutionStatus(
                                 ExecutionStatus.fromValue(execution.getStatus())));
     }
 

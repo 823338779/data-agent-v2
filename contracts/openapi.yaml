@@ -31,16 +31,16 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ConversationSession' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
-  /api/v1/agent-sessions/activity-events:
+  /api/v1/agent-sessions/summary-events:
     get:
-      operationId: streamConversationActivity
-      description: Sends current per-user conversation activity snapshots and subsequent changes. Clients reconnect by listing sessions before reopening this stream; permanent event replay is not provided.
+      operationId: streamConversationSummaries
+      description: Sends current per-user conversation summary snapshots and subsequent changes. Clients reconnect by listing sessions before reopening this stream; permanent event replay is not provided.
       responses:
         '200':
-          description: Current activity snapshot followed by changed snapshots
+          description: Current conversation summary snapshot followed by changed snapshots
           content:
             text/event-stream:
-              schema: { $ref: '#/components/schemas/ConversationActivitySnapshot' }
+              schema: { $ref: '#/components/schemas/ConversationSummarySnapshot' }
   /api/v1/agent-sessions/{conversationSessionId}:
     get:
       operationId: getConversationSession
@@ -780,7 +780,7 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/AgentExecution' }
             - { type: 'null' }
-    ConversationActivityItem:
+    ConversationSummaryStreamItem:
       type: object
       required: [conversationSessionId, status, unread, lastNotifiableEventSequence, updatedAt]
       properties:
@@ -791,14 +791,14 @@ components:
         unread: { type: boolean }
         lastNotifiableEventSequence: { type: integer, format: int64, minimum: 0 }
         updatedAt: { type: string, format: date-time }
-    ConversationActivitySnapshot:
+    ConversationSummarySnapshot:
       type: object
       required: [type, sessions, snapshotAt]
       properties:
-        type: { type: string, const: activity_snapshot }
+        type: { type: string, const: conversation_summary_snapshot }
         sessions:
           type: array
-          items: { $ref: '#/components/schemas/ConversationActivityItem' }
+          items: { $ref: '#/components/schemas/ConversationSummaryStreamItem' }
         snapshotAt: { type: string, format: date-time }
     MetricPlatformCredentialBinding:
       type: object

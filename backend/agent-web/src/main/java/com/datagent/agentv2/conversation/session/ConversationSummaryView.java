@@ -1,6 +1,6 @@
 package com.datagent.agentv2.conversation.session;
 
-import com.datagent.agentv2.conversation.enums.SessionActivityStatus;
+import com.datagent.agentv2.conversation.enums.SessionExecutionStatus;
 import java.time.LocalDateTime;
 
 /** 会话列表使用的轻量投影，不携带消息正文、执行时间线或回答内容。 */
@@ -22,4 +22,4 @@ public record ConversationSummaryView(
         /** 最近一个可通知执行事件序号。 */
         long lastNotifiableEventSequence,
         /** 会话最新执行状态，无执行时为 idle。 */
-        SessionActivityStatus status) {}
+        SessionExecutionStatus status) {}

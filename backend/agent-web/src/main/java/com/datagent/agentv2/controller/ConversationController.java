@@ -1,12 +1,12 @@
 package com.datagent.agentv2.controller;
 
-import com.datagent.agentv2.conversation.activity.ActivityEventStreamFacade;
 import com.datagent.agentv2.conversation.execution.AgentExecutionControlService;
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
 import com.datagent.agentv2.conversation.session.ConversationSummaryView;
 import com.datagent.agentv2.conversation.session.ConversationTitleService;
 import com.datagent.agentv2.conversation.session.ConversationView;
 import com.datagent.agentv2.conversation.stream.ConversationEventStreamFacade;
+import com.datagent.agentv2.conversation.summary.ConversationSummaryStreamFacade;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -36,13 +36,14 @@ public class ConversationController {
     private static final String RETRY_EXECUTION_PATH =
             "/{conversationSessionId}/executions/{executionId}:retry";
     private static final String MARK_READ_PATH = "/{conversationSessionId}:mark-read";
+    private static final String SUMMARY_EVENTS_PATH = "/summary-events";
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 
     private final ConversationApplicationService conversations;
     private final ConversationTitleService titles;
     private final AgentExecutionControlService controls;
     private final ConversationEventStreamFacade eventStreams;
-    private final ActivityEventStreamFacade activityEvents;
+    private final ConversationSummaryStreamFacade summaryStream;
 
     @GetMapping
     List<ConversationSummaryView> list() {
@@ -72,9 +73,9 @@ public class ConversationController {
         return conversations.get(conversationSessionId);
     }
 
-    @GetMapping(value = "/activity-events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    SseEmitter streamActivity() {
-        return activityEvents.open();
+    @GetMapping(value = SUMMARY_EVENTS_PATH, produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    SseEmitter streamSummaries() {
+        return summaryStream.open();
     }
 
     @PostMapping(MARK_READ_PATH)

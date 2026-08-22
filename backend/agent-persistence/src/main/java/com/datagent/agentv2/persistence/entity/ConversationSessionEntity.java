@@ -33,7 +33,7 @@ public final class ConversationSessionEntity extends TenantAuditedEntity {
     /** 当前已分配的最大执行事件序号。 */
     private Long executionEventSequence;
 
-    /** 最近一次影响会话列表状态或内容的活动时间，供 activity reconciliation 增量扫描。 */
+    /** 最近一次影响会话列表状态或内容的时间，供会话摘要收敛扫描。 */
     private Instant lastActivityAt;
 
     /** 最近一个会触发用户未读提示的执行事件序号。 */

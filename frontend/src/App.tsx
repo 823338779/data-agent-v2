@@ -96,14 +96,14 @@ export default function App({ client }: AppProps) {
           (message) => message.content === active.execution?.streamCheckpoint?.answer,
         ))),
   );
-  const activeStatus = active?.execution?.status ?? active?.activityStatus ?? 'idle';
+  const activeStatus = active?.execution?.status ?? active?.latestExecutionStatus ?? 'idle';
   // SSE effect 只依赖“是否仍在处理”，避免同一处理阶段内的状态细化触发先关闭再重连。
   const activeIsProcessing = isProcessingStatus(activeStatus);
   const hasBackgroundProcessingSession = sessions.some(
     (session) =>
       session.conversationSessionId !==
         (route.kind === 'session' ? route.conversationSessionId : null) &&
-      isProcessingStatus(session.execution?.status ?? session.activityStatus ?? 'idle'),
+      isProcessingStatus(session.execution?.status ?? session.latestExecutionStatus ?? 'idle'),
   );
 
   function handleFailure(failure: unknown, message: string) {

@@ -3,7 +3,7 @@ features:
   - { id: message-execution, entry: "提交用户消息并创建 Agent 执行", success: "保存消息后由同一节点调用 Ollama", failure: "活动 Agent 执行 冲突返回 409", security: "事务边界", phase: 1 }
   - { id: session-sse, entry: "会话 SSE", success: "重放检查点后继续实时事件", failure: "断线后刷新恢复", security: "当前阶段使用固定身份", phase: 1 }
   - { id: session-user-activity, entry: "跨设备未读与更新时间排序", success: "按固定用户游标同步会话并按 updatedAt 降序返回", failure: "状态读取失败返回统一问题详情", security: "当前阶段使用固定用户", phase: 1 }
-  - { id: activity-sse, entry: "用户级 activity SSE", success: "建连发送快照并仅在版本变化时收敛", failure: "重连先读取会话列表且不承诺永久事件历史", security: "只推送固定用户的会话", phase: 1 }
+  - { id: conversation-summary-sse, entry: "用户级会话摘要 SSE", success: "建连发送快照并仅在摘要变化时收敛", failure: "重连先读取会话列表且不承诺永久事件历史", security: "只推送固定用户的会话", phase: 1 }
   - { id: metric-platform-credential, entry: "Metric Platform Credential CRUD 与验证", success: "凭据可绑定并验证", failure: "无效凭据返回稳定错误", security: "密钥加密", phase: 4 }
   - { id: artifacts, entry: "Artifact 元数据、预览和下载", success: "生成受限下载链接", failure: "过期下载拒绝", security: "签名下载", phase: 10 }
   - { id: scheduled-tasks, entry: "定时任务 CRUD 和手工触发", success: "幂等创建执行", failure: "重复或无权触发拒绝", security: "任务归属和幂等键", phase: 13 }

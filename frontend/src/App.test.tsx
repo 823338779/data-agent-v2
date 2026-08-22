@@ -231,7 +231,7 @@ describe('server-backed conversation workspace', () => {
   it('closes the previous detail stream before opening the viewed processing session', async () => {
     const running = {
       ...session,
-      activityStatus: 'running' as const,
+      latestExecutionStatus: 'running' as const,
       execution: {
         ...completedExecution('execution_1', ''),
         status: 'running' as const,
@@ -276,7 +276,7 @@ describe('server-backed conversation workspace', () => {
   it('applies execution updates from SSE without refetching the full session', async () => {
     const running = {
       ...session,
-      activityStatus: 'running' as const,
+      latestExecutionStatus: 'running' as const,
       execution: {
         ...completedExecution('execution_1', ''),
         status: 'running' as const,
@@ -324,7 +324,7 @@ describe('server-backed conversation workspace', () => {
   it('keeps one detail stream while execution moves between processing states', async () => {
     const queued = {
       ...session,
-      activityStatus: 'queued' as const,
+      latestExecutionStatus: 'queued' as const,
       execution: {
         ...completedExecution('execution_1', ''),
         status: 'queued' as const,
@@ -377,7 +377,7 @@ describe('server-backed conversation workspace', () => {
   it('shows no notice or connection warning after a completed execution', async () => {
     const running = {
       ...session,
-      activityStatus: 'running' as const,
+      latestExecutionStatus: 'running' as const,
       execution: {
         ...completedExecution('execution_1', ''),
         status: 'running' as const,
@@ -476,7 +476,7 @@ describe('server-backed conversation workspace', () => {
       ...session,
       conversationSessionId: 'session_2',
       title: '后台分析',
-      activityStatus: 'running' as const,
+      latestExecutionStatus: 'running' as const,
     };
     const listSessions = vi.fn().mockResolvedValue([viewed, background]);
     const backend = client({ listSessions, getSession: vi.fn().mockResolvedValue(viewed) });

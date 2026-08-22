@@ -131,7 +131,7 @@ npm.cmd run dev
 
 - 每个实例最多执行 256 个并发 Run，由 `DATA_AGENT_MAX_CONCURRENT_EXECUTIONS_PER_INSTANCE` 调整；同一用户最多 3 个 Run 同时处于 running。
 - 队列领取和控制降级轮询默认 1 秒；详细会话 SSE 的 PostgreSQL reconciliation 默认 1 秒，可通过 `DATA_AGENT_SESSION_EVENT_RECONCILE_INTERVAL` 调整。
-- 用户级 activity SSE 默认每 2 秒从 PostgreSQL reconciliation，可通过 `DATA_AGENT_ACTIVITY_RECONCILE_INTERVAL` 调整。Redis 只负责低延迟通知，断开时以上轮询仍保证最终收敛。
+- 用户级会话摘要 SSE 默认每 2 秒从 PostgreSQL 收敛，可通过 `DATA_AGENT_CONVERSATION_SUMMARY_RECONCILE_INTERVAL` 调整。Redis 只负责低延迟通知，断开时以上轮询仍保证最终收敛。
 
 ## 外部双实例验收
 

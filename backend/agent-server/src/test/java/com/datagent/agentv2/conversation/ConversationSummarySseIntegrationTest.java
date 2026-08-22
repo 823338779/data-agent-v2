@@ -25,9 +25,10 @@ import org.testcontainers.utility.DockerImageName;
 
 @SpringBootTest
 @AutoConfigureMockMvc
-class ActivitySseIntegrationTest {
+class ConversationSummarySseIntegrationTest {
 
     private static final String REDIS_PASSWORD = "redis_test";
+    private static final String SUMMARY_EVENTS_PATH = "/api/v1/agent-sessions/summary-events";
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
     private static final GenericContainer<?> REDIS =
@@ -60,23 +61,24 @@ class ActivitySseIntegrationTest {
     @Autowired private MockMvc mvc;
 
     @Test
-    void connectionImmediatelyReceivesCurrentActivitySnapshotAndCleansUp() throws Exception {
+    void connectionImmediatelyReceivesCurrentConversationSummarySnapshotAndCleansUp()
+            throws Exception {
         Cookie login = login();
         createSession(login);
 
         MvcResult stream =
-                mvc.perform(get("/api/v1/agent-sessions/activity-events").cookie(login))
+                mvc.perform(get(SUMMARY_EVENTS_PATH).cookie(login))
                         .andExpect(status().isOk())
                         .andExpect(request().asyncStarted())
                         .andReturn();
 
-        // 初始快照必须在轮询周期之前可见，且携带当前用户的会话活动字段。
+        // 初始快照必须在轮询周期之前可见，且携带当前用户的会话摘要字段。
         Awaitility.await()
                 .atMost(Duration.ofSeconds(3))
                 .untilAsserted(
                         () -> {
                             String content = stream.getResponse().getContentAsString();
-                            assertThat(content).contains("event:activity_snapshot");
+                            assertThat(content).contains("event:conversation_summary_snapshot");
                             assertThat(content).contains("conversationSessionId");
                             assertThat(content).doesNotContain("orderingVersion");
                         });
@@ -88,7 +90,7 @@ class ActivitySseIntegrationTest {
                         post("/api/v1/agent-sessions")
                                 .cookie(login)
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content("{\"title\":\"activity-sse\"}"))
+                                .content("{\"title\":\"conversation-summary-sse\"}"))
                 .andExpect(status().isCreated());
     }
 

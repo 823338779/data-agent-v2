@@ -2,7 +2,7 @@ package com.datagent.agentv2.contracts;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.datagent.agentv2.conversation.enums.ActivityEventType;
+import com.datagent.agentv2.conversation.enums.ConversationSummaryEventType;
 import com.datagent.agentv2.conversation.enums.ExecutionControlType;
 import com.datagent.agentv2.conversation.enums.ExecutionEventType;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
@@ -17,9 +17,9 @@ class BusinessEnumSerializationTest {
 
     @Test
     void finiteBusinessValuesKeepTheirExistingWireRepresentation() {
-        // 枚举约束 Java 侧取值，同时通过 JsonValue 保持既有 REST/SSE 协议字符串不变。
-        assertThat(json.writeValueAsString(ActivityEventType.SNAPSHOT))
-                .isEqualTo("\"activity_snapshot\"");
+        // 枚举约束 Java 侧取值，同时通过 JsonValue 固定 REST/SSE 协议字符串。
+        assertThat(json.writeValueAsString(ConversationSummaryEventType.SNAPSHOT))
+                .isEqualTo("\"conversation_summary_snapshot\"");
         assertThat(json.writeValueAsString(ExecutionEventType.STARTED))
                 .isEqualTo("\"execution_started\"");
         assertThat(json.writeValueAsString(ExecutionControlType.CANCEL)).isEqualTo("\"cancel\"");

@@ -1,7 +1,7 @@
-package com.datagent.agentv2.conversation.activity;
+package com.datagent.agentv2.conversation.summary;
 
-import com.datagent.agentv2.conversation.enums.ActivityEventType;
-import com.datagent.agentv2.conversation.enums.SessionActivityStatus;
+import com.datagent.agentv2.conversation.enums.ConversationSummaryEventType;
+import com.datagent.agentv2.conversation.enums.SessionExecutionStatus;
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
 import com.datagent.agentv2.conversation.session.ConversationSummaryView;
 import java.io.IOException;
@@ -22,13 +22,14 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-/** 用户级 activity SSE：只发送数据库可重建的当前快照，不承诺永久事件历史。 */
+/** 用户级会话摘要 SSE：只发送数据库可重建的当前快照，不承诺永久事件历史。 */
 @Service
-public final class ActivityEventStreamFacade {
+public final class ConversationSummaryStreamFacade {
 
-    private static final String ERROR_CONNECTION_LIMIT = "Activity SSE connection limit exceeded";
-    private static final String ERROR_SLOW_CLIENT = "Activity SSE client is too slow";
-    private static final String SENDER_THREAD_PREFIX = "activity-sse-";
+    private static final String ERROR_CONNECTION_LIMIT =
+            "Conversation summary SSE connection limit exceeded";
+    private static final String ERROR_SLOW_CLIENT = "Conversation summary SSE client is too slow";
+    private static final String SENDER_THREAD_PREFIX = "conversation-summary-sse-";
     private static final int MAX_CONNECTIONS = 256;
     private static final int MAX_PENDING_SENDS = 16;
     private static final AtomicLong CONNECTION_SEQUENCE = new AtomicLong();
@@ -37,7 +38,7 @@ public final class ActivityEventStreamFacade {
     private final Set<Subscription> subscriptions = new CopyOnWriteArraySet<>();
     private final AtomicInteger connectionCount = new AtomicInteger();
 
-    public ActivityEventStreamFacade(ConversationApplicationService conversations) {
+    public ConversationSummaryStreamFacade(ConversationApplicationService conversations) {
         this.conversations = conversations;
     }
 
@@ -54,37 +55,38 @@ public final class ActivityEventStreamFacade {
         emitter.onTimeout(() -> remove(subscription));
         emitter.onError(ignored -> remove(subscription));
 
-        // 注册完成后读取数据库快照，避免初始读取与后续 reconciliation 之间出现空窗。
+        // 注册完成后读取数据库快照，避免初始读取与后续收敛之间出现空窗。
         subscription.accept(snapshot());
         return emitter;
     }
 
     /** 固定用户的连接共享一次数据库快照，避免逐连接重复查询。 */
-    public void reconcileActiveUsers() {
+    public void reconcileSubscribers() {
         if (subscriptions.isEmpty()) {
             return;
         }
-        ActivitySnapshot snapshot = snapshot();
+        ConversationSummarySnapshot snapshot = snapshot();
         subscriptions.forEach(subscription -> subscription.accept(snapshot));
     }
 
-    int activeUserCount() {
+    int activeSubscriberCount() {
         return subscriptions.isEmpty() ? 0 : 1;
     }
 
-    private ActivitySnapshot snapshot() {
+    private ConversationSummarySnapshot snapshot() {
         List<ConversationSummaryView> visible = conversations.listSummaries();
-        List<ActivityItem> items = new ArrayList<>(visible.size());
+        List<ConversationSummaryItem> items = new ArrayList<>(visible.size());
         for (ConversationSummaryView session : visible) {
             items.add(
-                    new ActivityItem(
+                    new ConversationSummaryItem(
                             session.conversationSessionId(),
                             session.status(),
                             session.unread(),
                             session.lastNotifiableEventSequence(),
                             session.updatedAt()));
         }
-        return new ActivitySnapshot(ActivityEventType.SNAPSHOT, List.copyOf(items), Instant.now());
+        return new ConversationSummarySnapshot(
+                ConversationSummaryEventType.SNAPSHOT, List.copyOf(items), Instant.now());
     }
 
     private void remove(Subscription subscription) {
@@ -108,7 +110,7 @@ public final class ActivityEventStreamFacade {
             this.sender = sender();
         }
 
-        private synchronized void accept(ActivitySnapshot snapshot) {
+        private synchronized void accept(ConversationSummarySnapshot snapshot) {
             Fingerprint fingerprint = new Fingerprint(snapshot.sessions());
             if (fingerprint.equals(lastFingerprint) || closed.get()) {
                 return;
@@ -120,7 +122,7 @@ public final class ActivityEventStreamFacade {
                             try {
                                 emitter.send(
                                         SseEmitter.event()
-                                                .name(ActivityEventType.SNAPSHOT.value())
+                                                .name(ConversationSummaryEventType.SNAPSHOT.value())
                                                 .data(snapshot, MediaType.APPLICATION_JSON));
                             } catch (IOException | IllegalStateException failure) {
                                 remove(this);
@@ -149,14 +151,16 @@ public final class ActivityEventStreamFacade {
         }
     }
 
-    private record Fingerprint(List<ActivityItem> sessions) {}
+    private record Fingerprint(List<ConversationSummaryItem> sessions) {}
 
-    public record ActivitySnapshot(
-            ActivityEventType type, List<ActivityItem> sessions, Instant snapshotAt) {}
+    public record ConversationSummarySnapshot(
+            ConversationSummaryEventType type,
+            List<ConversationSummaryItem> sessions,
+            Instant snapshotAt) {}
 
-    public record ActivityItem(
+    public record ConversationSummaryItem(
             String conversationSessionId,
-            SessionActivityStatus status,
+            SessionExecutionStatus status,
             boolean unread,
             long lastNotifiableEventSequence,
             LocalDateTime updatedAt) {}

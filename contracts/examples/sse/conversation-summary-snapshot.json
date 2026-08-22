@@ -1,5 +1,5 @@
 {
-  "type": "activity_snapshot",
+  "type": "conversation_summary_snapshot",
   "sessions": [
     {
       "conversationSessionId": "session_background",

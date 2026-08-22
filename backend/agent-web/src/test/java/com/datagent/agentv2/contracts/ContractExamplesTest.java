@@ -21,7 +21,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 class ContractExamplesTest {
 
-    private static final String ACTIVITY_SNAPSHOT_EXAMPLE = "session-activity-snapshot.json";
+    private static final String SUMMARY_SNAPSHOT_EXAMPLE = "conversation-summary-snapshot.json";
     private static final String STREAM_SNAPSHOT = "stream_snapshot";
 
     private static final YAMLMapper YAML = new YAMLMapper();
@@ -44,7 +44,7 @@ class ContractExamplesTest {
     @ValueSource(
             strings = {
                 "session-create.yaml",
-                "session-activity.yaml",
+                "conversation-summary.yaml",
                 "session-queued.yaml",
                 "session-running.yaml",
                 "problem-validation.yaml"
@@ -82,22 +82,22 @@ class ContractExamplesTest {
     }
 
     @Test
-    void activityExamplesFreezeSnapshotAndReconciliationFields() throws IOException {
+    void summaryExamplesFreezeSnapshotAndReconciliationFields() throws IOException {
         JsonNode rest =
                 YAML.readTree(
                         ContractFiles.root()
-                                .resolve("examples/rest/session-activity.yaml")
+                                .resolve("examples/rest/conversation-summary.yaml")
                                 .toFile());
         tools.jackson.databind.JsonNode snapshot =
                 JSON.readTree(
                         ContractFiles.root()
-                                .resolve("examples/sse/session-activity-snapshot.json")
+                                .resolve("examples/sse/conversation-summary-snapshot.json")
                                 .toFile());
 
-        // REST 与 SSE 共享同一组会话活动字段，确保重连 GET 后可以直接收敛快照。
-        assertThat(rest.path("schema").asText()).isEqualTo("ConversationActivitySnapshot");
+        // REST 与 SSE 共享同一组会话摘要字段，确保重连 GET 后可以直接收敛快照。
+        assertThat(rest.path("schema").asText()).isEqualTo("ConversationSummarySnapshot");
         assertThat(rest.path("value").has("orderingVersion")).isFalse();
-        assertThat(snapshot.path("type").asString()).isEqualTo("activity_snapshot");
+        assertThat(snapshot.path("type").asString()).isEqualTo("conversation_summary_snapshot");
         assertThat(snapshot.has("orderingVersion")).isFalse();
         assertThat(snapshot.path("sessions").path(0).path("unread").asBoolean()).isTrue();
         assertThat(snapshot.path("sessions").path(0).path("lastNotifiableEventSequence").asLong())
@@ -187,14 +187,14 @@ class ContractExamplesTest {
         Schema schema = SchemaRegistry.withDefaultDialect(CONTRACT_DIALECT).getSchema(schemaNode);
         List<java.nio.file.Path> examples;
         try (var paths = Files.list(ContractFiles.root().resolve("examples/sse"))) {
-            // 用户级 activity 快照属于独立 SSE 契约，不套用单会话事件 schema。
+            // 用户级会话摘要快照属于独立 SSE 契约，不套用单会话事件 schema。
             examples =
                     paths.filter(path -> path.toString().endsWith(".json"))
                             .filter(
                                     path ->
                                             !path.getFileName()
                                                     .toString()
-                                                    .equals(ACTIVITY_SNAPSHOT_EXAMPLE))
+                                                    .equals(SUMMARY_SNAPSHOT_EXAMPLE))
                             .sorted()
                             .toList();
         }

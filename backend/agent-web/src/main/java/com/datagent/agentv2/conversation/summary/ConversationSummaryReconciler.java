@@ -1,22 +1,23 @@
-package com.datagent.agentv2.conversation.activity;
+package com.datagent.agentv2.conversation.summary;
 
 import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeProperties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/** 每两秒从 PostgreSQL 收敛本实例活跃用户的 activity 快照。 */
+/** 每两秒从 PostgreSQL 收敛本实例订阅者的会话摘要快照。 */
 @Component
 @RequiredArgsConstructor
-public final class ActivityReconciler {
+public final class ConversationSummaryReconciler {
 
-    private final ActivityEventStreamFacade activityEvents;
+    private final ConversationSummaryStreamFacade summaryStream;
     private final AgentExecutionRuntimeProperties runtime;
 
-    @Scheduled(fixedDelayString = "${data-agent.runtime.activity-reconcile-interval:2s}")
+    @Scheduled(
+            fixedDelayString = "${data-agent.runtime.conversation-summary-reconcile-interval:2s}")
     public void reconcile() {
         if (runtime.schedulingEnabled()) {
-            activityEvents.reconcileActiveUsers();
+            summaryStream.reconcileSubscribers();
         }
     }
 }

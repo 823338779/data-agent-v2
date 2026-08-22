@@ -393,7 +393,7 @@ function toSession(session: BackendSession | BackendSessionSummary): Conversatio
     version: session.version,
     unread: session.unread ?? false,
     lastNotifiableEventSequence: session.lastNotifiableEventSequence ?? 0,
-    activityStatus: session.status ? toStatus(session.status) : undefined,
+    latestExecutionStatus: session.status ? toStatus(session.status) : undefined,
     messages: detail.messages?.map(toMessage) ?? [],
     execution: detail.execution ? toExecution(detail.execution) : null,
   };

@@ -27,7 +27,7 @@ data-agent:
     queue-scan-interval: ${DATA_AGENT_QUEUE_SCAN_INTERVAL:1s}
     control-poll-interval: ${DATA_AGENT_CONTROL_POLL_INTERVAL:1s}
     session-event-reconcile-interval: ${DATA_AGENT_SESSION_EVENT_RECONCILE_INTERVAL:1s}
-    activity-reconcile-interval: ${DATA_AGENT_ACTIVITY_RECONCILE_INTERVAL:2s}
+    conversation-summary-reconcile-interval: ${DATA_AGENT_CONVERSATION_SUMMARY_RECONCILE_INTERVAL:2s}
     execution-budget: ${DATA_AGENT_EXECUTION_BUDGET:10m}
     lease-duration: ${DATA_AGENT_EXECUTION_LEASE_DURATION:60s}
     heartbeat-interval: ${DATA_AGENT_EXECUTION_HEARTBEAT_INTERVAL:15s}

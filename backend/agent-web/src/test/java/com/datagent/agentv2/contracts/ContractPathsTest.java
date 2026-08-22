@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 
 class ContractPathsTest {
 
-    private static final String ACTIVITY_EVENTS_PATH = "/api/v1/agent-sessions/activity-events";
+    private static final String SUMMARY_EVENTS_PATH = "/api/v1/agent-sessions/summary-events";
     private static final String CONVERSATION_SESSION_PATH =
             "/api/v1/agent-sessions/{conversationSessionId}";
     private static final String MARK_READ_PATH =
@@ -168,7 +168,7 @@ class ContractPathsTest {
     }
 
     @Test
-    void openApiFreezesPerUserActivityContracts() throws IOException {
+    void openApiFreezesPerUserSummaryContracts() throws IOException {
         JsonNode api = YAML.readTree(ContractFiles.openApi().toFile());
         JsonNode schemas = api.path("components").path("schemas");
 
@@ -203,11 +203,11 @@ class ContractPathsTest {
         assertThat(api.path("paths").has("/api/v1/agent-sessions:reorder")).isFalse();
         assertThat(schemas.has("ReorderConversationSessionsRequest")).isFalse();
 
-        // Activity SSE 是可收敛快照流，不接收 Last-Event-ID 历史游标。
-        JsonNode activityEvents = api.path("paths").path(ACTIVITY_EVENTS_PATH).path("get");
-        assertThat(activityEvents.path("parameters")).isEmpty();
+        // 会话摘要 SSE 是可收敛快照流，不接收 Last-Event-ID 历史游标。
+        JsonNode summaryEvents = api.path("paths").path(SUMMARY_EVENTS_PATH).path("get");
+        assertThat(summaryEvents.path("parameters")).isEmpty();
         assertThat(
-                        activityEvents
+                        summaryEvents
                                 .path("responses")
                                 .path("200")
                                 .path("content")
@@ -215,13 +215,13 @@ class ContractPathsTest {
                                 .path("schema")
                                 .path("$ref")
                                 .asText())
-                .isEqualTo("#/components/schemas/ConversationActivitySnapshot");
+                .isEqualTo("#/components/schemas/ConversationSummarySnapshot");
     }
 
     private static Map<String, Set<String>> requiredOperations() {
         Map<String, Set<String>> required = new LinkedHashMap<>();
         required.put("/api/v1/agent-sessions", Set.of("get", "post"));
-        required.put(ACTIVITY_EVENTS_PATH, Set.of("get"));
+        required.put(SUMMARY_EVENTS_PATH, Set.of("get"));
         required.put(CONVERSATION_SESSION_PATH, Set.of("get", "patch"));
         required.put(MARK_READ_PATH, Set.of("post"));
         required.put(

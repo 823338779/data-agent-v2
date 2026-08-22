@@ -84,7 +84,7 @@ export function ConversationList({
   return (
     <nav>
       {sessions.map((session) => {
-        const status = session.activityStatus ?? session.execution?.status;
+        const status = session.latestExecutionStatus ?? session.execution?.status;
         if (editingId === session.conversationSessionId) {
           return (
             <input
