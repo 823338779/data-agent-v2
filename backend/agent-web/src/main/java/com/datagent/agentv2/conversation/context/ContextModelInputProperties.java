@@ -1,12 +1,14 @@
 package com.datagent.agentv2.conversation.context;
 
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /** 非 Ollama provider 使用的统一模型输入预算和固定协议开销。 */
 @Component
-@Data
+@Getter
+@Setter
 @ConfigurationProperties("data-agent.context.model-input")
 public class ContextModelInputProperties {
 
