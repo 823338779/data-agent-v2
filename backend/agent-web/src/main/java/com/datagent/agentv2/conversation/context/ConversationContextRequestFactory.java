@@ -6,22 +6,19 @@ import com.datagent.agentv2.conversation.react.ModelInvocationCoordinator;
 import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import java.util.List;
+
+import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /** 从已持久化 invocation 边界、当前工具集和服务配置建立策略请求。 */
 @Component
+@AllArgsConstructor
 public class ConversationContextRequestFactory {
 
     private static final String ERROR_EXECUTION_NOT_FOUND = "Agent execution was not found";
 
     private final AgentExecutionService executions;
     private final ContextModelBudgetProvider budgets;
-    public ConversationContextRequestFactory(
-            AgentExecutionService executions,
-            ContextModelBudgetProvider budgets) {
-        this.executions = executions;
-        this.budgets = budgets;
-    }
 
     public ConversationContextRequest create(
             AgentExecutionPort.ClaimedAgentExecution run,
