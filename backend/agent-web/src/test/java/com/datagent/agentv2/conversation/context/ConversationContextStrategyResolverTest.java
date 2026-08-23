@@ -79,7 +79,7 @@ class ConversationContextStrategyResolverTest {
 
     private static ConversationContextRequest request() {
         return new ConversationContextRequest(
-                new ContextExecutionRef("tenant-1", "session-1", "execution-1", "owner-1", 1L, 4L),
+                new ContextExecutionRef("tenant-1", "session-1", "execution-1", 4L),
                 new ContextBudget(65_536, 4_096, 4_096, 0),
                 List.of(),
                 List.of());

@@ -26,16 +26,19 @@ public final class AgentExecutionSubmissionService {
     private final AgentExecutionSubmissionTransactionService submissionTransactions;
 
     public ConversationSession submit(
-            String conversationSessionId, String content, String idempotencyKey, String requestId) {
+            String conversationSessionId,
+            String content,
+            SubmissionConflictPolicy conflictPolicy,
+            String idempotencyKey) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_IDEMPOTENCY_KEY_BLANK);
         }
-        String payloadHash = payloadHash(content);
+        String payloadHash = payloadHash(content, conflictPolicy);
 
         // 先提交创建事务；唯一约束冲突时，再通过独立事务读取并发请求的提交结果。
         try {
             return submissionTransactions.createOrReplay(
-                    conversationSessionId, content, idempotencyKey, payloadHash, requestId);
+                    conversationSessionId, content, conflictPolicy, idempotencyKey, payloadHash);
         } catch (DataIntegrityViolationException conflict) {
             ConversationSession replay =
                     submissionTransactions.replayAfterConstraintConflict(
@@ -48,11 +51,16 @@ public final class AgentExecutionSubmissionService {
     }
 
     static String payloadHash(String content) {
+        return payloadHash(content, SubmissionConflictPolicy.REJECT);
+    }
+
+    static String payloadHash(String content, SubmissionConflictPolicy conflictPolicy) {
         String normalized =
                 Normalizer.normalize(
-                        content
-                                .replace(WINDOWS_LINE_SEPARATOR, LINE_SEPARATOR)
-                                .replace(CARRIAGE_RETURN, LINE_SEPARATOR),
+                        SubmissionConflictPolicy.defaulted(conflictPolicy).name()
+                                + LINE_SEPARATOR
+                                + content.replace(WINDOWS_LINE_SEPARATOR, LINE_SEPARATOR)
+                                        .replace(CARRIAGE_RETURN, LINE_SEPARATOR),
                         Normalizer.Form.NFC);
         try {
             byte[] digest =

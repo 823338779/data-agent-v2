@@ -48,7 +48,8 @@ class LsmPlannerStateMachineTest {
                                     turns,
                                     manifest,
                                     activeSegments,
-                                    new LsmContextPolicySnapshot(1, fanout, maxLevel, 10, 75, 65, 100, 109, 10),
+                                    new LsmContextPolicySnapshot(
+                                            1, fanout, maxLevel, 10, 75, 65, 10),
                                     new LsmPlanningInput.TokenPressure(20_000, 8_000, 16_000),
                                     true);
                     LsmCompactionPlan plan = planner.plan(input);
@@ -72,7 +73,7 @@ class LsmPlannerStateMachineTest {
                         turns,
                         LsmContextManifest.empty(),
                         List.of(),
-                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10),
+                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 10),
                         new LsmPlanningInput.TokenPressure(20_000, 8_000, 16_000),
                         true);
         LsmCompactionPlan valid = planner.plan(input);
@@ -85,8 +86,6 @@ class LsmPlannerStateMachineTest {
                         missingTail.stream().map(LsmSummarySegment::segmentId).toList(),
                         null,
                         null,
-                        validManifest.warmStartTurnSequence(),
-                        validManifest.warmEndTurnSequence(),
                         validManifest.generation(),
                         validManifest.effectiveFanout(),
                         validManifest.effectiveMaxLevel());
@@ -106,7 +105,7 @@ class LsmPlannerStateMachineTest {
                         completedTurns(117),
                         LsmContextManifest.empty(),
                         List.of(),
-                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10),
+                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 10),
                         new LsmPlanningInput.TokenPressure(12_000, 8_000, 16_000),
                         false);
 
@@ -122,12 +121,12 @@ class LsmPlannerStateMachineTest {
     void retryAndTakeoverReuseFrozenPolicyAndProduceTheSamePlan() {
         List<LsmSummarySegment> segments = fiveL0Segments();
         LsmContextPolicySnapshot frozenPolicy =
-                new LsmContextPolicySnapshot(7, 5, 4, 10, 75, 65, 100, 109, 10);
+                new LsmContextPolicySnapshot(7, 5, 4, 10, 75, 65, 10);
         LsmPlanningInput initialInput = planningInput(segments, frozenPolicy);
 
         LsmCompactionPlan initial = planner.plan(initialInput);
         LsmContextPolicySnapshot changedServicePolicy =
-                new LsmContextPolicySnapshot(8, 3, 3, 10, 75, 65, 100, 109, 10);
+                new LsmContextPolicySnapshot(8, 3, 3, 10, 75, 65, 10);
         LsmCompactionPlan servicePolicyPlan =
                 planner.plan(planningInput(segments, changedServicePolicy));
         LsmCompactionPlan retry = planner.plan(planningInput(segments, frozenPolicy));
@@ -141,7 +140,11 @@ class LsmPlannerStateMachineTest {
     private static void assertPublishedInvariants(
             LsmCompactionPlan plan, int fanout, int maxLevel) {
         assertThat(plan.hotBoundary().completedTurnCount()).isEqualTo(10);
-        assertThat(plan.proposedManifest().warmTurnCount()).isBetween(100L, 109L);
+        assertThat(plan.proposedManifest().activeSegmentIds())
+                .containsExactlyElementsOf(
+                        plan.projectedSegments().stream()
+                                .map(LsmSummarySegment::segmentId)
+                                .toList());
         assertThat(plan.projectedSegments())
                 .filteredOn(segment -> segment.kind() == LsmSummarySegment.SegmentKind.ROOT)
                 .hasSizeLessThanOrEqualTo(1);
@@ -178,8 +181,6 @@ class LsmPlannerStateMachineTest {
                 new LsmContextManifest(
                         null,
                         segments.stream().map(LsmSummarySegment::segmentId).toList(),
-                        null,
-                        null,
                         null,
                         null,
                         4,

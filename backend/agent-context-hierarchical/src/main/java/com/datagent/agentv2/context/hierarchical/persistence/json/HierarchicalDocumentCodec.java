@@ -1,163 +1,39 @@
 package com.datagent.agentv2.context.hierarchical.persistence.json;
 
-import com.datagent.agentv2.context.hierarchical.domain.HierarchicalColdCandidate;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
-import tools.jackson.databind.JsonNode;
+import java.util.Objects;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
-/** 插件私有 JSON 文档的版本校验和确定性编解码边界。 */
+/** 冻结执行策略的严格 V2 JSON 编解码边界。 */
 public final class HierarchicalDocumentCodec {
+    private final ObjectMapper json = JsonMapper.builder().build();
 
-    private static final int SUPPORTED_POLICY_VERSION = 1;
-    private static final int SUPPORTED_SUMMARY_SCHEMA_VERSION = 1;
-    private static final int SUPPORTED_SUMMARY_PROMPT_VERSION = 1;
-    private static final int SUPPORTED_COLD_CANDIDATE_VERSION = 1;
-    private static final String SCHEMA_VERSION_FIELD = "schemaVersion";
-    private static final String INVALID_POLICY_DOCUMENT = "invalid hierarchical policy document";
-    private static final String INVALID_VERSIONED_DOCUMENT =
-            "invalid hierarchical versioned document";
-    private static final String INVALID_COLD_CANDIDATE = "invalid hierarchical Cold candidate";
-
-    /** 插件内所有 JSON 文档共用同一份 Jackson 配置。 */
-    private final ObjectMapper json;
-
-    public HierarchicalDocumentCodec() {
-        this(JsonMapper.builder().build());
-    }
-
-    HierarchicalDocumentCodec(ObjectMapper json) {
-        this.json = json;
-    }
-
-    /** 将已验证的执行策略写成 JSONB 文档。 */
     public String writePolicy(HierarchicalContextPolicySnapshot policy) {
-        validatePolicy(policy);
-        try {
-            return json.writeValueAsString(policy);
-        } catch (RuntimeException failure) {
-            throw new IllegalStateException(INVALID_POLICY_DOCUMENT, failure);
-        }
+        validate(policy);
+        return json.writeValueAsString(policy);
     }
 
-    /** 读取冻结策略并拒绝当前插件不认识的策略版本。 */
     public HierarchicalContextPolicySnapshot readPolicy(String document) {
         try {
             HierarchicalContextPolicySnapshot policy =
-                    json.readValue(document, HierarchicalContextPolicySnapshot.class);
-            validatePolicy(policy);
+                    json.readValue(
+                            Objects.requireNonNull(document, "document"),
+                            HierarchicalContextPolicySnapshot.class);
+            validate(policy);
             return policy;
         } catch (RuntimeException failure) {
-            throw new IllegalStateException(INVALID_POLICY_DOCUMENT, failure);
+            throw new IllegalStateException("invalid hierarchical policy document", failure);
         }
     }
 
-    /** 校验通用 versioned JSON 文档并返回规范化表示。 */
-    public String canonicalizeVersionedDocument(String document, int expectedSchemaVersion) {
-        try {
-            JsonNode root = json.readTree(document);
-            if (root == null
-                    || !root.isObject()
-                    || root.path(SCHEMA_VERSION_FIELD).asInt(-1) != expectedSchemaVersion) {
-                throw new IllegalArgumentException(INVALID_VERSIONED_DOCUMENT);
-            }
-            return json.writeValueAsString(root);
-        } catch (RuntimeException failure) {
-            throw new IllegalStateException(INVALID_VERSIONED_DOCUMENT, failure);
-        }
-    }
-
-    /** 校验摘要文档及其 schema、prompt 版本均受当前插件支持。 */
-    public String canonicalizeSummaryDocument(
-            String document, int schemaVersion, int promptVersion) {
-        if (schemaVersion != SUPPORTED_SUMMARY_SCHEMA_VERSION
-                || promptVersion != SUPPORTED_SUMMARY_PROMPT_VERSION) {
-            throw new IllegalStateException(INVALID_VERSIONED_DOCUMENT);
-        }
-        return canonicalizeVersionedDocument(document, schemaVersion);
-    }
-
-    /** 将 Cold 正文及可信 coverage/identity 包装为单一 versioned JSONB 文档。 */
-    public String writeColdCandidate(HierarchicalColdCandidate candidate) {
-        try {
-            HierarchicalColdCandidate checked =
-                    java.util.Objects.requireNonNull(candidate, "candidate");
-            String summary =
-                    canonicalizeSummaryDocument(
-                            checked.summaryDocument(),
-                            checked.summarySchemaVersion(),
-                            checked.summaryPromptVersion());
-            ColdCandidateDocument document =
-                    new ColdCandidateDocument(
-                            SUPPORTED_COLD_CANDIDATE_VERSION,
-                            checked.candidateId(),
-                            checked.startTurn(),
-                            checked.endTurn(),
-                            checked.startMessageSequence(),
-                            checked.endMessageSequence(),
-                            summary,
-                            checked.estimatedTokenCount(),
-                            checked.summarySchemaVersion(),
-                            checked.summaryPromptVersion(),
-                            checked.modelProvider(),
-                            checked.modelName());
-            return json.writeValueAsString(document);
-        } catch (RuntimeException failure) {
-            throw new IllegalStateException(INVALID_COLD_CANDIDATE, failure);
-        }
-    }
-
-    /** 从 job 恢复 Cold 候选，并重新校验 envelope 及内嵌摘要协议版本。 */
-    public HierarchicalColdCandidate readColdCandidate(String document) {
-        try {
-            ColdCandidateDocument stored = json.readValue(document, ColdCandidateDocument.class);
-            if (stored.schemaVersion() != SUPPORTED_COLD_CANDIDATE_VERSION) {
-                throw new IllegalArgumentException(INVALID_COLD_CANDIDATE);
-            }
-            String summary =
-                    canonicalizeSummaryDocument(
-                            stored.summaryDocument(),
-                            stored.summarySchemaVersion(),
-                            stored.summaryPromptVersion());
-            return new HierarchicalColdCandidate(
-                    stored.candidateId(),
-                    stored.startTurn(),
-                    stored.endTurn(),
-                    stored.startMessageSequence(),
-                    stored.endMessageSequence(),
-                    summary,
-                    stored.estimatedTokenCount(),
-                    stored.summarySchemaVersion(),
-                    stored.summaryPromptVersion(),
-                    stored.modelProvider(),
-                    stored.modelName());
-        } catch (RuntimeException failure) {
-            throw new IllegalStateException(INVALID_COLD_CANDIDATE, failure);
-        }
-    }
-
-    /** Cold candidate envelope 的字段均用于 crash recovery 与发布前一致性校验。 */
-    private record ColdCandidateDocument(
-            int schemaVersion,
-            String candidateId,
-            long startTurn,
-            long endTurn,
-            long startMessageSequence,
-            long endMessageSequence,
-            String summaryDocument,
-            int estimatedTokenCount,
-            int summarySchemaVersion,
-            int summaryPromptVersion,
-            String modelProvider,
-            String modelName) {}
-
-    /** 策略版本是读取持久化配置时的兼容性门禁。 */
-    private static void validatePolicy(HierarchicalContextPolicySnapshot policy) {
+    private static void validate(HierarchicalContextPolicySnapshot policy) {
         if (policy == null
-                || policy.policyVersion() != SUPPORTED_POLICY_VERSION
-                || policy.summarySchemaVersion() != SUPPORTED_SUMMARY_SCHEMA_VERSION
-                || policy.summaryPromptVersion() != SUPPORTED_SUMMARY_PROMPT_VERSION) {
-            throw new IllegalArgumentException(INVALID_POLICY_DOCUMENT);
+                || policy.policyVersion() != 2
+                || policy.summarySchemaVersion() != 2
+                || policy.summaryPromptVersion() != 2
+                || policy.recentRawTurns() != 10) {
+            throw new IllegalArgumentException("invalid hierarchical policy document");
         }
     }
 }

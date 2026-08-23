@@ -45,7 +45,6 @@ class ContractExamplesTest {
             strings = {
                 "session-create.yaml",
                 "conversation-summary.yaml",
-                "session-queued.yaml",
                 "session-running.yaml",
                 "problem-validation.yaml"
             })
@@ -58,27 +57,19 @@ class ContractExamplesTest {
     }
 
     @Test
-    void sessionExamplesFreezeQueuedAndCancellationFields() throws IOException {
-        JsonNode queued =
-                YAML.readTree(
-                        ContractFiles.root().resolve("examples/rest/session-queued.yaml").toFile());
+    void sessionExampleUsesTheLocalExecutionContract() throws IOException {
         JsonNode running =
                 YAML.readTree(
                         ContractFiles.root()
                                 .resolve("examples/rest/session-running.yaml")
                                 .toFile());
 
-        assertThat(queued.path("value").path("execution").path("status").asText())
-                .isEqualTo("queued");
-        assertThat(
-                        queued.path("value")
-                                .path("execution")
-                                .path("streamCheckpoint")
-                                .path("executionAttemptNumber")
-                                .asInt())
-                .isZero();
-        assertThat(queued.path("value").path("execution").has("cancellationRequestedAt")).isTrue();
-        assertThat(running.path("value").path("execution").has("cancellationRequestedAt")).isTrue();
+        assertThat(running.path("value").path("execution").path("status").asText())
+                .isEqualTo("running");
+        assertThat(running.path("value").has("sessionType")).isFalse();
+        assertThat(running.path("value").has("metricPlatformCredential")).isFalse();
+        assertThat(running.path("value").path("execution").has("cancellationRequestedAt"))
+                .isFalse();
     }
 
     @Test
@@ -130,7 +121,7 @@ class ContractExamplesTest {
     }
 
     @Test
-    void sessionStreamingContractFreezesCheckpointAndCompositeCursorFields() throws IOException {
+    void sessionStreamingContractUsesTheSingleRunCoordinates() throws IOException {
         JsonNode openapi = YAML.readTree(ContractFiles.root().resolve("openapi.yaml").toFile());
         JsonNode runStream =
                 openapi.path("components").path("schemas").path("AgentExecutionStreamCheckpoint");
@@ -141,21 +132,10 @@ class ContractExamplesTest {
         tools.jackson.databind.JsonNode schema =
                 JSON.readTree(ContractFiles.schema("session-sse-event.schema.json"));
 
-        // AgentExecutionStreamCheckpoint 始终暴露当前 attempt/turn 的完整 checkpoint；queued 投影允许零值。
+        // 本机执行只需要模型轮次和回答位置，不公开调度 attempt 或持久化时间戳。
         assertThat(runStream.path("required").toString())
-                .contains(
-                        "executionAttemptNumber",
-                        "modelInvocationSequence",
-                        "outputDeltaSequence",
-                        "answer",
-                        "checkpointedAt");
-        assertThat(
-                        runStream
-                                .path("properties")
-                                .path("executionAttemptNumber")
-                                .path("minimum")
-                                .asInt())
-                .isZero();
+                .contains("modelInvocationSequence", "outputDeltaSequence", "answer");
+        assertThat(runStream.path("properties").has("executionAttemptNumber")).isFalse();
         assertThat(
                         runStream
                                 .path("properties")
@@ -168,13 +148,13 @@ class ContractExamplesTest {
         assertThat(eventPath.path("parameters").size()).isOne();
         assertThat(schema.has("x-sse-event-id")).isFalse();
 
-        // Delta 带完整流坐标，snapshot 额外携带可收敛的累计正文与 checkpoint 时间。
+        // Delta 带流坐标，snapshot 额外携带可收敛的累计正文。
         assertThat(schema.path("properties").path("type").path("enum").toString())
                 .contains(STREAM_SNAPSHOT);
         assertThat(schema.path("properties").has("modelInvocationSequence")).isTrue();
         assertThat(schema.path("properties").has("reasoning")).isFalse();
         assertThat(schema.path("properties").has("answer")).isTrue();
-        assertThat(schema.path("properties").has("checkpointedAt")).isTrue();
+        assertThat(schema.path("properties").has("checkpointedAt")).isFalse();
         assertThat(schema.path("x-sensitive-payload-fields-forbidden").toString())
                 .contains("prompt", "toolInput", "toolOutput");
     }
@@ -203,18 +183,5 @@ class ContractExamplesTest {
             tools.jackson.databind.JsonNode value = JSON.readTree(example);
             assertThat(schema.validate(value)).as(example.getFileName().toString()).isEmpty();
         }
-    }
-
-    @Test
-    void taskExecutionSseSchemaFreezesTheTimelineEnvelope() throws IOException {
-        tools.jackson.databind.JsonNode schema =
-                JSON.readTree(ContractFiles.schema("task-execution-sse-event.schema.json"));
-
-        assertThat(schema.path("$schema").asString())
-                .isEqualTo("https://json-schema.org/draft/2020-12/schema");
-        assertThat(schema.path("required").toString())
-                .contains("source", "sourceSequence", "occurredAt", "type", "payload");
-        assertThat(schema.path("properties").path("source").path("enum").toString())
-                .contains("SCHEDULER", "AGENT");
     }
 }

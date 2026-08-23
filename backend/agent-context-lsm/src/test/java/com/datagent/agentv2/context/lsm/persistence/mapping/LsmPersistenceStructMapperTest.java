@@ -26,30 +26,27 @@ class LsmPersistenceStructMapperTest {
         entity.setSourceSegmentIds(documents.writeStringList(List.of("child-1", "child-2")));
         entity.setPartialSegment(true);
 
-        LsmSummarySegment mapped =
-                LsmPersistenceStructMapper.INSTANCE.toDomain(entity, documents);
+        LsmSummarySegment mapped = LsmPersistenceStructMapper.INSTANCE.toDomain(entity, documents);
 
         assertThat(mapped.sourceSegmentIds()).containsExactly("child-1", "child-2");
         assertThat(mapped.coverage()).isEqualTo(new LsmSummarySegment.Coverage(11L, 20L));
     }
 
     @Test
-    void mapsPersistedManifestAndDerivesWarmRange() {
+    void mapsPersistedManifestWithoutSyntheticWarmRange() {
         LsmContextManifestEntity entity = new LsmContextManifestEntity();
         entity.setActiveRootSegmentId("root-1");
         entity.setActiveSegmentIds(documents.writeStringList(List.of("segment-1", "root-1")));
         entity.setPendingRawStartTurnSequence(21L);
         entity.setPendingRawEndTurnSequence(22L);
-        entity.setWarmCutoffTurnSequence(120L);
         entity.setGeneration(4L);
         entity.setEffectiveFanout(3);
         entity.setEffectiveMaxLevel(2);
 
-        LsmContextManifest mapped =
-                LsmPersistenceStructMapper.INSTANCE.toDomain(entity, documents);
+        LsmContextManifest mapped = LsmPersistenceStructMapper.INSTANCE.toDomain(entity, documents);
 
         assertThat(mapped.activeSegmentIds()).containsExactly("segment-1", "root-1");
-        assertThat(mapped.warmStartTurnSequence()).isEqualTo(21L);
-        assertThat(mapped.warmEndTurnSequence()).isEqualTo(120L);
+        assertThat(mapped.pendingRawStartTurnSequence()).isEqualTo(21L);
+        assertThat(mapped.pendingRawEndTurnSequence()).isEqualTo(22L);
     }
 }

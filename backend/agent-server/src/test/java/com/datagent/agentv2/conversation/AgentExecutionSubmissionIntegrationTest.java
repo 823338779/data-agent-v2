@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.datagent.agentv2.conversation.react.ReactExecutionEngine;
 import jakarta.servlet.http.Cookie;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -17,8 +18,8 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 import tools.jackson.databind.ObjectMapper;
@@ -29,14 +30,9 @@ class AgentExecutionSubmissionIntegrationTest {
 
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
-    private static final GenericContainer<?> REDIS =
-            new GenericContainer<>(DockerImageName.parse("redis:7.4-alpine"))
-                    .withCommand("redis-server", "--requirepass", "redis_test")
-                    .withExposedPorts(6379);
 
     static {
         POSTGRES.start();
-        REDIS.start();
     }
 
     @DynamicPropertySource
@@ -44,21 +40,17 @@ class AgentExecutionSubmissionIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
-        registry.add("spring.data.redis.host", REDIS::getHost);
-        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
-        registry.add("spring.data.redis.username", () -> "default");
-        registry.add("spring.data.redis.password", () -> "redis_test");
     }
 
     @AfterAll
     static void stopContainers() {
-        REDIS.stop();
         POSTGRES.stop();
     }
 
     @Autowired private MockMvc mvc;
     @Autowired private JdbcTemplate jdbc;
     @Autowired private ObjectMapper json;
+    @MockitoBean private ReactExecutionEngine executionEngine;
 
     @Test
     void messageSubmissionRequiresIdempotencyKey() throws Exception {
@@ -76,7 +68,7 @@ class AgentExecutionSubmissionIntegrationTest {
     }
 
     @Test
-    void messageSubmissionPersistsResolvedRequestIdWhenHeaderIsAbsent() throws Exception {
+    void messageSubmissionReturnsResolvedRequestIdWhenHeaderIsAbsent() throws Exception {
         Cookie login = login();
         String conversationSessionId = createSession(login, "generated-request-id");
 
@@ -95,16 +87,10 @@ class AgentExecutionSubmissionIntegrationTest {
                         .getHeader("X-Request-Id");
 
         assertThat(requestId).isNotBlank().isNotEqualTo("request_unknown");
-        assertThat(
-                        jdbc.queryForObject(
-                                "select request_id from agent_execution where conversation_session_id = ?",
-                                String.class,
-                                conversationSessionId))
-                .isEqualTo(requestId);
     }
 
     @Test
-    void serialReplayReturnsOriginalQueuedExecutionWithoutDuplicateMessage() throws Exception {
+    void serialReplayReturnsOriginalRunningExecutionWithoutDuplicateMessage() throws Exception {
         Cookie login = login();
         String conversationSessionId = createSession(login, "serial-replay");
 
@@ -115,7 +101,7 @@ class AgentExecutionSubmissionIntegrationTest {
         assertCounts(conversationSessionId, 2, 1);
         assertContentCenteredMessages(conversationSessionId, "hello");
         assertThat(json.readTree(first).path("execution").path("status").asString())
-                .isEqualTo("queued");
+                .isEqualTo("running");
         assertThat(
                         json.readTree(first)
                                 .path("execution")
@@ -123,14 +109,14 @@ class AgentExecutionSubmissionIntegrationTest {
                                 .get(0)
                                 .path("type")
                                 .asString())
-                .isEqualTo("execution_queued");
+                .isEqualTo("execution_started");
         assertThat(
                         json.readTree(first)
                                 .path("execution")
                                 .path("streamCheckpoint")
-                                .path("executionAttemptNumber")
-                                .asLong())
-                .isZero();
+                                .path("phase")
+                                .asString())
+                .isEqualTo("PREPARING_CONTEXT");
     }
 
     @Test
@@ -150,6 +136,76 @@ class AgentExecutionSubmissionIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
         assertCounts(conversationSessionId, 2, 1);
+    }
+
+    @Test
+    void activeExecutionStillConflictsWhenSteeringPolicyIsAbsent() throws Exception {
+        Cookie login = login();
+        String conversationSessionId = createSession(login, "default-active-conflict");
+        submit(login, conversationSessionId, "key-active-first", "first");
+
+        mvc.perform(
+                        post(
+                                        "/api/v1/agent-sessions/{conversationSessionId}/messages",
+                                        conversationSessionId)
+                                .cookie(login)
+                                .header("Idempotency-Key", "key-active-second")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"content\":\"second\"}"))
+                .andExpect(status().isConflict());
+
+        assertCounts(conversationSessionId, 2, 1);
+    }
+
+    @Test
+    void steeringSubmissionCancelsActiveTurnAndCreatesOneActiveSuccessor() throws Exception {
+        Cookie login = login();
+        String conversationSessionId = createSession(login, "steer-active");
+        String original = submit(login, conversationSessionId, "key-steer-first", "first");
+
+        String steered = submitSteering(login, conversationSessionId, "key-steer-second", "second");
+
+        assertThat(executionId(steered)).isNotEqualTo(executionId(original));
+        assertCounts(conversationSessionId, 4, 2);
+        assertThat(
+                        jdbc.queryForObject(
+                                "select status from agent_execution where execution_id = ?",
+                                String.class,
+                                executionId(original)))
+                .isEqualTo("cancelled");
+        assertThat(
+                        jdbc.queryForObject(
+                                "select count(*) from agent_execution where conversation_session_id = ? and status = 'running'",
+                                Integer.class,
+                                conversationSessionId))
+                .isEqualTo(1);
+        assertThat(
+                        jdbc.queryForList(
+                                "select content from conversation_message where conversation_session_id = ? and role = 'user' order by conversation_message_sequence",
+                                String.class,
+                                conversationSessionId))
+                .containsExactly("first", "second");
+    }
+
+    @Test
+    void steeringReplayReturnsSuccessorWithoutCancellingIt() throws Exception {
+        Cookie login = login();
+        String conversationSessionId = createSession(login, "steer-replay");
+        submit(login, conversationSessionId, "key-steer-replay-first", "first");
+
+        String first =
+                submitSteering(login, conversationSessionId, "key-steer-replay-second", "second");
+        String replay =
+                submitSteering(login, conversationSessionId, "key-steer-replay-second", "second");
+
+        assertThat(executionId(replay)).isEqualTo(executionId(first));
+        assertCounts(conversationSessionId, 4, 2);
+        assertThat(
+                        jdbc.queryForObject(
+                                "select status from agent_execution where execution_id = ?",
+                                String.class,
+                                executionId(first)))
+                .isEqualTo("running");
     }
 
     @Test
@@ -180,6 +236,27 @@ class AgentExecutionSubmissionIntegrationTest {
                                 .header("X-Request-Id", "request-" + key)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"content\":\"" + content + "\"}"))
+                .andExpect(status().isAccepted())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+    }
+
+    private String submitSteering(
+            Cookie login, String conversationSessionId, String key, String content)
+            throws Exception {
+        return mvc.perform(
+                        post(
+                                        "/api/v1/agent-sessions/{conversationSessionId}/messages",
+                                        conversationSessionId)
+                                .cookie(login)
+                                .header("Idempotency-Key", key)
+                                .header("X-Request-Id", "request-" + key)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        "{\"content\":\""
+                                                + content
+                                                + "\",\"conflictPolicy\":\"STEER_ACTIVE\"}"))
                 .andExpect(status().isAccepted())
                 .andReturn()
                 .getResponse()

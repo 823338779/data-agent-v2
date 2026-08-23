@@ -24,8 +24,4 @@ final class ContractFiles {
     static Path schema(String name) {
         return root().resolve("schemas").resolve(name);
     }
-
-    static Path inventory(String name) {
-        return root().resolve("inventories").resolve(name);
-    }
 }

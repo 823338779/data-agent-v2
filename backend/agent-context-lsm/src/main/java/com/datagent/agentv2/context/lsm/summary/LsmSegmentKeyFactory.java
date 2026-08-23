@@ -40,8 +40,6 @@ public final class LsmSegmentKeyFactory {
                 policy.baseSegmentTurns(),
                 policy.compressionThresholdPercent(),
                 policy.targetWatermarkPercent(),
-                policy.warmTargetTurns(),
-                policy.warmMaxTurns(),
                 policy.protectedHotTurns(),
                 model.provider(),
                 model.model());
@@ -65,8 +63,6 @@ public final class LsmSegmentKeyFactory {
             int baseSegmentTurns,
             int compressionThresholdPercent,
             int targetWatermarkPercent,
-            int warmTargetTurns,
-            int warmMaxTurns,
             int protectedHotTurns,
             String modelProvider,
             String modelName) {
@@ -84,8 +80,6 @@ public final class LsmSegmentKeyFactory {
                         Integer.toString(baseSegmentTurns),
                         Integer.toString(compressionThresholdPercent),
                         Integer.toString(targetWatermarkPercent),
-                        Integer.toString(warmTargetTurns),
-                        Integer.toString(warmMaxTurns),
                         Integer.toString(protectedHotTurns),
                         modelProvider,
                         modelName,

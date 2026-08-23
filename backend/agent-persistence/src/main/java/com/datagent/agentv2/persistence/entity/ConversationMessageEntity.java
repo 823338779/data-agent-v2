@@ -8,11 +8,16 @@ import lombok.Getter;
 import lombok.Setter;
 import org.apache.ibatis.type.JdbcType;
 
-/** 持久化用户、模型和工具产生的不可变会话消息。 */
+/** 持久化用户和模型产生的不可变会话消息。 */
 @Getter
 @Setter
 @TableName("conversation_message")
 public final class ConversationMessageEntity extends TenantAuditedEntity {
+
+    private static final String ROLE_USER = "user";
+    private static final String ROLE_ASSISTANT = "assistant";
+    private static final String ERROR_UNSUPPORTED_ROLE =
+            "conversation message role must be user or assistant";
 
     /** 消息的业务唯一标识，对应数据库 conversation_message_id 列。 */
     private String conversationMessageId;
@@ -23,8 +28,15 @@ public final class ConversationMessageEntity extends TenantAuditedEntity {
     /** 产生或消费该消息的 Agent 执行业务标识；没有关联执行时为空。 */
     private String executionId;
 
-    /** 消息角色，例如 user、assistant、system 或 tool。 */
+    /** 持久化消息角色，只允许 user 或 assistant */
     private String role;
+
+    public void setRole(String role) {
+        if (!ROLE_USER.equals(role) && !ROLE_ASSISTANT.equals(role)) {
+            throw new IllegalArgumentException(ERROR_UNSUPPORTED_ROLE);
+        }
+        this.role = role;
+    }
 
     /** 消息正文；工具消息保存经过清理的 observation。 */
     private String content;

@@ -15,7 +15,7 @@
   <packaging>jar</packaging>
 
   <dependencies>
-    <!-- 验收模块只依赖通用测试/JSON库，不依赖任何 Data Agent 运行时模块。 -->
+    <!-- 评测模块只依赖通用测试/JSON库，不依赖任何 Data Agent 运行时模块。 -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
@@ -25,5 +25,22 @@
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
     </dependency>
+    <dependency>
+      <groupId>com.huaban</groupId>
+      <artifactId>jieba-analysis</artifactId>
+      <version>1.0.2</version>
+    </dependency>
   </dependencies>
+
+  <build>
+    <testResources>
+      <testResource>
+        <directory>src/test/resources</directory>
+        <!-- 官方语料按显式 Path 读取，避免 Maven 再复制一份到 test-classes。 -->
+        <excludes>
+          <exclude>compact-eval/data/**</exclude>
+        </excludes>
+      </testResource>
+    </testResources>
+  </build>
 </project>

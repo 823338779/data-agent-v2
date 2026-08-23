@@ -2,10 +2,9 @@
   "type": "stream_snapshot",
   "conversationSessionId": "session_demo",
   "executionId": "execution_demo",
-  "executionAttemptNumber": 1,
   "modelInvocationSequence": 1,
   "outputDeltaSequence": 2,
+  "phase": "ANSWERING",
   "answer": "你好",
-  "checkpointedAt": "2026-08-01T06:00:02Z",
   "occurredAt": "2026-08-01T06:00:02Z"
 }

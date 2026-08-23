@@ -95,13 +95,10 @@ class ThinkingProcessAuditLoggerTest {
                         25L,
                         ThinkingProcessItem.CURRENT_SCHEMA_VERSION,
                         "test_tool",
-                        "Test tool",
-                        "tool_execution_1",
                         "tool_call_1",
                         1L,
                         truncatedInput,
                         truncatedOutput,
-                        true,
                         null,
                         null);
         return new ProcessAuditEvent(item, null, fullInput, fullOutput);

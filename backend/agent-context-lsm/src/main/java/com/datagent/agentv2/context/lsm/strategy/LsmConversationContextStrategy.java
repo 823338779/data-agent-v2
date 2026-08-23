@@ -4,7 +4,6 @@ import com.datagent.agentv2.context.lsm.configuration.LsmContextProperties;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
 import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
-import com.datagent.agentv2.context.lsm.persistence.repository.LsmExecutionPolicyRepository;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator;
 import com.datagent.agentv2.context.lsm.runtime.LsmConversationContextAssembler;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
@@ -17,28 +16,25 @@ public class LsmConversationContextStrategy implements ConversationContextStrate
 
     public static final String STRATEGY_ID = "lsm";
 
-    private final LsmExecutionPolicyRepository policies;
     private final LsmConversationContextAssembler assembler;
     private final LsmCompactionCoordinator coordinator;
     private final LsmContextMetrics metrics;
+
     /** 首次访问 execution 时用于创建冻结策略的当前服务配置。 */
     private final LsmContextProperties properties;
 
     public LsmConversationContextStrategy(
-            LsmExecutionPolicyRepository policies,
             LsmConversationContextAssembler assembler,
             LsmCompactionCoordinator coordinator,
             LsmContextProperties properties) {
-        this(policies, assembler, coordinator, LsmContextMetrics.isolated(), properties);
+        this(assembler, coordinator, LsmContextMetrics.isolated(), properties);
     }
 
     public LsmConversationContextStrategy(
-            LsmExecutionPolicyRepository policies,
             LsmConversationContextAssembler assembler,
             LsmCompactionCoordinator coordinator,
             LsmContextMetrics metrics,
             LsmContextProperties properties) {
-        this.policies = Objects.requireNonNull(policies, "policies");
         this.assembler = Objects.requireNonNull(assembler, "assembler");
         this.coordinator = Objects.requireNonNull(coordinator, "coordinator");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
@@ -52,9 +48,8 @@ public class LsmConversationContextStrategy implements ConversationContextStrate
 
     @Override
     public PreparedConversationContext prepare(ConversationContextRequest request) {
-        // 必须是首个副作用：即使不足 75%，retry/takeover 也只能读取同一策略快照。
-        LsmContextPolicySnapshot frozen =
-                policies.findOrCreateExecutionPolicy(request.execution(), properties.snapshot());
+        // 单次准备全程使用同一份当前配置快照。
+        LsmContextPolicySnapshot frozen = properties.snapshot();
         LsmConversationContextAssembler.ContextState state =
                 assembler.loadAndEstimate(request, frozen);
         recordInputPressure(state);

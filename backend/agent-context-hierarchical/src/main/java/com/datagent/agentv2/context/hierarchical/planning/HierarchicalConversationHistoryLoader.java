@@ -7,36 +7,25 @@ import com.datagent.agentv2.conversation.context.ContextToolCall;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.BoundedProcessPayload;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.domain.MessageRole;
 import com.datagent.agentv2.conversation.domain.ModelThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
 import com.datagent.agentv2.conversation.domain.ToolThinkingProcessItem;
-import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
-import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.TreeMap;
-import java.util.UUID;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-/** 从真实会话消息、thinking process 和工具执行行重建原子问答历史。 */
+/** 从真实会话消息和 thinking process 重建原子问答历史。 */
 public final class HierarchicalConversationHistoryLoader {
-
-    /** 持久化 user 角色的稳定值。 */
-    private static final String ROLE_USER = "user";
-
-    /** 持久化 assistant 角色的稳定值。 */
-    private static final String ROLE_ASSISTANT = "assistant";
 
     /** thinking-only 和 tool-call assistant 消息使用的空正文。 */
     private static final String EMPTY_CONTENT = "";
@@ -51,7 +40,7 @@ public final class HierarchicalConversationHistoryLoader {
     /** 有界消息行违反顺序或会话约束时的稳定错误。 */
     private static final String ERROR_INVALID_HISTORY = "Conversation history is inconsistent";
 
-    /** thinking tool 节点与工具执行行不一致时的稳定错误。 */
+    /** thinking tool 节点无法形成完整调用时的稳定错误。 */
     private static final String ERROR_MISMATCHED_TOOL_PROCESS =
             "Tool process item does not match its execution row";
 
@@ -88,9 +77,6 @@ public final class HierarchicalConversationHistoryLoader {
     /** 按冻结会话序号边界读取真实消息的持久化服务。 */
     private final ConversationMessageService messages;
 
-    /** 跨历史 assistant execution 批量读取工具身份行的持久化服务。 */
-    private final ToolExecutionService toolExecutions;
-
     /** 序列化工具 observation 和截断预览的 JSON 边界。 */
     private final ObjectMapper json;
 
@@ -101,12 +87,10 @@ public final class HierarchicalConversationHistoryLoader {
     public HierarchicalConversationHistoryLoader(
             AgentExecutionService agentExecutions,
             ConversationMessageService messages,
-            ToolExecutionService toolExecutions,
             ObjectMapper json,
             ConversationTurnGrouper grouper) {
         this.agentExecutions = Objects.requireNonNull(agentExecutions, "agentExecutions");
         this.messages = Objects.requireNonNull(messages, "messages");
-        this.toolExecutions = Objects.requireNonNull(toolExecutions, "toolExecutions");
         this.json = Objects.requireNonNull(json, "json");
         this.grouper = Objects.requireNonNull(grouper, "grouper");
     }
@@ -127,27 +111,21 @@ public final class HierarchicalConversationHistoryLoader {
                 messages.findByConversationSessionIdUpTo(
                         reference.conversationSessionId(), reference.inputUpToMessageSequence());
         validateRows(reference, rows);
-        Map<UUID, ToolExecutionEntity> executionIndex = executionIndex(rows);
-        Set<UUID> referencedToolProcesses = new HashSet<>();
         List<ConversationTurnGrouper.SourceMessage> sources = new ArrayList<>(rows.size());
 
         // 每条持久化 assistant 中心行可展开多次模型调用，但仍只贡献一个源消息序号。
         for (ConversationMessage row : rows) {
             long sequence = row.getConversationMessageSequence();
-            if (ROLE_USER.equals(row.getRole())) {
+            if (row.getRole() == MessageRole.USER) {
                 sources.add(
                         ConversationTurnGrouper.SourceMessage.user(
                                 sequence, ContextMessage.user(row.getContent())));
             } else {
-                List<ContextMessage> rebuilt =
-                        rebuildAssistant(row, executionIndex, referencedToolProcesses);
+                List<ContextMessage> rebuilt = rebuildAssistant(row);
                 sources.add(
                         ConversationTurnGrouper.SourceMessage.assistant(
                                 sequence, !row.getContent().isBlank(), rebuilt));
             }
-        }
-        if (referencedToolProcesses.size() != executionIndex.size()) {
-            throw new IllegalStateException(ERROR_MISMATCHED_TOOL_PROCESS);
         }
         return grouper.groupSources(sources);
     }
@@ -162,7 +140,7 @@ public final class HierarchicalConversationHistoryLoader {
                     || row.getConversationMessageSequence() == null
                     || row.getConversationMessageSequence() <= previousSequence
                     || row.getConversationMessageSequence() > reference.inputUpToMessageSequence()
-                    || (!ROLE_USER.equals(row.getRole()) && !ROLE_ASSISTANT.equals(row.getRole()))
+                    || row.getRole() == null
                     || row.getContent() == null) {
                 throw new IllegalStateException(ERROR_INVALID_HISTORY);
             }
@@ -170,31 +148,7 @@ public final class HierarchicalConversationHistoryLoader {
         }
     }
 
-    private Map<UUID, ToolExecutionEntity> executionIndex(List<ConversationMessage> rows) {
-        List<String> executionIds =
-                rows.stream()
-                        .filter(row -> ROLE_ASSISTANT.equals(row.getRole()))
-                        .map(ConversationMessage::getExecutionId)
-                        .filter(Objects::nonNull)
-                        .distinct()
-                        .toList();
-        Map<UUID, ToolExecutionEntity> result = new HashMap<>();
-
-        // 工具执行必须覆盖所有历史 assistant execution，并由 process UUID 唯一索引。
-        for (ToolExecutionEntity toolExecution : toolExecutions.findByExecutionIds(executionIds)) {
-            if (toolExecution == null
-                    || toolExecution.getToolProcessItemId() == null
-                    || result.put(toolExecution.getToolProcessItemId(), toolExecution) != null) {
-                throw new IllegalStateException(ERROR_MISMATCHED_TOOL_PROCESS);
-            }
-        }
-        return result;
-    }
-
-    private List<ContextMessage> rebuildAssistant(
-            ConversationMessage assistant,
-            Map<UUID, ToolExecutionEntity> executionIndex,
-            Set<UUID> referencedToolProcesses) {
+    private List<ContextMessage> rebuildAssistant(ConversationMessage assistant) {
         TreeMap<Long, InvocationParts> invocations = new TreeMap<>();
         List<ThinkingProcessItem> process =
                 assistant.getThinkingProcess() == null
@@ -229,13 +183,7 @@ public final class HierarchicalConversationHistoryLoader {
                 }
                 continue;
             }
-            appendToolInvocation(
-                    assistant,
-                    parts.tools,
-                    thinking,
-                    executionIndex,
-                    referencedToolProcesses,
-                    result);
+            appendToolInvocation(parts.tools, thinking, result);
         }
 
         // 最终正文与最后一次无工具模型调用的 thinking 绑定；空 retry 占位不进入协议消息列表。
@@ -246,19 +194,12 @@ public final class HierarchicalConversationHistoryLoader {
     }
 
     private void appendToolInvocation(
-            ConversationMessage assistant,
-            List<ToolThinkingProcessItem> items,
-            String thinking,
-            Map<UUID, ToolExecutionEntity> executionIndex,
-            Set<UUID> referencedToolProcesses,
-            List<ContextMessage> result) {
+            List<ToolThinkingProcessItem> items, String thinking, List<ContextMessage> result) {
         List<ContextToolCall> calls = new ArrayList<>(items.size());
 
         // 同一 invocation 先形成完整 assistant tool_calls，再依节点顺序追加 terminal observations。
         for (ToolThinkingProcessItem item : items) {
-            ToolExecutionEntity persisted = executionIndex.get(item.processItemId());
-            validateToolItem(assistant, item, persisted);
-            referencedToolProcesses.add(item.processItemId());
+            validateToolItem(item);
             calls.add(
                     new ContextToolCall(
                             item.toolCallId(), item.toolName(), inputArguments(item.input())));
@@ -282,22 +223,11 @@ public final class HierarchicalConversationHistoryLoader {
         return ((ToolThinkingProcessItem) item).modelInvocationSequence();
     }
 
-    private static void validateToolItem(
-            ConversationMessage assistant,
-            ToolThinkingProcessItem item,
-            ToolExecutionEntity persisted) {
-        // 冻结历史只接受能同时重建 call 与 observation 的 terminal 工具节点。
+    private static void validateToolItem(ToolThinkingProcessItem item) {
+        // 冻结历史只接受 thinking process 中可同时重建 call 与 observation 的 terminal 节点。
         if (!isTerminal(item.status())
-                || persisted == null
-                || !assistant
-                        .getConversationMessageId()
-                        .equals(persisted.getAssistantConversationMessageId())
-                || !Objects.equals(assistant.getExecutionId(), persisted.getExecutionId())
-                || !item.toolExecutionId().equals(persisted.getToolExecutionId())
-                || !item.toolCallId().equals(persisted.getToolCallId())
-                || !item.toolName().equals(persisted.getToolName())
-                || !Objects.equals(
-                        item.modelInvocationSequence(), persisted.getModelInvocationSequence())) {
+                || item.toolCallId().isBlank()
+                || item.toolName().isBlank()) {
             throw new IllegalStateException(ERROR_MISMATCHED_TOOL_PROCESS);
         }
     }

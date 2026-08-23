@@ -16,9 +16,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /** 内部模型协议与 Ollama 请求协议之间的结构映射。 */
-@Mapper(
-        unmappedTargetPolicy = ReportingPolicy.ERROR,
-        builder = @Builder(disableBuilder = true))
+@Mapper(unmappedTargetPolicy = ReportingPolicy.ERROR, builder = @Builder(disableBuilder = true))
 public interface OllamaModelStructMapper {
 
     OllamaModelStructMapper INSTANCE = Mappers.getMapper(OllamaModelStructMapper.class);
@@ -27,16 +25,14 @@ public interface OllamaModelStructMapper {
     @Mapping(
             target = "toolCalls",
             expression = "java(toProviderToolCalls(message.toolCalls(), json))")
-    OllamaApi.Message toProviderMessage(
-            ModelInputMessage message, @Context ObjectMapper json);
+    OllamaApi.Message toProviderMessage(ModelInputMessage message, @Context ObjectMapper json);
 
     @Mapping(target = "id", source = "toolCallId")
     @Mapping(
             target = "function",
             expression =
                     "java(new OllamaApi.Message.ToolCallFunction(call.name(), toMap(call.arguments(), json)))")
-    OllamaApi.Message.ToolCall toProviderToolCall(
-            ModelToolCall call, @Context ObjectMapper json);
+    OllamaApi.Message.ToolCall toProviderToolCall(ModelToolCall call, @Context ObjectMapper json);
 
     default List<OllamaApi.Message.ToolCall> toProviderToolCalls(
             List<ModelToolCall> calls, @Context ObjectMapper json) {
@@ -45,8 +41,7 @@ public interface OllamaModelStructMapper {
                 : calls.stream().map(call -> toProviderToolCall(call, json)).toList();
     }
 
-    default List<OllamaApi.ChatRequest.Tool> toProviderTools(
-            List<ModelToolDefinition> tools) {
+    default List<OllamaApi.ChatRequest.Tool> toProviderTools(List<ModelToolDefinition> tools) {
         return tools.stream().map(this::toProviderTool).toList();
     }
 

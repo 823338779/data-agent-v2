@@ -1,113 +1,36 @@
 package com.datagent.agentv2.conversation.context;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
-import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
-import com.datagent.agentv2.conversation.enums.ExecutionEventType;
-import com.datagent.agentv2.conversation.enums.ExecutionStatus;
-import com.datagent.agentv2.conversation.exception.ExecutionDeadlineExceededException;
-import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
-import com.datagent.agentv2.conversation.process.AgentExecutionProcessTerminationService;
-import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
-import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeStructMapper;
-import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
+import com.datagent.agentv2.conversation.runtime.ExecutionStoppedException;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
-import com.datagent.agentv2.persistence.service.ConversationSessionService;
 import com.datagent.agentv2.platform.context.TenantContext;
-import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/** 以共享数据库行锁实现 LSM execution fencing、取消、事件和失败收敛。 */
+/** 上下文压缩边界只校验本机 execution 仍运行且未超时。 */
 @Component
 @RequiredArgsConstructor
 public class WebContextExecutionControlAdapter implements ContextExecutionControlPort {
 
-    private static final String EVENT_ID_PREFIX = "execution_event";
-    private static final String EMPTY_EVENT_PAYLOAD = "{}";
-
     private final AgentExecutionService executions;
-    private final AgentExecutionProcessTerminationService termination;
-    private final ConversationSessionService sessions;
-    private final AgentExecutionEventService events;
-    private final IdGenerator ids;
-
-    @Override
-    public void assertOwnedAndWithinBudget(ContextExecutionRef execution) {
-        // select for update 加入调用方事务；publication 的 REQUIRES_NEW 会把锁保持到 manifest CAS 后提交。
-        AgentExecution locked = lockAndValidate(execution);
-        Instant deadline = locked.getHardDeadlineAt();
-        if (deadline == null || !deadline.isAfter(Instant.now())) {
-            throw new ExecutionDeadlineExceededException(execution.executionId());
-        }
-    }
-
-    @Override
-    public boolean cancelIfRequested(ContextExecutionRef execution) {
-        AgentExecution locked = lockAndValidate(execution);
-        if (locked.getCancellationRequestedAt() == null) {
-            return false;
-        }
-        return termination.cancelOwned(run(execution), Instant.now());
-    }
 
     @Override
     @Transactional
-    public void publish(ContextExecutionRef execution, ContextLifecycleEvent event) {
-        lockAndValidate(execution);
-        ExecutionEventType type =
-                switch (event.type()) {
-                    case STARTED -> ExecutionEventType.CONTEXT_COMPACTION_STARTED;
-                    case COMPLETED -> ExecutionEventType.CONTEXT_COMPACTION_COMPLETED;
-                    case FAILED -> ExecutionEventType.CONTEXT_COMPACTION_FAILED;
-                };
-        persistBodyFreeEvent(execution, type, Instant.now());
-    }
-
-    @Override
-    @Transactional
-    public void fail(ContextExecutionRef execution, String failureCode, String safeMessage) {
-        lockAndValidate(execution);
-        Instant now = Instant.now();
-        persistBodyFreeEvent(execution, ExecutionEventType.CONTEXT_COMPACTION_FAILED, now);
-        termination.failOwned(run(execution), failureCode, safeMessage, now);
-    }
-
-    private AgentExecution lockAndValidate(ContextExecutionRef execution) {
-        if (!TenantContext.requiredTenantId().equals(execution.tenantId())) {
-            throw new ExecutionOwnershipLostException(execution.executionId());
-        }
+    public void assertRunningAndWithinDeadline(ContextExecutionRef execution) {
         AgentExecution locked = executions.lockById(execution.executionId());
-        if (locked == null
-                || !execution.conversationSessionId().equals(locked.getConversationSessionId())
-                || !ExecutionStatus.RUNNING.value().equals(locked.getStatus())
-                || !execution.ownerInstanceId().equals(locked.getOwnerInstanceId())
-                || execution.executionAttempt() != locked.getExecutionAttemptNumber()) {
-            throw new ExecutionOwnershipLostException(execution.executionId());
+        boolean running =
+                TenantContext.requiredTenantId().equals(execution.tenantId())
+                        && locked != null
+                        && execution
+                                .conversationSessionId()
+                                .equals(locked.getConversationSessionId())
+                        && "running".equals(locked.getStatus())
+                        && locked.getHardDeadlineAt() != null
+                        && locked.getHardDeadlineAt().isAfter(Instant.now());
+        if (!running) {
+            throw new ExecutionStoppedException(execution.executionId());
         }
-        // owner/attempt 尚未被接管也不代表租约仍有效；在同一行锁内先独立执行 lease fence。
-        Instant leaseExpiresAt = locked.getLeaseExpiresAt();
-        if (leaseExpiresAt == null || !leaseExpiresAt.isAfter(Instant.now())) {
-            throw new ExecutionOwnershipLostException(execution.executionId());
-        }
-        return locked;
-    }
-
-    private void persistBodyFreeEvent(
-            ContextExecutionRef execution, ExecutionEventType type, Instant now) {
-        events.save(
-                AgentExecutionEvent.occurred(
-                        ids.next(EVENT_ID_PREFIX),
-                        execution.conversationSessionId(),
-                        execution.executionId(),
-                        sessions.nextExecutionEventSequence(execution.conversationSessionId()),
-                        type.value(),
-                        EMPTY_EVENT_PAYLOAD,
-                        now));
-    }
-
-    private static AgentExecutionPort.ClaimedAgentExecution run(ContextExecutionRef execution) {
-        return AgentExecutionRuntimeStructMapper.INSTANCE.toClaimedExecution(execution);
     }
 }

@@ -55,9 +55,7 @@ class ConversationProcessDocumentCodecTest {
                                 START.plusMillis(18),
                                 10L,
                                 1,
-                                "current_time",
                                 "Current time",
-                                "tool_execution_1",
                                 "call_1",
                                 1L,
                                 new BoundedProcessPayload(
@@ -74,13 +72,18 @@ class ConversationProcessDocumentCodecTest {
                                         17L,
                                         SHA_C,
                                         CONTENT_TYPE_JSON),
-                                true,
                                 null,
                                 null));
 
         String document = codec.write(items);
 
         assertThat(document).startsWith("[");
+        assertThat(document)
+                .contains("\"toolName\"")
+                .contains("\"toolCallId\"")
+                .doesNotContain("\"toolId\"")
+                .doesNotContain("\"toolExecutionId\"")
+                .doesNotContain("\"success\"");
         assertThat(codec.read(document)).containsExactlyElementsOf(items);
     }
 

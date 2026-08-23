@@ -2,7 +2,6 @@
   "type": "assistant_delta",
   "conversationSessionId": "session_demo",
   "executionId": "execution_demo",
-  "executionAttemptNumber": 1,
   "modelInvocationSequence": 1,
   "outputDeltaSequence": 2,
   "delta": "你好",

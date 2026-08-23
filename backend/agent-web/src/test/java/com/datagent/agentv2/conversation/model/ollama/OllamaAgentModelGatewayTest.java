@@ -1,13 +1,12 @@
 package com.datagent.agentv2.conversation.model.ollama;
 
-import com.datagent.agentv2.conversation.model.api.ModelInvocationResult;
-import com.datagent.agentv2.conversation.model.api.ModelOutputDelta;
-import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.datagent.agentv2.conversation.exception.ModelStreamInterruptedException;
+import com.datagent.agentv2.conversation.model.api.ModelInvocationResult;
+import com.datagent.agentv2.conversation.model.api.ModelOutputDelta;
+import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
 import com.datagent.agentv2.conversation.react.ModelInputMessage;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.sun.net.httpserver.HttpExchange;

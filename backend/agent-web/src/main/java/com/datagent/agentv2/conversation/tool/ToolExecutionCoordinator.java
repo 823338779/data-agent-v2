@@ -1,10 +1,8 @@
 package com.datagent.agentv2.conversation.tool;
 
-import com.datagent.agentv2.conversation.enums.ToolExecutionStatus;
-import com.datagent.agentv2.conversation.runtime.AgentExecutionLeaseService;
-import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
-import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
-import com.datagent.agentv2.persistence.service.ToolExecutionService;
+import com.datagent.agentv2.conversation.process.ConversationProcessCoordinator;
+import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
+import com.datagent.agentv2.conversation.runtime.LocalExecutionGuard;
 import jakarta.annotation.PreDestroy;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -23,75 +21,65 @@ import tools.jackson.databind.JsonNode;
 @RequiredArgsConstructor
 public final class ToolExecutionCoordinator implements AutoCloseable {
 
-    private static final String ERROR_INVALID_ASSISTANT_CALL =
-            "Prepared tool execution has no matching assistant tool call";
+    private static final String ERROR_INVALID_RESULT = "Tool returned no result";
 
-    private final ToolExecutionService toolExecutions;
-    private final AgentExecutionLeaseService leases;
-    private final ToolExecutionTransactionService transactionOperations;
+    private final AgentToolRegistry tools;
+    private final LocalExecutionGuard guard;
+    private final ConversationProcessCoordinator processes;
     private final ToolFailureSanitizer failures;
     private final ExecutorService toolExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public List<ToolExecutionResult> executeModelInvocationTools(
-            AgentExecutionPort.ClaimedAgentExecution run, long modelInvocationSequence) {
+            LocalAgentExecution run,
+            long modelInvocationSequence,
+            List<PreparedToolInvocation> prepared) {
         List<ToolExecutionResult> observations = new ArrayList<>();
-
-        // Model Turn 内严格按 prepared 顺序执行；单个失败仅形成 Observation，不中断后续工具。
-        for (ToolExecutionEntity row :
-                toolExecutions.findByTurn(run.executionId(), modelInvocationSequence)) {
-            if (isTerminal(row.getStatus())) {
-                continue;
-            }
-            leases.assertOwnedAndWithinBudget(run);
-            ToolExecutionTransactionService.PreparedInvocation invocation =
-                    transactionOperations.beginInvocation(run, row);
-            ToolExecutionResult observation = invoke(invocation, run, modelInvocationSequence);
-            leases.assertOwnedAndWithinBudget(run);
-            transactionOperations.persistResult(
-                    run, invocation.execution(), observation, Instant.now());
-            observations.add(observation);
+        for (PreparedToolInvocation invocation : prepared) {
+            guard.assertRunningAndWithinDeadline(run);
+            processes.startTool(run, invocation.processItemId(), Instant.now());
+            ToolExecutionResult result = invoke(run, modelInvocationSequence, invocation);
+            guard.assertRunningAndWithinDeadline(run);
+            processes.finishTool(run, invocation.processItemId(), result, Instant.now());
+            observations.add(result);
         }
         return List.copyOf(observations);
     }
 
     private ToolExecutionResult invoke(
-            ToolExecutionTransactionService.PreparedInvocation invocation,
-            AgentExecutionPort.ClaimedAgentExecution run,
-            long modelInvocationSequence) {
-        if (invocation.tool() == null) {
-            return failures.sanitize(new IllegalStateException(ERROR_INVALID_ASSISTANT_CALL));
+            LocalAgentExecution run,
+            long modelInvocationSequence,
+            PreparedToolInvocation invocation) {
+        AgentTool tool;
+        try {
+            tool = tools.require(invocation.call().name());
+        } catch (RuntimeException failure) {
+            return failures.sanitize(failure);
         }
         AgentTool.InvocationContext context =
                 new AgentTool.InvocationContext(
                         run.tenantId(),
                         run.executionId(),
                         modelInvocationSequence,
-                        invocation.execution().getToolCallId(),
-                        invocation.execution().getIdempotencyKey());
+                        invocation.call().toolCallId(),
+                        run.executionId() + ":" + invocation.call().toolCallId());
         Future<JsonNode> future =
-                toolExecutor.submit(
-                        () -> invocation.tool().execute(invocation.arguments(), context));
+                toolExecutor.submit(() -> tool.execute(invocation.call().arguments(), context));
         try {
-            JsonNode content =
-                    future.get(invocation.tool().timeout().toMillis(), TimeUnit.MILLISECONDS);
+            JsonNode content = future.get(tool.timeout().toMillis(), TimeUnit.MILLISECONDS);
             if (content == null) {
-                throw new IllegalStateException(ERROR_INVALID_ASSISTANT_CALL);
+                throw new IllegalStateException(ERROR_INVALID_RESULT);
             }
             return ToolExecutionResult.succeeded(content);
         } catch (TimeoutException failure) {
             future.cancel(true);
             return failures.sanitize(failure);
         } catch (InterruptedException failure) {
+            future.cancel(true);
             Thread.currentThread().interrupt();
             return failures.sanitize(failure);
         } catch (ExecutionException failure) {
             return failures.sanitize(failure.getCause());
         }
-    }
-
-    private static boolean isTerminal(String status) {
-        return ToolExecutionStatus.SUCCEEDED.matches(status)
-                || ToolExecutionStatus.FAILED.matches(status);
     }
 
     @Override

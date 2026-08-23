@@ -80,15 +80,12 @@ public final class ConversationProcessDocumentCodec {
             return node;
         }
         ToolThinkingProcessItem tool = (ToolThinkingProcessItem) item;
-        node.put("toolId", tool.toolId());
         node.put("toolName", tool.toolName());
-        node.put("toolExecutionId", tool.toolExecutionId());
         node.put("toolCallId", tool.toolCallId());
         node.put("modelInvocationSequence", tool.modelInvocationSequence());
         node.set("input", writePayload(tool.input()));
         writeNullableNode(
                 node, "output", tool.output() == null ? null : writePayload(tool.output()));
-        writeNullableBoolean(node, "success", tool.success());
         writeNullableText(node, "errorCode", tool.errorCode());
         writeNullableText(node, "errorMessage", tool.errorMessage());
         return node;
@@ -164,16 +161,13 @@ public final class ConversationProcessDocumentCodec {
                 common.completedAt(),
                 common.durationMillis(),
                 common.schemaVersion(),
-                requiredText(node, "toolId"),
                 requiredText(node, "toolName"),
-                requiredText(node, "toolExecutionId"),
                 requiredText(node, "toolCallId"),
                 requiredLong(node, "modelInvocationSequence"),
                 readPayload(requiredNode(node, "input")),
                 nullableNode(node, "output") == null
                         ? null
                         : readPayload(nullableNode(node, "output")),
-                nullableBoolean(node, "success"),
                 nullableText(node, "errorCode"),
                 nullableText(node, "errorMessage"));
     }
@@ -269,11 +263,6 @@ public final class ConversationProcessDocumentCodec {
         return value == null ? null : value.asLong();
     }
 
-    private static Boolean nullableBoolean(JsonNode node, String field) {
-        JsonNode value = nullableNode(node, field);
-        return value == null ? null : value.asBoolean();
-    }
-
     private static Instant nullableInstant(JsonNode node, String field) {
         String value = nullableText(node, field);
         return value == null ? null : Instant.parse(value);
@@ -284,14 +273,6 @@ public final class ConversationProcessDocumentCodec {
     }
 
     private static void writeNullableText(ObjectNode node, String field, String value) {
-        if (value == null) {
-            node.putNull(field);
-        } else {
-            node.put(field, value);
-        }
-    }
-
-    private static void writeNullableBoolean(ObjectNode node, String field, Boolean value) {
         if (value == null) {
             node.putNull(field);
         } else {

@@ -1,13 +1,13 @@
 package com.datagent.agentv2.controller;
 
 import com.datagent.agentv2.conversation.execution.AgentExecutionControlService;
+import com.datagent.agentv2.conversation.execution.SubmissionConflictPolicy;
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
 import com.datagent.agentv2.conversation.session.ConversationSummaryView;
 import com.datagent.agentv2.conversation.session.ConversationTitleService;
 import com.datagent.agentv2.conversation.session.ConversationView;
 import com.datagent.agentv2.conversation.stream.ConversationEventStreamFacade;
 import com.datagent.agentv2.conversation.summary.ConversationSummaryStreamFacade;
-import com.datagent.agentv2.http.RequestContext;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -21,7 +21,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -87,15 +86,14 @@ public class ConversationController {
     ResponseEntity<ConversationView> submitMessage(
             @PathVariable String conversationSessionId,
             @Valid @RequestBody SubmitConversationMessageRequest request,
-            @RequestHeader(IDEMPOTENCY_KEY_HEADER) String idempotencyKey,
-            @RequestAttribute(RequestContext.ATTRIBUTE_REQUEST_ID) String requestId) {
+            @RequestHeader(IDEMPOTENCY_KEY_HEADER) String idempotencyKey) {
         return ResponseEntity.accepted()
                 .body(
                         conversations.submitMessage(
                                 conversationSessionId,
                                 request.content(),
-                                idempotencyKey,
-                                requestId));
+                                SubmissionConflictPolicy.defaulted(request.conflictPolicy()),
+                                idempotencyKey));
     }
 
     @PostMapping("/{conversationSessionId}/executions/{executionId}:cancel")
@@ -130,5 +128,6 @@ public class ConversationController {
             @NotBlank @Size(max = 120) String title, @Min(0) long expectedVersion) {}
 
     /** 向指定对话会话提交用户消息的请求。 */
-    record SubmitConversationMessageRequest(@NotBlank @Size(max = 8000) String content) {}
+    record SubmitConversationMessageRequest(
+            @NotBlank @Size(max = 8000) String content, SubmissionConflictPolicy conflictPolicy) {}
 }

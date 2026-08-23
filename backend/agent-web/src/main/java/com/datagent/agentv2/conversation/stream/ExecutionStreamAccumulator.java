@@ -13,9 +13,6 @@ public final class ExecutionStreamAccumulator {
     /** 未持久化回答达到该字符数时立即写 checkpoint。 */
     public static final int MAX_UNCHECKPOINTED_CHARACTERS = 512;
 
-    /** 当前本地累计所属的执行 attempt fencing token。 */
-    private final long executionAttemptNumber;
-
     /** 当前本地累计所属的模型调用序号。 */
     private final long modelInvocationSequence;
 
@@ -37,7 +34,6 @@ public final class ExecutionStreamAccumulator {
     /**
      * 从数据库权威投影恢复一个本地累计器。
      *
-     * @param executionAttemptNumber 当前执行 attempt
      * @param modelInvocationSequence 当前模型调用序号
      * @param outputDeltaSequence 已发布的最后增量序号
      * @param answer 已持久化的完整回答
@@ -45,13 +41,11 @@ public final class ExecutionStreamAccumulator {
      * @param checkpointedAt 最近 checkpoint 时间
      */
     public ExecutionStreamAccumulator(
-            long executionAttemptNumber,
             long modelInvocationSequence,
             long outputDeltaSequence,
             String answer,
             String phase,
             Instant checkpointedAt) {
-        this.executionAttemptNumber = executionAttemptNumber;
         this.modelInvocationSequence = modelInvocationSequence;
         this.outputDeltaSequence = outputDeltaSequence;
         this.answer = new StringBuilder(answer);
@@ -85,11 +79,6 @@ public final class ExecutionStreamAccumulator {
     /** 返回是否存在已经发布但尚未写入完整投影的回答字符。 */
     public boolean hasPending() {
         return uncheckpointedCharacters > 0;
-    }
-
-    /** 返回累计器所属的执行 attempt fencing token。 */
-    public long executionAttemptNumber() {
-        return executionAttemptNumber;
     }
 
     /** 返回累计器所属的模型调用序号。 */

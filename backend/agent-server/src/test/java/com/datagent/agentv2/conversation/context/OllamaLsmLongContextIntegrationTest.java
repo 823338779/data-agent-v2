@@ -2,10 +2,12 @@ package com.datagent.agentv2.conversation.context;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.datagent.agentv2.context.common.summary.EventContextSummaryDocument;
+import com.datagent.agentv2.context.common.summary.EventContextSummaryRenderer;
+import com.datagent.agentv2.context.common.summary.EventContextSummaryValidator;
 import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.planning.ConversationTokenEstimator;
-import com.datagent.agentv2.context.lsm.summary.ContextSummaryDocumentValidator;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GeneratedSummary;
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.GenerationRequest;
@@ -87,7 +89,8 @@ class OllamaLsmLongContextIntegrationTest {
         ContextSummaryGenerator generator =
                 new ContextSummaryGenerator(
                         new OllamaContextSummaryModelAdapter(api, properties),
-                        new ContextSummaryDocumentValidator(),
+                        new EventContextSummaryValidator(),
+                        new EventContextSummaryRenderer(),
                         estimator,
                         new LsmSegmentKeyFactory());
         GenerationRequest request =
@@ -97,7 +100,8 @@ class OllamaLsmLongContextIntegrationTest {
                         new LsmSummarySegment.Coverage(1, COMPLETED_TURNS),
                         new MessageCoverage(1, MESSAGE_COUNT),
                         List.of(SOURCE_ID),
-                        sourceDocument);
+                        sourceDocument,
+                        4_096);
 
         GeneratedSummary generated =
                 generator.generate(request, LsmContextPolicySnapshot.defaults(5, 4));
@@ -107,9 +111,9 @@ class OllamaLsmLongContextIntegrationTest {
         assertThat(generated.model()).isEqualTo(model);
         assertThat(generated.document().coverage())
                 .isEqualTo(
-                        new ContextSummaryDocumentValidator.ContextSummaryDocument.Coverage(
+                        new EventContextSummaryDocument.Coverage(
                                 1, COMPLETED_TURNS, 1, MESSAGE_COUNT));
-        assertThat(generated.document().confirmedFacts()).isNotEmpty();
+        assertThat(generated.document().events()).isNotEmpty();
         assertThat(generated.estimatedTokenCount())
                 .isPositive()
                 .isLessThan(estimator.estimateSummaryDocument(sourceDocument));

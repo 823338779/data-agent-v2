@@ -9,10 +9,7 @@ interface ConversationListProps {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  queued: '排队中',
   running: '处理中',
-  waiting_for_user: '待操作',
-  waiting_confirmation: '待确认',
   failed: '失败',
   cancelled: '已取消',
 };

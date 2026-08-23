@@ -19,7 +19,6 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -27,18 +26,12 @@ import org.testcontainers.utility.DockerImageName;
 @AutoConfigureMockMvc
 class ConversationSummarySseIntegrationTest {
 
-    private static final String REDIS_PASSWORD = "redis_test";
     private static final String SUMMARY_EVENTS_PATH = "/api/v1/agent-sessions/summary-events";
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
-    private static final GenericContainer<?> REDIS =
-            new GenericContainer<>(DockerImageName.parse("redis:7.4-alpine"))
-                    .withCommand("redis-server", "--requirepass", REDIS_PASSWORD)
-                    .withExposedPorts(6379);
 
     static {
         POSTGRES.start();
-        REDIS.start();
     }
 
     @DynamicPropertySource
@@ -46,15 +39,10 @@ class ConversationSummarySseIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
-        registry.add("spring.data.redis.host", REDIS::getHost);
-        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
-        registry.add("spring.data.redis.username", () -> "default");
-        registry.add("spring.data.redis.password", () -> REDIS_PASSWORD);
     }
 
     @AfterAll
     static void stopContainers() {
-        REDIS.stop();
         POSTGRES.stop();
     }
 

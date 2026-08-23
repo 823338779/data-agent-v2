@@ -18,6 +18,7 @@
 
     <modules>
         <module>agent-domain</module>
+        <module>agent-context-common</module>
         <module>agent-persistence</module>
         <module>agent-context-lsm</module>
         <module>agent-context-hierarchical</module>

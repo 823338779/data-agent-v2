@@ -6,14 +6,15 @@
     "status": "running",
     "progress": 25,
     "objective": "分析示例数据",
-    "cancellationRequestedAt": null,
     "streamCheckpoint": null
   },
   "event": {
     "executionEventId": "execution_event_demo",
     "executionEventSequence": 2,
     "type": "execution_started",
-    "occurredAt": "2026-08-01T06:00:01Z"
+    "occurredAt": "2026-08-01T06:00:01Z",
+    "executionId": "execution_demo",
+    "status": "running"
   },
   "messages": []
 }

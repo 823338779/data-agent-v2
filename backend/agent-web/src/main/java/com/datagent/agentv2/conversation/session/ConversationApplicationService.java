@@ -11,17 +11,16 @@ import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.domain.ConversationSession;
-import com.datagent.agentv2.conversation.enums.ConversationSessionType;
+import com.datagent.agentv2.conversation.domain.MessageRole;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
-import com.datagent.agentv2.conversation.enums.MessageRole;
 import com.datagent.agentv2.conversation.execution.AgentExecutionSubmissionService;
+import com.datagent.agentv2.conversation.execution.SubmissionConflictPolicy;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
-import com.datagent.agentv2.platform.context.OperatorContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
 import java.util.HashMap;
@@ -56,8 +55,6 @@ public class ConversationApplicationService {
                         idGenerator.next(ID_PREFIX_CONVERSATION_SESSION),
                         normalizedTitle(title),
                         tag,
-                        ConversationSessionType.INTERACTIVE.value(),
-                        OperatorContext.requiredUserId(),
                         Instant.now());
         conversationSessionService.save(session);
         return ConversationView.composeFromNewSession(session);
@@ -204,14 +201,7 @@ public class ConversationApplicationService {
                 (conversationSessionId, run) -> {
                     activeBySession.put(
                             conversationSessionId,
-                            ExecutionStatus.QUEUED.value().equals(run.getStatus())
-                                    || ExecutionStatus.RUNNING.value().equals(run.getStatus())
-                                    || ExecutionStatus.WAITING_FOR_USER
-                                            .value()
-                                            .equals(run.getStatus())
-                                    || ExecutionStatus.WAITING_CONFIRMATION
-                                            .value()
-                                            .equals(run.getStatus()));
+                            ExecutionStatus.RUNNING.value().equals(run.getStatus()));
                     AgentExecutionStreamCheckpoint stream =
                             streamsByExecutionId.get(run.getExecutionId());
                     if (stream != null) {
@@ -312,10 +302,13 @@ public class ConversationApplicationService {
     }
 
     public ConversationView submitMessage(
-            String conversationSessionId, String content, String idempotencyKey, String requestId) {
+            String conversationSessionId,
+            String content,
+            SubmissionConflictPolicy conflictPolicy,
+            String idempotencyKey) {
         ConversationSession session =
                 agentExecutionSubmissionService.submit(
-                        conversationSessionId, content, idempotencyKey, requestId);
+                        conversationSessionId, content, conflictPolicy, idempotencyKey);
         return snapshot(session);
     }
 
@@ -354,7 +347,10 @@ public class ConversationApplicationService {
                         session.getConversationSessionId());
         List<ConversationView.MessageView> baseMessageViews =
                 messageEntities.stream()
-                        .map(message -> ConversationView.MessageView.composeFromMessage(message, null))
+                        .map(
+                                message ->
+                                        ConversationView.MessageView.composeFromMessage(
+                                                message, null))
                         .toList();
         List<AgentExecution> executionEntities =
                 agentExecutionService.findByConversationSessionIdOrderByCreatedAtDesc(
@@ -375,9 +371,7 @@ public class ConversationApplicationService {
                                 message ->
                                         ConversationView.MessageView.composeFromMessage(
                                                 message,
-                                                MessageRole.ASSISTANT
-                                                                .value()
-                                                                .equals(message.getRole())
+                                                message.getRole() == MessageRole.ASSISTANT
                                                         ? executionViewsById.get(
                                                                 message.getExecutionId())
                                                         : null))
@@ -386,15 +380,17 @@ public class ConversationApplicationService {
                 executionEntities.isEmpty()
                         ? null
                         : executionViewsById.get(executionEntities.getFirst().getExecutionId());
-        return ConversationView.composeFromSession(
-                session, messageViews, latestAgentExecutionView);
+        return ConversationView.composeFromSession(session, messageViews, latestAgentExecutionView);
     }
 
     private ConversationView.AgentExecutionView executionView(
             AgentExecution run, List<ConversationView.MessageView> messageViews) {
         List<ConversationView.AgentExecutionEventView> eventViews =
                 agentExecutionEventService.findByExecutionId(run.getExecutionId()).stream()
-                        .map(event -> ConversationView.AgentExecutionEventView.composeFromEvent(event, run))
+                        .map(
+                                event ->
+                                        ConversationView.AgentExecutionEventView.composeFromEvent(
+                                                event, run))
                         .toList();
         AgentExecutionStreamCheckpoint stream =
                 agentExecutionStreamCheckpointService.findByExecutionId(run.getExecutionId());
@@ -427,23 +423,19 @@ public class ConversationApplicationService {
     /** 数据库中一次 Agent 执行的完整流式投影，用于 SSE 建连和跳号恢复。 */
     public record ExecutionStreamCheckpointView(
             String executionId,
-            long executionAttemptNumber,
             long modelInvocationSequence,
             ExecutionPhase phase,
             long outputDeltaSequence,
-            String answer,
-            java.time.Instant checkpointedAt) {
+            String answer) {
 
         public static ExecutionStreamCheckpointView composeFromStream(
                 AgentExecution execution, AgentExecutionStreamCheckpoint stream) {
             return new ExecutionStreamCheckpointView(
                     execution.getExecutionId(),
-                    stream.getExecutionAttemptNumber(),
                     stream.getModelInvocationSequence(),
                     ExecutionPhase.fromValue(stream.getPhase()),
                     stream.getOutputDeltaSequence(),
-                    stream.getAnswer(),
-                    stream.getCheckpointedAt());
+                    stream.getAnswer());
         }
     }
 

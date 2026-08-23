@@ -8,9 +8,7 @@ public final class ExecutionConstants {
     public static final String ID_PREFIX_EXECUTION_STREAM_CHECKPOINT =
             "execution_stream_checkpoint";
     public static final String ID_PREFIX_CONVERSATION_MESSAGE = "conversation_message";
-    public static final String ID_PREFIX_NOTIFICATION_MESSAGE = "notification_message";
     public static final String ID_PREFIX_CONVERSATION_SESSION = "conversation_session";
-    public static final String REQUEST_ID_UNKNOWN = "request_unknown";
     public static final String EMPTY_TEXT = "";
     public static final String HASH_ALGORITHM_SHA_256 = "SHA-256";
     public static final String ERROR_IDEMPOTENCY_KEY_BLANK = "Idempotency-Key must not be blank";
@@ -26,23 +24,16 @@ public final class ExecutionConstants {
     public static final String ERROR_ONLY_TERMINAL_EXECUTIONS_RETRY =
             "only terminal Agent executions can be retried";
     public static final String ERROR_SESSION_CHANGED_CONCURRENTLY = "session changed concurrently";
-    public static final String ERROR_EXECUTION_ALREADY_OWNED_PREFIX =
-            "Agent execution already owned locally: ";
-    public static final String ERROR_EXECUTION_OWNERSHIP_LOST_PREFIX =
-            "Agent execution ownership was lost: ";
-    public static final String ERROR_EXECUTION_BUDGET_EXHAUSTED_PREFIX =
-            "Agent execution budget was exhausted: ";
     public static final String ERROR_HASH_ALGORITHM_UNAVAILABLE_SUFFIX = " is unavailable";
     public static final String DEFAULT_CONVERSATION_TITLE = "New conversation";
-    public static final String EVENT_TITLE_EXECUTION_QUEUED = "Agent execution queued";
     public static final String EVENT_TITLE_EXECUTION_STARTED = "Agent execution started";
-    public static final String EVENT_DETAIL_EXECUTION_QUEUED = "Waiting for execution capacity";
     public static final String EVENT_DETAIL_EXECUTION_STARTED = "Preparing the model request";
+
     /** 用于把单独的回车符统一归一化为换行符。 */
     public static final String CARRIAGE_RETURN = "\r";
+
     public static final String WINDOWS_LINE_SEPARATOR = "\r\n";
     public static final String LINE_SEPARATOR = "\n";
-    public static final String INSTANCE_ID_PREFIX = "instance_";
 
     private ExecutionConstants() {}
 }

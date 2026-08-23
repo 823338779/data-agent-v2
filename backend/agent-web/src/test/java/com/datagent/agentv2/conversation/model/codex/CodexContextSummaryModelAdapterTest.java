@@ -27,7 +27,7 @@ class CodexContextSummaryModelAdapterTest {
     private static final String SECRET_BODY = "provider-secret-body";
 
     @Test
-    void usesNoToolsNoDeltaAndCarriesSchemaAndOutputLimit() {
+    void usesNoToolsNoDeltaAndCarriesSchemaAndSeparateBudgets() {
         CodexAppServerClient client = mock(CodexAppServerClient.class);
         CodexModelProperties properties = new CodexModelProperties();
         properties.setModel(MODEL_NAME);
@@ -36,7 +36,12 @@ class CodexContextSummaryModelAdapterTest {
         ContextSummaryModelPort adapter = new CodexContextSummaryModelAdapter(client, properties);
         ContextSummaryRequest request =
                 new ContextSummaryRequest(
-                        "summary-system", "source-document", "{\"type\":\"object\"}", 2_048);
+                        "summary-system",
+                        "source-document",
+                        "{\"type\":\"object\"}",
+                        256,
+                        2_048,
+                        4_096);
 
         ContextSummaryResult result = adapter.summarize(request);
 
@@ -54,7 +59,8 @@ class CodexContextSummaryModelAdapterTest {
                                         prompt.contains("summary-system")
                                                 && prompt.contains("source-document")
                                                 && prompt.contains("\"type\":\"object\"")
-                                                && prompt.contains("2048")),
+                                                && prompt.contains("\"TARGET_RENDERED_TOKENS\":256")
+                                                && prompt.contains("\"MAX_OUTPUT_TOKENS\":2048")),
                         eq(List.of()),
                         any());
     }
@@ -71,7 +77,12 @@ class CodexContextSummaryModelAdapterTest {
                         () ->
                                 adapter.summarize(
                                         new ContextSummaryRequest(
-                                                "system", "source", "{\"type\":\"object\"}", 100)))
+                                                "system",
+                                                "source",
+                                                "{\"type\":\"object\"}",
+                                                50,
+                                                100,
+                                                1_000)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Codex context summary request failed")
                 .hasNoCause()

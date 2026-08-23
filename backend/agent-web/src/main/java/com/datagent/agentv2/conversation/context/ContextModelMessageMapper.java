@@ -1,7 +1,7 @@
 package com.datagent.agentv2.conversation.context;
 
-import com.datagent.agentv2.conversation.react.ModelInputMessage;
 import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
+import com.datagent.agentv2.conversation.react.ModelInputMessage;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -26,8 +26,7 @@ public class ContextModelMessageMapper {
         return MAPPINGS.toModelMessages(messages, json);
     }
 
-    public List<ContextToolDefinition> toContextToolDefinitions(
-            List<ModelToolDefinition> tools) {
+    public List<ContextToolDefinition> toContextToolDefinitions(List<ModelToolDefinition> tools) {
         return MAPPINGS.toContextToolDefinitions(tools);
     }
 }

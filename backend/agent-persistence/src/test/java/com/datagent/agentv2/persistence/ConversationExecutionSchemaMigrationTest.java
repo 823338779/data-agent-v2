@@ -1,17 +1,14 @@
 package com.datagent.agentv2.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -24,115 +21,13 @@ class ConversationExecutionSchemaMigrationTest {
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
 
     @BeforeAll
-    static void migrateLegacyData() throws SQLException {
+    static void migrateFreshDatabase() {
         POSTGRES.start();
         Flyway.configure()
                 .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
                 .locations("classpath:db/migration")
-                .target(MigrationVersion.fromVersion("2"))
                 .load()
                 .migrate();
-
-        execute(
-                """
-                insert into tenant(id, name) values ('tenant_legacy', 'Legacy');
-                insert into user_account(id, tenant_id, username, password_hash)
-                    values ('user_legacy', 'tenant_legacy', 'legacy', 'hash');
-                insert into agent_session(id, tenant_id, title, session_type, created_by)
-                    values ('session_legacy', 'tenant_legacy', 'Legacy', 'INTERACTIVE', 'user_legacy');
-                insert into agent_message(id, tenant_id, session_id, role, content, sequence, author_user_id)
-                    values ('message_legacy', 'tenant_legacy', 'session_legacy', 'user', 'hello', 1, 'user_legacy');
-                insert into agent_run(
-                    id, tenant_id, session_id, triggering_message_id, status, phase,
-                    execution_attempt, owner_instance_id, request_id, started_at, hard_deadline_at)
-                    values (
-                    'execution_legacy', 'tenant_legacy', 'session_legacy', 'message_legacy', 'running',
-                    'THINKING', 1, 'instance_legacy', 'request_legacy',
-                    '2026-08-01T00:00:00Z', '2026-08-01T00:10:00Z');
-                """);
-
-        int migratedToVersionSeven =
-                Flyway.configure()
-                        .dataSource(
-                                POSTGRES.getJdbcUrl(),
-                                POSTGRES.getUsername(),
-                                POSTGRES.getPassword())
-                        .locations("classpath:db/migration")
-                        .target(MigrationVersion.fromVersion("7"))
-                        .load()
-                        .migrate()
-                        .migrationsExecuted;
-        assertThat(migratedToVersionSeven).isEqualTo(5);
-
-        // 模拟真实库中执行已被领取、但首个模型调用尚未开始的合法检查点。
-        execute(
-                """
-                insert into agent_run_stream(
-                    stream_id, run_id, tenant_id, execution_attempt, phase,
-                    model_turn_sequence, stream_sequence)
-                    values (
-                    'stream_legacy', 'execution_legacy', 'tenant_legacy', 1,
-                    'RECEIVED', 0, 0)
-                    on conflict (tenant_id, run_id) do update
-                       set execution_attempt = excluded.execution_attempt,
-                           model_turn_sequence = excluded.model_turn_sequence,
-                           stream_sequence = excluded.stream_sequence,
-                           phase = excluded.phase
-                """);
-
-        // 构造 V7 时代的 internal assistant/tool observation 与公开回答，验证 V13 可逆聚合。
-        execute(
-                """
-                update agent_session set message_sequence = 4 where session_id = 'session_legacy';
-                update agent_message set run_id = 'execution_legacy'
-                 where message_id = 'message_legacy';
-                insert into agent_model_turn(
-                    model_turn_id, tenant_id, run_id, model_turn_sequence, execution_attempt,
-                    input_up_to_message_sequence, status, completed_at)
-                values ('turn_legacy', 'tenant_legacy', 'execution_legacy', 1, 1, 1,
-                        'completed', '2026-08-01T00:00:03Z');
-                insert into agent_message(
-                    message_id, tenant_id, session_id, run_id, role, content, sequence,
-                    tool_calls, visibility)
-                values ('assistant_internal_legacy', 'tenant_legacy', 'session_legacy',
-                        'execution_legacy', 'assistant', '', 2,
-                        '{"version":1,"calls":[{"id":"call_legacy","name":"current_time","arguments":{"zone":"Asia/Shanghai","token":"must-redact"}}]}',
-                        'internal');
-                insert into agent_tool_execution(
-                    tenant_id, tool_execution_id, run_id, model_turn_sequence, execution_attempt,
-                    assistant_message_id, tool_call_id, tool_name, status, execution_count,
-                    started_at)
-                values ('tenant_legacy', 'tool_legacy', 'execution_legacy', 1, 1,
-                        'assistant_internal_legacy', 'call_legacy', 'current_time', 'executing', 1,
-                        '2026-08-01T00:00:01Z');
-                insert into agent_message(
-                    message_id, tenant_id, session_id, run_id, role, content, sequence,
-                    tool_execution_id, tool_call_id, tool_name, visibility)
-                values ('observation_legacy', 'tenant_legacy', 'session_legacy',
-                        'execution_legacy', 'tool',
-                        '{"status":"succeeded","content":{"time":"08:00"}}', 3,
-                        'tool_legacy', 'call_legacy', 'current_time', 'internal');
-                update agent_tool_execution
-                   set status = 'succeeded', observation_message_id = 'observation_legacy',
-                       completed_at = '2026-08-01T00:00:02Z'
-                 where tool_execution_id = 'tool_legacy';
-                insert into agent_message(
-                    message_id, tenant_id, session_id, run_id, role, content, sequence, visibility)
-                values ('assistant_public_legacy', 'tenant_legacy', 'session_legacy',
-                        'execution_legacy', 'assistant', '最终回答', 4, 'user');
-                """);
-
-        int migratedToLatest =
-                Flyway.configure()
-                        .dataSource(
-                                POSTGRES.getJdbcUrl(),
-                                POSTGRES.getUsername(),
-                                POSTGRES.getPassword())
-                        .locations("classpath:db/migration")
-                        .load()
-                        .migrate()
-                        .migrationsExecuted;
-        assertThat(migratedToLatest).isEqualTo(12);
     }
 
     @AfterAll
@@ -141,204 +36,88 @@ class ConversationExecutionSchemaMigrationTest {
     }
 
     @Test
-    void v1AndV2ExecutionDataReceivesOwnerLeaseAndBudgetDefaults() throws SQLException {
-        assertThat(
-                        row(
-                                """
-                                select owner_user_id, queued_at is not null, lease_expires_at is not null,
-                                       heartbeat_at is not null, active_segment_started_at is not null,
-                                       execution_budget_ms, active_execution_ms, request_type is null
-                                  from agent_execution where execution_id = 'execution_legacy'
-                                """))
-                .containsExactly("user_legacy", "t", "t", "t", "t", "600000", "0", "t");
-    }
-
-    @Test
-    void queuedExecutionAllowsAttemptZeroAndNullableOwnershipFields() throws SQLException {
-        execute(
-                """
-                insert into conversation_session(conversation_session_id, tenant_id, title, session_type, created_by_user_id)
-                    values ('session_queued', 'tenant_legacy', 'Queued', 'INTERACTIVE', 'user_legacy');
-                insert into conversation_message(conversation_message_id, tenant_id, conversation_session_id, role, content, conversation_message_sequence, author_user_id)
-                    values ('message_queued', 'tenant_legacy', 'session_queued', 'user', 'queued', 1, 'user_legacy');
-                insert into agent_execution(
-                    execution_id, tenant_id, conversation_session_id, triggering_conversation_message_id, status, phase,
-                    execution_attempt_number, owner_user_id, owner_instance_id, request_id, queued_at,
-                    started_at, hard_deadline_at, lease_expires_at, heartbeat_at,
-                    active_segment_started_at, request_type, request_idempotency_key,
-                    request_payload_hash)
-                    values (
-                    'execution_queued', 'tenant_legacy', 'session_queued', 'message_queued', 'queued',
-                    'QUEUED', 0, 'user_legacy', null, 'request_queued', current_timestamp,
-                    null, null, null, null, null, 'message_submission', 'key-1',
-                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
-                """);
-
-        assertThat(
-                        row(
-                                """
-                                select execution_attempt_number, owner_instance_id is null,
-                                       hard_deadline_at is null, lease_expires_at is null
-                                  from agent_execution where execution_id = 'execution_queued'
-                                """))
-                .containsExactly("0", "t", "t", "t");
-    }
-
-    @Test
-    void executionChecksRejectInvalidStateAndPartialIdempotencyData() {
-        assertThatThrownBy(
-                        () ->
-                                execute(
-                                        """
-                                        update agent_execution set status = 'unknown' where execution_id = 'execution_legacy'
-                                        """))
-                .isInstanceOf(SQLException.class);
-        assertThatThrownBy(
-                        () ->
-                                execute(
-                                        """
-                                        update agent_execution set request_type = 'message_submission'
-                                         where execution_id = 'execution_legacy'
-                                        """))
-                .isInstanceOf(SQLException.class);
-    }
-
-    @Test
-    void partialIndexesProtectIdempotencyQueueCapacityAndRecovery() throws SQLException {
-        assertThat(indexDefinition("uq_agent_execution_request_idempotency"))
-                .contains("unique")
+    void freshSchemaContainsOnlySingleInstanceExecutionFacts() throws SQLException {
+        assertThat(tableNames())
                 .contains(
-                        "tenant_id, conversation_session_id, request_type, request_idempotency_key")
-                .contains("where (request_idempotency_key is not null)");
-        assertThat(indexDefinition("uq_agent_execution_one_active"))
-                .contains("queued", "running", "waiting_for_user", "waiting_confirmation");
-        assertThat(indexDefinition("ix_agent_execution_queued"))
-                .contains("queued_at", "where", "status", "queued");
-        assertThat(indexDefinition("ix_agent_execution_user_running"))
-                .contains("tenant_id, owner_user_id", "status", "running");
-        assertThat(indexDefinition("ix_agent_execution_expired_lease"))
-                .contains("lease_expires_at", "status", "running");
-    }
+                        "agent_execution",
+                        "agent_execution_event",
+                        "agent_execution_stream_checkpoint")
+                .doesNotContain(
+                        "agent_execution_attempt",
+                        "notification_outbox_message",
+                        "model_invocation",
+                        "tool_execution");
 
-    @Test
-    void streamAndAttemptUseIdPrimaryKeysAndKeepBusinessUniqueness() throws SQLException {
-        assertThat(primaryKey("agent_execution_stream_checkpoint")).isEqualTo("primary key (id)");
-        assertThat(primaryKey("agent_execution_attempt")).isEqualTo("primary key (id)");
-        assertThat(constraintDefinition("uq_agent_execution_attempt_execution"))
-                .contains("unique", "tenant_id", "execution_id", "execution_attempt_number");
-    }
+        assertThat(columnNames("agent_execution"))
+                .contains("execution_id", "conversation_session_id", "status", "hard_deadline_at")
+                .doesNotContain(
+                        "execution_attempt_number",
+                        "owner_user_id",
+                        "owner_instance_id",
+                        "request_id",
+                        "queued_at",
+                        "lease_expires_at",
+                        "heartbeat_at",
+                        "cancellation_requested_at",
+                        "retry_of_execution_id",
+                        "recovery_attempt_count",
+                        "execution_budget_ms",
+                        "active_execution_ms",
+                        "active_segment_started_at",
+                        "phase",
+                        "started_at",
+                        "completed_at",
+                        "failed_at");
 
-    @Test
-    void claimedExecutionBeforeFirstModelInvocationKeepsItsStreamCoordinate() throws SQLException {
-        assertThat(
-                        row(
-                                """
-                                select execution_attempt_number, model_invocation_sequence,
-                                       output_delta_sequence, phase
-                                  from agent_execution_stream_checkpoint
-                                 where execution_id = 'execution_legacy'
-                                """))
-                .containsExactly("1", "0", "0", "RECEIVED");
-    }
-
-    @Test
-    void latestSchemaRemovesReasoningStorageAndThinkingPhase() throws SQLException {
+        assertThat(columnNames("agent_execution_event")).doesNotContain("payload");
         assertThat(columnNames("agent_execution_stream_checkpoint"))
-                .doesNotContain("reasoning", "reasoning_expires_at");
-        assertThat(columnNames("model_invocation"))
-                .doesNotContain("reasoning", "reasoning_expires_at");
-        assertThat(constraintDefinition("ck_agent_execution_phase")).doesNotContain("THINKING");
-        assertThat(constraintDefinition("ck_agent_execution_stream_checkpoint_phase"))
-                .doesNotContain("THINKING");
+                .contains(
+                        "execution_id",
+                        "model_invocation_sequence",
+                        "phase",
+                        "output_delta_sequence",
+                        "answer")
+                .doesNotContain(
+                        "execution_stream_checkpoint_id",
+                        "execution_attempt_number",
+                        "checkpointed_at");
     }
 
     @Test
-    void legacyToolMessagesAreBackfilledIntoThePublicAssistantProcessArray() throws SQLException {
-        assertThat(columnNames("conversation_message")).contains("thinking_process");
-        assertThat(columnNames("tool_execution")).contains("tool_process_item_id");
-        assertThat(
-                        row(
-                                """
-                                select data_type, is_nullable, column_default
-                                  from information_schema.columns
-                                 where table_schema = 'public'
-                                   and table_name = 'conversation_message'
-                                   and column_name = 'thinking_process'
-                                """))
-                .containsExactly("jsonb", "NO", "'[]'::jsonb");
-        assertThat(constraintDefinition("ck_conversation_message_thinking_process_array"))
-                .contains("jsonb_typeof(thinking_process) = 'array'");
-        assertThat(
-                        row(
-                                """
-                                select content,
-                                       jsonb_array_length(thinking_process),
-                                       thinking_process #>> '{0,type}',
-                                       thinking_process #>> '{0,status}',
-                                       thinking_process #>> '{0,toolExecutionId}',
-                                       thinking_process #>> '{0,input,value,token}',
-                                       thinking_process #>> '{0,output,value,content,time}',
-                                       thinking_process #>> '{0,durationMillis}'
-                                  from conversation_message
-                                 where conversation_message_id = 'assistant_public_legacy'
-                                """))
-                .containsExactly(
-                        "最终回答",
-                        "1",
-                        "TOOL",
-                        "SUCCEEDED",
-                        "tool_legacy",
-                        "[REDACTED]",
-                        "08:00",
-                        "1000");
-        assertThat(
-                        row(
-                                """
-                                select tool_execution.tool_process_item_id::text,
-                                       conversation_message.thinking_process #>> '{0,processItemId}'
-                                  from tool_execution
-                                  join conversation_message
-                                    on conversation_message.conversation_message_id = tool_execution.assistant_conversation_message_id
-                                 where tool_execution.tool_execution_id = 'tool_legacy'
-                                """))
-                .satisfies(values -> assertThat(values.get(0)).isEqualTo(values.get(1)));
-
-        // V14 完成 contract 阶段后，运行时只保留正文中心和过程数组。
-        assertThat(columnNames("conversation_message"))
-                .doesNotContain("tool_calls", "visibility", "tool_execution_id");
-        assertThat(columnNames("tool_execution"))
-                .doesNotContain("observation_conversation_message_id");
+    void executionStatusConstraintExposesOnlyLocalLifecycleStates() throws SQLException {
+        assertThat(constraintDefinition("ck_agent_execution_status"))
+                .contains("running", "done", "cancelled", "failed")
+                .doesNotContain("queued", "lost", "waiting_for_user", "waiting_confirmation");
+        assertThat(indexDefinition("uq_agent_execution_one_active"))
+                .contains("status", "running")
+                .doesNotContain("queued", "waiting_for_user", "waiting_confirmation");
     }
 
-    private static void execute(String sql) throws SQLException {
-        try (Connection connection = connection();
-                Statement statement = connection.createStatement()) {
-            statement.execute(sql);
-        }
+    private static List<String> tableNames() throws SQLException {
+        return query(
+                """
+                select lower(table_name) from information_schema.tables
+                 where table_schema = 'public' order by table_name
+                """,
+                null);
     }
 
-    private static List<String> row(String sql) throws SQLException {
-        try (Connection connection = connection();
-                Statement statement = connection.createStatement();
-                ResultSet resultSet = statement.executeQuery(sql)) {
-            assertThat(resultSet.next()).isTrue();
-            List<String> values = new ArrayList<>();
-            for (int index = 1; index <= resultSet.getMetaData().getColumnCount(); index++) {
-                values.add(resultSet.getString(index));
-            }
-            return values;
-        }
+    private static List<String> columnNames(String table) throws SQLException {
+        return query(
+                """
+                select lower(column_name) from information_schema.columns
+                 where table_schema = 'public' and table_name = ? order by ordinal_position
+                """,
+                table);
     }
 
-    private static String primaryKey(String table) throws SQLException {
+    private static String constraintDefinition(String constraint) throws SQLException {
         return query(
                         """
                         select lower(pg_get_constraintdef(c.oid))
-                          from pg_constraint c
-                          join pg_class t on t.oid = c.conrelid
-                         where t.relname = ? and c.contype = 'p'
+                          from pg_constraint c where c.conname = ?
                         """,
-                        table)
+                        constraint)
                 .getFirst();
     }
 
@@ -352,30 +131,16 @@ class ConversationExecutionSchemaMigrationTest {
                 .getFirst();
     }
 
-    private static String constraintDefinition(String constraint) throws SQLException {
-        return query(
-                        """
-                        select lower(pg_get_constraintdef(c.oid))
-                          from pg_constraint c
-                         where c.conname = ?
-                        """,
-                        constraint)
-                .getFirst();
-    }
-
-    private static List<String> columnNames(String table) throws SQLException {
-        return query(
-                """
-                select lower(column_name) from information_schema.columns
-                 where table_schema = 'public' and table_name = ? order by ordinal_position
-                """,
-                table);
-    }
-
     private static List<String> query(String sql, String argument) throws SQLException {
-        try (Connection connection = connection();
+        try (Connection connection =
+                        DriverManager.getConnection(
+                                POSTGRES.getJdbcUrl(),
+                                POSTGRES.getUsername(),
+                                POSTGRES.getPassword());
                 var statement = connection.prepareStatement(sql)) {
-            statement.setString(1, argument);
+            if (argument != null) {
+                statement.setString(1, argument);
+            }
             try (ResultSet resultSet = statement.executeQuery()) {
                 List<String> values = new ArrayList<>();
                 while (resultSet.next()) {
@@ -384,10 +149,5 @@ class ConversationExecutionSchemaMigrationTest {
                 return values;
             }
         }
-    }
-
-    private static Connection connection() throws SQLException {
-        return DriverManager.getConnection(
-                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     }
 }

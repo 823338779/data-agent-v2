@@ -5,6 +5,7 @@ import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.domain.ConversationSession;
+import com.datagent.agentv2.conversation.domain.MessageRole;
 import com.datagent.agentv2.persistence.entity.AgentExecutionEntity;
 import com.datagent.agentv2.persistence.entity.AgentExecutionEventEntity;
 import com.datagent.agentv2.persistence.entity.AgentExecutionStreamCheckpointEntity;
@@ -23,6 +24,14 @@ import org.mapstruct.ReportingPolicy;
         uses = ConversationProcessDocumentCodec.class,
         unmappedTargetPolicy = ReportingPolicy.IGNORE)
 public interface ConversationPersistenceMapper {
+
+    default MessageRole toMessageRole(String value) {
+        return MessageRole.fromValue(value);
+    }
+
+    default String toMessageRoleValue(MessageRole role) {
+        return role.value();
+    }
 
     ConversationSession toModel(ConversationSessionEntity entity);
 

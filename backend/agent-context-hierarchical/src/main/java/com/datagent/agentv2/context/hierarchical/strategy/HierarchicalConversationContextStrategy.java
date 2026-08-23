@@ -7,7 +7,6 @@ import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextState
 import com.datagent.agentv2.context.hierarchical.observability.HierarchicalContextMetrics;
 import com.datagent.agentv2.context.hierarchical.observability.HierarchicalContextMetrics.CompactionOutcome;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCheckpointRepository;
-import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalExecutionPolicyRepository;
 import com.datagent.agentv2.context.hierarchical.planning.HierarchicalContextPolicy;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionCoordinator;
 import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalConversationContextAssembler;
@@ -20,16 +19,11 @@ import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Duration;
 import java.util.Objects;
 
-/** Hierarchical 插件的唯一业务入口，先冻结 execution policy 再读取任何会话历史。 */
+/** Hierarchical 插件的唯一业务入口，使用当前进程配置同步压缩会话历史。 */
 public final class HierarchicalConversationContextStrategy implements ConversationContextStrategy {
 
     public static final String STRATEGY_ID = "hierarchical";
     private static final String CHECKPOINT_ID_PREFIX = "hierarchical_checkpoint";
-    private static final String EMPTY_SUMMARY_DOCUMENT = "{\"schemaVersion\":1}";
-    private static final String EMPTY_FRONTIER_DOCUMENT = "{\"schemaVersion\":1,\"nodes\":[]}";
-
-    /** 冻结或读取 execution 首次持久化策略的仓储。 */
-    private final HierarchicalExecutionPolicyRepository policies;
 
     /** 为新会话幂等建立 generation 0 基线的私有仓储。 */
     private final HierarchicalCheckpointRepository checkpoints;
@@ -53,7 +47,6 @@ public final class HierarchicalConversationContextStrategy implements Conversati
     private final HierarchicalContextPolicySnapshot configuredPolicy;
 
     public HierarchicalConversationContextStrategy(
-            HierarchicalExecutionPolicyRepository policies,
             HierarchicalCheckpointRepository checkpoints,
             HierarchicalConversationContextAssembler assembler,
             HierarchicalCompactionCoordinator coordinator,
@@ -61,7 +54,6 @@ public final class HierarchicalConversationContextStrategy implements Conversati
             ContextSummaryModelPort summaryModel,
             IdGenerator ids,
             HierarchicalContextProperties properties) {
-        this.policies = Objects.requireNonNull(policies, "policies");
         this.checkpoints = Objects.requireNonNull(checkpoints, "checkpoints");
         this.assembler = Objects.requireNonNull(assembler, "assembler");
         this.coordinator = Objects.requireNonNull(coordinator, "coordinator");
@@ -80,13 +72,10 @@ public final class HierarchicalConversationContextStrategy implements Conversati
     public PreparedConversationContext prepare(ConversationContextRequest request) {
         ConversationContextRequest checkedRequest = Objects.requireNonNull(request, "request");
 
-        // 必须是首个副作用：retry/takeover 只能读取首次持久化的 execution policy。
-        HierarchicalContextPolicySnapshot frozen =
-                policies.findOrCreate(checkedRequest.execution(), configuredPolicy);
+        HierarchicalContextPolicySnapshot frozen = configuredPolicy;
         ContextSummaryModelIdentity model =
                 Objects.requireNonNull(summaryModel.identity(), "summary model identity");
         ensureInitialCheckpoint(checkedRequest, frozen, model);
-        checkpoints.migrateIdentityIfRequired(checkedRequest.execution(), frozen, model);
         HierarchicalContextState state = assembler.loadAndEstimate(checkedRequest, frozen);
         metrics.recordInput(state.estimatedTokens(), checkedRequest.budget());
         HierarchicalContextPolicy policy = new HierarchicalContextPolicy(frozen);
@@ -96,13 +85,16 @@ public final class HierarchicalConversationContextStrategy implements Conversati
             return prepared;
         }
 
-        // 协调器负责恢复、生成和原子发布；策略只计时并重建最终正式视图。
+        // 协调器同步生成并原子发布；策略只计时并重建最终正式视图。
         long startedAt = System.nanoTime();
         try {
             HierarchicalCompactionCoordinator.CompactionOutcome outcome =
-                    coordinator.compactIfRequired(state);
+                    coordinator.compactIfRequired(state, model);
             PreparedConversationContext prepared =
-                    assembler.preparePublishedView(outcome.checkpoint(), checkedRequest, frozen);
+                    outcome.compacted()
+                            ? assembler.preparePublishedView(
+                                    outcome.checkpoint(), checkedRequest, frozen)
+                            : assembler.prepareCurrentView(state);
             metrics.recordCompaction(
                     CompactionOutcome.SUCCEEDED,
                     Duration.ofNanos(Math.max(0L, System.nanoTime() - startedAt)));
@@ -125,24 +117,16 @@ public final class HierarchicalConversationContextStrategy implements Conversati
                 new HierarchicalCheckpoint(
                         ids.next(CHECKPOINT_ID_PREFIX),
                         request.execution().conversationSessionId(),
-                        EMPTY_SUMMARY_DOCUMENT,
+                        null,
                         0L,
-                        0L,
-                        0,
-                        policy.summarySchemaVersion(),
-                        policy.summaryPromptVersion(),
-                        model.provider(),
-                        model.model(),
-                        EMPTY_FRONTIER_DOCUMENT,
                         0L,
                         0L));
     }
 
     private void recordPublishedState(
             HierarchicalCheckpoint checkpoint, HierarchicalContextPolicySnapshot policy) {
-        metrics.recordActiveFrontier(assembler.activeFrontierCounts(checkpoint, policy));
         metrics.recordCheckpoint(
-                checkpoint.summarizedUpToConversationMessageSequence(),
+                checkpoint.evaluatedUpToConversationMessageSequence(),
                 checkpoint.strategyGeneration());
     }
 }

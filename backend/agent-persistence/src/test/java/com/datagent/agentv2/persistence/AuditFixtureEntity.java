@@ -15,8 +15,6 @@ final class AuditFixtureEntity extends TenantAuditedEntity {
     private String conversationSessionId;
 
     private String title;
-    private String sessionType;
-    private String createdByUserId;
 
     @Version private long version;
 
@@ -24,8 +22,6 @@ final class AuditFixtureEntity extends TenantAuditedEntity {
         AuditFixtureEntity value = new AuditFixtureEntity();
         value.setConversationSessionId(id);
         value.title = title;
-        value.sessionType = "CHAT";
-        value.createdByUserId = "user_admin";
         return value;
     }
 }

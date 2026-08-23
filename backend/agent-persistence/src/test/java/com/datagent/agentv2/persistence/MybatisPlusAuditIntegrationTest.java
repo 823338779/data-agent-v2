@@ -60,20 +60,10 @@ class MybatisPlusAuditIntegrationTest {
     @Autowired private JdbcTemplate jdbc;
 
     @BeforeEach
-    void seedTenantsAndUsers() {
+    void seedTenants() {
         jdbc.execute("truncate table tenant cascade");
         jdbc.update("insert into tenant (tenant_id, name) values ('tenant_local', 'Local')");
         jdbc.update("insert into tenant (tenant_id, name) values ('tenant_two', 'Two')");
-        jdbc.update(
-                """
-                insert into user_account (user_id, tenant_id, username, password_hash)
-                values ('user_admin', 'tenant_local', 'admin', 'not-used')
-                """);
-        jdbc.update(
-                """
-                insert into user_account (user_id, tenant_id, username, password_hash)
-                values ('user_two', 'tenant_two', 'two', 'not-used')
-                """);
     }
 
     @Test

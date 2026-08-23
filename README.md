@@ -1,16 +1,16 @@
 # Data Agent V2
 
-Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多模块工程、REST/SSE 契约、完整性清单以及从 V1 当前文件快照迁移的前端；旧 `data-agent` 仅作为已冻结行为的提取来源，不是本仓库的运行时或测试依赖。
+Data Agent V2 是面向单实例部署的对话 Agent 工程，包含后端 Maven 多模块、REST/SSE 契约、前端以及可选的上下文压缩策略。
 
 ## 目录
 
-- `backend/agent-persistence`：数据库迁移、MyBatis-Plus、审计持久化，以及 ID、时钟和请求上下文基础能力
-- `backend/agent-context-lsm`：可插拔的 LSM 会话上下文压缩策略、独立持久化、迁移、恢复和指标
-- `backend/agent-context-hierarchical`：可插拔的 Hot/Warm/Cold 分层上下文策略、独立持久化、迁移、恢复和指标
+- `backend/agent-persistence`：数据库迁移、MyBatis-Plus，以及 ID、时钟和请求上下文基础能力
+- `backend/agent-context-lsm`：同步执行的 LSM 会话上下文压缩策略及其摘要持久化
+- `backend/agent-context-hierarchical`：同步执行的 Hot/Warm/Cold 分层上下文压缩策略及其摘要持久化
 - `backend/agent-web`：REST/SSE 接口、BFF、会话编排与契约测试
 - `backend/agent-server`：唯一可执行模块，负责 Spring Boot 启动、服务级全局拦截器、异常边界与运行时装配
 - `backend/agent-evals`：独立评测模块
-- `contracts`：REST、SSE、示例与完整性清单
+- `contracts`：当前 REST、SSE 契约与示例
 - `docs`：仓库内设计和验证说明
 - `frontend`：阶段 1 迁移的前端快照
 
@@ -31,10 +31,9 @@ Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多�
 
 本地开发使用 Vite 同源代理：浏览器只访问前端域名，`/api`（包括 SSE）由 Vite 转发到 V2 后端。默认后端地址是 `http://127.0.0.1:8080`；需要切换实例或 Nginx 时，将 `frontend/.env.example` 复制为 `frontend/.env.local` 并修改 `VITE_BACKEND_ORIGIN`。
 
-先准备 PostgreSQL 数据库 `data_agent_v2`、Redis 和 Ollama。两个后端实例必须连接同一 PostgreSQL 与 Redis：
+先准备 PostgreSQL 数据库 `data_agent_v2` 和 Ollama。本阶段仅支持单个后端进程：
 
 - PostgreSQL 默认连接参数为 `data_agent/data_agent_local_dev`，可通过 `DATA_AGENT_DB_URL`、`DATA_AGENT_DB_USERNAME`、`DATA_AGENT_DB_PASSWORD` 覆盖。
-- Redis 默认连接 `localhost:6379`，用户名和密码为 `default/redis_local_dev`，可通过 `SPRING_DATA_REDIS_HOST`、`SPRING_DATA_REDIS_PORT`、`SPRING_DATA_REDIS_USERNAME`、`SPRING_DATA_REDIS_PASSWORD` 覆盖。
 - Ollama 默认使用 `qwen3.5:9b`。先执行 `ollama pull qwen3.5:9b`，再通过 `SPRING_AI_OLLAMA_BASE_URL` 指定服务地址；模型、超时和最大输出分别可由 `DATA_AGENT_MODEL_OLLAMA_MODEL`、`DATA_AGENT_MODEL_OLLAMA_TIMEOUT`、`DATA_AGENT_MODEL_OLLAMA_MAX_OUTPUT_TOKENS` 覆盖。
 
 ### 会话上下文策略与分层压缩
@@ -51,7 +50,7 @@ Data Agent V2 是独立版本化的重建仓库。当前包含后端 Maven 多�
 | `DATA_AGENT_CONTEXT_HIERARCHICAL_RECENT_RAW_TURNS` | `10` | 正整数且小于总窗口 | hierarchical 通常原样保护的最近完整对话轮数；仅在硬输入上限无法满足时，允许从最老 Hot 轮次开始紧急退化。 |
 | `DATA_AGENT_CONTEXT_HIERARCHICAL_WARM_WINDOW_TURNS` | `100` | 大于最近原始轮数 | hierarchical 的 Hot + Warm 总窗口；默认由 10 轮 Hot 与其前 90 轮连续二进制 Warm 摘要组成，更早历史汇入单调前进的 Cold 摘要。 |
 
-LSM 默认在输入超过窗口的 75% 时触发并争取压缩至 65%；hierarchical 默认在超过 75% 时触发并争取压缩至 70%，维护 100 轮总窗口（默认 10 轮 Hot + 90 轮 Warm），超出部分推进 Cold。Hot 通常保持原样；只有固定内容与摘要已经无法满足硬输入上限时，才允许从最老 Hot 轮次开始紧急退化。两种压缩策略都会在 execution 首次进入上下文流程时冻结策略快照；后续重试、恢复和租约接管继续使用同一快照，不会被运行期间的服务配置变化改写。
+LSM 默认在输入超过窗口的 75% 时触发并争取压缩至 65%；hierarchical 默认在超过 75% 时触发并争取压缩至 70%，维护 100 轮总窗口（默认 10 轮 Hot + 90 轮 Warm），超出部分推进 Cold。Hot 通常保持原样；只有固定内容与摘要已经无法满足硬输入上限时，才允许从最老 Hot 轮次开始紧急退化。压缩在当前请求的本机执行流程中同步完成，不创建后台压缩任务。
 
 需要回滚到原始上下文行为时，应在所有实例中统一设置：
 
@@ -59,24 +58,24 @@ LSM 默认在输入超过窗口的 75% 时触发并争取压缩至 65%；hierarc
 $env:DATA_AGENT_CONTEXT_STRATEGY = 'raw'
 ```
 
-随后重启所有后端实例。策略切换必须在全部实例上统一完成，避免同一服务集群使用不同上下文行为。`raw` 模式不会装载压缩插件策略、不会运行插件 Flyway，也不会读取或写入 `conversation_context_lsm_*` 或 `conversation_context_hierarchical_*` 表。回滚不会删除已有的摘要、checkpoint、manifest 或 job；数据保持不变，可供问题分析或后续重新启用相应插件使用。
+随后重启后端进程。`raw` 模式不会装载压缩插件策略、不会运行插件 Flyway，也不会读取或写入 `conversation_context_lsm_*` 或 `conversation_context_hierarchical_*` 表。切换策略不会删除已有的摘要、checkpoint 或 manifest，可供问题分析或后续重新启用相应插件使用。
 
 选择 `lsm` 时，插件从 `classpath:db/agent-context-lsm/migration` 迁移，并使用独立历史表 `flyway_agent_context_lsm_schema_history`。选择 `hierarchical` 时，插件从 `classpath:db/agent-context-hierarchical/migration` 迁移，并使用独立历史表 `flyway_agent_context_hierarchical_schema_history`。主 Flyway 始终先完成通用迁移；插件迁移分别只管理 `conversation_context_lsm_*` 或 `conversation_context_hierarchical_*` 对象，不污染主 Flyway 历史。
 
-Hierarchical 上下文端到端验证命令：
+Hierarchical 上下文验证命令：
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am `
   '-Dsurefire.failIfNoSpecifiedTests=false' `
-  '-Dtest=ContextStrategyIsolationIntegrationTest,HierarchicalContextCompactionIntegrationTest,HierarchicalContextCompactionRecoveryIntegrationTest' test
+  '-Dtest=*Hierarchical*Test' test
 ```
 
-LSM 上下文端到端验证命令：
+LSM 上下文验证命令：
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am `
   '-Dsurefire.failIfNoSpecifiedTests=false' `
-  '-Dtest=LsmContextCompactionIntegrationTest,LsmContextCompactionRecoveryIntegrationTest' test
+  '-Dtest=*Lsm*Test' test
 ```
 
 ### 使用本机 Codex 登录态
@@ -113,38 +112,13 @@ npm.cmd ci
 npm.cmd run dev
 ```
 
-打开 `http://127.0.0.1:5173` 即可进入工作区。当前阶段后端固定使用 `tenant_local` 租户和 `user_admin` / `admin` 身份，不提供登录、退出或租户切换；这些能力将在后续重新设计。当前可联调按更新时间排序的多会话、执行取消/重试、Ollama answer 流以及 Redis 跨实例通知。
+打开 `http://127.0.0.1:5173` 即可进入工作区。当前阶段后端固定使用 `tenant_local` 租户和 `user_admin` / `admin` 身份，不提供登录、退出或租户切换；这些能力将在后续重新设计。当前可联调按更新时间排序的多会话、本机执行取消/重试和模型回答流。服务启动时会把上次进程退出后仍为 `running` 的执行直接标记为失败，不做跨进程恢复或接管。
 
-## 双实例运行与收敛参数
+## 服务端黑盒评测
 
-两个进程使用不同 HTTP 端口即可；工作实例 ID 会由每个进程独立生成。以下命令需在两个 PowerShell 终端中分别执行：
-
-```powershell
-# 实例 A
-.\backend\mvnw.cmd -f .\backend\pom.xml -pl agent-server -am spring-boot:run '-Dspring-boot.run.arguments=--server.port=8080'
-
-# 实例 B
-.\backend\mvnw.cmd -f .\backend\pom.xml -pl agent-server -am spring-boot:run '-Dspring-boot.run.arguments=--server.port=8081'
-```
-
-运行时默认值及其含义：
-
-- 每个实例最多执行 256 个并发 Run，由 `DATA_AGENT_MAX_CONCURRENT_EXECUTIONS_PER_INSTANCE` 调整；同一用户最多 3 个 Run 同时处于 running。
-- 队列领取和控制降级轮询默认 1 秒；详细会话 SSE 的 PostgreSQL reconciliation 默认 1 秒，可通过 `DATA_AGENT_SESSION_EVENT_RECONCILE_INTERVAL` 调整。
-- 用户级会话摘要 SSE 默认每 2 秒从 PostgreSQL 收敛，可通过 `DATA_AGENT_CONVERSATION_SUMMARY_RECONCILE_INTERVAL` 调整。Redis 只负责低延迟通知，断开时以上轮询仍保证最终收敛。
-
-## 外部双实例验收
-
-`agent-evals` 不依赖 `agent-web`、`agent-persistence` 或其他产品运行时模块，只使用 JDK HTTP client 和公开 JSON 契约。先启动共享 PostgreSQL/Redis/Ollama 以及 8080/8081 两个实例，再执行：
-
-```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-evals `
-  '-Ddata.agent.acceptance.enabled=true' `
-  '-Ddata.agent.acceptance.instance-a=http://127.0.0.1:8080' `
-  '-Ddata.agent.acceptance.instance-b=http://127.0.0.1:8081' test
-```
-
-验收会通过实例 B 创建并提交 4 个不同会话，从实例 A 观察“最多 3 running、其余 queued”。故障注入验收（在第 3 个工具边界终止实例、Redis 断开/恢复及 Outbox 补发）需要部署环境提供进程和基础设施生命周期控制；产品正确性由 `agent-server` 中相应的双实例、恢复和 Redis 降级集成测试覆盖。
+`agent-evals` 不依赖产品运行时模块，只通过公开 HTTP 契约对当前已启动的服务配置执行语料、
+评分并输出独立 JSON 评测结果。模块不负责读取或比较其他配置的结果；详细运行方式见
+[`backend/agent-evals/README.md`](backend/agent-evals/README.md)。
 
 前端生产构建：
 

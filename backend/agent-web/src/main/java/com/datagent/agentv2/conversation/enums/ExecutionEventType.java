@@ -6,13 +6,11 @@ import java.util.Arrays;
 
 /** Agent 执行生命周期事件的有限协议取值。 */
 public enum ExecutionEventType {
-    QUEUED("execution_queued"),
     STARTED("execution_started"),
     DONE("execution_done"),
     COMPLETED("execution_completed"),
     FAILED("execution_failed"),
     CANCELLED("execution_cancelled"),
-    WAITING("execution_waiting"),
     PHASE_CHANGED("execution_phase_changed"),
     CONTEXT_COMPACTION_STARTED("context_compaction_started"),
     CONTEXT_COMPACTION_COMPLETED("context_compaction_completed"),

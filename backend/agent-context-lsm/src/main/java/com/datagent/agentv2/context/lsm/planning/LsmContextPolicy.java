@@ -1,7 +1,7 @@
 package com.datagent.agentv2.context.lsm.planning;
 
-import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
+import com.datagent.agentv2.conversation.context.ContextBudget;
 import java.util.Objects;
 
 /** 将上下文预算的软触发、目标水位和硬边界集中为确定性决策。 */

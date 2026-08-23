@@ -5,14 +5,10 @@ import com.fasterxml.jackson.annotation.JsonValue;
 /** 会话列表展示使用的最新执行状态；尚无执行时使用 idle。 */
 public enum SessionExecutionStatus {
     IDLE("idle"),
-    QUEUED("queued"),
     RUNNING("running"),
     FAILED("failed"),
     CANCELLED("cancelled"),
-    DONE("done"),
-    LOST("lost"),
-    WAITING_FOR_USER("waiting_for_user"),
-    WAITING_CONFIRMATION("waiting_confirmation");
+    DONE("done");
 
     private final String value;
 

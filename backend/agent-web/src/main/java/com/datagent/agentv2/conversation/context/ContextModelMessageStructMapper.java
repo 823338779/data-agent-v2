@@ -1,8 +1,8 @@
 package com.datagent.agentv2.conversation.context;
 
+import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
 import com.datagent.agentv2.conversation.react.ModelInputMessage;
 import com.datagent.agentv2.conversation.react.ModelToolCall;
-import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
 import java.util.List;
 import java.util.Map;
 import org.mapstruct.Context;

@@ -21,12 +21,6 @@ public final class ConversationSession {
     /** 会话检索和业务分类标签。 */
     private String tag;
 
-    /** 会话用途类型。 */
-    private String sessionType;
-
-    /** 创建会话的用户业务标识。 */
-    private String createdByUserId;
-
     /** 当前已分配的最大消息序号。 */
     private Long conversationMessageSequence;
 
@@ -47,18 +41,11 @@ public final class ConversationSession {
 
     /** 组装新建会话，并集中设置业务初始水位。 */
     public static ConversationSession create(
-            String conversationSessionId,
-            String title,
-            String tag,
-            String sessionType,
-            String createdByUserId,
-            Instant createdAt) {
+            String conversationSessionId, String title, String tag, Instant createdAt) {
         ConversationSession session = new ConversationSession();
         session.conversationSessionId = conversationSessionId;
         session.title = title;
         session.tag = tag;
-        session.sessionType = sessionType;
-        session.createdByUserId = createdByUserId;
         session.conversationMessageSequence = 0L;
         session.executionEventSequence = 0L;
         session.lastActivityAt = createdAt;

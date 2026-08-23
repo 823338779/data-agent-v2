@@ -1,6 +1,5 @@
 package com.datagent.agentv2.conversation.stream;
 
-import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotification;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -15,7 +14,7 @@ public final class ExecutionStreamResynchronizer {
     public static final int MAX_BUFFERED_DELTAS = 256;
 
     /** 按 output delta 序号排序的待确认增量缓冲区。 */
-    private final NavigableMap<Long, AgentExecutionDeltaNotification> buffered = new TreeMap<>();
+    private final NavigableMap<Long, LocalExecutionDelta> buffered = new TreeMap<>();
 
     /** 当前 SSE 连接已经确认并发送的复合游标。 */
     private CompositeSseCursor cursor;
@@ -35,8 +34,8 @@ public final class ExecutionStreamResynchronizer {
     }
 
     /** 接受瞬时回答增量，并返回当前可以连续发送的消息集合。 */
-    public synchronized List<AgentExecutionDeltaNotification> accept(
-            AgentExecutionDeltaNotification envelope, Instant receivedAt) {
+    public synchronized List<LocalExecutionDelta> accept(
+            LocalExecutionDelta envelope, Instant receivedAt) {
         // 新 Agent 执行只能从首个 delta 直接切换；否则等待 checkpoint 确认身份，避免拼接迟到消息。
         if (executionId != null && !executionId.equals(envelope.executionId())) {
             // 新 execution 的首个增量足以证明新投影起点，否则必须等待数据库确认身份。
@@ -52,9 +51,7 @@ public final class ExecutionStreamResynchronizer {
         if (executionId == null) {
             executionId = envelope.executionId();
         }
-        int projection =
-                compareProjection(
-                        envelope.executionAttemptNumber(), envelope.modelInvocationSequence());
+        int projection = compareProjection(envelope.modelInvocationSequence());
 
         // 旧 owner/旧模型调用的迟到消息不再进入缓冲区。
         if (projection < 0) {
@@ -64,11 +61,7 @@ public final class ExecutionStreamResynchronizer {
         // 新 attempt 或模型调用从序号零重新建立连续性窗口。
         if (projection > 0) {
             buffered.clear();
-            cursor =
-                    cursor.withStream(
-                            envelope.executionAttemptNumber(),
-                            envelope.modelInvocationSequence(),
-                            0);
+            cursor = cursor.withStream(envelope.modelInvocationSequence(), 0);
             gapSince = null;
         }
 
@@ -87,12 +80,11 @@ public final class ExecutionStreamResynchronizer {
     }
 
     /** 应用数据库完整 checkpoint，并返回 snapshot 之后已经连续的缓冲增量。 */
-    public synchronized List<AgentExecutionDeltaNotification> apply(
-            Snapshot snapshot, Instant appliedAt) {
+    public synchronized List<LocalExecutionDelta> apply(Snapshot snapshot, Instant appliedAt) {
         // checkpoint 是 Agent 执行身份与完整内容的权威来源，可安全切换到新的执行投影。
         if (!snapshot.executionId().equals(executionId)) {
             // 先保存与新 execution 同源的缓冲消息，切换身份后再恢复这些候选增量。
-            NavigableMap<Long, AgentExecutionDeltaNotification> pending = new TreeMap<>();
+            NavigableMap<Long, LocalExecutionDelta> pending = new TreeMap<>();
             // 只有缓冲区与 snapshot 指向同一 execution 时才能跨身份切换保留。
             if (snapshot.executionId().equals(bufferedExecutionId)) {
                 pending.putAll(buffered);
@@ -106,9 +98,7 @@ public final class ExecutionStreamResynchronizer {
             buffered.clear();
             bufferedExecutionId = null;
         }
-        int projection =
-                compareProjection(
-                        snapshot.executionAttemptNumber(), snapshot.modelInvocationSequence());
+        int projection = compareProjection(snapshot.modelInvocationSequence());
 
         // 比当前连接坐标更旧的 snapshot 不具备推进能力。
         if (projection < 0) {
@@ -118,13 +108,11 @@ public final class ExecutionStreamResynchronizer {
         // snapshot 覆盖完整正文和已发布序号，因此直接把游标推进到其权威坐标。
         cursor =
                 cursor.withStream(
-                        snapshot.executionAttemptNumber(),
-                        snapshot.modelInvocationSequence(),
-                        snapshot.outputDeltaSequence());
+                        snapshot.modelInvocationSequence(), snapshot.outputDeltaSequence());
         buffered.headMap(snapshot.outputDeltaSequence(), true).clear();
         bufferedExecutionId = buffered.isEmpty() ? null : snapshot.executionId();
         gapSince = null;
-        List<AgentExecutionDeltaNotification> drained = drainContiguous();
+        List<LocalExecutionDelta> drained = drainContiguous();
 
         // 应用 snapshot 后仍有跳号时，从当前时刻重新计算缺口等待窗口。
         if (!buffered.isEmpty() && buffered.firstKey() > cursor.outputDeltaSequence() + 1) {
@@ -144,18 +132,16 @@ public final class ExecutionStreamResynchronizer {
         if (executionId == null || !snapshot.executionId().equals(executionId)) {
             return true;
         }
-        int projection =
-                compareProjection(
-                        snapshot.executionAttemptNumber(), snapshot.modelInvocationSequence());
+        int projection = compareProjection(snapshot.modelInvocationSequence());
         return projection > 0
                 || (projection == 0
                         && snapshot.outputDeltaSequence() > cursor.outputDeltaSequence());
     }
 
-    /** 判断缓冲区是否溢出，或缺口是否超过一个 lease 窗口仍未修复。 */
-    public synchronized boolean shouldClose(Instant now, Duration leaseWindow) {
+    /** 判断缓冲区是否溢出，或缺口是否超过允许时长仍未修复。 */
+    public synchronized boolean shouldClose(Instant now, Duration gapTimeout) {
         return buffered.size() > MAX_BUFFERED_DELTAS
-                || (gapSince != null && !now.isBefore(gapSince.plus(leaseWindow)));
+                || (gapSince != null && !now.isBefore(gapSince.plus(gapTimeout)));
     }
 
     /** 返回当前已经确认的 SSE 复合游标。 */
@@ -164,23 +150,19 @@ public final class ExecutionStreamResynchronizer {
     }
 
     /** 从缓冲区头部连续取出紧邻当前游标的回答增量。 */
-    private List<AgentExecutionDeltaNotification> drainContiguous() {
-        List<AgentExecutionDeltaNotification> ready = new ArrayList<>();
+    private List<LocalExecutionDelta> drainContiguous() {
+        List<LocalExecutionDelta> ready = new ArrayList<>();
 
         // 每次只消费 expected=cursor+1，直到遇到第一个缺口。
         while (true) {
             long expected = cursor.outputDeltaSequence() + 1;
-            AgentExecutionDeltaNotification next = buffered.remove(expected);
+            LocalExecutionDelta next = buffered.remove(expected);
             // 找不到精确相邻序号即停止，保留更高序号等待 snapshot 或缺失消息。
             if (next == null) {
                 break;
             }
             ready.add(next);
-            cursor =
-                    cursor.withStream(
-                            next.executionAttemptNumber(),
-                            next.modelInvocationSequence(),
-                            next.outputDeltaSequence());
+            cursor = cursor.withStream(next.modelInvocationSequence(), next.outputDeltaSequence());
         }
 
         // 缓冲区清空意味着当前不存在待跟踪 execution 或缺口时间。
@@ -192,16 +174,12 @@ public final class ExecutionStreamResynchronizer {
     }
 
     /** 比较给定 attempt/model invocation 与当前游标投影的新旧关系。 */
-    private int compareProjection(long executionAttemptNumber, long modelInvocationSequence) {
-        int attempt = Long.compare(executionAttemptNumber, cursor.executionAttemptNumber());
-        return attempt != 0
-                ? attempt
-                : Long.compare(modelInvocationSequence, cursor.modelInvocationSequence());
+    private int compareProjection(long modelInvocationSequence) {
+        return Long.compare(modelInvocationSequence, cursor.modelInvocationSequence());
     }
 
     /** 缓冲尚未被 checkpoint 确认的新 execution 消息。 */
-    private void bufferDifferentExecution(
-            AgentExecutionDeltaNotification envelope, Instant receivedAt) {
+    private void bufferDifferentExecution(LocalExecutionDelta envelope, Instant receivedAt) {
         // 缓冲区一次只服务一个候选 execution，新的候选会替换旧候选。
         if (!envelope.executionId().equals(bufferedExecutionId)) {
             buffered.clear();
@@ -220,7 +198,7 @@ public final class ExecutionStreamResynchronizer {
         executionId = nextExecutionId;
         bufferedExecutionId = null;
         buffered.clear();
-        cursor = cursor.withStream(0, 0, 0);
+        cursor = cursor.withStream(0, 0);
         gapSince = null;
     }
 
@@ -228,13 +206,9 @@ public final class ExecutionStreamResynchronizer {
      * 数据库完整流投影中用于重同步的最小坐标。
      *
      * @param executionId snapshot 所属执行
-     * @param executionAttemptNumber owner attempt
      * @param modelInvocationSequence 模型调用序号
      * @param outputDeltaSequence snapshot 已覆盖的回答增量序号
      */
     public record Snapshot(
-            String executionId,
-            long executionAttemptNumber,
-            long modelInvocationSequence,
-            long outputDeltaSequence) {}
+            String executionId, long modelInvocationSequence, long outputDeltaSequence) {}
 }

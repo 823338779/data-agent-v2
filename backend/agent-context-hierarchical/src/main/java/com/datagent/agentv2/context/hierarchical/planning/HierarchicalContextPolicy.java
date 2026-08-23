@@ -15,8 +15,7 @@ public final class HierarchicalContextPolicy {
         if (!(snapshot.targetRatio() > 0.0d
                         && snapshot.targetRatio() < snapshot.triggerRatio()
                         && snapshot.triggerRatio() < 1.0d)
-                || snapshot.recentRawTurns() <= 0
-                || snapshot.warmWindowTurns() <= snapshot.recentRawTurns()) {
+                || snapshot.recentRawTurns() != 10) {
             throw new IllegalArgumentException("Invalid hierarchical context policy");
         }
     }
@@ -46,22 +45,9 @@ public final class HierarchicalContextPolicy {
         return estimatedInputTokens > softTriggerTokens(budget);
     }
 
-    /** 只有严格突破物理硬上限时才允许破坏 Hot 原文保护。 */
-    public boolean requiresHotDegradation(int estimatedInputTokens, ContextBudget budget) {
-        if (estimatedInputTokens < 0) {
-            throw new IllegalArgumentException("estimatedInputTokens must not be negative");
-        }
-        return estimatedInputTokens > hardInputLimitTokens(budget);
-    }
-
     /** 暴露已冻结的近期原文轮数，供边界规划复用。 */
     public int recentRawTurns() {
         return snapshot.recentRawTurns();
-    }
-
-    /** 暴露已冻结的 Hot+Warm 窗口轮数，供边界规划复用。 */
-    public int warmWindowTurns() {
-        return snapshot.warmWindowTurns();
     }
 
     private ContextBudget validatedBudget(ContextBudget budget) {

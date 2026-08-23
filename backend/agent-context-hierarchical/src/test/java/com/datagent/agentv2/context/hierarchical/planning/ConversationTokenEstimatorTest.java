@@ -144,7 +144,7 @@ class ConversationTokenEstimatorTest {
             List<ContextToolDefinition> toolDefinitions,
             int safetyReserveTokens) {
         return new ConversationContextRequest(
-                new ContextExecutionRef(TENANT_ID, SESSION_ID, EXECUTION_ID, OWNER_ID, 1L, 3L),
+                new ContextExecutionRef(TENANT_ID, SESSION_ID, EXECUTION_ID, 3L),
                 new ContextBudget(65_536, 4_096, safetyReserveTokens, FIXED_INPUT_TOKENS),
                 fixedSystemMessages,
                 toolDefinitions);

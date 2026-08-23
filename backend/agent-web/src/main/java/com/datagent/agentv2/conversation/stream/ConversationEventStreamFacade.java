@@ -1,16 +1,15 @@
 package com.datagent.agentv2.conversation.stream;
 
-import com.datagent.agentv2.conversation.cluster.AgentExecutionDeltaNotification;
 import com.datagent.agentv2.conversation.enums.ConversationStreamEventType;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.process.ConversationMessageChanged;
-import com.datagent.agentv2.conversation.runtime.AgentExecutionRuntimeProperties;
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
 import com.datagent.agentv2.conversation.session.ConversationView;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventPersisted;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -34,7 +33,7 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-/** 详细会话 SSE：持久事件可重放，瞬时 delta 由 Redis 与 checkpoint 共同收敛。 */
+/** 详细会话 SSE：持久事件可重放，瞬时 delta 与 checkpoint 在本机收敛。 */
 @Service
 @RequiredArgsConstructor
 public final class ConversationEventStreamFacade {
@@ -48,11 +47,10 @@ public final class ConversationEventStreamFacade {
     /** 提供会话鉴权、生命周期事件 replay 和数据库流 snapshot。 */
     private final ConversationApplicationService conversations;
 
-    /** 保存本实例连接并接收 owner 本地或 Redis 入站增量。 */
+    /** 保存本实例连接并接收本机执行增量。 */
     private final LocalSseRegistry localStreams;
 
-    /** 提供 lease 窗口，用于判定长时间无法收敛的流缺口。 */
-    private final AgentExecutionRuntimeProperties runtime;
+    private static final Duration STREAM_GAP_TIMEOUT = Duration.ofSeconds(60);
 
     /** tenant/session 到当前实例详细 SSE subscriptions 的并发映射。 */
     private final ConcurrentMap<SessionKey, Set<Subscription>> subscriptions =
@@ -65,7 +63,7 @@ public final class ConversationEventStreamFacade {
      * @return 无服务端超时、由连接生命周期主动关闭的 emitter
      */
     public SseEmitter open(String conversationSessionId) {
-        // 鉴权必须在注册任何本地/Redis 资源之前完成，避免越权连接短暂接收消息。
+        // 鉴权必须在注册本地连接之前完成，避免越权连接短暂接收消息。
         String tenantId = TenantContext.requiredTenantId();
         conversations.requireAccessibleSession(conversationSessionId);
 
@@ -73,7 +71,7 @@ public final class ConversationEventStreamFacade {
         Subscription subscription =
                 new Subscription(tenantId, conversationSessionId, emitter, CompositeSseCursor.ZERO);
 
-        // 先建立本地缓冲与 Redis 动态订阅，再读取持久化 replay，消除 subscribe gap。
+        // 先建立本地缓冲，再读取持久化 replay，消除 subscribe gap。
         LocalSseRegistry.Registration localRegistration =
                 localStreams.register(
                         tenantId,
@@ -81,13 +79,13 @@ public final class ConversationEventStreamFacade {
                         new LocalSseRegistry.Subscriber() {
                             /** 连续增量直接进入 subscription 初始化缓冲或重同步器。 */
                             @Override
-                            public void onDelta(AgentExecutionDeltaNotification envelope) {
+                            public void onDelta(LocalExecutionDelta envelope) {
                                 acceptDelta(subscription, envelope);
                             }
 
                             /** 跳号增量同样进入重同步器，由 snapshot 决定何时可发送。 */
                             @Override
-                            public void onGap(AgentExecutionDeltaNotification envelope) {
+                            public void onGap(LocalExecutionDelta envelope) {
                                 acceptDelta(subscription, envelope);
                             }
                         });
@@ -228,8 +226,8 @@ public final class ConversationEventStreamFacade {
                 sendSnapshot(subscription, snapshot);
             }
 
-            // 缓冲溢出或超过 lease 窗口仍无法补齐时关闭慢/失步连接。
-            if (subscription.resynchronizer.shouldClose(now, runtime.leaseDuration())) {
+            // 缓冲溢出或超时仍无法补齐时关闭慢/失步连接。
+            if (subscription.resynchronizer.shouldClose(now, STREAM_GAP_TIMEOUT)) {
                 closeWithError(
                         subscription, new IllegalStateException("SSE stream gap did not converge"));
             }
@@ -237,7 +235,7 @@ public final class ConversationEventStreamFacade {
     }
 
     /** 将 registry 回调转交给 subscription 的同步增量入口。 */
-    private void acceptDelta(Subscription subscription, AgentExecutionDeltaNotification envelope) {
+    private void acceptDelta(Subscription subscription, LocalExecutionDelta envelope) {
         subscription.acceptDelta(envelope);
     }
 
@@ -251,7 +249,6 @@ public final class ConversationEventStreamFacade {
             ExecutionStreamResynchronizer.Snapshot position =
                     new ExecutionStreamResynchronizer.Snapshot(
                             snapshot.executionId(),
-                            snapshot.executionAttemptNumber(),
                             snapshot.modelInvocationSequence(),
                             snapshot.outputDeltaSequence());
             boolean snapshotIdentityChanged =
@@ -263,7 +260,7 @@ public final class ConversationEventStreamFacade {
             }
 
             // 应用 snapshot 后，重同步器返回所有紧邻新序号的已缓冲增量。
-            List<AgentExecutionDeltaNotification> ready =
+            List<LocalExecutionDelta> ready =
                     subscription.resynchronizer.apply(position, Instant.now());
 
             // 连接复合游标推进到数据库已经覆盖的流坐标。
@@ -271,16 +268,14 @@ public final class ConversationEventStreamFacade {
                     subscription
                             .cursor()
                             .withStream(
-                                    snapshot.executionAttemptNumber(),
                                     snapshot.modelInvocationSequence(),
                                     snapshot.outputDeltaSequence());
             subscription.cursor = cursor;
             subscription.snapshotExecutionId = snapshot.executionId();
 
-            // 本地 registry 游标同步推进，避免 Redis 回环再次投递 snapshot 已覆盖增量。
+            // 本地 registry 游标同步推进，避免再次投递 snapshot 已覆盖增量。
             subscription.localRegistration.resume(
                     snapshot.executionId(),
-                    snapshot.executionAttemptNumber(),
                     snapshot.modelInvocationSequence(),
                     snapshot.outputDeltaSequence());
 
@@ -291,12 +286,10 @@ public final class ConversationEventStreamFacade {
                             ConversationStreamEventType.SNAPSHOT,
                             subscription.conversationSessionId,
                             snapshot.executionId(),
-                            snapshot.executionAttemptNumber(),
                             snapshot.modelInvocationSequence(),
                             snapshot.outputDeltaSequence(),
                             snapshot.phase(),
                             snapshot.answer(),
-                            snapshot.checkpointedAt(),
                             Instant.now()));
             ready.forEach(subscription::sendDelta);
         }
@@ -363,8 +356,8 @@ public final class ConversationEventStreamFacade {
         private final List<ConversationView.AgentExecutionUpdateView> pendingEvents =
                 new ArrayList<>();
 
-        /** 握手期间由本地或 Redis 到达的瞬时回答增量。 */
-        private final List<AgentExecutionDeltaNotification> pendingDeltas = new ArrayList<>();
+        /** 握手期间到达的本机瞬时回答增量。 */
+        private final List<LocalExecutionDelta> pendingDeltas = new ArrayList<>();
 
         /** 握手期间到达的中心消息全量替换。 */
         private final List<ConversationView.MessageView> pendingMessages = new ArrayList<>();
@@ -434,10 +427,9 @@ public final class ConversationEventStreamFacade {
                     execution == null ? null : execution.streamCheckpoint();
             CompositeSseCursor bootstrapCursor =
                     checkpoint == null
-                            ? new CompositeSseCursor(bootstrap.executionEventSequence(), 0L, 0L, 0L)
+                            ? new CompositeSseCursor(bootstrap.executionEventSequence(), 0L, 0L)
                             : new CompositeSseCursor(
                                     bootstrap.executionEventSequence(),
-                                    checkpoint.executionAttemptNumber(),
                                     checkpoint.modelInvocationSequence(),
                                     checkpoint.outputDeltaSequence());
             cursor = bootstrapCursor;
@@ -453,7 +445,6 @@ public final class ConversationEventStreamFacade {
                 snapshotExecutionId = execution.executionId();
                 localRegistration.resume(
                         execution.executionId(),
-                        checkpoint.executionAttemptNumber(),
                         checkpoint.modelInvocationSequence(),
                         checkpoint.outputDeltaSequence());
             }
@@ -470,7 +461,7 @@ public final class ConversationEventStreamFacade {
         }
 
         /** 接受回答增量，并在初始化后交给重同步器筛选连续消息。 */
-        private synchronized void acceptDelta(AgentExecutionDeltaNotification envelope) {
+        private synchronized void acceptDelta(LocalExecutionDelta envelope) {
             // 握手阶段无法确认 snapshot 覆盖位置，因此先限制大小地缓存原始增量。
             if (initializing) {
                 pendingDeltas.add(envelope);
@@ -502,13 +493,8 @@ public final class ConversationEventStreamFacade {
             // 回答增量按 attempt、模型调用、delta 三段坐标排序后交给重同步器。
             pendingDeltas.stream()
                     .sorted(
-                            Comparator.comparingLong(
-                                            AgentExecutionDeltaNotification::executionAttemptNumber)
-                                    .thenComparingLong(
-                                            AgentExecutionDeltaNotification
-                                                    ::modelInvocationSequence)
-                                    .thenComparingLong(
-                                            AgentExecutionDeltaNotification::outputDeltaSequence))
+                            Comparator.comparingLong(LocalExecutionDelta::modelInvocationSequence)
+                                    .thenComparingLong(LocalExecutionDelta::outputDeltaSequence))
                     .flatMap(envelope -> resynchronizer.accept(envelope, Instant.now()).stream())
                     .forEach(this::sendDelta);
 
@@ -560,19 +546,16 @@ public final class ConversationEventStreamFacade {
         }
 
         /** 推进流坐标并把回答增量事件加入连接发送队列。 */
-        private void sendDelta(AgentExecutionDeltaNotification envelope) {
+        private void sendDelta(LocalExecutionDelta envelope) {
             cursor =
                     cursor.withStream(
-                            envelope.executionAttemptNumber(),
-                            envelope.modelInvocationSequence(),
-                            envelope.outputDeltaSequence());
+                            envelope.modelInvocationSequence(), envelope.outputDeltaSequence());
             send(
                     ConversationStreamEventType.ASSISTANT_DELTA.value(),
                     new DeltaEvent(
                             ConversationStreamEventType.ASSISTANT_DELTA,
                             conversationSessionId,
                             envelope.executionId(),
-                            envelope.executionAttemptNumber(),
                             envelope.modelInvocationSequence(),
                             envelope.outputDeltaSequence(),
                             envelope.delta(),
@@ -638,13 +621,8 @@ public final class ConversationEventStreamFacade {
             CompositeSseCursor current = cursor;
             return !snapshot.executionId().equals(snapshotExecutionId)
                     || resynchronizer.needsSnapshot()
-                    || snapshot.executionAttemptNumber() > current.executionAttemptNumber()
-                    || (snapshot.executionAttemptNumber() == current.executionAttemptNumber()
-                            && snapshot.modelInvocationSequence()
-                                    > current.modelInvocationSequence())
-                    || (snapshot.executionAttemptNumber() == current.executionAttemptNumber()
-                            && snapshot.modelInvocationSequence()
-                                    == current.modelInvocationSequence()
+                    || snapshot.modelInvocationSequence() > current.modelInvocationSequence()
+                    || (snapshot.modelInvocationSequence() == current.modelInvocationSequence()
                             && snapshot.outputDeltaSequence() > current.outputDeltaSequence());
         }
 
@@ -680,8 +658,7 @@ public final class ConversationEventStreamFacade {
     private static boolean isTerminal(ExecutionStatus status) {
         return status == ExecutionStatus.DONE
                 || status == ExecutionStatus.CANCELLED
-                || status == ExecutionStatus.FAILED
-                || status == ExecutionStatus.LOST;
+                || status == ExecutionStatus.FAILED;
     }
 
     /** 首次详情流发送的完整会话快照。 */
@@ -721,7 +698,6 @@ public final class ConversationEventStreamFacade {
      * @param type 固定为 assistant_delta
      * @param conversationSessionId 会话标识
      * @param executionId Agent 执行标识
-     * @param executionAttemptNumber owner attempt
      * @param modelInvocationSequence 模型调用序号
      * @param outputDeltaSequence 回答增量序号
      * @param delta 回答正文片段
@@ -731,7 +707,6 @@ public final class ConversationEventStreamFacade {
             ConversationStreamEventType type,
             String conversationSessionId,
             String executionId,
-            long executionAttemptNumber,
             long modelInvocationSequence,
             long outputDeltaSequence,
             String delta,
@@ -743,23 +718,19 @@ public final class ConversationEventStreamFacade {
      * @param type 固定为 stream_snapshot
      * @param conversationSessionId 会话标识
      * @param executionId Agent 执行标识
-     * @param executionAttemptNumber owner attempt
      * @param modelInvocationSequence 模型调用序号
      * @param outputDeltaSequence snapshot 已覆盖的回答增量序号
      * @param phase 当前流阶段
      * @param answer 完整回答投影
-     * @param checkpointedAt 数据库 checkpoint 时间
      * @param occurredAt snapshot 发送时间
      */
     private record StreamSnapshotEvent(
             ConversationStreamEventType type,
             String conversationSessionId,
             String executionId,
-            long executionAttemptNumber,
             long modelInvocationSequence,
             long outputDeltaSequence,
             ExecutionPhase phase,
             String answer,
-            Instant checkpointedAt,
             Instant occurredAt) {}
 }

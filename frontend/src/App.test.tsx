@@ -24,15 +24,12 @@ function completedExecution(
     status: 'done',
     progress: 100,
     objective: answer,
-    cancellationRequestedAt: null,
     events: [],
     streamCheckpoint: {
-      executionAttemptNumber: 1,
       modelInvocationSequence: 1,
       phase: 'COMPLETED',
       outputDeltaSequence: 1,
       answer,
-      checkpointedAt: '2026-08-01T08:01:00Z',
     },
   };
 }
@@ -64,7 +61,6 @@ function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient
         status: 'running',
         progress: 5,
         objective: '分析订单延迟',
-        cancellationRequestedAt: null,
         events: [],
         streamCheckpoint: null,
       },
@@ -74,6 +70,12 @@ function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient
     subscribeSessionEvents: vi.fn().mockReturnValue(() => undefined),
     ...overrides,
   };
+}
+
+async function openSession(title: string) {
+  const expandButton = screen.queryByRole('button', { name: '展开会话列表' });
+  if (expandButton) fireEvent.click(expandButton);
+  fireEvent.click((await screen.findAllByRole('button', { name: new RegExp(title) }))[0]);
 }
 
 afterEach(() => {
@@ -88,7 +90,7 @@ describe('server-backed conversation workspace', () => {
     const backend = client();
     render(<App client={backend} />);
 
-    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+    await openSession('订单延迟分析');
     const input = screen.getByLabelText('输入消息');
     fireEvent.change(input, { target: { value: '分析订单延迟' } });
     fireEvent.keyDown(input, { key: 'Enter' });
@@ -98,6 +100,18 @@ describe('server-backed conversation workspace', () => {
     );
     expect(await screen.findByText('分析订单延迟')).toBeInTheDocument();
     expect(screen.getAllByText('处理中')).not.toHaveLength(0);
+  });
+
+  it('keeps the session drawer open after selecting a session until the user collapses it', async () => {
+    render(<App client={client()} />);
+
+    await openSession('订单延迟分析');
+
+    expect(screen.getByRole('complementary', { name: '会话列表' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '关闭会话列表' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '收起会话列表' }));
+    expect(screen.queryByRole('complementary', { name: '会话列表' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '展开会话列表' })).toBeInTheDocument();
   });
 
   it('does not duplicate persisted assistant answers with execution checkpoints', async () => {
@@ -131,7 +145,7 @@ describe('server-backed conversation workspace', () => {
     };
 
     render(<App client={client({ listSessions: vi.fn().mockResolvedValue([history]) })} />);
-    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+    await openSession('订单延迟分析');
 
     expect(screen.queryByText('推理过程')).not.toBeInTheDocument();
     expect(screen.queryByText('查看运行过程')).not.toBeInTheDocument();
@@ -167,7 +181,7 @@ describe('server-backed conversation workspace', () => {
     };
 
     render(<App client={client({ listSessions: vi.fn().mockResolvedValue([history]) })} />);
-    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+    await openSession('订单延迟分析');
 
     expect(screen.getByRole('heading', { name: '期末试卷' })).toBeInTheDocument();
     expect(screen.getByRole('table')).toBeInTheDocument();
@@ -205,7 +219,7 @@ describe('server-backed conversation workspace', () => {
     });
     render(<App client={backend} />);
 
-    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+    await openSession('订单延迟分析');
     await waitFor(() =>
       expect(backend.subscribeSessionEvents).toHaveBeenCalledWith(
         'session_1',
@@ -213,7 +227,7 @@ describe('server-backed conversation workspace', () => {
         expect.any(Function),
       ),
     );
-    fireEvent.click(screen.getByRole('button', { name: /库存分析/ }));
+    await openSession('库存分析');
 
     await waitFor(() => expect(backend.subscribeSessionEvents).toHaveBeenCalledTimes(2));
     expect(closeFirst).toHaveBeenCalledOnce();
@@ -236,7 +250,7 @@ describe('server-backed conversation workspace', () => {
     });
     render(<App client={backend} />);
 
-    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+    await openSession('订单延迟分析');
     await waitFor(() => expect(backend.subscribeSessionEvents).toHaveBeenCalledOnce());
     const onEvent = vi.mocked(backend.subscribeSessionEvents).mock.calls[0][1];
 
@@ -249,7 +263,6 @@ describe('server-backed conversation workspace', () => {
           status: 'running',
           progress: 25,
           objective: '分析订单延迟',
-          cancellationRequestedAt: null,
           streamCheckpoint: null,
         },
         event: {
@@ -257,8 +270,8 @@ describe('server-backed conversation workspace', () => {
           executionEventSequence: 1,
           type: 'execution_started',
           occurredAt: '2026-08-01T08:01:00Z',
-          title: '开始执行',
-          summary: null,
+          executionId: 'execution_1',
+          status: 'running',
         },
         messages: [],
       }),
@@ -268,29 +281,122 @@ describe('server-backed conversation workspace', () => {
     expect(backend.getSession).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps one detail stream while execution moves between processing states', async () => {
-    const queued = {
+  it('shows progress and streams an answer while the assistant placeholder is still empty', async () => {
+    const execution = {
+      ...completedExecution('execution_1', ''),
+      status: 'running' as const,
+      progress: 25,
+      streamCheckpoint: {
+        modelInvocationSequence: 0,
+        phase: 'PREPARING_CONTEXT',
+        outputDeltaSequence: 0,
+        answer: '',
+      },
+    };
+    const running: ConversationSession = {
       ...session,
-      latestExecutionStatus: 'queued' as const,
+      latestExecutionStatus: 'running',
+      messages: [
+        {
+          conversationMessageId: 'assistant_placeholder',
+          executionId: 'execution_1',
+          role: 'assistant',
+          author: 'assistant',
+          content: '',
+          timestamp: '2026-08-01T08:01:00Z',
+          version: 0,
+          thinkingProcess: [],
+          execution,
+        },
+      ],
+      execution,
+    };
+    let listener: Parameters<AgentBackendClient['subscribeSessionEvents']>[1] | undefined;
+    const backend = client({
+      listSessions: vi.fn().mockResolvedValue([running]),
+      getSession: vi.fn().mockResolvedValue(running),
+      subscribeSessionEvents: vi.fn((_sessionId, onEvent) => {
+        listener = onEvent;
+        return () => undefined;
+      }),
+    });
+    render(<App client={backend} />);
+    await openSession('订单延迟分析');
+
+    expect(await screen.findByRole('status')).toHaveTextContent('正在整理上下文');
+    await waitFor(() => expect(listener).toBeDefined());
+    act(() =>
+      listener?.({
+        type: 'stream_snapshot',
+        conversationSessionId: 'session_1',
+        executionId: 'execution_1',
+        modelInvocationSequence: 1,
+        outputDeltaSequence: 0,
+        phase: 'ANSWERING',
+        answer: '',
+        occurredAt: '2026-08-01T08:01:01Z',
+      }),
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('模型正在思考');
+    act(() =>
+      listener?.({
+        type: 'assistant_delta',
+        conversationSessionId: 'session_1',
+        executionId: 'execution_1',
+        modelInvocationSequence: 1,
+        outputDeltaSequence: 1,
+        delta: '这是正在生成的回答',
+        occurredAt: '2026-08-01T08:01:02Z',
+      }),
+    );
+
+    const streamingAnswer = screen.getByText('这是正在生成的回答');
+    const answerContainer = streamingAnswer.closest('.message-content');
+    expect(answerContainer).not.toBeNull();
+    expect(streamingAnswer.closest('.stream-answer-content')).toBeNull();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    act(() =>
+      listener?.({
+        type: 'message_update',
+        conversationSessionId: 'session_1',
+        message: {
+          ...running.messages[0],
+          content: '这是正在生成的回答',
+          version: 1,
+          execution: null,
+        },
+        occurredAt: '2026-08-01T08:01:03Z',
+      }),
+    );
+
+    expect(screen.getByText('这是正在生成的回答').closest('.message-content')).toBe(
+      answerContainer,
+    );
+  });
+
+  it('keeps one detail stream while execution moves between processing states', async () => {
+    const running = {
+      ...session,
+      latestExecutionStatus: 'running' as const,
       execution: {
         ...completedExecution('execution_1', ''),
-        status: 'queued' as const,
-        progress: 0,
+        status: 'running' as const,
+        progress: 5,
         streamCheckpoint: null,
       },
     };
     const closeDetail = vi.fn();
     let listener: Parameters<AgentBackendClient['subscribeSessionEvents']>[1] | undefined;
     const backend = client({
-      listSessions: vi.fn().mockResolvedValue([queued]),
-      getSession: vi.fn().mockResolvedValue(queued),
+      listSessions: vi.fn().mockResolvedValue([running]),
+      getSession: vi.fn().mockResolvedValue(running),
       subscribeSessionEvents: vi.fn((_sessionId, onEvent) => {
         listener = onEvent;
         return closeDetail;
       }),
     });
     render(<App client={backend} />);
-    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+    await openSession('订单延迟分析');
     await waitFor(() => expect(listener).toBeDefined());
 
     act(() =>
@@ -302,7 +408,6 @@ describe('server-backed conversation workspace', () => {
           status: 'running',
           progress: 25,
           objective: '分析订单延迟',
-          cancellationRequestedAt: null,
           streamCheckpoint: null,
         },
         event: {
@@ -310,8 +415,8 @@ describe('server-backed conversation workspace', () => {
           executionEventSequence: 1,
           type: 'execution_started',
           occurredAt: '2026-08-01T08:01:00Z',
-          title: '开始执行',
-          summary: null,
+          executionId: 'execution_1',
+          status: 'running',
         },
         messages: [],
       }),
@@ -344,7 +449,7 @@ describe('server-backed conversation workspace', () => {
       }),
     });
     render(<App client={backend} />);
-    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+    await openSession('订单延迟分析');
     await waitFor(() => expect(listener).toBeDefined());
 
     act(() =>
@@ -356,7 +461,6 @@ describe('server-backed conversation workspace', () => {
           status: 'done',
           progress: 100,
           objective: '分析订单延迟',
-          cancellationRequestedAt: null,
           streamCheckpoint: null,
         },
         event: {
@@ -364,8 +468,8 @@ describe('server-backed conversation workspace', () => {
           executionEventSequence: 2,
           type: 'execution_completed',
           occurredAt: '2026-08-01T08:02:00Z',
-          title: '执行完成',
-          summary: null,
+          executionId: 'execution_1',
+          status: 'done',
         },
         messages: [],
       }),
@@ -383,7 +487,7 @@ describe('server-backed conversation workspace', () => {
     const backend = client({ getSession: vi.fn().mockResolvedValue(terminal) });
     render(<App client={backend} />);
 
-    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+    await openSession('订单延迟分析');
 
     await waitFor(() => expect(backend.getSession).toHaveBeenCalledWith('session_1'));
     expect(backend.subscribeSessionEvents).not.toHaveBeenCalled();
@@ -417,7 +521,7 @@ describe('server-backed conversation workspace', () => {
     const listSessions = vi.fn().mockResolvedValue([viewed, background]);
     const backend = client({ listSessions, getSession: vi.fn().mockResolvedValue(viewed) });
     render(<App client={backend} />);
-    fireEvent.click((await screen.findAllByRole('button', { name: /订单延迟分析/ }))[0]);
+    await openSession('订单延迟分析');
     await screen.findByText('当前详情回答');
 
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
@@ -431,11 +535,10 @@ describe('server-backed conversation workspace', () => {
     const renamed = { ...session, title: '新的会话标题', version: 5 };
     const backend = client({ renameSession: vi.fn().mockResolvedValue(renamed) });
     render(<App client={backend} />);
-    const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
-
-    const sessionButton = await within(sidebar).findByRole('button', { name: /订单延迟分析/ });
-    fireEvent.click(sessionButton);
+    await openSession('订单延迟分析');
     expect(await screen.findByRole('heading', { name: '订单延迟分析' })).toBeInTheDocument();
+    const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
+    const sessionButton = await within(sidebar).findByRole('button', { name: /订单延迟分析/ });
     fireEvent.doubleClick(sessionButton);
     const titleInput = within(sidebar).getByRole('textbox', {
       name: '编辑“订单延迟分析”标题',
@@ -458,6 +561,7 @@ describe('server-backed conversation workspace', () => {
       getSession: vi.fn().mockResolvedValue(latest),
     });
     render(<App client={backend} />);
+    fireEvent.click(await screen.findByRole('button', { name: '展开会话列表' }));
     const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
 
     fireEvent.doubleClick(await within(sidebar).findByRole('button', { name: /订单延迟分析/ }));

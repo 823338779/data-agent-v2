@@ -59,10 +59,12 @@ class OllamaContextSummaryModelAdapterTest {
         ContextSummaryResult result =
                 adapter.summarize(
                         new ContextSummaryRequest(
-                                "summary system prompt",
+                                "summary system prompt TARGET_RENDERED_TOKENS=256",
                                 "source data",
                                 "{\"type\":\"object\"}",
-                                2_048));
+                                256,
+                                2_048,
+                                4_096));
 
         assertThat(result)
                 .isEqualTo(
@@ -76,7 +78,7 @@ class OllamaContextSummaryModelAdapterTest {
                         "\"num_ctx\":65536",
                         "\"num_predict\":2048",
                         "\"format\":{\"type\":\"object\"}",
-                        "summary system prompt",
+                        "summary system prompt TARGET_RENDERED_TOKENS=256",
                         "source data")
                 .doesNotContain("\"tools\"", "\"model\":\"mistral\"");
     }
@@ -93,7 +95,9 @@ class OllamaContextSummaryModelAdapterTest {
                                                 "summary system prompt",
                                                 "source data",
                                                 "{\"type\":\"object\"}",
-                                                2_048)))
+                                                256,
+                                                2_048,
+                                                4_096)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Ollama context summary request failed")
                 .hasNoCause()

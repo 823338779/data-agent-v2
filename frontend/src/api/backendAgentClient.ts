@@ -30,14 +30,10 @@ const SESSION_EVENT_TYPES = [
 ] as const;
 const EXECUTION_STATUSES: AgentExecutionStatus[] = [
   'idle',
-  'queued',
   'running',
-  'waiting_for_user',
-  'waiting_confirmation',
   'done',
   'cancelled',
   'failed',
-  'lost',
 ];
 
 interface BackendMessage {
@@ -61,8 +57,8 @@ interface BackendAgentExecutionEvent {
   executionEventSequence: number;
   type: string;
   occurredAt: string;
-  title: string | null;
-  summary: string | null;
+  executionId: string;
+  status: string;
 }
 
 interface BackendAgentExecution {
@@ -70,7 +66,6 @@ interface BackendAgentExecution {
   status: string;
   progress: number;
   objective: string;
-  cancellationRequestedAt?: string | null;
   events: BackendAgentExecutionEvent[];
   streamCheckpoint: BackendStreamCheckpoint | null;
 }
@@ -80,7 +75,6 @@ interface BackendAgentExecutionState {
   status: string;
   progress: number;
   objective: string;
-  cancellationRequestedAt?: string | null;
   streamCheckpoint: BackendStreamCheckpoint | null;
 }
 
@@ -104,12 +98,10 @@ interface BackendMessageUpdate {
 }
 
 interface BackendStreamCheckpoint {
-  executionAttemptNumber?: number;
   modelInvocationSequence?: number;
   phase: string;
   outputDeltaSequence?: number;
   answer: string;
-  checkpointedAt?: string | null;
 }
 
 interface BackendSessionSummary {
@@ -134,7 +126,6 @@ export type ExecutionStreamEvent =
       executionId: string;
       phase: string;
       answer: string;
-      checkpointedAt: string | null;
       occurredAt: string;
     } & StreamCursor)
   | ({
@@ -168,7 +159,6 @@ export type ConversationStreamEvent =
   | ExecutionStreamEvent;
 
 interface StreamCursor {
-  executionAttemptNumber: number;
   modelInvocationSequence: number;
   outputDeltaSequence: number;
 }
@@ -219,12 +209,10 @@ export function applyExecutionStreamEvent(
       return current;
     }
     return {
-      executionAttemptNumber: event.executionAttemptNumber,
       modelInvocationSequence: event.modelInvocationSequence,
       phase: event.phase,
       outputDeltaSequence: event.outputDeltaSequence,
       answer: event.answer,
-      checkpointedAt: event.checkpointedAt,
     };
   }
   if (
@@ -310,10 +298,7 @@ export function applyConversationStreamEvent(
 }
 
 function compareTurn(left: StreamCursor, right: StreamCursor): number {
-  return (
-    left.executionAttemptNumber - right.executionAttemptNumber ||
-    left.modelInvocationSequence - right.modelInvocationSequence
-  );
+  return left.modelInvocationSequence - right.modelInvocationSequence;
 }
 
 function toStatus(status: string): AgentExecutionStatus {
@@ -324,12 +309,10 @@ function toStatus(status: string): AgentExecutionStatus {
 
 function toCheckpoint(checkpoint: BackendStreamCheckpoint): AgentExecutionStreamCheckpoint {
   return {
-    executionAttemptNumber: checkpoint.executionAttemptNumber ?? 0,
     modelInvocationSequence: checkpoint.modelInvocationSequence ?? 0,
     phase: checkpoint.phase,
     outputDeltaSequence: checkpoint.outputDeltaSequence ?? 0,
     answer: checkpoint.answer,
-    checkpointedAt: checkpoint.checkpointedAt ?? null,
   };
 }
 
@@ -339,9 +322,15 @@ function toExecution(execution: BackendAgentExecution): AgentExecution {
     status: toStatus(execution.status),
     progress: execution.progress,
     objective: execution.objective,
-    cancellationRequestedAt: execution.cancellationRequestedAt ?? null,
-    events: execution.events.map((event) => ({ ...event })),
+    events: execution.events.map(toExecutionEvent),
     streamCheckpoint: execution.streamCheckpoint ? toCheckpoint(execution.streamCheckpoint) : null,
+  };
+}
+
+function toExecutionEvent(event: BackendAgentExecutionEvent): AgentExecution['events'][number] {
+  return {
+    ...event,
+    status: toStatus(event.status) as Exclude<AgentExecutionStatus, 'idle'>,
   };
 }
 
@@ -351,7 +340,6 @@ function toExecutionState(execution: BackendAgentExecutionState): Omit<AgentExec
     status: toStatus(execution.status),
     progress: execution.progress,
     objective: execution.objective,
-    cancellationRequestedAt: execution.cancellationRequestedAt ?? null,
     streamCheckpoint: execution.streamCheckpoint ? toCheckpoint(execution.streamCheckpoint) : null,
   };
 }
@@ -512,7 +500,7 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
               type: EXECUTION_UPDATE_EVENT,
               conversationSessionId: update.conversationSessionId,
               execution: toExecutionState(update.execution),
-              event: { ...update.event },
+              event: toExecutionEvent(update.event),
               messages: update.messages.map(toMessage),
             });
             return;

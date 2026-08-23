@@ -3,10 +3,9 @@ package com.datagent.agentv2.conversation.context;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
 import com.datagent.agentv2.conversation.react.ModelInvocationCoordinator;
-import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
+import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import java.util.List;
-
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -22,7 +21,7 @@ public class ConversationContextRequestFactory {
     private final ContextModelMessageMapper mappings;
 
     public ConversationContextRequest create(
-            AgentExecutionPort.ClaimedAgentExecution run,
+            LocalAgentExecution run,
             ModelInvocationCoordinator.ModelInvocationBoundary boundary,
             List<ModelToolDefinition> tools) {
         AgentExecution execution = executions.findByExecutionId(run.executionId());
@@ -38,8 +37,6 @@ public class ConversationContextRequestFactory {
                         run.tenantId(),
                         execution.getConversationSessionId(),
                         run.executionId(),
-                        run.ownerInstanceId(),
-                        run.executionAttemptNumber(),
                         boundary.inputUpToConversationMessageSequence()),
                 budgets.currentBudget(),
                 fixedSystemMessages,

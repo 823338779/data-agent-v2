@@ -48,7 +48,7 @@ public final class ConversationMessage {
     private String executionId;
 
     /** 消息角色。 */
-    private String role;
+    private MessageRole role;
 
     /** 消息正文。 */
     private String content;
@@ -74,17 +74,18 @@ public final class ConversationMessage {
             String sessionId,
             String content,
             long sequence,
-            String authorUserId,
-            String role) {
-        ConversationMessage message = base(messageId, sessionId, role, content, sequence);
+            String authorUserId) {
+        ConversationMessage message =
+                base(messageId, sessionId, MessageRole.USER, content, sequence);
         message.authorUserId = authorUserId;
         return message;
     }
 
     /** 组装与执行绑定的唯一 assistant 中心占位消息。 */
     public static ConversationMessage assistantPlaceholder(
-            String messageId, String sessionId, String executionId, long sequence, String role) {
-        ConversationMessage message = base(messageId, sessionId, role, "", sequence);
+            String messageId, String sessionId, String executionId, long sequence) {
+        ConversationMessage message =
+                base(messageId, sessionId, MessageRole.ASSISTANT, "", sequence);
         message.executionId = executionId;
         message.thinkingProcess = List.of();
         return message;
@@ -92,13 +93,9 @@ public final class ConversationMessage {
 
     /** 组装与执行关联的 assistant 消息。 */
     public static ConversationMessage assistant(
-            String messageId,
-            String sessionId,
-            String executionId,
-            String content,
-            long sequence,
-            String role) {
-        ConversationMessage message = base(messageId, sessionId, role, content, sequence);
+            String messageId, String sessionId, String executionId, String content, long sequence) {
+        ConversationMessage message =
+                base(messageId, sessionId, MessageRole.ASSISTANT, content, sequence);
         message.executionId = executionId;
         return message;
     }
@@ -240,11 +237,11 @@ public final class ConversationMessage {
     }
 
     private static ConversationMessage base(
-            String messageId, String sessionId, String role, String content, long sequence) {
+            String messageId, String sessionId, MessageRole role, String content, long sequence) {
         ConversationMessage message = new ConversationMessage();
         message.conversationMessageId = messageId;
         message.conversationSessionId = sessionId;
-        message.role = role;
+        message.role = Objects.requireNonNull(role, "role");
         message.content = content;
         message.conversationMessageSequence = sequence;
         message.version = 0L;

@@ -3,45 +3,33 @@ value:
   conversationSessionId: session_demo
   title: Local metric analysis
   tag: local-demo
-  sessionType: INTERACTIVE
   createdAt: 2026-08-01T08:00:00Z
   updatedAt: 2026-08-01T08:01:00Z
   version: 2
-  metricPlatformCredentialBindingVersion: 0
-  metricPlatformCredential: null
   messages:
     - conversationMessageId: message_demo
       role: user
+      executionId: null
       author: user_admin
       content: Summarize local revenue by month
+      version: 0
+      thinkingProcess: []
       createdAt: 2026-08-01T08:01:00Z
-      citations: []
+      execution: null
   execution:
     executionId: execution_demo
     status: running
     progress: 35
     objective: Summarize local revenue by month
-    cancellationRequestedAt: null
     events:
       - executionEventId: event_demo
         executionEventSequence: 1
         type: execution_started
         occurredAt: 2026-08-01T08:01:00Z
         executionId: execution_demo
-        conversationMessageId: message_demo
-        title: Agent execution started
-        summary: Preparing the metric query
-        toolName: null
-        input: {}
-        output: {}
-        confirmationId: null
-        approved: null
         status: running
-    pendingConfirmation: null
-    pendingInteraction: null
     streamCheckpoint:
-      executionAttemptNumber: 1
       modelInvocationSequence: 1
-      phase: planning
+      phase: CONNECTING_MODEL
       outputDeltaSequence: 1
       answer: ''

@@ -8,9 +8,20 @@ public record HierarchicalContextPolicySnapshot(
         double triggerRatio,
         double targetRatio,
         int recentRawTurns,
-        int warmWindowTurns,
         int summarySchemaVersion,
         int summaryPromptVersion) {
+
+    public HierarchicalContextPolicySnapshot {
+        if (policyVersion <= 0
+                || targetRatio <= 0.0d
+                || targetRatio >= triggerRatio
+                || triggerRatio >= 1.0d
+                || recentRawTurns != 10
+                || summarySchemaVersion != 2
+                || summaryPromptVersion != 2) {
+            throw new IllegalArgumentException("Invalid hierarchical context policy");
+        }
+    }
 
     /** Returns the input-token threshold that starts hierarchical compaction. */
     public int softTriggerTokens(ContextBudget budget) {

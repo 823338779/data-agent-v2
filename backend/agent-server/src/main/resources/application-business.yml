@@ -11,24 +11,15 @@ data-agent:
     hierarchical:
       trigger-ratio: ${DATA_AGENT_CONTEXT_HIERARCHICAL_TRIGGER_RATIO:0.75}
       target-ratio: ${DATA_AGENT_CONTEXT_HIERARCHICAL_TARGET_RATIO:0.70}
-      # 保留最近 10 轮原始对话，并维护包含 Hot 数据在内的 100 轮 Hot/Warm 窗口。
+      # 保留最近 10 轮原始对话。
       recent-raw-turns: ${DATA_AGENT_CONTEXT_HIERARCHICAL_RECENT_RAW_TURNS:10}
-      warm-window-turns: ${DATA_AGENT_CONTEXT_HIERARCHICAL_WARM_WINDOW_TURNS:100}
   model:
     provider: ${DATA_AGENT_MODEL_PROVIDER:codex}
     codex:
       executable: ${DATA_AGENT_MODEL_CODEX_EXECUTABLE:codex}
-      model: ${DATA_AGENT_MODEL_CODEX_MODEL:gpt-5.5}
-      effort: ${DATA_AGENT_MODEL_CODEX_EFFORT:low}
+      model: ${DATA_AGENT_MODEL_CODEX_MODEL:gpt-5.6-sol}
+      effort: ${DATA_AGENT_MODEL_CODEX_EFFORT:medium}
       timeout: ${DATA_AGENT_MODEL_CODEX_TIMEOUT:5m}
       working-directory: ${DATA_AGENT_MODEL_CODEX_WORKING_DIRECTORY:}
-  runtime:
-    max-concurrent-executions-per-instance: ${DATA_AGENT_MAX_CONCURRENT_EXECUTIONS_PER_INSTANCE:256}
-    queue-scan-interval: ${DATA_AGENT_QUEUE_SCAN_INTERVAL:1s}
-    control-poll-interval: ${DATA_AGENT_CONTROL_POLL_INTERVAL:1s}
-    session-event-reconcile-interval: ${DATA_AGENT_SESSION_EVENT_RECONCILE_INTERVAL:1s}
-    conversation-summary-reconcile-interval: ${DATA_AGENT_CONVERSATION_SUMMARY_RECONCILE_INTERVAL:2s}
-    execution-budget: ${DATA_AGENT_EXECUTION_BUDGET:10m}
-    lease-duration: ${DATA_AGENT_EXECUTION_LEASE_DURATION:60s}
-    heartbeat-interval: ${DATA_AGENT_EXECUTION_HEARTBEAT_INTERVAL:15s}
-    scheduling-enabled: ${DATA_AGENT_RUNTIME_SCHEDULING_ENABLED:true}
+  execution:
+    deadline: ${DATA_AGENT_EXECUTION_DEADLINE:10m}

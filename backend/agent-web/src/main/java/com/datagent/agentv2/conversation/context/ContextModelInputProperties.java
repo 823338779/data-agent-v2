@@ -23,5 +23,4 @@ public class ContextModelInputProperties {
 
     /** provider adapter 固定包装和协议边界的估算 token。 */
     private int fixedProtocolTokens = 256;
-
 }

@@ -1,37 +1,27 @@
 package com.datagent.agentv2.conversation.session;
 
-import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVENT_DETAIL_EXECUTION_QUEUED;
-import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVENT_DETAIL_EXECUTION_STARTED;
-import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVENT_TITLE_EXECUTION_QUEUED;
-import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EVENT_TITLE_EXECUTION_STARTED;
-
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.domain.ConversationSession;
+import com.datagent.agentv2.conversation.domain.MessageRole;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessItem;
-import com.datagent.agentv2.conversation.enums.ConversationSessionType;
 import com.datagent.agentv2.conversation.enums.ExecutionEventType;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
-import com.datagent.agentv2.conversation.enums.MessageRole;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
 
 /** 对话查询接口返回的完整会话投影。 */
 public record ConversationView(
         String conversationSessionId,
         String title,
         String tag,
-        ConversationSessionType sessionType,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
         long version,
-        long metricPlatformCredentialBindingVersion,
-        Object metricPlatformCredential,
         List<MessageView> messages,
         AgentExecutionView execution) {
 
@@ -42,19 +32,14 @@ public record ConversationView(
 
     /** 从会话及其已组装的关联视图生成完整接口投影。 */
     public static ConversationView composeFromSession(
-            ConversationSession session,
-            List<MessageView> messages,
-            AgentExecutionView execution) {
+            ConversationSession session, List<MessageView> messages, AgentExecutionView execution) {
         return new ConversationView(
                 session.getConversationSessionId(),
                 session.getTitle(),
                 session.getTag() == null ? "" : session.getTag(),
-                ConversationSessionType.fromValue(session.getSessionType()),
                 session.getCreatedAt(),
                 session.getUpdatedAt(),
                 session.getVersion(),
-                0,
-                null,
                 messages,
                 execution);
     }
@@ -71,7 +56,6 @@ public record ConversationView(
             /** 与正文绑定的有序思考及工具过程节点。 */
             List<ThinkingProcessItem> thinkingProcess,
             LocalDateTime createdAt,
-            List<Object> citations,
             /** assistant 回答所属的 Agent 执行，用于在历史消息下恢复对应过程。 */
             AgentExecutionView execution) {
 
@@ -80,18 +64,17 @@ public record ConversationView(
                 ConversationMessage message, AgentExecutionView execution) {
             String author =
                     message.getAuthorUserId() == null
-                            ? message.getRole()
+                            ? message.getRole().value()
                             : message.getAuthorUserId();
             return new MessageView(
                     message.getConversationMessageId(),
                     message.getExecutionId(),
-                    MessageRole.fromValue(message.getRole()),
+                    message.getRole(),
                     author,
                     message.getContent(),
                     java.util.Objects.requireNonNullElse(message.getVersion(), 0L),
                     message.getThinkingProcess(),
                     message.getCreatedAt(),
-                    List.of(),
                     execution);
         }
     }
@@ -102,10 +85,7 @@ public record ConversationView(
             ExecutionStatus status,
             int progress,
             String objective,
-            Instant cancellationRequestedAt,
             List<AgentExecutionEventView> events,
-            Object pendingConfirmation,
-            Object pendingInteraction,
             AgentExecutionStreamCheckpointView streamCheckpoint) {
 
         /** 从执行、关联投影和检查点组装完整执行视图。 */
@@ -117,12 +97,9 @@ public record ConversationView(
             return new AgentExecutionView(
                     execution.getExecutionId(),
                     ExecutionStatus.fromValue(execution.getStatus()),
-                    ConversationView.progress(execution.getPhase()),
+                    ConversationView.progress(checkpoint),
                     objective,
-                    execution.getCancellationRequestedAt(),
                     events,
-                    null,
-                    null,
                     AgentExecutionStreamCheckpointView.composeFromCheckpoint(checkpoint));
         }
     }
@@ -137,8 +114,6 @@ public record ConversationView(
             int progress,
             /** 触发执行的用户目标。 */
             String objective,
-            /** 首次取消请求时间。 */
-            Instant cancellationRequestedAt,
             /** 当前持久化回答检查点。 */
             AgentExecutionStreamCheckpointView streamCheckpoint) {
 
@@ -150,9 +125,8 @@ public record ConversationView(
             return new AgentExecutionStateView(
                     execution.getExecutionId(),
                     ExecutionStatus.fromValue(execution.getStatus()),
-                    ConversationView.progress(execution.getPhase()),
+                    ConversationView.progress(checkpoint),
                     objective,
-                    execution.getCancellationRequestedAt(),
                     AgentExecutionStreamCheckpointView.composeFromCheckpoint(checkpoint));
         }
     }
@@ -177,8 +151,7 @@ public record ConversationView(
                 List<MessageView> messages) {
             return new AgentExecutionUpdateView(
                     execution.getConversationSessionId(),
-                    AgentExecutionStateView.composeFromExecution(
-                            execution, objective, checkpoint),
+                    AgentExecutionStateView.composeFromExecution(execution, objective, checkpoint),
                     AgentExecutionEventView.composeFromEvent(event, execution),
                     messages);
         }
@@ -191,41 +164,23 @@ public record ConversationView(
             ExecutionEventType type,
             Instant occurredAt,
             String executionId,
-            String conversationMessageId,
-            String title,
-            String summary,
-            String toolName,
-            Map<String, Object> input,
-            Map<String, Object> output,
-            String confirmationId,
-            Boolean approved,
             ExecutionStatus status) {
 
         /** 从持久事件及其所属执行组装公开事件。 */
         public static AgentExecutionEventView composeFromEvent(
                 AgentExecutionEvent event, AgentExecution execution) {
-            boolean queued = ExecutionEventType.QUEUED.value().equals(event.getType());
             return new AgentExecutionEventView(
                     event.getExecutionEventId(),
                     event.getExecutionEventSequence(),
                     ExecutionEventType.fromValue(event.getType()),
                     event.getOccurredAt(),
                     event.getExecutionId(),
-                    execution.getTriggeringConversationMessageId(),
-                    queued ? EVENT_TITLE_EXECUTION_QUEUED : EVENT_TITLE_EXECUTION_STARTED,
-                    queued ? EVENT_DETAIL_EXECUTION_QUEUED : EVENT_DETAIL_EXECUTION_STARTED,
-                    null,
-                    Map.of(),
-                    Map.of(),
-                    null,
-                    null,
                     ExecutionStatus.fromValue(execution.getStatus()));
         }
     }
 
     /** 用于断线恢复的最新流式输出检查点。 */
     public record AgentExecutionStreamCheckpointView(
-            long executionAttemptNumber,
             long modelInvocationSequence,
             ExecutionPhase phase,
             long outputDeltaSequence,
@@ -237,7 +192,6 @@ public record ConversationView(
             return checkpoint == null
                     ? null
                     : new AgentExecutionStreamCheckpointView(
-                            checkpoint.getExecutionAttemptNumber(),
                             checkpoint.getModelInvocationSequence(),
                             ExecutionPhase.fromValue(checkpoint.getPhase()),
                             checkpoint.getOutputDeltaSequence(),
@@ -245,15 +199,17 @@ public record ConversationView(
         }
     }
 
-    private static int progress(String phase) {
+    private static int progress(AgentExecutionStreamCheckpoint checkpoint) {
+        if (checkpoint == null) {
+            return 0;
+        }
         ExecutionPhase executionPhase;
         try {
-            executionPhase = ExecutionPhase.fromValue(phase);
+            executionPhase = ExecutionPhase.fromValue(checkpoint.getPhase());
         } catch (IllegalArgumentException ignored) {
             return 0;
         }
         return switch (executionPhase) {
-            case QUEUED -> 0;
             case RECEIVED -> 5;
             case PREPARING_CONTEXT -> 15;
             case CONNECTING_MODEL -> 25;

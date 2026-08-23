@@ -17,12 +17,10 @@
     "messages": { "type": "array", "items": { "$ref": "#/$defs/message" } },
     "message": { "$ref": "#/$defs/message" },
     "executionId": { "type": "string", "minLength": 1 },
-    "executionAttemptNumber": { "type": "integer", "minimum": 0 },
     "modelInvocationSequence": { "type": "integer", "minimum": 0 },
     "outputDeltaSequence": { "type": "integer", "minimum": 0 },
     "delta": { "type": "string" },
     "answer": { "type": "string" },
-    "checkpointedAt": { "type": ["string", "null"], "format": "date-time" },
     "occurredAt": { "type": "string", "format": "date-time" },
     "phase": { "type": "string" }
   },
@@ -45,18 +43,18 @@
     {
       "title": "回答增量",
       "properties": { "type": { "const": "assistant_delta" } },
-      "required": ["executionId", "executionAttemptNumber", "modelInvocationSequence", "outputDeltaSequence", "delta", "occurredAt"]
+      "required": ["executionId", "modelInvocationSequence", "outputDeltaSequence", "delta", "occurredAt"]
     },
     {
       "title": "流检查点快照",
       "properties": { "type": { "const": "stream_snapshot" } },
-      "required": ["executionId", "executionAttemptNumber", "modelInvocationSequence", "outputDeltaSequence", "answer", "checkpointedAt", "occurredAt"]
+      "required": ["executionId", "modelInvocationSequence", "outputDeltaSequence", "phase", "answer", "occurredAt"]
     }
   ],
   "$defs": {
     "message": {
       "type": "object",
-      "required": ["conversationMessageId", "executionId", "role", "author", "content", "version", "thinkingProcess", "createdAt", "citations"],
+      "required": ["conversationMessageId", "executionId", "role", "author", "content", "version", "thinkingProcess", "createdAt"],
       "properties": {
         "conversationMessageId": { "type": "string" },
         "executionId": { "type": ["string", "null"] },
@@ -65,8 +63,7 @@
         "content": { "type": "string" },
         "version": { "type": "integer", "minimum": 0 },
         "thinkingProcess": { "type": "array", "items": { "$ref": "#/$defs/processItem" } },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "citations": { "type": "array" }
+        "createdAt": { "type": "string", "format": "date-time" }
       }
     },
     "processItem": {
@@ -114,17 +111,14 @@
         { "$ref": "#/$defs/processCommon" },
         {
           "type": "object",
-          "required": ["toolId", "toolName", "toolExecutionId", "toolCallId", "modelInvocationSequence", "input", "output", "success", "errorCode", "errorMessage"],
+          "required": ["toolName", "toolCallId", "modelInvocationSequence", "input", "output", "errorCode", "errorMessage"],
           "properties": {
             "type": { "const": "TOOL" },
-            "toolId": { "type": "string" },
             "toolName": { "type": "string" },
-            "toolExecutionId": { "type": "string" },
             "toolCallId": { "type": "string" },
             "modelInvocationSequence": { "type": "integer", "minimum": 1 },
             "input": { "$ref": "#/$defs/boundedPayload" },
             "output": { "anyOf": [{ "$ref": "#/$defs/boundedPayload" }, { "type": "null" }] },
-            "success": { "type": ["boolean", "null"] },
             "errorCode": { "type": ["string", "null"] },
             "errorMessage": { "type": ["string", "null"] }
           }

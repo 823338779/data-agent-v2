@@ -1,6 +1,5 @@
 package com.datagent.agentv2.conversation.domain;
 
-import java.time.Instant;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -11,44 +10,31 @@ import lombok.Setter;
 @NoArgsConstructor
 public final class AgentExecutionStreamCheckpoint {
 
-    /** 执行流检查点业务唯一标识。 */
-    private String executionStreamCheckpointId;
-
-    /** 检查点所属 Agent 执行标识。 */
+    /** 检查点所属执行业务标识，每个执行最多一个有效检查点。 */
     private String executionId;
 
-    /** 当前 owner 的执行尝试编号。 */
-    private Long executionAttemptNumber;
-
-    /** 当前模型调用序号。 */
+    /** 执行内当前模型调用序号，0 表示尚未调用模型。 */
     private Long modelInvocationSequence;
 
-    /** 当前流阶段。 */
+    /** 当前执行阶段，用于进度展示和断线恢复。 */
     private String phase;
 
-    /** 当前 attempt 内最后发布的 delta 序号。 */
+    /** 已持久化的最高输出增量序号，0 表示尚无输出。 */
     private Long outputDeltaSequence;
 
-    /** 当前累计回答草稿。 */
+    /** 截至当前增量拼接出的完整用户可见回答。 */
     private String answer;
 
-    /** 最近一次完整流投影持久化时间。 */
-    private Instant checkpointedAt;
-
-    /** 检查点乐观锁版本。 */
+    /** 快照并发更新使用的乐观锁版本。 */
     private Long version;
 
-    /** 组装 queued 执行的初始空检查点。 */
-    public static AgentExecutionStreamCheckpoint initial(
-            String checkpointId, String executionId, String phase, String emptyAnswer) {
+    public static AgentExecutionStreamCheckpoint initial(String executionId, String phase) {
         AgentExecutionStreamCheckpoint checkpoint = new AgentExecutionStreamCheckpoint();
-        checkpoint.executionStreamCheckpointId = checkpointId;
         checkpoint.executionId = executionId;
-        checkpoint.executionAttemptNumber = 0L;
         checkpoint.modelInvocationSequence = 0L;
         checkpoint.phase = phase;
         checkpoint.outputDeltaSequence = 0L;
-        checkpoint.answer = emptyAnswer;
+        checkpoint.answer = "";
         checkpoint.version = 0L;
         return checkpoint;
     }

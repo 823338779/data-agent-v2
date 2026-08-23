@@ -1,12 +1,10 @@
 package com.datagent.agentv2.conversation.execution;
 
-import static com.datagent.agentv2.conversation.execution.ExecutionConstants.EMPTY_TEXT;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_CONVERSATION_SESSION_NOT_FOUND;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_SESSION_CHANGED_CONCURRENTLY;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_CONVERSATION_MESSAGE;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_EXECUTION;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_EXECUTION_EVENT;
-import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_EXECUTION_STREAM_CHECKPOINT;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
@@ -16,149 +14,155 @@ import com.datagent.agentv2.conversation.domain.ConversationSession;
 import com.datagent.agentv2.conversation.enums.ExecutionEventType;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import com.datagent.agentv2.conversation.enums.ExecutionRequestType;
-import com.datagent.agentv2.conversation.enums.ExecutionStatus;
-import com.datagent.agentv2.conversation.enums.MessageRole;
 import com.datagent.agentv2.conversation.exception.ActiveExecutionConflictException;
 import com.datagent.agentv2.conversation.exception.IdempotencyKeyReusedException;
+import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
+import com.datagent.agentv2.conversation.runtime.LocalExecutionCancelled;
+import com.datagent.agentv2.conversation.runtime.LocalExecutionProperties;
+import com.datagent.agentv2.conversation.runtime.LocalExecutionStarted;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
 import com.datagent.agentv2.platform.context.OperatorContext;
+import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
-import org.springframework.http.HttpStatus;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-/** 承载消息提交中的独立事务边界，避免冲突重放加入已经失败的创建事务。 */
+/** 在一个事务中创建立即运行的本机 execution。 */
 @Service
 @RequiredArgsConstructor
 public class AgentExecutionSubmissionTransactionService {
 
     private static final ExecutionRequestType REQUEST_TYPE =
             ExecutionRequestType.MESSAGE_SUBMISSION;
-    private static final long DEFAULT_EXECUTION_BUDGET_MS = 600_000L;
 
     private final ConversationSessionService sessions;
     private final ConversationMessageService messages;
-    private final AgentExecutionService agentExecutions;
+    private final AgentExecutionService executions;
     private final AgentExecutionEventService events;
     private final AgentExecutionStreamCheckpointService streamCheckpoints;
+    private final AgentExecutionControlService controls;
+    private final LocalExecutionProperties properties;
+    private final ApplicationEventPublisher applicationEvents;
     private final IdGenerator ids;
 
-    /** 在独立事务内创建提交记录，或者返回已经存在的幂等提交。 */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ConversationSession createOrReplay(
-            String conversationSessionId,
+            String sessionId,
             String content,
+            SubmissionConflictPolicy conflictPolicy,
             String idempotencyKey,
-            String payloadHash,
-            String requestId) {
-        // 锁定会话并在写入前处理串行幂等重放和活动执行冲突。
-        ConversationSession session = sessions.lockById(conversationSessionId);
+            String payloadHash) {
+        ConversationSession session = sessions.lockById(sessionId);
         if (session == null) {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, ERROR_CONVERSATION_SESSION_NOT_FOUND);
         }
         AgentExecution replay =
-                agentExecutions.findRequest(
-                        conversationSessionId, REQUEST_TYPE.value(), idempotencyKey);
+                executions.findRequest(sessionId, REQUEST_TYPE.value(), idempotencyKey);
         if (replay != null) {
             requireSamePayload(replay, payloadHash);
             return session;
         }
-        if (agentExecutions.hasActiveExecution(conversationSessionId)) {
+        AgentExecution active = executions.lockActiveByConversationSessionId(sessionId);
+        if (active != null && conflictPolicy != SubmissionConflictPolicy.STEER_ACTIVE) {
             throw new ActiveExecutionConflictException();
         }
 
-        // 在创建依赖记录前推进由会话持有的消息和事件序号。
         ConversationSession.AllocatedSequences sequences = session.allocateSubmissionSequences(2);
+        long startedSequence = sequences.executionEvent();
+        Instant cancelledAt = null;
+        if (active != null) {
+            cancelledAt = Instant.now();
+            controls.cancelForSteeringLocked(active, cancelledAt);
+            startedSequence++;
+            session.setExecutionEventSequence(startedSequence);
+        }
         if (!sessions.updateById(session)) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT, ERROR_SESSION_CHANGED_CONCURRENTLY);
         }
+        if (active != null) {
+            events.save(
+                    AgentExecutionEvent.occurred(
+                            ids.next(ID_PREFIX_EXECUTION_EVENT),
+                            sessionId,
+                            active.getExecutionId(),
+                            sequences.executionEvent(),
+                            ExecutionEventType.CANCELLED.value(),
+                            cancelledAt));
+            applicationEvents.publishEvent(new LocalExecutionCancelled(active.getExecutionId()));
+        }
 
-        // 先持久化用户消息，因为执行记录需要引用该触发消息。
-        String operatorUserId = OperatorContext.requiredUserId();
-        ConversationMessage message =
+        String userId = OperatorContext.requiredUserId();
+        ConversationMessage userMessage =
                 ConversationMessage.user(
                         ids.next(ID_PREFIX_CONVERSATION_MESSAGE),
-                        conversationSessionId,
+                        sessionId,
                         content,
                         sequences.firstConversationMessage(),
-                        operatorUserId,
-                        MessageRole.USER.value());
-        messages.save(message);
+                        userId);
+        messages.save(userMessage);
 
-        // 创建排队中的执行记录，并补全消息到执行的双向关联。
         Instant now = Instant.now();
-        AgentExecution run =
-                AgentExecution.queued(
+        AgentExecution execution =
+                AgentExecution.running(
                         ids.next(ID_PREFIX_EXECUTION),
-                        conversationSessionId,
-                        message.getConversationMessageId(),
-                        operatorUserId,
-                        requestId,
-                        now,
+                        sessionId,
+                        userMessage.getConversationMessageId(),
                         REQUEST_TYPE.value(),
                         idempotencyKey,
                         payloadHash,
-                        DEFAULT_EXECUTION_BUDGET_MS,
-                        ExecutionStatus.QUEUED.value(),
-                        ExecutionPhase.QUEUED.value());
-        agentExecutions.save(run);
-
-        message.associateExecution(run.getExecutionId());
-        messages.updateById(message);
-
-        // 同一事务保存唯一 assistant 中心占位行，后续只在该行更新正文和过程列表。
+                        now.plus(properties.deadline()));
+        executions.save(execution);
+        userMessage.associateExecution(execution.getExecutionId());
+        messages.updateById(userMessage);
         messages.save(
                 ConversationMessage.assistantPlaceholder(
                         ids.next(ID_PREFIX_CONVERSATION_MESSAGE),
-                        conversationSessionId,
-                        run.getExecutionId(),
-                        sequences.lastConversationMessage(),
-                        MessageRole.ASSISTANT.value()));
-
-        // 初始化可重放事件流和模型输出检查点，使执行在提交后可被 worker 接管。
+                        sessionId,
+                        execution.getExecutionId(),
+                        sequences.lastConversationMessage()));
         events.save(
                 AgentExecutionEvent.occurred(
                         ids.next(ID_PREFIX_EXECUTION_EVENT),
-                        conversationSessionId,
-                        run.getExecutionId(),
-                        sequences.executionEvent(),
-                        ExecutionEventType.QUEUED.value(),
-                        null,
+                        sessionId,
+                        execution.getExecutionId(),
+                        startedSequence,
+                        ExecutionEventType.STARTED.value(),
                         now));
         streamCheckpoints.save(
                 AgentExecutionStreamCheckpoint.initial(
-                        ids.next(ID_PREFIX_EXECUTION_STREAM_CHECKPOINT),
-                        run.getExecutionId(),
-                        ExecutionPhase.QUEUED.value(),
-                        EMPTY_TEXT));
+                        execution.getExecutionId(), ExecutionPhase.PREPARING_CONTEXT.value()));
+        applicationEvents.publishEvent(
+                new LocalExecutionStarted(
+                        new LocalAgentExecution(
+                                TenantContext.requiredTenantId(),
+                                sessionId,
+                                execution.getExecutionId(),
+                                sequences.lastConversationMessage())));
         return session;
     }
 
-    /** 在创建事务回滚后，以新事务读取并发请求已经提交的幂等结果。 */
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public ConversationSession replayAfterConstraintConflict(
-            String conversationSessionId, String idempotencyKey, String payloadHash) {
-        // 仅把相同幂等键和相同负载视为可重放结果。
+            String sessionId, String idempotencyKey, String payloadHash) {
         AgentExecution replay =
-                agentExecutions.findRequest(
-                        conversationSessionId, REQUEST_TYPE.value(), idempotencyKey);
+                executions.findRequest(sessionId, REQUEST_TYPE.value(), idempotencyKey);
         if (replay == null) {
             return null;
         }
         requireSamePayload(replay, payloadHash);
-
-        // 返回租户过滤后的会话快照，供应用层继续构建响应。
-        ConversationSession session = sessions.findByUuid(conversationSessionId);
+        ConversationSession session = sessions.findByUuid(sessionId);
         if (session == null) {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, ERROR_CONVERSATION_SESSION_NOT_FOUND);
@@ -166,8 +170,8 @@ public class AgentExecutionSubmissionTransactionService {
         return session;
     }
 
-    private static void requireSamePayload(AgentExecution run, String payloadHash) {
-        if (!payloadHash.equals(run.getRequestPayloadHash())) {
+    private static void requireSamePayload(AgentExecution execution, String payloadHash) {
+        if (!payloadHash.equals(execution.getRequestPayloadHash())) {
             throw new IdempotencyKeyReusedException();
         }
     }

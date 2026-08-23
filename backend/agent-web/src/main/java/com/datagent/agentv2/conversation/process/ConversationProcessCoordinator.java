@@ -7,9 +7,9 @@ import com.datagent.agentv2.conversation.domain.ModelThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
 import com.datagent.agentv2.conversation.domain.ToolThinkingProcessItem;
-import com.datagent.agentv2.conversation.exception.ExecutionOwnershipLostException;
 import com.datagent.agentv2.conversation.react.ModelToolCall;
-import com.datagent.agentv2.conversation.runtime.AgentExecutionPort;
+import com.datagent.agentv2.conversation.runtime.ExecutionStoppedException;
+import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
 import com.datagent.agentv2.conversation.tool.ToolExecutionResult;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
@@ -78,7 +78,7 @@ public class ConversationProcessCoordinator {
 
     /** 创建 RUNNING thinking 节点并返回稳定 UUID。 */
     public UUID startThinking(
-            AgentExecutionPort.ClaimedAgentExecution run,
+            LocalAgentExecution run,
             long modelInvocationSequence,
             String provider,
             String model,
@@ -133,10 +133,7 @@ public class ConversationProcessCoordinator {
 
     /** 追加 thinking 增量，并以完整安全缓冲重新计算节点持久化边界。 */
     public void appendThinking(
-            AgentExecutionPort.ClaimedAgentExecution run,
-            UUID processItemId,
-            String delta,
-            Instant now) {
+            LocalAgentExecution run, UUID processItemId, String delta, Instant now) {
         Objects.requireNonNull(delta, "delta");
         String safeDelta = sanitizer.sanitizeText(delta);
         ThinkingAppendResult appended =
@@ -191,7 +188,7 @@ public class ConversationProcessCoordinator {
 
     /** 将 thinking 节点收敛为成功或失败终态，并记录完整安全正文。 */
     public void finishThinking(
-            AgentExecutionPort.ClaimedAgentExecution run,
+            LocalAgentExecution run,
             UUID processItemId,
             ThinkingProcessStatus status,
             Instant now) {
@@ -217,10 +214,9 @@ public class ConversationProcessCoordinator {
 
     /** 创建包含完整调用身份、脱敏入参和模型调用序号的 PREPARED 工具节点。 */
     public UUID prepareTool(
-            AgentExecutionPort.ClaimedAgentExecution run,
+            LocalAgentExecution run,
             long modelInvocationSequence,
             ModelToolCall call,
-            String toolExecutionId,
             Instant now) {
         Objects.requireNonNull(call, "call");
         JsonNode fullSafeInput = sanitizer.sanitizeJson(call.arguments());
@@ -245,12 +241,9 @@ public class ConversationProcessCoordinator {
                                             null,
                                             ThinkingProcessItem.CURRENT_SCHEMA_VERSION,
                                             call.name(),
-                                            call.name(),
-                                            toolExecutionId,
                                             call.toolCallId(),
                                             modelInvocationSequence,
                                             boundedInput,
-                                            null,
                                             null,
                                             null,
                                             null);
@@ -265,8 +258,7 @@ public class ConversationProcessCoordinator {
     }
 
     /** 将 PREPARED 工具节点转为 RUNNING 并记录真实开始时间。 */
-    public void startTool(
-            AgentExecutionPort.ClaimedAgentExecution run, UUID processItemId, Instant now) {
+    public void startTool(LocalAgentExecution run, UUID processItemId, Instant now) {
         mutate(
                 run,
                 now,
@@ -277,7 +269,6 @@ public class ConversationProcessCoordinator {
                                     current,
                                     ThinkingProcessStatus.RUNNING,
                                     now,
-                                    null,
                                     null,
                                     null,
                                     null,
@@ -297,10 +288,7 @@ public class ConversationProcessCoordinator {
 
     /** 使用完整工具结果构建成功或失败终态，并仅把有界表示写入 JSONB。 */
     public ProcessAuditEvent finishTool(
-            AgentExecutionPort.ClaimedAgentExecution run,
-            UUID processItemId,
-            ToolExecutionResult result,
-            Instant now) {
+            LocalAgentExecution run, UUID processItemId, ToolExecutionResult result, Instant now) {
         Objects.requireNonNull(result, "result");
         JsonNode fullSafeOutput =
                 result.content() == null ? null : sanitizer.sanitizeJson(result.content());
@@ -328,7 +316,6 @@ public class ConversationProcessCoordinator {
                                             current.startedAt(),
                                             now,
                                             boundedOutput,
-                                            succeeded,
                                             result.failureCode(),
                                             safeFailureMessage);
                             assistant.replaceProcessItem(processItemId, changed);
@@ -347,10 +334,9 @@ public class ConversationProcessCoordinator {
     /** 在执行异常边界一次更新中把所有未完成节点收敛为 FAILED。 */
     public void failOpenItems(
             String executionId, String errorCode, String errorMessage, Instant now) {
-        AgentExecution execution = requireExecutionLocked(executionId);
+        requireExecutionLocked(executionId);
         ConversationMessage assistant = requireAssistantLocked(executionId);
         String safeErrorMessage = sanitizer.sanitizeText(errorMessage);
-        long attempt = Objects.requireNonNullElse(execution.getExecutionAttemptNumber(), 0L);
         List<ProcessAuditEvent> auditEvents = new ArrayList<>();
         List<ProcessBufferKey> completedKeys = new ArrayList<>();
 
@@ -359,8 +345,7 @@ public class ConversationProcessCoordinator {
             if (isTerminal(item.status())) {
                 continue;
             }
-            ProcessBufferKey bufferKey =
-                    new ProcessBufferKey(executionId, attempt, item.processItemId());
+            ProcessBufferKey bufferKey = new ProcessBufferKey(executionId, item.processItemId());
             if (item instanceof ModelThinkingProcessItem thinking) {
                 ThinkingCheckpointBuffer buffer = thinkingBuffers.get(bufferKey);
                 String fullSafeContent =
@@ -377,7 +362,6 @@ public class ConversationProcessCoordinator {
                                 tool.startedAt(),
                                 now,
                                 null,
-                                false,
                                 errorCode,
                                 safeErrorMessage);
                 assistant.replaceProcessItem(item.processItemId(), failed);
@@ -400,7 +384,7 @@ public class ConversationProcessCoordinator {
 
     /** 所有常规变更共享 execution 行锁、owner fencing、assistant 行锁与一次保存路径。 */
     private <T> T mutate(
-            AgentExecutionPort.ClaimedAgentExecution run,
+            LocalAgentExecution run,
             Instant now,
             Function<ConversationMessage, Mutation<T>> mutation) {
         requireOwnedLocked(run, now);
@@ -419,7 +403,7 @@ public class ConversationProcessCoordinator {
     private void saveAndPublish(
             String tenantId, ConversationMessage assistant, List<ProcessAuditEvent> auditEvents) {
         if (!messages.updateById(assistant)) {
-            throw new ExecutionOwnershipLostException(assistant.getExecutionId());
+            throw new ExecutionStoppedException(assistant.getExecutionId());
         }
         applicationEvents.publishEvent(
                 new ConversationMessageChanged(
@@ -431,18 +415,14 @@ public class ConversationProcessCoordinator {
     }
 
     /** 锁定执行并拒绝状态、owner、attempt 或硬截止时间已经失效的写入。 */
-    private AgentExecution requireOwnedLocked(
-            AgentExecutionPort.ClaimedAgentExecution run, Instant now) {
+    private AgentExecution requireOwnedLocked(LocalAgentExecution run, Instant now) {
         AgentExecution execution = requireExecutionLocked(run.executionId());
-        boolean owned =
+        boolean running =
                 STATUS_RUNNING.equals(execution.getStatus())
-                        && Objects.equals(execution.getOwnerInstanceId(), run.ownerInstanceId())
-                        && Objects.equals(
-                                execution.getExecutionAttemptNumber(), run.executionAttemptNumber())
                         && execution.getHardDeadlineAt() != null
                         && execution.getHardDeadlineAt().isAfter(now);
-        if (!owned) {
-            throw new ExecutionOwnershipLostException(run.executionId());
+        if (!running) {
+            throw new ExecutionStoppedException(run.executionId());
         }
         return execution;
     }
@@ -450,7 +430,7 @@ public class ConversationProcessCoordinator {
     private AgentExecution requireExecutionLocked(String executionId) {
         AgentExecution execution = agentExecutions.lockById(executionId);
         if (execution == null) {
-            throw new ExecutionOwnershipLostException(executionId);
+            throw new ExecutionStoppedException(executionId);
         }
         return execution;
     }
@@ -496,7 +476,6 @@ public class ConversationProcessCoordinator {
             Instant startedAt,
             Instant completedAt,
             BoundedProcessPayload output,
-            Boolean success,
             String errorCode,
             String errorMessage) {
         return new ToolThinkingProcessItem(
@@ -510,14 +489,11 @@ public class ConversationProcessCoordinator {
                         ? null
                         : durationMillis(startedAt, completedAt),
                 current.schemaVersion(),
-                current.toolId(),
                 current.toolName(),
-                current.toolExecutionId(),
                 current.toolCallId(),
                 current.modelInvocationSequence(),
                 current.input(),
                 output,
-                success,
                 errorCode,
                 errorMessage);
     }
@@ -565,9 +541,8 @@ public class ConversationProcessCoordinator {
         return sizeReached || timeReached;
     }
 
-    private static ProcessBufferKey key(
-            AgentExecutionPort.ClaimedAgentExecution run, UUID processItemId) {
-        return new ProcessBufferKey(run.executionId(), run.executionAttemptNumber(), processItemId);
+    private static ProcessBufferKey key(LocalAgentExecution run, UUID processItemId) {
+        return new ProcessBufferKey(run.executionId(), processItemId);
     }
 
     /** 本地缓冲只在事务提交后更新，避免回滚事务留下不可见的脏状态。 */
@@ -598,6 +573,5 @@ public class ConversationProcessCoordinator {
             String fullSafeContent, int checkpointedCharacters, Instant checkpointedAt) {}
 
     /** execution、attempt 和 ProcessItem UUID 共同隔离本地完整安全缓冲。 */
-    private record ProcessBufferKey(
-            String executionId, long executionAttemptNumber, UUID processItemId) {}
+    private record ProcessBufferKey(String executionId, UUID processItemId) {}
 }

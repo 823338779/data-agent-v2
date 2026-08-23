@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.datagent.agentv2.context.lsm.domain.ConversationTurn;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmSummarySegmentEntity;
 import com.datagent.agentv2.context.lsm.persistence.json.LsmDocumentCodec;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmSummarySegmentRepository;
@@ -17,7 +18,6 @@ import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
-import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import java.util.ArrayList;
 import java.util.List;
@@ -51,7 +51,7 @@ class LsmConversationContextAssemblerTest {
                         segment("child-3", "STANDARD", 0, 21, 30, 80, "{\"child\":3}", "[]"));
         LsmContextManifest manifest =
                 new LsmContextManifest(
-                        null, List.of("child-1", "child-2", "child-3"), 31L, 31L, 1L, 31L, 0, 3, 2);
+                        null, List.of("child-1", "child-2", "child-3"), 31L, 31L, 0, 3, 2);
         var state =
                 new LsmConversationContextAssembler.ContextState(
                         request,
@@ -69,26 +69,18 @@ class LsmConversationContextAssemblerTest {
                         .orElseThrow();
 
         assertThat(parent.generationRequest().sourceDocument())
-                .contains("\"child\":1", "\"child\":2", "\"child\":3")
+                .contains("child-1", "child-2", "child-3")
                 .doesNotContain(RAW_MARKER);
     }
 
     @Test
-    void warmFrontierExpandsToChildrenWithRoomAndUsesParentWhenBudgetIsTight() {
+    void publishedViewUsesOnlyAuthorizedActiveSegmentsForEveryBudget() {
         LsmSummarySegmentRepository segments = mock(LsmSummarySegmentRepository.class);
         LsmConversationContextAssembler delegate = assembler(segments);
         LsmConversationContextAssembler assembler = org.mockito.Mockito.spy(delegate);
         LsmContextManifest manifest =
                 new LsmContextManifest(
-                        "root",
-                        List.of("root", "cold", "warm-parent"),
-                        null,
-                        null,
-                        21L,
-                        40L,
-                        3,
-                        3,
-                        2);
+                        "root", List.of("root", "cold", "warm-parent"), null, null, 3, 3, 2);
         List<LsmSummarySegmentEntity> active =
                 List.of(
                         segment("root", "ROOT", 2, 1, 10, 20, ROOT_DOCUMENT, "[]"),
@@ -147,33 +139,23 @@ class LsmConversationContextAssemblerTest {
         assertThat(roomyContents)
                 .containsSubsequence(
                         "fixed-system",
-                        ROOT_DOCUMENT,
-                        COLD_DOCUMENT,
-                        WARM_CHILD_ONE_DOCUMENT,
-                        WARM_CHILD_TWO_DOCUMENT,
+                        "[事件] root｜进行中\n事实：root",
+                        "[事件] cold｜进行中\n事实：cold",
+                        "[事件] warm-parent｜进行中\n事实：warm-parent",
                         "hot",
                         "current")
-                .doesNotContain(WARM_PARENT_DOCUMENT);
-        assertThat(tightContents)
-                .containsSubsequence(
-                        "fixed-system",
-                        ROOT_DOCUMENT,
-                        COLD_DOCUMENT,
-                        WARM_PARENT_DOCUMENT,
-                        "hot",
-                        "current")
-                .doesNotContain(WARM_CHILD_ONE_DOCUMENT, WARM_CHILD_TWO_DOCUMENT);
+                .noneMatch(content -> content.contains("schemaVersion"));
+        assertThat(tightContents).isEqualTo(roomyContents);
     }
 
     @Test
-    void rootAndWarmUseOneNonOverlappingAuthorizedFrontier() {
+    void rootAndTailUseOneNonOverlappingAuthorizedFrontier() {
         LsmSummarySegmentRepository segments = mock(LsmSummarySegmentRepository.class);
         LsmConversationContextAssembler delegate = assembler(segments);
         LsmConversationContextAssembler assembler = org.mockito.Mockito.spy(delegate);
         ConversationContextRequest request = request(new ContextBudget(2_000, 100, 100, 0));
         LsmContextManifest manifest =
-                new LsmContextManifest(
-                        "root", List.of("root", "warm-parent"), null, null, 21L, 40L, 3, 3, 2);
+                new LsmContextManifest("root", List.of("root", "warm-parent"), null, null, 3, 3, 2);
         LsmSummarySegmentEntity root =
                 segment(
                         "root",
@@ -230,8 +212,15 @@ class LsmConversationContextAssemblerTest {
 
         assertThat(contents)
                 .containsSubsequence(
-                        "fixed-system", ROOT_DOCUMENT, WARM_CHILD_ONE_DOCUMENT, "hot", "current")
-                .doesNotContain(ROOT_WARM_CHILD_DOCUMENT, WARM_PARENT_DOCUMENT);
+                        "fixed-system",
+                        "[事件] root｜进行中\n事实：root",
+                        "[事件] warm-parent｜进行中\n事实：warm-parent",
+                        "hot",
+                        "current")
+                .noneMatch(
+                        content ->
+                                content.contains("root-warm-child")
+                                        || content.contains("warm-child"));
     }
 
     @Test
@@ -241,7 +230,7 @@ class LsmConversationContextAssemblerTest {
         LsmConversationContextAssembler assembler = org.mockito.Mockito.spy(delegate);
         ConversationContextRequest request = request(new ContextBudget(600, 50, 50, 0));
         LsmContextManifest manifest =
-                new LsmContextManifest(null, List.of("warm-parent"), null, null, 1L, 20L, 3, 3, 2);
+                new LsmContextManifest(null, List.of("warm-parent"), null, null, 3, 3, 2);
         LsmSummarySegmentEntity warmParent =
                 segment(
                         "warm-parent",
@@ -321,12 +310,8 @@ class LsmConversationContextAssemblerTest {
                         .toList();
 
         assertThat(contents)
-                .contains(WARM_PARENT_DOCUMENT)
-                .doesNotContain(
-                        READY_ORPHAN_DOCUMENT,
-                        CANCELLED_ORPHAN_DOCUMENT,
-                        SUPERSEDED_ORPHAN_DOCUMENT,
-                        CAS_LOSER_ORPHAN_DOCUMENT);
+                .contains("[事件] warm-parent｜进行中\n事实：warm-parent")
+                .noneMatch(content -> content.contains("orphan"));
     }
 
     @Test
@@ -336,8 +321,7 @@ class LsmConversationContextAssemblerTest {
         LsmConversationContextAssembler assembler = org.mockito.Mockito.spy(delegate);
         ConversationContextRequest request = request(new ContextBudget(2_000, 100, 100, 0));
         LsmContextManifest manifest =
-                new LsmContextManifest(
-                        null, List.of("one", "three"), null, null, null, null, 1, 3, 2);
+                new LsmContextManifest(null, List.of("one", "three"), null, null, 1, 3, 2);
         List<LsmSummarySegmentEntity> active =
                 List.of(
                         segment("one", "STANDARD", 0, 1, 10, 20, "{\"one\":true}", "[]"),
@@ -400,26 +384,33 @@ class LsmConversationContextAssemblerTest {
         entity.setStartMessageSequence(start);
         entity.setEndMessageSequence(end);
         entity.setEstimatedTokenCount(tokens);
-        entity.setSummaryDocument(document);
+        entity.setSummaryDocument(eventSummary(id, start, end));
         entity.setSourceSegmentIds(sourceIds);
         return entity;
     }
 
+    private static String eventSummary(String title, long start, long end) {
+        return """
+                {"schemaVersion":2,"coverage":{"startTurnSequence":%d,"endTurnSequence":%d,"startMessageSequence":%d,"endMessageSequence":%d},"events":[{"title":{"text":"%s","sourceRanges":[{"startMessageSequence":%d,"endMessageSequence":%d}]},"status":{"value":"ACTIVE","sourceRanges":[{"startMessageSequence":%d,"endMessageSequence":%d}]},"confirmedFacts":[{"statement":"%s","sourceRanges":[{"startMessageSequence":%d,"endMessageSequence":%d}]}],"userPreferences":[],"workingHypotheses":[],"decisions":[],"rejectedApproaches":[],"toolFindings":[],"openQuestions":[],"nextSteps":[]}]}
+                """
+                .formatted(
+                        start, end, start, end, title, start, end, start, end, title, start, end);
+    }
+
     private static ConversationContextRequest request(ContextBudget budget) {
         return new ConversationContextRequest(
-                new ContextExecutionRef("tenant", "session", "execution", "owner", 1, 42),
+                new ContextExecutionRef("tenant", "session", "execution", 42),
                 budget,
                 List.of(ContextMessage.system("fixed-system")),
                 List.of());
     }
 
     private static LsmContextPolicySnapshot policy() {
-        return new LsmContextPolicySnapshot(1, 3, 2, 10, 75, 65, 100, 109, 10);
+        return new LsmContextPolicySnapshot(1, 3, 2, 10, 75, 65, 10);
     }
 
     private static LsmConversationContextAssembler assembler(LsmSummarySegmentRepository segments) {
         return new LsmConversationContextAssembler(
-                null,
                 null,
                 null,
                 null,

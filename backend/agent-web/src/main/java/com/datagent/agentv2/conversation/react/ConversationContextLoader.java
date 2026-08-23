@@ -3,23 +3,19 @@ package com.datagent.agentv2.conversation.react;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.BoundedProcessPayload;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.domain.MessageRole;
 import com.datagent.agentv2.conversation.domain.ModelThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
 import com.datagent.agentv2.conversation.domain.ToolThinkingProcessItem;
-import com.datagent.agentv2.conversation.enums.MessageRole;
-import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
-import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
@@ -31,8 +27,7 @@ import tools.jackson.databind.ObjectMapper;
 public class ConversationContextLoader {
 
     private static final String ERROR_EXECUTION_NOT_FOUND = "Agent execution was not found";
-    private static final String ERROR_MISMATCHED_TOOL_PROCESS =
-            "Tool process item does not match its execution row";
+    private static final String ERROR_INVALID_TOOL_PROCESS = "Tool process item is incomplete";
     private static final String KEY_PREVIEW = "preview";
     private static final String KEY_TRUNCATED = "truncated";
     private static final String KEY_ORIGINAL_SIZE_BYTES = "originalSizeBytes";
@@ -45,7 +40,6 @@ public class ConversationContextLoader {
 
     private final AgentExecutionService agentExecutions;
     private final ConversationMessageService messages;
-    private final ToolExecutionService toolExecutions;
     private final ObjectMapper json;
 
     public List<ModelInputMessage> load(
@@ -57,44 +51,20 @@ public class ConversationContextLoader {
         List<ConversationMessage> rows =
                 messages.findByConversationSessionIdUpTo(
                         execution.getConversationSessionId(), inputUpToConversationMessageSequence);
-        Map<UUID, ToolExecutionEntity> executionsByProcessItem = executionIndex(rows);
         List<ModelInputMessage> result = new ArrayList<>(rows.size());
 
         // 真实消息按会话顺序回放；assistant 的工具轮次在其正文之前展开为模型协议消息。
         for (ConversationMessage row : rows) {
-            if (MessageRole.ASSISTANT.value().equals(row.getRole())) {
-                appendAssistant(row, executionsByProcessItem, result);
+            if (row.getRole() == MessageRole.ASSISTANT) {
+                appendAssistant(row, result);
             } else {
-                result.add(ModelInputMessage.plain(row.getRole(), row.getContent()));
+                result.add(ModelInputMessage.plain(row.getRole().value(), row.getContent()));
             }
         }
         return List.copyOf(result);
     }
 
-    private Map<UUID, ToolExecutionEntity> executionIndex(List<ConversationMessage> messages) {
-        // 模型上下文会跨越多轮 assistant 消息，因此工具索引必须覆盖这些消息各自所属的 execution。
-        List<String> contextExecutionIds =
-                messages.stream()
-                        .filter(message -> MessageRole.ASSISTANT.value().equals(message.getRole()))
-                        .map(ConversationMessage::getExecutionId)
-                        .filter(java.util.Objects::nonNull)
-                        .distinct()
-                        .toList();
-        Map<UUID, ToolExecutionEntity> result = new HashMap<>();
-        for (ToolExecutionEntity execution :
-                toolExecutions.findByExecutionIds(contextExecutionIds)) {
-            UUID processItemId = execution.getToolProcessItemId();
-            if (processItemId == null || result.put(processItemId, execution) != null) {
-                throw new IllegalStateException(ERROR_MISMATCHED_TOOL_PROCESS);
-            }
-        }
-        return Map.copyOf(result);
-    }
-
-    private void appendAssistant(
-            ConversationMessage assistant,
-            Map<UUID, ToolExecutionEntity> executionsByProcessItem,
-            List<ModelInputMessage> result) {
+    private void appendAssistant(ConversationMessage assistant, List<ModelInputMessage> result) {
         Map<Long, List<ToolThinkingProcessItem>> toolsByInvocation = new TreeMap<>();
         Map<Long, String> thinkingByInvocation = new TreeMap<>();
         assistant.getThinkingProcess().stream()
@@ -123,8 +93,7 @@ public class ConversationContextLoader {
         for (List<ToolThinkingProcessItem> toolItems : toolsByInvocation.values()) {
             List<ModelToolCall> calls = new ArrayList<>(toolItems.size());
             for (ToolThinkingProcessItem item : toolItems) {
-                validateToolItem(
-                        assistant, item, executionsByProcessItem.get(item.processItemId()));
+                validateToolItem(item);
                 calls.add(
                         new ModelToolCall(
                                 item.toolCallId(), item.toolName(), inputNode(item.input())));
@@ -149,19 +118,9 @@ public class ConversationContextLoader {
         }
     }
 
-    private void validateToolItem(
-            ConversationMessage assistant,
-            ToolThinkingProcessItem item,
-            ToolExecutionEntity execution) {
-        if (execution == null
-                || !assistant
-                        .getConversationMessageId()
-                        .equals(execution.getAssistantConversationMessageId())
-                || !item.toolExecutionId().equals(execution.getToolExecutionId())
-                || !item.toolCallId().equals(execution.getToolCallId())
-                || !item.toolName().equals(execution.getToolName())
-                || item.modelInvocationSequence() != execution.getModelInvocationSequence()) {
-            throw new IllegalStateException(ERROR_MISMATCHED_TOOL_PROCESS);
+    private static void validateToolItem(ToolThinkingProcessItem item) {
+        if (item.toolCallId().isBlank() || item.toolName().isBlank()) {
+            throw new IllegalStateException(ERROR_INVALID_TOOL_PROCESS);
         }
     }
 
@@ -183,7 +142,7 @@ public class ConversationContextLoader {
             return json.writeValueAsString(failure);
         }
         if (output == null) {
-            throw new IllegalStateException(ERROR_MISMATCHED_TOOL_PROCESS);
+            throw new IllegalStateException(ERROR_INVALID_TOOL_PROCESS);
         }
         if (output.truncated()) {
             return json.writeValueAsString(payloadPreview(output));

@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.datagent.agentv2.conversation.react.ReactExecutionEngine;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterAll;
@@ -21,9 +22,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -40,14 +41,9 @@ class AgentV2ApplicationTest {
     private static final Pattern SESSION_VERSION_PATTERN = Pattern.compile("\"version\":([0-9]+)");
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
-    private static final GenericContainer<?> REDIS =
-            new GenericContainer<>(DockerImageName.parse("redis:7.4-alpine"))
-                    .withCommand("redis-server", "--requirepass", "redis_test")
-                    .withExposedPorts(6379);
 
     static {
         POSTGRES.start();
-        REDIS.start();
     }
 
     @DynamicPropertySource
@@ -55,19 +51,15 @@ class AgentV2ApplicationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
-        registry.add("spring.data.redis.host", REDIS::getHost);
-        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
-        registry.add("spring.data.redis.username", () -> "default");
-        registry.add("spring.data.redis.password", () -> "redis_test");
     }
 
     @AfterAll
     static void stopDatabase() {
-        REDIS.stop();
         POSTGRES.stop();
     }
 
     @Autowired private MockMvc mvc;
+    @MockitoBean private ReactExecutionEngine executionEngine;
 
     @Test
     void fixedUserCanCreateListAndReadConversation() throws Exception {
@@ -80,7 +72,7 @@ class AgentV2ApplicationTest {
                         .andExpect(status().isCreated())
                         .andExpect(jsonPath("$.title").value("First chat"))
                         .andExpect(jsonPath("$.tag").value("local"))
-                        .andExpect(jsonPath("$.sessionType").value("INTERACTIVE"))
+                        .andExpect(jsonPath("$.sessionType").doesNotExist())
                         .andExpect(jsonPath("$.messages").isEmpty())
                         .andExpect(jsonPath("$.execution").doesNotExist())
                         .andReturn()
@@ -223,9 +215,10 @@ class AgentV2ApplicationTest {
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.messages[0].role").value("user"))
                 .andExpect(jsonPath("$.messages[0].content").value("hello ollama"))
-                .andExpect(jsonPath("$.execution.status").value("queued"))
-                .andExpect(jsonPath("$.execution.events[0].type").value("execution_queued"))
-                .andExpect(jsonPath("$.execution.streamCheckpoint.phase").value("QUEUED"));
+                .andExpect(jsonPath("$.execution.status").value("running"))
+                .andExpect(jsonPath("$.execution.events[0].type").value("execution_started"))
+                .andExpect(
+                        jsonPath("$.execution.streamCheckpoint.phase").value("PREPARING_CONTEXT"));
     }
 
     @Test
@@ -267,7 +260,7 @@ class AgentV2ApplicationTest {
                                 .string(
                                         org.hamcrest.Matchers.not(
                                                 org.hamcrest.Matchers.containsString(
-                                                        "event:execution_queued"))))
+                                                        "event:execution_started"))))
                 .andExpect(request().asyncStarted());
 
         // 即使携带旧游标，重连也必须先返回 PostgreSQL 权威快照，避免低延迟事件丢失。
@@ -275,7 +268,6 @@ class AgentV2ApplicationTest {
                         get(
                                         "/api/v1/agent-sessions/{conversationSessionId}/events",
                                         conversationSessionId)
-                                .queryParam("cursor", "e=0;a=0;t=0;s=0")
                                 .accept(MediaType.TEXT_EVENT_STREAM))
                 .andExpect(status().isOk())
                 .andExpect(

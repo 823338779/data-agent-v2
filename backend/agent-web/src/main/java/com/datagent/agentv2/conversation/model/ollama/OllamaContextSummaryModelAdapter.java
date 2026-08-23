@@ -4,7 +4,6 @@ import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ContextSummaryRequest;
 import com.datagent.agentv2.conversation.context.ContextSummaryResult;
-import com.datagent.agentv2.conversation.model.api.ModelInvocationResult;
 import java.util.List;
 import java.util.Objects;
 import org.springframework.ai.ollama.api.OllamaApi;

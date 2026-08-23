@@ -29,9 +29,7 @@ class HierarchicalFlywayIntegrationTest {
     private static final List<String> HIERARCHICAL_TABLES =
             List.of(
                     "conversation_context_hierarchical_checkpoint",
-                    "conversation_context_hierarchical_compaction_job",
-                    "conversation_context_hierarchical_execution_policy",
-                    "conversation_context_hierarchical_summary_node");
+                    "conversation_context_hierarchical_cold");
 
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
@@ -49,11 +47,18 @@ class HierarchicalFlywayIntegrationTest {
     }
 
     @Test
-    void pluginMigrationUsesIndependentHistoryAndCreatesExactlyItsFourTables() throws SQLException {
+    void pluginMigrationUsesIndependentHistoryAndCreatesOnlyRollingColdStorage()
+            throws SQLException {
         assertThat(hierarchicalTables()).containsExactlyElementsOf(HIERARCHICAL_TABLES);
         assertThat(tables()).contains(PRIMARY_HISTORY, HIERARCHICAL_HISTORY);
         assertThat(migrationScripts(PRIMARY_HISTORY)).doesNotContain(MIGRATION_SCRIPT);
         assertThat(migrationScripts(HIERARCHICAL_HISTORY)).contains(MIGRATION_SCRIPT);
+    }
+
+    @Test
+    void incompatibleSchemaStartsFromOneMigration() throws SQLException {
+        assertThat(migrationScripts(HIERARCHICAL_HISTORY))
+                .containsExactly("<< Flyway Baseline >>", MIGRATION_SCRIPT);
     }
 
     @Test
@@ -69,63 +74,27 @@ class HierarchicalFlywayIntegrationTest {
     void pluginTablesEnforceIdentityPointerAndLifecycleConstraints() throws SQLException {
         assertThat(
                         constraintDefinition(
-                                "conversation_context_hierarchical_execution_policy",
-                                "uk_hierarchical_execution_policy"))
-                .isEqualTo("UNIQUE (tenant_id, execution_id)");
-        assertThat(
-                        constraintDefinition(
                                 "conversation_context_hierarchical_checkpoint",
                                 "uk_hierarchical_checkpoint_session"))
                 .isEqualTo("UNIQUE (tenant_id, conversation_session_id)");
-        assertThat(
-                        constraintDefinition(
-                                "conversation_context_hierarchical_summary_node",
-                                "uk_hierarchical_summary_node_identity"))
-                .contains(
-                        "tenant_id",
-                        "conversation_session_id",
-                        "level",
-                        "start_conversation_message_sequence",
-                        "end_conversation_message_sequence",
-                        "summary_schema_version",
-                        "summary_prompt_version",
-                        "model_provider",
-                        "model_name");
+        assertThat(hierarchicalTables())
+                .contains("conversation_context_hierarchical_cold")
+                .doesNotContain("conversation_context_hierarchical_summary_node");
         assertThat(checkDefinitions("conversation_context_hierarchical_checkpoint"))
                 .anySatisfy(
                         definition ->
                                 assertThat(definition)
                                         .contains(
-                                                "summarized_up_to_conversation_message_sequence >= 0",
-                                                "summarized_completed_turn_count >= 0",
-                                                "estimated_token_count >= 0",
+                                                "evaluated_up_to_conversation_message_sequence >= 0",
                                                 "strategy_generation >= 0"));
-        assertThat(checkDefinitions("conversation_context_hierarchical_summary_node"))
+        assertThat(checkDefinitions("conversation_context_hierarchical_cold"))
                 .anySatisfy(
                         definition ->
                                 assertThat(definition)
                                         .contains(
-                                                "level >= 0",
-                                                "covered_completed_turn_count > 0",
-                                                "estimated_token_count >= 0"));
-        assertThat(checkDefinitions("conversation_context_hierarchical_compaction_job"))
-                .anySatisfy(
-                        definition ->
-                                assertThat(definition)
-                                        .contains(
-                                                "PLANNED",
-                                                "GENERATING",
-                                                "READY_TO_PUBLISH",
-                                                "SUCCEEDED",
-                                                "FAILED",
-                                                "CANCELLED"));
-    }
-
-    @Test
-    void everyPluginColumnHasDocumentation() throws SQLException {
-        for (String table : HIERARCHICAL_TABLES) {
-            assertThat(undocumentedColumns(table)).as("column comments for %s", table).isEmpty();
-        }
+                                                "persisted_token_count > 0",
+                                                "rendered_token_count > 0",
+                                                "rendered_token_count <= target_rendered_tokens"));
     }
 
     private static Flyway flyway(String location, String historyTable) {

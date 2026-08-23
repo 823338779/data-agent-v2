@@ -15,6 +15,8 @@ public record LsmPlanningInput(
         LsmContextPolicySnapshot policy,
         /** 本次完整输入和目标水位的 token 压力快照。 */
         TokenPressure pressure,
+        /** 扣除固定输入、最近十轮、当前轮和摘要 wrapper 后可用于摘要渲染的预算。 */
+        int historyMemoryBudget,
         /** 超过硬边界后是否允许将不足十轮的完整历史强制封为 L0。 */
         boolean forcePartialL0) {
 
@@ -24,6 +26,26 @@ public record LsmPlanningInput(
         segments = List.copyOf(Objects.requireNonNull(segments, "segments"));
         policy = Objects.requireNonNull(policy, "policy");
         pressure = Objects.requireNonNull(pressure, "pressure");
+        if (historyMemoryBudget <= 0) {
+            throw new IllegalArgumentException("historyMemoryBudget must be positive");
+        }
+    }
+
+    public LsmPlanningInput(
+            List<ConversationTurn> turns,
+            LsmContextManifest manifest,
+            List<LsmSummarySegment> segments,
+            LsmContextPolicySnapshot policy,
+            TokenPressure pressure,
+            boolean forcePartialL0) {
+        this(
+                turns,
+                manifest,
+                segments,
+                policy,
+                pressure,
+                Math.max(1, pressure.hardInputLimitTokens()),
+                forcePartialL0);
     }
 
     /** Planner 判断 forced L0 和 Major Compaction 所需的 token 压力。 */

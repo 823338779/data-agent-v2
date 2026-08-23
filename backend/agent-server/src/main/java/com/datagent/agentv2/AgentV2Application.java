@@ -5,11 +5,9 @@ import java.util.TimeZone;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
-import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
 @ConfigurationPropertiesScan("com.datagent.agentv2.conversation")
-@EnableScheduling
 public class AgentV2Application {
 
     private static final ZoneId SERVER_TIME_ZONE = ZoneId.of("Asia/Shanghai");

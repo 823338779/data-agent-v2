@@ -8,17 +8,13 @@ import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** 注册 hierarchical 上下文指标，并把 meter 标签限制为固定策略、结果和有限树层级。 */
+/** 注册滚动 Cold 上下文指标，标签只使用固定策略与有限结果。 */
 public final class HierarchicalContextMetrics {
 
     private static final String STRATEGY_ID = "hierarchical";
@@ -26,16 +22,10 @@ public final class HierarchicalContextMetrics {
     private static final String UTILIZATION_RATIO = "agent_context_utilization_ratio";
     private static final String COMPACTION_TOTAL = "agent_context_compaction_total";
     private static final String COMPACTION_DURATION = "agent_context_compaction_duration_seconds";
-    private static final String GENERATED_NODES = "agent_context_generated_nodes_total";
-    private static final String ACTIVE_FRONTIER_NODES = "agent_context_active_frontier_nodes";
     private static final String COLD_POINTER = "agent_context_cold_pointer";
     private static final String STRATEGY_GENERATION = "agent_context_strategy_generation";
     private static final String TAG_STRATEGY = "strategy";
     private static final String TAG_OUTCOME = "outcome";
-    private static final String TAG_LEVEL = "level";
-    private static final int MIN_LEVEL = 0;
-    private static final int MAX_EXACT_LEVEL = 8;
-    private static final String OVERFLOW_LEVEL_TAG = "9_plus";
     private static final Tags STRATEGY_TAGS = Tags.of(TAG_STRATEGY, STRATEGY_ID);
 
     /** 最近一次完整模型输入的估算 token 数。 */
@@ -49,10 +39,6 @@ public final class HierarchicalContextMetrics {
 
     /** 最近一次正式 checkpoint 的策略代次。 */
     private final AtomicLong strategyGeneration = new AtomicLong();
-
-    /** 已注册的有限 frontier 层级 gauge 及其最新节点数。 */
-    private final ConcurrentMap<String, AtomicLong> activeFrontierByBucket =
-            new ConcurrentHashMap<>();
 
     /** 仅用于注册固定名称和有限标签组合的 Micrometer registry。 */
     private final MeterRegistry registry;
@@ -94,43 +80,6 @@ public final class HierarchicalContextMetrics {
         Timer.builder(COMPACTION_DURATION).tags(tags).register(registry).record(checkedDuration);
     }
 
-    /** 按有限二进制树层级累计本次实际生成并持久化的节点数。 */
-    public void recordGeneratedNodes(int level, long count) {
-        validateLevel(level);
-        if (count < 0L) {
-            throw new IllegalArgumentException("generated node count must not be negative");
-        }
-        Counter.builder(GENERATED_NODES)
-                .tags(levelTags(levelTagValue(level)))
-                .register(registry)
-                .increment(count);
-    }
-
-    /** 用最新正式 checkpoint 原子替换各有限层级的 active frontier 节点数。 */
-    public synchronized void recordActiveFrontier(Map<Integer, Integer> countsByLevel) {
-        Map<Integer, Integer> counts = Map.copyOf(countsByLevel);
-        counts.forEach(
-                (level, count) -> {
-                    validateLevel(level);
-                    if (count < 0) {
-                        throw new IllegalArgumentException(
-                                "active frontier count must not be negative");
-                    }
-                });
-
-        // 超过精确上限的合法层级先聚合到单一桶，再替换当前 checkpoint 的观测值。
-        Map<String, Long> countsByBucket = new HashMap<>();
-        counts.forEach(
-                (level, count) ->
-                        countsByBucket.merge(levelTagValue(level), count.longValue(), Long::sum));
-        activeFrontierByBucket.values().forEach(value -> value.set(0L));
-        countsByBucket.forEach(
-                (bucket, count) ->
-                        activeFrontierByBucket
-                                .computeIfAbsent(bucket, this::registerActiveFrontierGauge)
-                                .set(count));
-    }
-
     /** 更新最近一次正式发布的 Cold 指针和策略代次。 */
     public void recordCheckpoint(long summarizedUpToMessageSequence, long generation) {
         if (summarizedUpToMessageSequence < 0L || generation < 0L) {
@@ -140,28 +89,8 @@ public final class HierarchicalContextMetrics {
         strategyGeneration.set(generation);
     }
 
-    private AtomicLong registerActiveFrontierGauge(String level) {
-        AtomicLong value = new AtomicLong();
-        registry.gauge(ACTIVE_FRONTIER_NODES, levelTags(level), value);
-        return value;
-    }
-
     private static List<Tag> outcomeTags(String outcome) {
         return List.of(Tag.of(TAG_STRATEGY, STRATEGY_ID), Tag.of(TAG_OUTCOME, outcome));
-    }
-
-    private static List<Tag> levelTags(String level) {
-        return List.of(Tag.of(TAG_STRATEGY, STRATEGY_ID), Tag.of(TAG_LEVEL, level));
-    }
-
-    private static void validateLevel(int level) {
-        if (level < MIN_LEVEL) {
-            throw new IllegalArgumentException("metric level must not be negative");
-        }
-    }
-
-    private static String levelTagValue(int level) {
-        return level <= MAX_EXACT_LEVEL ? Integer.toString(level) : OVERFLOW_LEVEL_TAG;
     }
 
     /** 策略入口可观察到的有限压缩结果，不暴露作业或会话标识。 */

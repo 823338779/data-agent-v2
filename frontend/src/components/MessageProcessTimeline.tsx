@@ -68,8 +68,7 @@ export function MessageProcessTimeline({ items }: MessageProcessTimelineProps) {
             ) : (
               <div className="process-tool-content">
                 <p>
-                  Tool ID: {item.toolId} · Call ID: {item.toolCallId} · Execution ID:{' '}
-                  {item.toolExecutionId}
+                  工具：{item.toolName} · Call ID: {item.toolCallId}
                 </p>
                 <ProcessPayload label="输入" payload={item.input} />
                 {item.output && <ProcessPayload label="输出" payload={item.output} />}

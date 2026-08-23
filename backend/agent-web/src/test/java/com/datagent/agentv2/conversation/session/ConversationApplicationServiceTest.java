@@ -8,7 +8,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.datagent.agentv2.conversation.domain.ConversationSession;
-import com.datagent.agentv2.conversation.enums.ConversationSessionType;
 import com.datagent.agentv2.conversation.execution.AgentExecutionSubmissionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
@@ -45,20 +44,13 @@ class ConversationApplicationServiceTest {
                 .save(any(ConversationSession.class));
         ConversationApplicationService service =
                 new ConversationApplicationService(
-                        sessions,
-                        messages,
-                        executions,
-                        events,
-                        checkpoints,
-                        submissions,
-                        ids);
+                        sessions, messages, executions, events, checkpoints, submissions, ids);
 
         ConversationView view = service.create("Test conversation", null);
 
         assertThat(view.conversationSessionId()).isEqualTo("conversation-session-1");
         assertThat(view.title()).isEqualTo("Test conversation");
         assertThat(view.tag()).isEmpty();
-        assertThat(view.sessionType()).isEqualTo(ConversationSessionType.INTERACTIVE);
         assertThat(view.createdAt()).isEqualTo(createdAt);
         assertThat(view.updatedAt()).isEqualTo(updatedAt);
         assertThat(view.version()).isZero();

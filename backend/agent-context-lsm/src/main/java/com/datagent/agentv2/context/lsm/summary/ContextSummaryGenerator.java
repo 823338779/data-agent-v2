@@ -1,11 +1,15 @@
 package com.datagent.agentv2.context.lsm.summary;
 
+import com.datagent.agentv2.context.common.summary.EventContextSummaryDocument;
+import com.datagent.agentv2.context.common.summary.EventContextSummaryPrompt;
+import com.datagent.agentv2.context.common.summary.EventContextSummaryRenderer;
+import com.datagent.agentv2.context.common.summary.EventContextSummaryValidator;
+import com.datagent.agentv2.context.common.summary.EventSummaryCoverage;
+import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.SegmentKind;
-import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.planning.ConversationTokenEstimator;
-import com.datagent.agentv2.context.lsm.summary.ContextSummaryDocumentValidator.ContextSummaryDocument;
 import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
 import com.datagent.agentv2.conversation.context.ContextSummaryRequest;
 import com.datagent.agentv2.conversation.context.ContextSummaryResult;
@@ -20,33 +24,51 @@ public final class ContextSummaryGenerator {
     private static final int STANDARD_BASE_OUTPUT_TOKENS = 1_536;
     private static final int STANDARD_LEVEL_INCREMENT_TOKENS = 512;
     private static final int STANDARD_MAX_OUTPUT_TOKENS = 3_584;
+    public static final int PROMPT_VERSION = 5;
     private static final String NO_VALID_DOCUMENT = "Summary model returned no valid document";
 
     private final ContextSummaryModelPort model;
-    private final ContextSummaryDocumentValidator validator;
+    private final EventContextSummaryValidator validator;
+    private final EventContextSummaryRenderer renderer;
     private final ConversationTokenEstimator estimator;
     private final LsmSegmentKeyFactory keyFactory;
     private final LsmContextMetrics metrics;
+    private final int summaryInputHardTokenBudget;
 
     public ContextSummaryGenerator(
             ContextSummaryModelPort model,
-            ContextSummaryDocumentValidator validator,
+            EventContextSummaryValidator validator,
+            EventContextSummaryRenderer renderer,
             ConversationTokenEstimator estimator,
             LsmSegmentKeyFactory keyFactory) {
-        this(model, validator, estimator, keyFactory, LsmContextMetrics.isolated());
+        this(
+                model,
+                validator,
+                renderer,
+                estimator,
+                keyFactory,
+                LsmContextMetrics.isolated(),
+                32_768);
     }
 
     public ContextSummaryGenerator(
             ContextSummaryModelPort model,
-            ContextSummaryDocumentValidator validator,
+            EventContextSummaryValidator validator,
+            EventContextSummaryRenderer renderer,
             ConversationTokenEstimator estimator,
             LsmSegmentKeyFactory keyFactory,
-            LsmContextMetrics metrics) {
+            LsmContextMetrics metrics,
+            int summaryInputHardTokenBudget) {
         this.model = Objects.requireNonNull(model, "model");
         this.validator = Objects.requireNonNull(validator, "validator");
+        this.renderer = Objects.requireNonNull(renderer, "renderer");
         this.estimator = Objects.requireNonNull(estimator, "estimator");
         this.keyFactory = Objects.requireNonNull(keyFactory, "keyFactory");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
+        if (summaryInputHardTokenBudget <= 0) {
+            throw new IllegalArgumentException("summaryInputHardTokenBudget must be positive");
+        }
+        this.summaryInputHardTokenBudget = summaryInputHardTokenBudget;
     }
 
     /** 调用中立摘要端口，最多两次，并且绝不截断无效或超限 JSON。 */
@@ -55,21 +77,23 @@ public final class ContextSummaryGenerator {
         GenerationRequest request = Objects.requireNonNull(generationRequest, "generationRequest");
         SummaryGenerationIdentity identity = generationIdentity(policySnapshot);
         int maxTokens = maxSummaryTokens(request.kind(), request.level());
-        ContextSummaryRequest modelRequest =
-                new ContextSummaryRequest(
-                        ContextSummaryPrompt.systemPrompt(
-                                request.turnCoverage().startTurnSequence(),
-                                request.turnCoverage().endTurnSequence(),
-                                request.messageCoverage().startMessageSequence(),
-                                request.messageCoverage().endMessageSequence()),
-                        request.sourceDocument(),
-                        validator.schemaDocumentFor(
-                                request.turnCoverage(), request.messageCoverage()),
-                        maxTokens);
+        EventSummaryCoverage coverage = coverage(request);
         String segmentKey = keyFactory.create(request, identity);
 
         // provider 输出无效时复用完全相同的协议、来源和 key，只允许一次重试。
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+            ContextSummaryRequest modelRequest =
+                    new ContextSummaryRequest(
+                            EventContextSummaryPrompt.systemPrompt(
+                                    coverage,
+                                    request.targetRenderedTokens(),
+                                    maxTokens,
+                                    attempt > 0),
+                            sourceSections(request),
+                            validator.schemaDocumentFor(coverage),
+                            request.targetRenderedTokens(),
+                            maxTokens,
+                            summaryInputHardTokenBudget);
             ContextSummaryResult result;
             try {
                 result = model.summarize(modelRequest);
@@ -81,11 +105,8 @@ public final class ContextSummaryGenerator {
                         || !identity.modelIdentity().model().equals(result.modelName())) {
                     continue;
                 }
-                ContextSummaryDocument document =
-                        validator.validate(
-                                result.content(),
-                                request.turnCoverage(),
-                                request.messageCoverage());
+                EventContextSummaryDocument document =
+                        validator.validate(result.content(), coverage);
                 int localEstimate = estimator.estimateSummaryDocument(result.content());
                 if (result.estimatedTokenCount() > maxTokens) {
                     continue;
@@ -93,6 +114,15 @@ public final class ContextSummaryGenerator {
                 // provider usage 和保守的字符级上下文估值不是同一单位；生成上限只校验前者，
                 // 后者取较大值持久化，继续用于后续装配和水位规划的安全预算。
                 int persistedEstimate = Math.max(result.estimatedTokenCount(), localEstimate);
+                String renderedText = renderer.render(document);
+                int renderedEstimate = estimator.estimateSummaryDocument(renderedText);
+                if (renderedEstimate > request.targetRenderedTokens()) {
+                    if (estimator.estimateSummaryDocument(renderer.renderCatalog(document))
+                            > request.targetRenderedTokens()) {
+                        throw new IllegalStateException("EVENT_CATALOG_OVERFLOW");
+                    }
+                    continue;
+                }
                 // 指标只保存层级和数值，不携带来源文档、摘要正文或会话标识。
                 metrics.recordSummary(
                         request.level(),
@@ -101,7 +131,9 @@ public final class ContextSummaryGenerator {
                 return new GeneratedSummary(
                         document,
                         result.content(),
+                        renderedText,
                         persistedEstimate,
+                        renderedEstimate,
                         identity.modelIdentity().provider(),
                         identity.modelIdentity().model(),
                         segmentKey);
@@ -130,8 +162,8 @@ public final class ContextSummaryGenerator {
     /** 返回当前 generator 在调用 provider 前即可审计的完整稳定生成身份。 */
     public SummaryGenerationIdentity generationIdentity(LsmContextPolicySnapshot policySnapshot) {
         return new SummaryGenerationIdentity(
-                ContextSummaryDocumentValidator.SCHEMA_VERSION,
-                ContextSummaryPrompt.PROMPT_VERSION,
+                EventContextSummaryValidator.SCHEMA_VERSION,
+                PROMPT_VERSION,
                 Objects.requireNonNull(policySnapshot, "policySnapshot"),
                 Objects.requireNonNull(model.identity(), "summary model identity"));
     }
@@ -152,7 +184,8 @@ public final class ContextSummaryGenerator {
             LsmSummarySegment.Coverage turnCoverage,
             MessageCoverage messageCoverage,
             List<String> sourceIds,
-            String sourceDocument) {
+            String sourceDocument,
+            int targetRenderedTokens) {
 
         public GenerationRequest {
             kind = Objects.requireNonNull(kind, "kind");
@@ -160,7 +193,7 @@ public final class ContextSummaryGenerator {
             messageCoverage = Objects.requireNonNull(messageCoverage, "messageCoverage");
             sourceIds = List.copyOf(Objects.requireNonNull(sourceIds, "sourceIds"));
             sourceDocument = Objects.requireNonNull(sourceDocument, "sourceDocument");
-            if (level < 0) {
+            if (level < 0 || targetRenderedTokens <= 0) {
                 throw new IllegalArgumentException("level must not be negative");
             }
             if (sourceIds.isEmpty() || sourceDocument.isBlank()) {
@@ -194,9 +227,11 @@ public final class ContextSummaryGenerator {
      * @param segmentKey 可跨重试复用的确定性 segment key
      */
     public record GeneratedSummary(
-            ContextSummaryDocument document,
+            EventContextSummaryDocument document,
             String serializedJson,
+            String renderedText,
             int estimatedTokenCount,
+            int renderedTokenCount,
             String provider,
             String model,
             String segmentKey) {
@@ -204,9 +239,23 @@ public final class ContextSummaryGenerator {
         public GeneratedSummary {
             document = Objects.requireNonNull(document, "document");
             serializedJson = Objects.requireNonNull(serializedJson, "serializedJson");
+            renderedText = Objects.requireNonNull(renderedText, "renderedText");
             provider = Objects.requireNonNull(provider, "provider");
             model = Objects.requireNonNull(model, "model");
             segmentKey = Objects.requireNonNull(segmentKey, "segmentKey");
         }
+    }
+
+    private static EventSummaryCoverage coverage(GenerationRequest request) {
+        return new EventSummaryCoverage(
+                request.turnCoverage().startTurnSequence(),
+                request.turnCoverage().endTurnSequence(),
+                request.messageCoverage().startMessageSequence(),
+                request.messageCoverage().endMessageSequence());
+    }
+
+    private static String sourceSections(GenerationRequest request) {
+        String section = request.level() == 0 ? "[新增原始对话]" : "[现有事件摘要]";
+        return section + "\n" + request.sourceDocument();
     }
 }

@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
-import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.conversation.context.ContextToolCall;
 import com.datagent.agentv2.conversation.context.ContextToolDefinition;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
@@ -131,7 +130,7 @@ class ConversationTokenEstimatorTest {
 
     private static ConversationContextRequest request() {
         return new ConversationContextRequest(
-                new ContextExecutionRef(TENANT_ID, SESSION_ID, EXECUTION_ID, OWNER_ID, 1L, 3L),
+                new ContextExecutionRef(TENANT_ID, SESSION_ID, EXECUTION_ID, 3L),
                 new ContextBudget(65_536, 4_096, 4_096, FIXED_INPUT_TOKENS),
                 List.of(ContextMessage.system(SYSTEM_PROMPT)),
                 List.of(

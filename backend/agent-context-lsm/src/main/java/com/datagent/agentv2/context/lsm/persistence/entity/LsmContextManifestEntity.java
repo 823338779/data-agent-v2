@@ -41,9 +41,6 @@ public final class LsmContextManifestEntity {
     /** 等待压缩的原始历史末轮序号。 */
     private Long pendingRawEndTurnSequence;
 
-    /** Warm 区间截止轮次序号。 */
-    private Long warmCutoffTurnSequence;
-
     /** Hot 区间起始轮次序号。 */
     private Long hotFromTurnSequence;
 

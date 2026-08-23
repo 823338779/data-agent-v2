@@ -6,14 +6,10 @@ import java.util.Arrays;
 
 /** Agent 执行状态的有限业务取值。 */
 public enum ExecutionStatus {
-    QUEUED("queued"),
     RUNNING("running"),
     FAILED("failed"),
     CANCELLED("cancelled"),
-    DONE("done"),
-    LOST("lost"),
-    WAITING_FOR_USER("waiting_for_user"),
-    WAITING_CONFIRMATION("waiting_confirmation");
+    DONE("done");
 
     private final String value;
 

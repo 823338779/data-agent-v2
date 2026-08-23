@@ -22,8 +22,6 @@ public interface LsmPersistenceStructMapper {
     @Mapping(target = "coverage", expression = "java(toCoverage(entity))")
     LsmSummarySegment toDomain(LsmSummarySegmentEntity entity, @Context LsmDocumentCodec documents);
 
-    @Mapping(target = "warmStartTurnSequence", expression = "java(warmStart(entity))")
-    @Mapping(target = "warmEndTurnSequence", source = "warmCutoffTurnSequence")
     LsmContextManifest toDomain(
             LsmContextManifestEntity entity, @Context LsmDocumentCodec documents);
 
@@ -34,13 +32,5 @@ public interface LsmPersistenceStructMapper {
     default LsmSummarySegment.Coverage toCoverage(LsmSummarySegmentEntity entity) {
         return new LsmSummarySegment.Coverage(
                 entity.getStartTurnSequence(), entity.getEndTurnSequence());
-    }
-
-    default Long warmStart(LsmContextManifestEntity entity) {
-        Long warmEnd = entity.getWarmCutoffTurnSequence();
-        if (warmEnd == null || warmEnd == 0L) {
-            return null;
-        }
-        return Math.max(1L, warmEnd - (100L + Math.floorMod(warmEnd - 100L, 10L)) + 1L);
     }
 }

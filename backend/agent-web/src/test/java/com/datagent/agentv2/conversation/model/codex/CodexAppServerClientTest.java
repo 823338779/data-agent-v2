@@ -1,11 +1,10 @@
 package com.datagent.agentv2.conversation.model.codex;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import com.datagent.agentv2.conversation.model.api.ModelInvocationResult;
 import com.datagent.agentv2.conversation.model.api.ModelOutputDelta;
 import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
 import com.datagent.agentv2.conversation.react.ModelInputMessage;
 import com.datagent.agentv2.conversation.react.ModelToolCall;
 import com.datagent.agentv2.platform.context.TenantContext;

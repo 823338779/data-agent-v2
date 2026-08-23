@@ -1,21 +1,7 @@
 export type MessageRole = 'user' | 'assistant' | 'system';
-export type AgentExecutionStatus =
-  | 'idle'
-  | 'queued'
-  | 'running'
-  | 'waiting_for_user'
-  | 'waiting_confirmation'
-  | 'done'
-  | 'cancelled'
-  | 'failed'
-  | 'lost';
+export type AgentExecutionStatus = 'idle' | 'running' | 'done' | 'cancelled' | 'failed';
 
-const PROCESSING_STATUSES = new Set<AgentExecutionStatus>([
-  'queued',
-  'running',
-  'waiting_for_user',
-  'waiting_confirmation',
-]);
+const PROCESSING_STATUSES = new Set<AgentExecutionStatus>(['running']);
 
 /** 判断会话是否仍需要实时详情更新。 */
 export function isProcessingStatus(status: AgentExecutionStatus): boolean {
@@ -59,14 +45,11 @@ export interface ModelThinkingProcessItem extends ProcessItemBase {
 
 export interface ToolThinkingProcessItem extends ProcessItemBase {
   type: 'TOOL';
-  toolId: string;
   toolName: string;
-  toolExecutionId: string;
   toolCallId: string;
   modelInvocationSequence: number;
   input: BoundedProcessPayload;
   output: BoundedProcessPayload | null;
-  success: boolean | null;
   errorCode: string | null;
   errorMessage: string | null;
 }
@@ -74,14 +57,12 @@ export interface ToolThinkingProcessItem extends ProcessItemBase {
 /** 与一条 assistant 正文绑定、按 sequence 有序展示的过程节点。 */
 export type ThinkingProcessItem = ModelThinkingProcessItem | ToolThinkingProcessItem;
 
-/** 可恢复的回答流检查点，三个序号共同标识严格顺序。 */
+/** 可恢复的回答流检查点。 */
 export interface AgentExecutionStreamCheckpoint {
-  executionAttemptNumber: number;
   modelInvocationSequence: number;
   phase: string;
   outputDeltaSequence: number;
   answer: string;
-  checkpointedAt: string | null;
 }
 
 export interface ConversationMessage {
@@ -107,8 +88,8 @@ export interface AgentExecutionEvent {
   executionEventSequence: number;
   type: string;
   occurredAt: string;
-  title: string | null;
-  summary: string | null;
+  executionId: string;
+  status: Exclude<AgentExecutionStatus, 'idle'>;
 }
 
 /** 一条用户消息触发的完整 Agent 执行及其最新输出检查点。 */
@@ -117,7 +98,6 @@ export interface AgentExecution {
   status: AgentExecutionStatus;
   progress: number;
   objective: string;
-  cancellationRequestedAt: string | null;
   events: AgentExecutionEvent[];
   /** 用于刷新恢复的最新流式输出检查点。 */
   streamCheckpoint: AgentExecutionStreamCheckpoint | null;

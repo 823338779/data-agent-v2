@@ -14,9 +14,6 @@ import java.util.Set;
 /** 集中校验成功发布和 Input Frontier 必须保持的结构不变量。 */
 public final class LsmInvariantValidator {
 
-    private static final int MIN_WARM_TURNS = 100;
-    private static final int MAX_WARM_TURNS = 109;
-
     /** 断言区间按时间连续、无重叠且无缺口。 */
     public void assertContinuous(List<LsmSummarySegment.Coverage> coverage) {
         Objects.requireNonNull(coverage, "coverage");
@@ -89,15 +86,7 @@ public final class LsmInvariantValidator {
                                         "manifest active ROOT must reference projected ROOT");
                             }
                         });
-        // 历史足够长时，每次成功发布必须把 Warm 收敛到 100～109 轮且保护十轮 Hot。
         long completedTurns = input.turns().stream().filter(turn -> turn.completed()).count();
-        if (completedTurns >= MIN_WARM_TURNS + 10L) {
-            long warmTurns = plan.proposedManifest().warmTurnCount();
-            if (warmTurns < MIN_WARM_TURNS || warmTurns > MAX_WARM_TURNS) {
-                throw new IllegalStateException(
-                        "published Warm range must contain 100 to 109 turns");
-            }
-        }
         int expectedHot = (int) Math.min(10L, completedTurns);
         if (plan.hotBoundary().completedTurnCount() != expectedHot) {
             throw new IllegalStateException("Hot must protect the last ten completed turns");

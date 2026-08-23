@@ -41,10 +41,6 @@ const STREAM_INTERRUPTED_MESSAGE = '实时状态连接已中断；会话内容�
 const FIXED_SUBJECT = 'admin';
 export const BACKGROUND_POLL_INTERVAL_MS = 60_000;
 
-function isNarrowScreen(): boolean {
-  return window.matchMedia?.(narrowScreenQuery).matches ?? false;
-}
-
 /** 会话更新时间为权威顺序；业务标识只用于相同时间戳下保持稳定。 */
 function sortSessionsByUpdatedAt(sessions: ConversationSession[]): ConversationSession[] {
   return [...sessions].sort(
@@ -64,7 +60,7 @@ export default function App({ client }: AppProps) {
   const backend = useMemo(() => client ?? createFetchAgentBackendClient(), [client]);
   const [route, setRoute] = useState<WorkspaceRoute>(parseWorkspaceRoute);
   const [sessions, setSessions] = useState<ConversationSession[]>([]);
-  const [historyOpen, setHistoryOpen] = useState(() => !isNarrowScreen());
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(true);
@@ -83,16 +79,25 @@ export default function App({ client }: AppProps) {
   );
   const assistantMessages =
     active?.messages.filter((message) => message.role === 'assistant') ?? [];
-  const hasMessageExecutionMetadata = assistantMessages.some((message) => message.execution);
+  const hasMessageExecutionMetadata = assistantMessages.some(
+    (message) => message.executionId || message.execution,
+  );
+  const activeExecutionAnswer = active?.execution?.streamCheckpoint?.answer ?? '';
   const activeExecutionAnswerPersisted = Boolean(
-    active?.execution?.streamCheckpoint?.answer &&
+    activeExecutionAnswer &&
     (assistantMessages.some(
-      (message) => message.execution?.executionId === active.execution?.executionId,
+      (message) =>
+        (message.executionId === active?.execution?.executionId ||
+          message.execution?.executionId === active?.execution?.executionId) &&
+        message.content === activeExecutionAnswer,
     ) ||
       (!hasMessageExecutionMetadata &&
-        assistantMessages.some(
-          (message) => message.content === active.execution?.streamCheckpoint?.answer,
-        ))),
+        assistantMessages.some((message) => message.content === activeExecutionAnswer))),
+  );
+  const activeAssistantMessage = assistantMessages.find(
+    (message) =>
+      message.executionId === active?.execution?.executionId ||
+      message.execution?.executionId === active?.execution?.executionId,
   );
   const activeStatus = active?.execution?.status ?? active?.latestExecutionStatus ?? 'idle';
   // SSE effect 只依赖“是否仍在处理”，避免同一处理阶段内的状态细化触发先关闭再重连。
@@ -275,7 +280,7 @@ export default function App({ client }: AppProps) {
         kind: 'session',
         conversationSessionId: session.conversationSessionId,
       });
-      if (isNarrowScreen()) setHistoryOpen(false);
+      setHistoryOpen(false);
     } catch (failure) {
       handleFailure(failure, '新会话创建失败，请稍后重试。');
     } finally {
@@ -308,7 +313,6 @@ export default function App({ client }: AppProps) {
 
   function openSession(conversationSessionId: string) {
     navigateWorkspace({ kind: 'session', conversationSessionId });
-    if (isNarrowScreen()) setHistoryOpen(false);
   }
 
   // 标题保存使用会话版本做乐观锁；冲突时刷新服务端最新会话，普通失败则保留编辑态。
@@ -400,15 +404,6 @@ export default function App({ client }: AppProps) {
           />
         </aside>
       )}
-      {historyOpen && (
-        <button
-          className="sidebar-backdrop"
-          type="button"
-          aria-label="关闭会话列表"
-          onClick={() => setHistoryOpen(false)}
-        />
-      )}
-
       {route.kind === 'home' && (
         <section className="home-view">
           <div className="home-copy">
@@ -453,37 +448,59 @@ export default function App({ client }: AppProps) {
           </header>
 
           <div className="message-list" aria-label="消息列表" ref={messagesRef}>
-            {active.messages.length === 0 && (
-              <div className="empty-conversation">
-                <Bot size={24} />
-                <h2>描述你要解决的数据问题</h2>
-                <p>当前服务端支持保存会话、提交消息并返回运行状态。</p>
-              </div>
-            )}
-            {active.messages.map((message) => (
-              <article className={`message ${message.role}`} key={message.conversationMessageId}>
-                <div className="message-avatar">
-                  {message.role === 'user' ? <UserRound size={16} /> : <Bot size={16} />}
+            <div className="message-list-content">
+              {active.messages.length === 0 && (
+                <div className="empty-conversation">
+                  <Bot size={24} />
+                  <h2>描述你要解决的数据问题</h2>
+                  <p>当前服务端支持保存会话、提交消息并返回运行状态。</p>
                 </div>
-                <div className="message-content">
-                  <header>
-                    <strong>{message.role === 'user' ? FIXED_SUBJECT : message.author}</strong>
-                    <time>{formatTimestamp(message.timestamp)}</time>
-                  </header>
-                  {message.role === 'assistant' ? (
-                    <MarkdownContent content={message.content} />
-                  ) : (
-                    <p className="plain-message-content">{message.content}</p>
-                  )}
-                  {message.role === 'assistant' && (
-                    <MessageProcessTimeline items={message.thinkingProcess} />
-                  )}
-                </div>
-              </article>
-            ))}
-            {!activeExecutionAnswerPersisted && active.execution && (
-              <RunStreamPanel checkpoint={active.execution.streamCheckpoint} />
-            )}
+              )}
+              {active.messages.map((message) => {
+                const isActiveAssistant =
+                  message.role === 'assistant' &&
+                  (message.executionId === active.execution?.executionId ||
+                    message.execution?.executionId === active.execution?.executionId);
+                const visibleAssistantContent =
+                  isActiveAssistant && !activeExecutionAnswerPersisted && activeExecutionAnswer
+                    ? activeExecutionAnswer
+                    : message.content;
+                return (
+                  <article
+                    className={`message ${message.role}`}
+                    key={message.conversationMessageId}
+                  >
+                    <div className="message-avatar">
+                      {message.role === 'user' ? <UserRound size={16} /> : <Bot size={16} />}
+                    </div>
+                    <div className="message-content">
+                      <header>
+                        <strong>{message.role === 'user' ? FIXED_SUBJECT : message.author}</strong>
+                        <time>{formatTimestamp(message.timestamp)}</time>
+                      </header>
+                      {message.role === 'assistant' ? (
+                        visibleAssistantContent ? (
+                          <MarkdownContent content={visibleAssistantContent} />
+                        ) : isActiveAssistant && activeIsProcessing ? (
+                          <RunStreamPanel checkpoint={active.execution?.streamCheckpoint ?? null} />
+                        ) : null
+                      ) : (
+                        <p className="plain-message-content">{message.content}</p>
+                      )}
+                      {message.role === 'assistant' && (
+                        <MessageProcessTimeline items={message.thinkingProcess} />
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+              {!activeExecutionAnswerPersisted &&
+                active.execution &&
+                !activeAssistantMessage &&
+                (activeIsProcessing || activeExecutionAnswer) && (
+                  <RunStreamPanel checkpoint={active.execution.streamCheckpoint} />
+                )}
+            </div>
           </div>
 
           <form className="composer" onSubmit={(event) => void sendPrompt(event)}>

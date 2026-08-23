@@ -1,5 +1,8 @@
 package com.datagent.agentv2.context.lsm.runtime;
 
+import com.datagent.agentv2.context.common.summary.EventContextSummaryRenderer;
+import com.datagent.agentv2.context.common.summary.EventContextSummaryValidator;
+import com.datagent.agentv2.context.common.summary.EventSummaryCoverage;
 import com.datagent.agentv2.context.lsm.domain.ConversationTurn;
 import com.datagent.agentv2.context.lsm.domain.FrontierSelection;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
@@ -14,7 +17,6 @@ import com.datagent.agentv2.context.lsm.persistence.mapping.LsmPersistenceStruct
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmContextManifestRepository;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmSummarySegmentRepository;
 import com.datagent.agentv2.context.lsm.planning.ConversationTokenEstimator;
-import com.datagent.agentv2.context.lsm.planning.WarmSegmentFrontierSelector;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.CandidateInput;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.CompactionRequest;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.SummarySource;
@@ -22,21 +24,19 @@ import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.Generati
 import com.datagent.agentv2.context.lsm.summary.ContextSummaryGenerator.MessageCoverage;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextMessage;
-import com.datagent.agentv2.conversation.context.ContextPreparationException;
 import com.datagent.agentv2.conversation.context.ContextToolCall;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import com.datagent.agentv2.conversation.context.PreparedConversationContext;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.BoundedProcessPayload;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.domain.MessageRole;
 import com.datagent.agentv2.conversation.domain.ModelThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
 import com.datagent.agentv2.conversation.domain.ToolThinkingProcessItem;
-import com.datagent.agentv2.persistence.entity.ToolExecutionEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
-import com.datagent.agentv2.persistence.service.ToolExecutionService;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.LocalDateTime;
 import java.util.ArrayDeque;
@@ -50,7 +50,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.UUID;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -83,12 +82,9 @@ public class LsmConversationContextAssembler {
     private static final String KEY_ERROR_CODE = "errorCode";
     private static final String KEY_ERROR_MESSAGE = "errorMessage";
     private static final String TOOL_STATUS_FAILED = "failed";
-    private static final String ROLE_USER = "user";
-    private static final String ROLE_ASSISTANT = "assistant";
 
     private final AgentExecutionService executions;
     private final ConversationMessageService messages;
-    private final ToolExecutionService toolExecutions;
     private final LsmContextManifestRepository manifests;
     private final LsmSummarySegmentRepository segments;
     private final LsmDocumentCodec documents;
@@ -97,12 +93,12 @@ public class LsmConversationContextAssembler {
     private final IdGenerator ids;
     private final ObjectMapper json;
     private final LsmContextMetrics metrics;
-    private final WarmSegmentFrontierSelector warmFrontiers = new WarmSegmentFrontierSelector();
+    private final EventContextSummaryValidator summaryValidator;
+    private final EventContextSummaryRenderer summaryRenderer;
 
     public LsmConversationContextAssembler(
             AgentExecutionService executions,
             ConversationMessageService messages,
-            ToolExecutionService toolExecutions,
             LsmContextManifestRepository manifests,
             LsmSummarySegmentRepository segments,
             LsmDocumentCodec documents,
@@ -113,7 +109,6 @@ public class LsmConversationContextAssembler {
         this(
                 executions,
                 messages,
-                toolExecutions,
                 manifests,
                 segments,
                 documents,
@@ -121,13 +116,14 @@ public class LsmConversationContextAssembler {
                 executionControl,
                 ids,
                 json,
-                LsmContextMetrics.isolated());
+                LsmContextMetrics.isolated(),
+                new EventContextSummaryValidator(),
+                new EventContextSummaryRenderer());
     }
 
     public LsmConversationContextAssembler(
             AgentExecutionService executions,
             ConversationMessageService messages,
-            ToolExecutionService toolExecutions,
             LsmContextManifestRepository manifests,
             LsmSummarySegmentRepository segments,
             LsmDocumentCodec documents,
@@ -136,9 +132,36 @@ public class LsmConversationContextAssembler {
             IdGenerator ids,
             ObjectMapper json,
             LsmContextMetrics metrics) {
+        this(
+                executions,
+                messages,
+                manifests,
+                segments,
+                documents,
+                estimator,
+                executionControl,
+                ids,
+                json,
+                metrics,
+                new EventContextSummaryValidator(),
+                new EventContextSummaryRenderer());
+    }
+
+    public LsmConversationContextAssembler(
+            AgentExecutionService executions,
+            ConversationMessageService messages,
+            LsmContextManifestRepository manifests,
+            LsmSummarySegmentRepository segments,
+            LsmDocumentCodec documents,
+            ConversationTokenEstimator estimator,
+            ContextExecutionControlPort executionControl,
+            IdGenerator ids,
+            ObjectMapper json,
+            LsmContextMetrics metrics,
+            EventContextSummaryValidator summaryValidator,
+            EventContextSummaryRenderer summaryRenderer) {
         this.executions = executions;
         this.messages = messages;
-        this.toolExecutions = toolExecutions;
         this.manifests = manifests;
         this.segments = segments;
         this.documents = documents;
@@ -147,6 +170,8 @@ public class LsmConversationContextAssembler {
         this.ids = ids;
         this.json = json;
         this.metrics = Objects.requireNonNull(metrics, "metrics");
+        this.summaryValidator = Objects.requireNonNull(summaryValidator, "summaryValidator");
+        this.summaryRenderer = Objects.requireNonNull(summaryRenderer, "summaryRenderer");
     }
 
     /** 固定本次原始消息边界、manifest 与摘要段，并估算未压缩完整输入。 */
@@ -186,7 +211,7 @@ public class LsmConversationContextAssembler {
                 state.turns());
     }
 
-    /** 使用发布视图按 ROOT、Cold、Warm、Hot 与当前轮顺序组装输入。 */
+    /** 使用活动 LSM 摘要、受保护原文与当前轮组装输入。 */
     public PreparedConversationContext preparePublishedView(
             LsmContextManifest manifest,
             ConversationContextRequest request,
@@ -200,7 +225,7 @@ public class LsmConversationContextAssembler {
             // 固定 wrapper 独立于动态摘要正文；持久化 provenance 不进入模型输入。
             dynamic.add(ContextMessage.system(MEMORY_WRAPPER));
             for (LsmSummarySegmentEntity segment : inputFrontier(refreshed, manifest, active)) {
-                dynamic.add(ContextMessage.user(segment.getSummaryDocument()));
+                dynamic.add(ContextMessage.user(renderSummary(segment)));
             }
         }
         long summarizedEnd =
@@ -254,7 +279,8 @@ public class LsmConversationContextAssembler {
                 state.policy(),
                 planningInput,
                 candidates,
-                superseded -> toCompactionRequest(loadAndEstimate(state.request(), state.policy())));
+                superseded ->
+                        toCompactionRequest(loadAndEstimate(state.request(), state.policy())));
     }
 
     private PreparedConversationContext boundedPrepared(
@@ -265,27 +291,9 @@ public class LsmConversationContextAssembler {
             List<TurnSource> turnSources) {
         List<ContextMessage> selected = new ArrayList<>(dynamic);
         int estimated = estimator.estimateCompleteInput(request, selected);
-        while (estimated > request.budget().hardInputLimitTokens()) {
-            ConversationTurn oldestComplete =
-                    turnSources.stream()
-                            .map(TurnSource::turn)
-                            .filter(ConversationTurn::completed)
-                            .filter(turn -> findTurnStart(selected, turn.messages()) >= 0)
-                            .findFirst()
-                            .orElse(null);
-            if (oldestComplete == null) {
-                metrics.recordWindowExceeded();
-                executionControl.fail(
-                        request.execution(),
-                        FAILURE_CODE_WINDOW_EXCEEDED,
-                        SAFE_MESSAGE_WINDOW_EXCEEDED);
-                throw new ContextPreparationException(
-                        FAILURE_CODE_WINDOW_EXCEEDED, SAFE_MESSAGE_WINDOW_EXCEEDED);
-            }
-            // 仅在硬上限无法满足时从最旧完整 Hot 原文开始退化，当前未完成轮永不移除。
-            int turnStart = findTurnStart(selected, oldestComplete.messages());
-            selected.subList(turnStart, turnStart + oldestComplete.messages().size()).clear();
-            estimated = estimator.estimateCompleteInput(request, selected);
+        if (estimated > request.budget().hardInputLimitTokens()) {
+            metrics.recordWindowExceeded();
+            throw new LsmProtectedContextOverflowException();
         }
         List<ContextMessage> complete = new ArrayList<>(request.fixedSystemMessages());
         complete.addAll(selected);
@@ -294,6 +302,7 @@ public class LsmConversationContextAssembler {
     }
 
     private LsmPlanningInput planningInput(ContextState state) {
+        int historyMemoryBudget = historyMemoryBudget(state);
         return new LsmPlanningInput(
                 state.turns().stream().map(TurnSource::turn).toList(),
                 state.manifest(),
@@ -303,70 +312,50 @@ public class LsmConversationContextAssembler {
                         state.estimatedTokens(),
                         state.policy().targetInputTokens(state.request().budget()),
                         state.request().budget().hardInputLimitTokens()),
+                historyMemoryBudget,
                 state.estimatedTokens() > state.request().budget().hardInputLimitTokens());
+    }
+
+    private int historyMemoryBudget(ContextState state) {
+        List<ConversationTurn> completed =
+                state.turns().stream()
+                        .map(TurnSource::turn)
+                        .filter(ConversationTurn::completed)
+                        .toList();
+        int protectedStart = Math.max(0, completed.size() - state.policy().protectedHotTurns());
+        Set<Long> protectedSequences =
+                completed.subList(protectedStart, completed.size()).stream()
+                        .map(ConversationTurn::sequence)
+                        .collect(java.util.stream.Collectors.toSet());
+        List<ContextMessage> protectedMessages = new ArrayList<>();
+        protectedMessages.add(ContextMessage.system(MEMORY_WRAPPER));
+        state.turns().stream()
+                .map(TurnSource::turn)
+                .filter(turn -> !turn.completed() || protectedSequences.contains(turn.sequence()))
+                .forEach(turn -> protectedMessages.addAll(turn.messages()));
+        int protectedTokens = estimator.estimateCompleteInput(state.request(), protectedMessages);
+        int remaining = state.request().budget().hardInputLimitTokens() - protectedTokens;
+        if (remaining <= 0) {
+            metrics.recordWindowExceeded();
+            throw new LsmProtectedContextOverflowException();
+        }
+        return remaining;
     }
 
     private List<LsmSummarySegmentEntity> inputFrontier(
             ContextState state, LsmContextManifest manifest, List<LsmSummarySegmentEntity> active) {
-        if (manifest.warmStartTurnSequence() == null) {
-            return active;
-        }
-        Map<String, LsmSummarySegmentEntity> entitiesById =
-                authorizedLineage(manifest, state.persistedSegments()).stream()
-                        .collect(
-                                java.util.stream.Collectors.toMap(
-                                        LsmSummarySegmentEntity::getSummarySegmentId,
-                                        segment -> segment));
-        List<LsmSummarySegment> available =
-                entitiesById.values().stream().map(this::toDomainSegment).toList();
-        List<LsmSummarySegmentEntity> selected = new ArrayList<>();
-        long coldStart = active.getFirst().getStartTurnSequence();
+        return active;
+    }
 
-        // ROOT 固定优先；其后的 Cold Tail 使用能够精确覆盖 Cold 区间的最粗节点。
-        if (manifest.activeRootSegmentId() != null) {
-            LsmSummarySegmentEntity root = entitiesById.get(manifest.activeRootSegmentId());
-            if (root == null) {
-                throw new IllegalStateException(ERROR_MANIFEST_INCONSISTENT);
-            }
-            selected.add(root);
-            coldStart = root.getEndTurnSequence() + 1L;
-        }
-        long coldEnd = manifest.warmStartTurnSequence() - 1L;
-        if (coldStart <= coldEnd) {
-            FrontierSelection cold =
-                    warmFrontiers.selectMinimum(
-                            available, new LsmSummarySegment.Coverage(coldStart, coldEnd));
-            selected.addAll(resolveFrontier(cold, entitiesById));
-        }
-
-        long summarizedWarmEnd =
-                Math.min(manifest.warmEndTurnSequence(), active.getLast().getEndTurnSequence());
-        long warmStart = Math.max(manifest.warmStartTurnSequence(), coldStart);
-        if (warmStart > summarizedWarmEnd) {
-            return selected;
-        }
-        LsmSummarySegment.Coverage warmCoverage =
-                new LsmSummarySegment.Coverage(warmStart, summarizedWarmEnd);
-        List<ContextMessage> reserved = new ArrayList<>();
-        reserved.add(ContextMessage.system(MEMORY_WRAPPER));
-        selected.forEach(
-                segment -> reserved.add(ContextMessage.user(segment.getSummaryDocument())));
-        state.turns().stream()
-                .filter(turn -> turn.turn().sequence() > summarizedWarmEnd)
-                .forEach(turn -> reserved.addAll(turn.turn().messages()));
-        int warmBudget =
-                Math.max(
-                        0,
-                        state.policy().targetInputTokens(state.request().budget())
-                                - estimator.estimateCompleteInput(state.request(), reserved));
-        FrontierSelection warm;
-        try {
-            warm = warmFrontiers.select(available, warmCoverage, warmBudget);
-        } catch (IllegalStateException insufficientTargetBudget) {
-            warm = warmFrontiers.selectMinimum(available, warmCoverage);
-        }
-        selected.addAll(resolveFrontier(warm, entitiesById));
-        return selected;
+    private String renderSummary(LsmSummarySegmentEntity segment) {
+        EventSummaryCoverage coverage =
+                new EventSummaryCoverage(
+                        segment.getStartTurnSequence(),
+                        segment.getEndTurnSequence(),
+                        segment.getStartMessageSequence(),
+                        segment.getEndMessageSequence());
+        return summaryRenderer.render(
+                summaryValidator.validate(segment.getSummaryDocument(), coverage));
     }
 
     /** 仅从 manifest 活动节点递归加载其直接来源谱系，不扫描同会话的孤儿候选。 */
@@ -450,23 +439,6 @@ public class LsmConversationContextAssembler {
         }
     }
 
-    private static int findTurnStart(
-            List<ContextMessage> selected, List<ContextMessage> turnMessages) {
-        for (int start = 0; start + turnMessages.size() <= selected.size(); start++) {
-            boolean sameTurn = true;
-            for (int offset = 0; offset < turnMessages.size(); offset++) {
-                if (selected.get(start + offset) != turnMessages.get(offset)) {
-                    sameTurn = false;
-                    break;
-                }
-            }
-            if (sameTurn) {
-                return start;
-            }
-        }
-        return -1;
-    }
-
     private CandidateInput candidate(
             ContextState state,
             com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan.PlannedOperation operation,
@@ -505,7 +477,7 @@ public class LsmConversationContextAssembler {
                     generationRequest(operation, covered, sourceIds, sourceDocument));
         }
 
-        // 高层与 ROOT 只读取直接子摘要；planned 子节点由 recovery 在顺序生成后解析真实正文。
+        // 高层与 ROOT 只读取直接子摘要；本次计划内的子节点按生成顺序解析正文。
         List<SummarySource> summarySources = new ArrayList<>();
         List<String> sourceDocuments = new ArrayList<>();
         for (String sourceId : operation.sourceIds()) {
@@ -541,7 +513,8 @@ public class LsmConversationContextAssembler {
                         covered.getFirst().startMessageSequence(),
                         covered.getLast().endMessageSequence()),
                 sourceIds,
-                sourceDocument);
+                sourceDocument,
+                operation.targetRenderedTokens());
     }
 
     private String plannedSourcePlaceholder(String sourceId) {
@@ -561,7 +534,6 @@ public class LsmConversationContextAssembler {
                             created.setConversationSessionId(
                                     request.execution().conversationSessionId());
                             created.setActiveSegmentIds(documents.writeStringList(List.of()));
-                            created.setWarmCutoffTurnSequence(0L);
                             created.setHotFromTurnSequence(0L);
                             created.setEvaluatedUpToMessageSequence(0L);
                             created.setEffectivePolicyVersion(policy.policyVersion());
@@ -587,7 +559,6 @@ public class LsmConversationContextAssembler {
     }
 
     private List<TurnSource> toTurns(List<ConversationMessage> rows) {
-        Map<UUID, ToolExecutionEntity> executionIndex = executionIndex(rows);
         List<TurnSource> turns = new ArrayList<>();
         List<ContextMessage> current = null;
         long turnSequence = 0L;
@@ -595,7 +566,7 @@ public class LsmConversationContextAssembler {
         long endSequence = 0L;
         boolean completed = false;
         for (ConversationMessage row : rows) {
-            if (ROLE_USER.equals(row.getRole())) {
+            if (row.getRole() == MessageRole.USER) {
                 if (current != null) {
                     turns.add(
                             new TurnSource(
@@ -612,8 +583,8 @@ public class LsmConversationContextAssembler {
                 continue;
             }
             endSequence = row.getConversationMessageSequence();
-            if (ROLE_ASSISTANT.equals(row.getRole())) {
-                appendAssistant(row, executionIndex, current);
+            if (row.getRole() == MessageRole.ASSISTANT) {
+                appendAssistant(row, current);
                 completed = !row.getContent().isBlank();
             } else {
                 current.add(ContextMessage.user(row.getContent()));
@@ -629,28 +600,7 @@ public class LsmConversationContextAssembler {
         return List.copyOf(turns);
     }
 
-    private Map<UUID, ToolExecutionEntity> executionIndex(List<ConversationMessage> rows) {
-        List<String> executionIds =
-                rows.stream()
-                        .filter(row -> ROLE_ASSISTANT.equals(row.getRole()))
-                        .map(ConversationMessage::getExecutionId)
-                        .filter(Objects::nonNull)
-                        .distinct()
-                        .toList();
-        Map<UUID, ToolExecutionEntity> result = new HashMap<>();
-        for (ToolExecutionEntity execution : toolExecutions.findByExecutionIds(executionIds)) {
-            if (execution.getToolProcessItemId() == null
-                    || result.put(execution.getToolProcessItemId(), execution) != null) {
-                throw new IllegalStateException(ERROR_MISMATCHED_TOOL_PROCESS);
-            }
-        }
-        return result;
-    }
-
-    private void appendAssistant(
-            ConversationMessage assistant,
-            Map<UUID, ToolExecutionEntity> executionIndex,
-            List<ContextMessage> result) {
+    private void appendAssistant(ConversationMessage assistant, List<ContextMessage> result) {
         Map<Long, List<ToolThinkingProcessItem>> toolsByInvocation = new TreeMap<>();
         Map<Long, String> thinkingByInvocation = new TreeMap<>();
         assistant.getThinkingProcess().stream()
@@ -673,7 +623,7 @@ public class LsmConversationContextAssembler {
         for (Map.Entry<Long, List<ToolThinkingProcessItem>> entry : toolsByInvocation.entrySet()) {
             List<ContextToolCall> calls = new ArrayList<>();
             for (ToolThinkingProcessItem item : entry.getValue()) {
-                validateToolItem(assistant, item, executionIndex.get(item.processItemId()));
+                validateToolItem(item);
                 calls.add(
                         new ContextToolCall(
                                 item.toolCallId(),
@@ -704,18 +654,8 @@ public class LsmConversationContextAssembler {
         }
     }
 
-    private void validateToolItem(
-            ConversationMessage assistant,
-            ToolThinkingProcessItem item,
-            ToolExecutionEntity execution) {
-        if (execution == null
-                || !assistant
-                        .getConversationMessageId()
-                        .equals(execution.getAssistantConversationMessageId())
-                || !item.toolExecutionId().equals(execution.getToolExecutionId())
-                || !item.toolCallId().equals(execution.getToolCallId())
-                || !item.toolName().equals(execution.getToolName())
-                || item.modelInvocationSequence() != execution.getModelInvocationSequence()) {
+    private static void validateToolItem(ToolThinkingProcessItem item) {
+        if (item.toolCallId().isBlank() || item.toolName().isBlank()) {
             throw new IllegalStateException(ERROR_MISMATCHED_TOOL_PROCESS);
         }
     }

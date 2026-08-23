@@ -21,12 +21,6 @@ public final class ConversationSessionEntity extends TenantAuditedEntity {
     /** 用于检索、评测隔离或业务分类的会话标签。 */
     private String tag;
 
-    /** 会话用途类型，用于区分交互式对话和其他来源。 */
-    private String sessionType;
-
-    /** 创建该会话的租户用户业务标识。 */
-    private String createdByUserId;
-
     /** 当前已分配的最大会话消息序号。 */
     private Long conversationMessageSequence;
 

@@ -2,12 +2,12 @@ package com.datagent.agentv2.contracts;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.datagent.agentv2.conversation.domain.MessageRole;
 import com.datagent.agentv2.conversation.enums.ConversationSummaryEventType;
 import com.datagent.agentv2.conversation.enums.ExecutionControlType;
 import com.datagent.agentv2.conversation.enums.ExecutionEventType;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
-import com.datagent.agentv2.conversation.enums.MessageRole;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -23,8 +23,7 @@ class BusinessEnumSerializationTest {
         assertThat(json.writeValueAsString(ExecutionEventType.STARTED))
                 .isEqualTo("\"execution_started\"");
         assertThat(json.writeValueAsString(ExecutionControlType.CANCEL)).isEqualTo("\"cancel\"");
-        assertThat(json.writeValueAsString(ExecutionStatus.WAITING_FOR_USER))
-                .isEqualTo("\"waiting_for_user\"");
+        assertThat(json.writeValueAsString(ExecutionStatus.RUNNING)).isEqualTo("\"running\"");
         assertThat(json.writeValueAsString(ExecutionPhase.PREPARING_CONTEXT))
                 .isEqualTo("\"PREPARING_CONTEXT\"");
         assertThat(json.writeValueAsString(MessageRole.ASSISTANT)).isEqualTo("\"assistant\"");
@@ -36,6 +35,8 @@ class BusinessEnumSerializationTest {
                 .isEqualTo(ExecutionEventType.DONE);
         assertThat(ExecutionStatus.fromValue("running")).isEqualTo(ExecutionStatus.RUNNING);
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> MessageRole.fromValue("tool"))
+                .isInstanceOf(IllegalArgumentException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> MessageRole.fromValue("system"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

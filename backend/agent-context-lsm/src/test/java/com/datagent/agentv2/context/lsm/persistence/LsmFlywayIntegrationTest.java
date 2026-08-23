@@ -21,11 +21,7 @@ class LsmFlywayIntegrationTest {
     private static final String LSM_HISTORY = "flyway_agent_context_lsm_schema_history";
     private static final String INITIAL_BASELINE_VERSION = "0";
     private static final List<String> LSM_TABLES =
-            List.of(
-                    "conversation_context_lsm_execution_policy",
-                    "conversation_context_lsm_job",
-                    "conversation_context_lsm_manifest",
-                    "conversation_context_lsm_segment");
+            List.of("conversation_context_lsm_manifest", "conversation_context_lsm_segment");
 
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
@@ -59,10 +55,6 @@ class LsmFlywayIntegrationTest {
                 .contains("确定性", "幂等键");
         assertThat(columnComment("conversation_context_lsm_manifest", "generation"))
                 .contains("单调递增", "代次");
-        assertThat(columnComment("conversation_context_lsm_job", "policy_snapshot"))
-                .contains("冻结", "策略快照");
-        assertThat(columnComment("conversation_context_lsm_execution_policy", "policy_snapshot"))
-                .contains("首次进入", "不可变策略快照");
     }
 
     @Test

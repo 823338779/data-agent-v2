@@ -6,10 +6,13 @@ import com.datagent.agentv2.conversation.context.ContextPreparationException;
 public final class HierarchicalContextWindowExceededException extends ContextPreparationException {
 
     /** 宿主 execution 收敛和外部错误映射使用的稳定 failure code。 */
-    public static final String FAILURE_CODE = "CONTEXT_WINDOW_EXCEEDED";
+    public static final String FAILURE_CODE = "PROTECTED_CONTEXT_OVERFLOW";
+
+    public static final String SAFE_MESSAGE =
+            "Protected conversation context exceeds the configured threshold";
 
     /** 以稳定 failure code 同时作为安全异常消息，避免泄漏上下文正文。 */
     public HierarchicalContextWindowExceededException() {
-        super(FAILURE_CODE, FAILURE_CODE);
+        super(FAILURE_CODE, SAFE_MESSAGE);
     }
 }

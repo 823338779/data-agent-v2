@@ -11,10 +11,7 @@ public class UserAccountService extends ServiceImpl<UserAccountMapper, UserAccou
     private static final String LOCK_FOR_UPDATE = "FOR UPDATE";
 
     public UserAccountEntity lockById(String userId) {
-        return lambdaQuery()
-                .eq(UserAccountEntity::getUserId, userId)
-                .last(LOCK_FOR_UPDATE)
-                .one();
+        return lambdaQuery().eq(UserAccountEntity::getUserId, userId).last(LOCK_FOR_UPDATE).one();
     }
 
     public UserAccountEntity findByUuid(String userId) {

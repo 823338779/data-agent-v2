@@ -105,7 +105,7 @@ class LsmCompactionPlannerTest {
                         turns,
                         LsmContextManifest.empty(),
                         List.of(),
-                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10),
+                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 10),
                         new LsmPlanningInput.TokenPressure(20_000, 8_000, 16_000),
                         true);
 
@@ -361,29 +361,24 @@ class LsmCompactionPlannerTest {
     }
 
     @Test
-    void warmMovesOnlyInTenTurnBatchesAndStaysBetweenOneHundredAndOneHundredNine() {
+    void rawHistoryOutsideTheProtectedTenTurnsEntersTheLsmHierarchy() {
         LsmPlanningInput input =
                 new LsmPlanningInput(
                         completedTurns(127),
                         LsmContextManifest.empty(),
                         List.of(),
-                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 100, 109, 10),
+                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 10),
                         new LsmPlanningInput.TokenPressure(20_000, 8_000, 16_000),
                         true);
 
         LsmCompactionPlan plan = planner.plan(input);
 
-        assertThat(plan.proposedManifest().warmTurnCount()).isEqualTo(107);
-        assertThat(plan.proposedManifest().warmStartTurnSequence()).isEqualTo(11);
+        assertThat(plan.hotBoundary().startTurnSequence()).isEqualTo(118L);
+        assertThat(plan.projectedSegments().getFirst().coverage().startTurnSequence())
+                .isEqualTo(1L);
+        assertThat(plan.projectedSegments().getLast().coverage().endTurnSequence()).isEqualTo(117L);
         assertThat(plan.operations())
-                .filteredOn(
-                        operation -> operation.type() == LsmCompactionPlan.OperationType.TRIM_WARM)
-                .singleElement()
-                .satisfies(
-                        operation -> {
-                            assertThat(operation.coverage().startTurnSequence()).isEqualTo(1);
-                            assertThat(operation.coverage().endTurnSequence()).isEqualTo(10);
-                        });
+                .allSatisfy(operation -> assertThat(operation.targetId()).isNotNull());
     }
 
     @Test
@@ -429,13 +424,11 @@ class LsmCompactionPlannerTest {
                         segments.stream().map(LsmSummarySegment::segmentId).toList(),
                         null,
                         null,
-                        null,
-                        null,
                         0,
                         fanout,
                         maxLevel),
                 segments,
-                new LsmContextPolicySnapshot(1, fanout, maxLevel, 10, 75, 65, 100, 109, 10),
+                new LsmContextPolicySnapshot(1, fanout, maxLevel, 10, 75, 65, 10),
                 pressure,
                 false);
     }
@@ -462,13 +455,11 @@ class LsmCompactionPlannerTest {
                         all.stream().map(LsmSummarySegment::segmentId).toList(),
                         null,
                         null,
-                        null,
-                        null,
                         0,
                         previousFanout,
                         previousMaxLevel),
                 all,
-                new LsmContextPolicySnapshot(2, fanout, maxLevel, 10, 75, 65, 100, 109, 10),
+                new LsmContextPolicySnapshot(2, fanout, maxLevel, 10, 75, 65, 10),
                 new LsmPlanningInput.TokenPressure(7_000, 8_000, 16_000),
                 false);
     }

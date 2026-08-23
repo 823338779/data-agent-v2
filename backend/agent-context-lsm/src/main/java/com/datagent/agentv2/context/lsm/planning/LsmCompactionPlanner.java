@@ -19,12 +19,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
-/** 按固定顺序规划 L0 封存、size-tiered 晋升、Warm 收敛和 Major Compaction。 */
+/** 按固定顺序规划 L0 封存、size-tiered 晋升和 Major Compaction。 */
 public final class LsmCompactionPlanner {
 
     private static final int HOT_COMPLETED_TURNS = 10;
     private static final int BASE_SEGMENT_TURNS = 10;
-    private static final int MIN_WARM_TURNS = 100;
     private static final int MIN_MAJOR_COLD_NODES = 3;
     private static final double NORMAL_SUMMARY_RATIO = 0.60d;
     private static final double MAJOR_SUMMARY_RATIO = 0.80d;
@@ -51,11 +50,14 @@ public final class LsmCompactionPlanner {
 
         // 规划顺序属于持久化恢复契约：先封 L0，再协调层级，最后移动边界和按压力合并 Cold。
         sealFullL0Batches(input, hot, state);
-        coordinateHierarchy(input.policy().fanout(), input.policy().maxLevel(), state);
-        WarmRange warmRange = trimWarmToRange(input, hot, state);
-        planMajorCompactionWhenUseful(input, warmRange, state);
+        coordinateHierarchy(
+                input.policy().fanout(),
+                input.policy().maxLevel(),
+                input.historyMemoryBudget(),
+                state);
+        planMajorCompactionWhenUseful(input, state);
 
-        LsmContextManifest proposed = proposedManifest(input, hot, warmRange, state);
+        LsmContextManifest proposed = proposedManifest(input, hot, state);
         LsmCompactionPlan plan =
                 new LsmCompactionPlan(
                         hot,
@@ -107,7 +109,8 @@ public final class LsmCompactionPlanner {
                         0,
                         coverage,
                         partial,
-                        tokens);
+                        tokens,
+                        targetRenderedTokens(input, tokens));
         state.operations.add(operation);
         state.activeSegments.add(
                 new LsmSummarySegment(
@@ -115,7 +118,8 @@ public final class LsmCompactionPlanner {
         state.activeSegments.sort(CHRONOLOGICAL);
     }
 
-    private static void coordinateHierarchy(int fanout, int maxLevel, PlanningState state) {
+    private static void coordinateHierarchy(
+            int fanout, int maxLevel, int historyMemoryBudget, PlanningState state) {
         while (true) {
             LsmSummarySegment root = activeRoot(state.activeSegments);
 
@@ -134,7 +138,8 @@ public final class LsmCompactionPlanner {
                         operationType,
                         SegmentKind.ROOT,
                         maxLevel,
-                        NORMAL_SUMMARY_RATIO);
+                        NORMAL_SUMMARY_RATIO,
+                        historyMemoryBudget);
                 continue;
             }
 
@@ -156,7 +161,8 @@ public final class LsmCompactionPlanner {
                     createsRoot ? OperationType.ROLL_ROOT : OperationType.PROMOTE,
                     createsRoot ? SegmentKind.ROOT : SegmentKind.STANDARD,
                     createsRoot ? maxLevel : sourceLevel + 1,
-                    NORMAL_SUMMARY_RATIO);
+                    NORMAL_SUMMARY_RATIO,
+                    historyMemoryBudget);
         }
     }
 
@@ -182,49 +188,13 @@ public final class LsmCompactionPlanner {
         return continuous(sources) ? sources : List.of();
     }
 
-    private static WarmRange trimWarmToRange(
-            LsmPlanningInput input, HotBoundary hot, PlanningState state) {
-        if (hot.startTurnSequence() == null || hot.startTurnSequence() <= 1L) {
-            return WarmRange.empty();
-        }
-        long warmEnd = hot.startTurnSequence() - 1L;
-        long availableWarmTurns = warmEnd;
-        long warmCount =
-                availableWarmTurns < MIN_WARM_TURNS
-                        ? availableWarmTurns
-                        : MIN_WARM_TURNS
-                                + (availableWarmTurns - MIN_WARM_TURNS) % BASE_SEGMENT_TURNS;
-        long warmStart = warmEnd - warmCount + 1L;
-
-        // 发布时把超出 109 的旧 Warm 以十轮批次迁出；候选边界最终稳定在 100～109 轮。
-        Long priorWarmStart = input.manifest().warmStartTurnSequence();
-        long movedStart = priorWarmStart == null ? 1L : priorWarmStart;
-        if (warmStart > movedStart) {
-            Coverage movedCoverage = new Coverage(movedStart, warmStart - 1L);
-            state.operations.add(
-                    new PlannedOperation(
-                            OperationType.TRIM_WARM,
-                            null,
-                            List.of(),
-                            SegmentKind.STANDARD,
-                            0,
-                            movedCoverage,
-                            false,
-                            0));
-        }
-        return new WarmRange(warmStart, warmEnd);
-    }
-
-    private static void planMajorCompactionWhenUseful(
-            LsmPlanningInput input, WarmRange warmRange, PlanningState state) {
+    private static void planMajorCompactionWhenUseful(LsmPlanningInput input, PlanningState state) {
         if (!input.pressure().aboveTarget()) {
             return;
         }
-        long coldEnd = warmRange.present() ? warmRange.start - 1L : Long.MAX_VALUE;
         List<LsmSummarySegment> coldNodes =
                 state.activeSegments.stream()
                         .filter(segment -> segment.kind() == SegmentKind.STANDARD)
-                        .filter(segment -> segment.coverage().endTurnSequence() <= coldEnd)
                         .sorted(CHRONOLOGICAL)
                         .toList();
         if (coldNodes.size() < MIN_MAJOR_COLD_NODES) {
@@ -257,11 +227,12 @@ public final class LsmCompactionPlanner {
                 OperationType.MAJOR_COMPACTION,
                 SegmentKind.ROOT,
                 input.policy().maxLevel(),
-                MAJOR_SUMMARY_RATIO);
+                MAJOR_SUMMARY_RATIO,
+                input.historyMemoryBudget());
     }
 
     private static LsmContextManifest proposedManifest(
-            LsmPlanningInput input, HotBoundary hot, WarmRange warmRange, PlanningState state) {
+            LsmPlanningInput input, HotBoundary hot, PlanningState state) {
         List<LsmSummarySegment> ordered =
                 state.activeSegments.stream().sorted(CHRONOLOGICAL).toList();
         LsmSummarySegment root = activeRoot(ordered);
@@ -284,8 +255,6 @@ public final class LsmCompactionPlanner {
                 ordered.stream().map(LsmSummarySegment::segmentId).toList(),
                 pendingStart,
                 pendingEnd,
-                warmRange.present() ? warmRange.start : null,
-                warmRange.present() ? warmRange.end : null,
                 input.manifest().generation() + 1L,
                 input.policy().fanout(),
                 input.policy().maxLevel());
@@ -374,7 +343,8 @@ public final class LsmCompactionPlanner {
             OperationType type,
             SegmentKind targetKind,
             int targetLevel,
-            double summaryRatio) {
+            double summaryRatio,
+            int historyMemoryBudget) {
         if (sources.isEmpty() || !continuous(sources)) {
             throw new IllegalArgumentException("merge sources must be non-empty and continuous");
         }
@@ -394,7 +364,8 @@ public final class LsmCompactionPlanner {
                         targetLevel,
                         coverage,
                         false,
-                        tokens);
+                        tokens,
+                        Math.max(1, Math.min(historyMemoryBudget, Math.max(256, tokens))));
 
         // 每个候选父节点只在前置来源完成后生成，投影立即替换来源以支持同计划内级联晋升。
         state.operations.add(operation);
@@ -451,6 +422,10 @@ public final class LsmCompactionPlanner {
         return left >= Integer.MAX_VALUE - right ? Integer.MAX_VALUE : left + right;
     }
 
+    private static int targetRenderedTokens(LsmPlanningInput input, int estimatedTokens) {
+        return Math.max(1, Math.min(input.historyMemoryBudget(), Math.max(256, estimatedTokens)));
+    }
+
     private static final class PlanningState {
 
         private final List<LsmSummarySegment> activeSegments;
@@ -458,17 +433,6 @@ public final class LsmCompactionPlanner {
 
         private PlanningState(List<LsmSummarySegment> activeSegments) {
             this.activeSegments = activeSegments;
-        }
-    }
-
-    private record WarmRange(long start, long end) {
-
-        private static WarmRange empty() {
-            return new WarmRange(0L, 0L);
-        }
-
-        private boolean present() {
-            return start > 0L;
         }
     }
 }

@@ -21,6 +21,11 @@
     </dependency>
     <dependency>
       <groupId>com.datagent</groupId>
+      <artifactId>agent-context-common</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.datagent</groupId>
       <artifactId>agent-persistence</artifactId>
       <version>${project.version}</version>
     </dependency>

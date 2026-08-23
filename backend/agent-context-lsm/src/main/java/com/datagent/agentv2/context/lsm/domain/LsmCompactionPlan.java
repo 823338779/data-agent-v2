@@ -33,7 +33,6 @@ public record LsmCompactionPlan(
     public List<PlannedOperation> merges() {
         return operations.stream()
                 .filter(operation -> operation.type != OperationType.SEAL_L0)
-                .filter(operation -> operation.type != OperationType.TRIM_WARM)
                 .toList();
     }
 
@@ -73,15 +72,38 @@ public record LsmCompactionPlan(
             /** forced L0 是否不足正常十轮批次。 */
             boolean partialSegment,
             /** 候选摘要正文的规划 token 估算。 */
-            int estimatedTokenCount) {
+            int estimatedTokenCount,
+            /** 规划时冻结的模型注入渲染预算。 */
+            int targetRenderedTokens) {
 
         public PlannedOperation {
             type = Objects.requireNonNull(type, "type");
             sourceIds = List.copyOf(Objects.requireNonNull(sourceIds, "sourceIds"));
             coverage = Objects.requireNonNull(coverage, "coverage");
-            if (targetLevel < 0 || estimatedTokenCount < 0) {
+            if (targetLevel < 0 || estimatedTokenCount < 0 || targetRenderedTokens <= 0) {
                 throw new IllegalArgumentException("operation numeric fields must not be negative");
             }
+        }
+
+        public PlannedOperation(
+                OperationType type,
+                String targetId,
+                List<String> sourceIds,
+                LsmSummarySegment.SegmentKind targetKind,
+                int targetLevel,
+                LsmSummarySegment.Coverage coverage,
+                boolean partialSegment,
+                int estimatedTokenCount) {
+            this(
+                    type,
+                    targetId,
+                    sourceIds,
+                    targetKind,
+                    targetLevel,
+                    coverage,
+                    partialSegment,
+                    estimatedTokenCount,
+                    Math.max(256, estimatedTokenCount));
         }
     }
 
@@ -90,7 +112,6 @@ public record LsmCompactionPlan(
         SEAL_L0,
         PROMOTE,
         ROLL_ROOT,
-        TRIM_WARM,
         MAJOR_COMPACTION,
         RECONCILE_CONFIGURATION
     }

@@ -38,14 +38,7 @@ public final class HttpCompactEvalGateway implements CompactEvalGateway {
     private static final String COMPACTION_COMPLETED_EVENT = "context_compaction_completed";
     private static final String COMPACTION_FAILED_EVENT = "context_compaction_failed";
     private static final String DONE_STATUS = "done";
-    private static final Set<String> TERMINAL_STATUSES =
-            Set.of(
-                    DONE_STATUS,
-                    "failed",
-                    "cancelled",
-                    "lost",
-                    "waiting_for_user",
-                    "waiting_confirmation");
+    private static final Set<String> TERMINAL_STATUSES = Set.of(DONE_STATUS, "failed", "cancelled");
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(3);
     private static final long POLL_INTERVAL_MILLIS = 500L;

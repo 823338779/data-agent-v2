@@ -5,6 +5,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.conversation.domain.MessageRole;
+import com.datagent.agentv2.conversation.react.ReactExecutionEngine;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.platform.context.TenantContext;
 import jakarta.servlet.http.Cookie;
@@ -19,28 +21,23 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 import tools.jackson.databind.ObjectMapper;
 
-@SpringBootTest(properties = "data-agent.runtime.scheduling-enabled=false")
+@SpringBootTest
 @AutoConfigureMockMvc
 class ContentCenteredMessageIntegrationTest {
 
     private static final String TENANT_ID = "tenant_local";
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
-    private static final GenericContainer<?> REDIS =
-            new GenericContainer<>(DockerImageName.parse("redis:7.4-alpine"))
-                    .withCommand("redis-server", "--requirepass", "redis_test")
-                    .withExposedPorts(6379);
 
     static {
         POSTGRES.start();
-        REDIS.start();
     }
 
     @DynamicPropertySource
@@ -48,15 +45,10 @@ class ContentCenteredMessageIntegrationTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
-        registry.add("spring.data.redis.host", REDIS::getHost);
-        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
-        registry.add("spring.data.redis.username", () -> "default");
-        registry.add("spring.data.redis.password", () -> "redis_test");
     }
 
     @AfterAll
     static void stopContainers() {
-        REDIS.stop();
         POSTGRES.stop();
     }
 
@@ -65,6 +57,7 @@ class ContentCenteredMessageIntegrationTest {
     @Autowired private ObjectMapper json;
     @Autowired private ConversationMessageService messages;
     @Autowired private TransactionTemplate transactions;
+    @MockitoBean private ReactExecutionEngine executionEngine;
 
     @BeforeEach
     void clearConversationData() {
@@ -121,7 +114,7 @@ class ContentCenteredMessageIntegrationTest {
                 TenantContext.call(TENANT_ID, () -> messages.findByExecutionId(retryExecutionId));
         assertThat(executionMessages)
                 .extracting(ConversationMessage::getRole)
-                .containsExactly("assistant");
+                .containsExactly(MessageRole.ASSISTANT);
         List<ConversationMessage> sessionMessages =
                 TenantContext.call(
                         TENANT_ID,
@@ -130,12 +123,13 @@ class ContentCenteredMessageIntegrationTest {
                                         conversationSessionId, Long.MAX_VALUE));
         assertThat(sessionMessages)
                 .extracting(ConversationMessage::getRole)
-                .containsExactly("user", "assistant", "assistant");
+                .containsExactly(MessageRole.USER, MessageRole.ASSISTANT, MessageRole.ASSISTANT);
     }
 
     private int roleCount(String conversationSessionId, String role) {
         return jdbc.queryForObject(
-                "select count(*) from conversation_message where conversation_session_id = ? and role = ?",
+                "select count(*) from conversation_message where conversation_session_id = ? and"
+                        + " role = ?",
                 Integer.class,
                 conversationSessionId,
                 role);

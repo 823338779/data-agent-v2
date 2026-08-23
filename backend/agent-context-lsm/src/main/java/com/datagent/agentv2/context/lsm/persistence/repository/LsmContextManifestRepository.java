@@ -34,31 +34,8 @@ public class LsmContextManifestRepository {
             String sessionId,
             long expectedVersion,
             long expectedGeneration,
-            String jobId,
-            String ownerInstanceId,
-            long executionAttempt,
-            long inputBoundary,
             LsmContextManifestEntity replacement) {
         return mapper.compareAndSet(
-                        TenantContext.requiredTenantId(),
-                        sessionId,
-                        expectedVersion,
-                        expectedGeneration,
-                        jobId,
-                        ownerInstanceId,
-                        executionAttempt,
-                        inputBoundary,
-                        replacement)
-                == 1;
-    }
-
-    /** 兼容不带 job fencing 的底层 repository 测试；运行时发布必须使用完整重载。 */
-    public boolean compareAndSetManifest(
-            String sessionId,
-            long expectedVersion,
-            long expectedGeneration,
-            LsmContextManifestEntity replacement) {
-        return mapper.compareAndSetUnfenced(
                         TenantContext.requiredTenantId(),
                         sessionId,
                         expectedVersion,

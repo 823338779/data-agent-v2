@@ -1,232 +1,171 @@
 package com.datagent.agentv2.context.hierarchical.runtime;
 
+import com.datagent.agentv2.context.common.summary.EventSummaryCoverage;
+import com.datagent.agentv2.context.hierarchical.domain.ConversationTurn;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCheckpoint;
-import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextPolicySnapshot;
+import com.datagent.agentv2.context.hierarchical.domain.HierarchicalCold;
 import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextState;
+import com.datagent.agentv2.context.hierarchical.domain.RollingColdCompactionPlan;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCheckpointRepository;
-import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCandidateGenerationService.ReadyCompaction;
-import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCheckpointPublicationTransaction.PublishResult;
-import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionBoundaryHook.Boundary;
-import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction.CompactionRequest;
-import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionPlanningTransaction.PlannedCompaction;
-import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionRecoveryService.RecoveryAction;
-import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionRecoveryService.RecoveryResult;
+import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalColdRepository;
+import com.datagent.agentv2.context.hierarchical.planning.RollingColdCompactionPlanner;
+import com.datagent.agentv2.context.hierarchical.summary.RollingColdSummaryGenerator;
+import com.datagent.agentv2.context.hierarchical.summary.RollingColdSummaryGenerator.GeneratedCold;
+import com.datagent.agentv2.context.hierarchical.summary.RollingColdSummaryGenerator.GenerationBatch;
+import com.datagent.agentv2.context.hierarchical.summary.RollingColdSummaryGenerator.GenerationRequest;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
-import com.datagent.agentv2.conversation.context.ConversationContextRequest;
-import com.datagent.agentv2.conversation.context.PreparedConversationContext;
+import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
+import java.util.List;
 import java.util.Objects;
 
-/** 协调 durable 恢复、事务外生成、原子发布以及发布后的预算复验。 */
+/**
+ * 在当前 execution 内同步生成滚动 Cold，并通过 checkpoint CAS 发布。
+ *
+ * <p>Cold 是覆盖连续历史轮次的不可变摘要；checkpoint 是会话当前可见 Cold 的唯一指针。摘要生成前后都检查执行状态，发布时使用 CAS，防止并发请求覆盖更新后的
+ * checkpoint。
+ */
 public final class HierarchicalCompactionCoordinator {
 
-    private static final int MAX_PUBLICATION_ATTEMPTS = 3;
-    private static final String RETRY_EXHAUSTED =
-            "Hierarchical checkpoint publication retries were exhausted";
-
-    private final HierarchicalCompactionPlanningTransaction planning;
-    private final HierarchicalCandidateGenerationService generation;
-    private final HierarchicalCompactionRecoveryService recovery;
-    private final HierarchicalCheckpointPublicationTransaction publication;
-    private final HierarchicalConversationContextAssembler assembler;
+    private final RollingColdCompactionPlanner planner;
+    private final RollingColdSummaryGenerator generator;
+    private final HierarchicalColdRepository colds;
     private final HierarchicalCheckpointRepository checkpoints;
-    private final ContextExecutionControlPort executions;
-    private final int maxSummaryTokens;
-
-    /** 单次摘要模型请求允许使用的严格输入 token 上限。 */
+    private final HierarchicalConversationContextAssembler assembler;
+    private final ContextExecutionControlPort executionControl;
+    private final int maxOutputTokens;
     private final int summaryInputHardTokenBudget;
 
-    private final HierarchicalCompactionBoundaryHook boundaryHook;
-
-    /** 固定恢复、生成、发布、重建和 execution 门禁依赖。 */
     public HierarchicalCompactionCoordinator(
-            HierarchicalCompactionPlanningTransaction planning,
-            HierarchicalCandidateGenerationService generation,
-            HierarchicalCompactionRecoveryService recovery,
-            HierarchicalCheckpointPublicationTransaction publication,
-            HierarchicalConversationContextAssembler assembler,
+            RollingColdCompactionPlanner planner,
+            RollingColdSummaryGenerator generator,
+            HierarchicalColdRepository colds,
             HierarchicalCheckpointRepository checkpoints,
-            ContextExecutionControlPort executions,
-            int maxSummaryTokens) {
-        this(
-                planning,
-                generation,
-                recovery,
-                publication,
-                assembler,
-                checkpoints,
-                executions,
-                maxSummaryTokens,
-                Integer.MAX_VALUE,
-                HierarchicalCompactionBoundaryHook.NO_OP);
-    }
-
-    /** 运行时构造器注入默认空的 durable 边界观察点。 */
-    public HierarchicalCompactionCoordinator(
-            HierarchicalCompactionPlanningTransaction planning,
-            HierarchicalCandidateGenerationService generation,
-            HierarchicalCompactionRecoveryService recovery,
-            HierarchicalCheckpointPublicationTransaction publication,
             HierarchicalConversationContextAssembler assembler,
-            HierarchicalCheckpointRepository checkpoints,
-            ContextExecutionControlPort executions,
-            int maxSummaryTokens,
-            HierarchicalCompactionBoundaryHook boundaryHook) {
-        this(
-                planning,
-                generation,
-                recovery,
-                publication,
-                assembler,
-                checkpoints,
-                executions,
-                maxSummaryTokens,
-                Integer.MAX_VALUE,
-                boundaryHook);
-    }
-
-    /** Binds complete summary output and provider-input hard budgets. */
-    public HierarchicalCompactionCoordinator(
-            HierarchicalCompactionPlanningTransaction planning,
-            HierarchicalCandidateGenerationService generation,
-            HierarchicalCompactionRecoveryService recovery,
-            HierarchicalCheckpointPublicationTransaction publication,
-            HierarchicalConversationContextAssembler assembler,
-            HierarchicalCheckpointRepository checkpoints,
-            ContextExecutionControlPort executions,
-            int maxSummaryTokens,
-            int summaryInputHardTokenBudget,
-            HierarchicalCompactionBoundaryHook boundaryHook) {
-        this.planning = Objects.requireNonNull(planning, "planning");
-        this.generation = Objects.requireNonNull(generation, "generation");
-        this.recovery = Objects.requireNonNull(recovery, "recovery");
-        this.publication = Objects.requireNonNull(publication, "publication");
-        this.assembler = Objects.requireNonNull(assembler, "assembler");
+            ContextExecutionControlPort executionControl,
+            int maxOutputTokens,
+            int summaryInputHardTokenBudget) {
+        this.planner = Objects.requireNonNull(planner, "planner");
+        this.generator = Objects.requireNonNull(generator, "generator");
+        this.colds = Objects.requireNonNull(colds, "colds");
         this.checkpoints = Objects.requireNonNull(checkpoints, "checkpoints");
-        this.executions = Objects.requireNonNull(executions, "executions");
-        this.boundaryHook = Objects.requireNonNull(boundaryHook, "boundaryHook");
-        if (maxSummaryTokens <= 0) {
-            throw new IllegalArgumentException("maxSummaryTokens must be positive");
-        }
-        this.maxSummaryTokens = maxSummaryTokens;
-        if (summaryInputHardTokenBudget <= 0) {
-            throw new IllegalArgumentException("summaryInputHardTokenBudget must be positive");
-        }
+        this.assembler = Objects.requireNonNull(assembler, "assembler");
+        this.executionControl = Objects.requireNonNull(executionControl, "executionControl");
+        this.maxOutputTokens = maxOutputTokens;
         this.summaryInputHardTokenBudget = summaryInputHardTokenBudget;
     }
 
-    /** stale CAS 后只从最新 checkpoint 重建状态，并以有界循环重新进入恢复/规划。 */
-    public CompactionOutcome compactIfRequired(HierarchicalContextState initialState) {
-        HierarchicalContextState current = Objects.requireNonNull(initialState, "initialState");
-        for (int attempt = 0; attempt < MAX_PUBLICATION_ATTEMPTS; attempt++) {
-            RecoveryResult recovered =
-                    recovery.recover(current.request().execution(), current.checkpoint());
-            if (recovered.action() == RecoveryAction.COMPLETED) {
-                return verifyPublished(
-                        recovered.publishedCheckpoint(), current.request(), current.policy());
-            }
-            if (recovered.action() == RecoveryAction.CANCELLED) {
-                return currentOutcome(current);
-            }
-            if (recovered.action() == RecoveryAction.FAILED) {
-                if (recovered.reportFailure()) {
-                    executions.fail(
-                            current.request().execution(),
-                            HierarchicalCompactionException.FAILURE_CODE,
-                            HierarchicalCompactionException.SAFE_MESSAGE);
-                }
-                throw new HierarchicalCompactionException(
-                        HierarchicalCompactionException.FAILURE_CODE, null);
-            }
-
-            ReadyCompaction ready;
-            if (recovered.action() == RecoveryAction.PUBLISH) {
-                ready = recovered.ready();
-            } else {
-                HierarchicalConversationContextAssembler.CompactionInput input;
-                try {
-                    input = assembler.toCompactionInput(current);
-                } catch (HierarchicalContextWindowExceededException hardFailure) {
-                    executions.fail(
-                            current.request().execution(),
-                            HierarchicalContextWindowExceededException.FAILURE_CODE,
-                            HierarchicalContextWindowExceededException.FAILURE_CODE);
-                    throw hardFailure;
-                }
-                PlannedCompaction planned =
-                        planning.plan(
-                                new CompactionRequest(
-                                        current.request().execution(),
-                                        current.policy(),
-                                        maxSummaryTokens,
-                                        summaryInputHardTokenBudget),
-                                input.planningInput());
-                boundaryHook.reached(Boundary.PLANNED, 0);
-                ready = generation.generate(planned);
-                boundaryHook.reached(Boundary.READY_TO_PUBLISH, planned.candidates().size());
-                if (ready.cancelled()) {
-                    return currentOutcome(current);
-                }
-            }
-
-            if (publication.publish(ready, current.request(), current.policy())
-                    == PublishResult.PUBLISHED) {
-                HierarchicalCheckpoint published =
-                        checkpoints.findCheckpoint(
-                                current.request().execution().conversationSessionId());
-                if (published == null) {
-                    throw new IllegalStateException(RETRY_EXHAUSTED);
-                }
-                return verifyPublished(published, current.request(), current.policy());
-            }
-            current = assembler.loadAndEstimate(current.request(), current.policy());
+    public CompactionOutcome compactIfRequired(
+            HierarchicalContextState state, ContextSummaryModelIdentity identity) {
+        var execution = state.request().execution();
+        executionControl.assertRunningAndWithinDeadline(execution);
+        var input = assembler.compactionInput(state, summaryInputHardTokenBudget);
+        RollingColdCompactionPlan plan =
+                planner.plan(
+                        execution.inputUpToMessageSequence(),
+                        input.sourceCold(),
+                        allTurns(state),
+                        input.historyMemoryBudget(),
+                        input.summaryInputHardTokenBudget());
+        if (plan.targetCoverage().isEmpty()) {
+            return new CompactionOutcome(state.checkpoint(), false);
         }
-        throw new IllegalStateException(RETRY_EXHAUSTED);
+        GeneratedCold generated =
+                generator.generate(generationRequest(state, plan, input.sourceCold(), identity));
+        // 模型调用期间执行可能被取消或超时，持久化候选摘要前必须再次建立有效性。
+        executionControl.assertRunningAndWithinDeadline(execution);
+        HierarchicalCold candidate = colds.insertOrSelect(toCold(state, plan, generated));
+        HierarchicalCheckpoint replacement =
+                new HierarchicalCheckpoint(
+                        state.checkpoint().checkpointId(),
+                        state.checkpoint().conversationSessionId(),
+                        candidate.coldId(),
+                        execution.inputUpToMessageSequence(),
+                        state.checkpoint().strategyGeneration() + 1L,
+                        state.checkpoint().version());
+        if (!checkpoints.compareAndSetCheckpoint(state.checkpoint(), replacement)) {
+            // 失败表示其他写入者已推进 checkpoint；静默覆盖会造成摘要覆盖范围倒退。
+            throw new IllegalStateException("Hierarchical checkpoint publication lost its CAS");
+        }
+        return new CompactionOutcome(
+                checkpoints.findCheckpoint(execution.conversationSessionId()), true);
     }
 
-    private CompactionOutcome verifyPublished(
-            HierarchicalCheckpoint checkpoint,
-            ConversationContextRequest request,
-            HierarchicalContextPolicySnapshot policy) {
-        PreparedConversationContext prepared;
-        try {
-            prepared = assembler.preparePublishedView(checkpoint, request, policy);
-        } catch (HierarchicalContextWindowExceededException hardFailure) {
-            // publication 已原子提交时，重建视图的 hard-limit 失败仍须同步到 execution 状态。
-            executions.fail(
-                    request.execution(),
-                    HierarchicalContextWindowExceededException.FAILURE_CODE,
-                    HierarchicalContextWindowExceededException.FAILURE_CODE);
-            throw hardFailure;
-        }
-        boolean targetReached =
-                prepared.estimatedInputTokens() <= policy.targetInputTokens(request.budget());
-        boolean withinHardLimit =
-                prepared.estimatedInputTokens() <= request.budget().hardInputLimitTokens();
-        if (!withinHardLimit) {
-            executions.fail(
-                    request.execution(),
-                    HierarchicalContextWindowExceededException.FAILURE_CODE,
-                    HierarchicalContextWindowExceededException.FAILURE_CODE);
-            throw new HierarchicalContextWindowExceededException();
-        }
-        return new CompactionOutcome(checkpoint, targetReached, true);
+    private GenerationRequest generationRequest(
+            HierarchicalContextState state,
+            RollingColdCompactionPlan plan,
+            HierarchicalCold source,
+            ContextSummaryModelIdentity identity) {
+        List<GenerationBatch> batches =
+                plan.batches().stream()
+                        .map(
+                                batch ->
+                                        new GenerationBatch(
+                                                new EventSummaryCoverage(
+                                                        batch.startTurn(),
+                                                        batch.endTurn(),
+                                                        batch.startMessageSequence(),
+                                                        batch.endMessageSequence()),
+                                                state.completedTurns().stream()
+                                                        .filter(
+                                                                turn ->
+                                                                        turn.ordinal()
+                                                                                        >= batch
+                                                                                                .startTurn()
+                                                                                && turn.ordinal()
+                                                                                        <= batch
+                                                                                                .endTurn())
+                                                        .toList()))
+                        .toList();
+        ConversationTurn first =
+                state.completedTurns().get(Math.toIntExact(plan.targetCoverage().startTurn() - 1));
+        ConversationTurn last =
+                state.completedTurns().get(Math.toIntExact(plan.targetCoverage().endTurn() - 1));
+        return new GenerationRequest(
+                state.request().execution().tenantId(),
+                state.request().execution().conversationSessionId(),
+                source,
+                batches,
+                new EventSummaryCoverage(
+                        first.ordinal(),
+                        last.ordinal(),
+                        first.startMessageSequence(),
+                        last.endMessageSequence()),
+                plan.historyMemoryBudget(),
+                maxOutputTokens,
+                summaryInputHardTokenBudget,
+                identity);
     }
 
-    private static CompactionOutcome currentOutcome(HierarchicalContextState state) {
-        boolean targetReached =
-                state.estimatedTokens()
-                        <= state.policy().targetInputTokens(state.request().budget());
-        boolean withinHardLimit =
-                state.estimatedTokens() <= state.request().budget().hardInputLimitTokens();
-        return new CompactionOutcome(state.checkpoint(), targetReached, withinHardLimit);
+    private static HierarchicalCold toCold(
+            HierarchicalContextState state,
+            RollingColdCompactionPlan plan,
+            GeneratedCold generated) {
+        return new HierarchicalCold(
+                generated.coldKey(),
+                state.request().execution().conversationSessionId(),
+                generated.coverage(),
+                generated.document(),
+                generated.persistedTokenCount(),
+                generated.renderedTokenCount(),
+                plan.historyMemoryBudget(),
+                2,
+                RollingColdSummaryGenerator.PROMPT_VERSION,
+                generated.identity().provider(),
+                generated.identity().model(),
+                generated.sourceContentSha256());
     }
 
-    /** 原子发布后的 checkpoint 及目标线、物理 hard limit 结果。 */
-    public record CompactionOutcome(
-            HierarchicalCheckpoint checkpoint, boolean targetReached, boolean withinHardLimit) {
-
-        public CompactionOutcome {
-            Objects.requireNonNull(checkpoint, "checkpoint");
+    private static List<ConversationTurn> allTurns(HierarchicalContextState state) {
+        var turns = new java.util.ArrayList<>(state.completedTurns());
+        if (state.currentTurn() != null) {
+            turns.add(state.currentTurn());
         }
+        return List.copyOf(turns);
     }
+
+    /**
+     * @param checkpoint 压缩后应作为后续上下文装配起点的最新 checkpoint
+     * @param compacted 本次调用是否生成并成功发布了新的 Cold
+     */
+    public record CompactionOutcome(HierarchicalCheckpoint checkpoint, boolean compacted) {}
 }

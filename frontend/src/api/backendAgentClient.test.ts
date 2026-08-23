@@ -210,7 +210,6 @@ describe('backend agent client', () => {
       data: JSON.stringify({
         type: 'assistant_delta',
         conversationSessionId: 'session_2',
-        executionAttemptNumber: 1,
         modelInvocationSequence: 1,
         outputDeltaSequence: 1,
         delta: '错误会话',
@@ -225,19 +224,16 @@ describe('backend agent client', () => {
 
   it('accepts continuous answer deltas and replaces partial output on a newer turn snapshot', () => {
     const initial = {
-      executionAttemptNumber: 1,
       modelInvocationSequence: 1,
       phase: 'ANSWERING',
       outputDeltaSequence: 1,
       answer: '',
-      checkpointedAt: null,
     };
     const duplicate = applyExecutionStreamEvent(initial, {
       type: 'assistant_delta',
       conversationSessionId: 'session_1',
       executionId: 'execution_1',
       occurredAt: '2026-08-01T08:01:00Z',
-      executionAttemptNumber: 1,
       modelInvocationSequence: 1,
       outputDeltaSequence: 1,
       delta: 'A',
@@ -247,7 +243,6 @@ describe('backend agent client', () => {
       conversationSessionId: 'session_1',
       executionId: 'execution_1',
       occurredAt: '2026-08-01T08:01:00Z',
-      executionAttemptNumber: 1,
       modelInvocationSequence: 1,
       outputDeltaSequence: 3,
       delta: 'answer',
@@ -257,7 +252,6 @@ describe('backend agent client', () => {
       conversationSessionId: 'session_1',
       executionId: 'execution_1',
       occurredAt: '2026-08-01T08:01:00Z',
-      executionAttemptNumber: 1,
       modelInvocationSequence: 1,
       outputDeltaSequence: 2,
       delta: 'answer',
@@ -267,12 +261,10 @@ describe('backend agent client', () => {
       conversationSessionId: 'session_1',
       executionId: 'execution_1',
       occurredAt: '2026-08-01T08:02:00Z',
-      executionAttemptNumber: 1,
       modelInvocationSequence: 2,
       outputDeltaSequence: 1,
       phase: 'ANSWERING',
       answer: '',
-      checkpointedAt: '2026-08-01T08:02:00Z',
     });
 
     expect(duplicate).toBe(initial);

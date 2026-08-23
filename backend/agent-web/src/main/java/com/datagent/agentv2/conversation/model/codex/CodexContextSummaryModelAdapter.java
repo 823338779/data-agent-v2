@@ -27,6 +27,7 @@ public final class CodexContextSummaryModelAdapter implements ContextSummaryMode
     private static final String KEY_SUMMARY_SYSTEM = "SUMMARY_SYSTEM";
     private static final String KEY_SOURCE_DOCUMENT = "SOURCE_DOCUMENT";
     private static final String KEY_OUTPUT_SCHEMA = "OUTPUT_SCHEMA";
+    private static final String KEY_TARGET_RENDERED_TOKENS = "TARGET_RENDERED_TOKENS";
     private static final String KEY_MAX_OUTPUT_TOKENS = "MAX_OUTPUT_TOKENS";
 
     private final CodexAppServerClient client;
@@ -81,6 +82,7 @@ public final class CodexContextSummaryModelAdapter implements ContextSummaryMode
         payload.put(KEY_SUMMARY_SYSTEM, request.systemPrompt());
         payload.put(KEY_SOURCE_DOCUMENT, request.sourceDocument());
         payload.set(KEY_OUTPUT_SCHEMA, json.readTree(request.outputSchema()));
+        payload.put(KEY_TARGET_RENDERED_TOKENS, request.targetRenderedTokens());
         payload.put(KEY_MAX_OUTPUT_TOKENS, request.maxOutputTokens());
         return PROMPT_PREFIX + json.writeValueAsString(payload);
     }

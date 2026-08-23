@@ -13,10 +13,6 @@ public record LsmContextManifest(
         Long pendingRawStartTurnSequence,
         /** 等待封存的原始历史结束轮次；没有 pending raw 时为空。 */
         Long pendingRawEndTurnSequence,
-        /** Warm 连续区间起始轮次；历史不足时为空。 */
-        Long warmStartTurnSequence,
-        /** Warm 连续区间结束轮次；历史不足时为空。 */
-        Long warmEndTurnSequence,
         /** 成功发布后单调递增的视图代次。 */
         long generation,
         /** 上次发布视图冻结的 fanout。 */
@@ -32,20 +28,11 @@ public record LsmContextManifest(
         }
         validateOptionalRange(
                 pendingRawStartTurnSequence, pendingRawEndTurnSequence, "pending raw range");
-        validateOptionalRange(warmStartTurnSequence, warmEndTurnSequence, "warm range");
     }
 
     /** 创建从未发布过压缩结果的空视图。 */
     public static LsmContextManifest empty() {
-        return new LsmContextManifest(null, List.of(), null, null, null, null, 0L, 0, 0);
-    }
-
-    /** 返回当前 Warm 区间包含的完整问答数量。 */
-    public long warmTurnCount() {
-        if (warmStartTurnSequence == null) {
-            return 0L;
-        }
-        return warmEndTurnSequence - warmStartTurnSequence + 1L;
+        return new LsmContextManifest(null, List.of(), null, null, 0L, 0, 0);
     }
 
     private static void validateOptionalRange(Long start, Long end, String rangeName) {

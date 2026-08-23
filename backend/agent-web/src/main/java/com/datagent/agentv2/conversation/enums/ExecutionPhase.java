@@ -6,16 +6,13 @@ import java.util.Arrays;
 
 /** Agent 执行进度阶段的有限业务取值。 */
 public enum ExecutionPhase {
-    /** 执行已经提交但尚未被 worker 领取。 */
-    QUEUED,
-
-    /** worker 已领取执行并建立 owner lease。 */
+    /** 本机执行已启动。 */
     RECEIVED,
 
-    /** worker 正在确定模型输入消息边界。 */
+    /** 本机执行正在确定模型输入消息边界。 */
     PREPARING_CONTEXT,
 
-    /** 已建立模型调用记录，正在等待供应商输出。 */
+    /** 正在等待模型输出。 */
     CONNECTING_MODEL,
 
     /** 模型正在生成或已经生成回答正文。 */
