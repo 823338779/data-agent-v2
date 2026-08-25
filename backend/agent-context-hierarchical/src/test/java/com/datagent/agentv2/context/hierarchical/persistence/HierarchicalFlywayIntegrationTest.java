@@ -29,6 +29,8 @@ class HierarchicalFlywayIntegrationTest {
             "V1__create_hierarchical_context_store.sql";
     private static final String REMOVE_SINGLE_VALUE_FIELDS_SCRIPT =
             "V2__remove_single_value_summary_versions.sql";
+    private static final String RESET_LEGACY_CONTEXT_SCRIPT =
+            "V3__reset_legacy_turn_completion_context.sql";
     private static final List<String> HIERARCHICAL_TABLES =
             List.of(
                     "conversation_context_hierarchical_checkpoint",
@@ -56,7 +58,10 @@ class HierarchicalFlywayIntegrationTest {
         assertThat(tables()).contains(PRIMARY_HISTORY, HIERARCHICAL_HISTORY);
         assertThat(migrationScripts(PRIMARY_HISTORY)).doesNotContain(INITIAL_MIGRATION_SCRIPT);
         assertThat(migrationScripts(HIERARCHICAL_HISTORY))
-                .contains(INITIAL_MIGRATION_SCRIPT, REMOVE_SINGLE_VALUE_FIELDS_SCRIPT);
+                .contains(
+                        INITIAL_MIGRATION_SCRIPT,
+                        REMOVE_SINGLE_VALUE_FIELDS_SCRIPT,
+                        RESET_LEGACY_CONTEXT_SCRIPT);
     }
 
     @Test
@@ -65,7 +70,8 @@ class HierarchicalFlywayIntegrationTest {
                 .containsExactly(
                         "<< Flyway Baseline >>",
                         INITIAL_MIGRATION_SCRIPT,
-                        REMOVE_SINGLE_VALUE_FIELDS_SCRIPT);
+                        REMOVE_SINGLE_VALUE_FIELDS_SCRIPT,
+                        RESET_LEGACY_CONTEXT_SCRIPT);
     }
 
     @Test
