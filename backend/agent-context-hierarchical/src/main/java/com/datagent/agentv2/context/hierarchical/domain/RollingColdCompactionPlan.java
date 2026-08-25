@@ -5,17 +5,16 @@ import java.util.Objects;
 
 /** 单 Cold 渐进压缩的一次冻结计划，不保存任何消息正文。 */
 public record RollingColdCompactionPlan(
-        long inputUpToMessageSequence,
+        long loadedThroughMessageSequence,
         String sourceColdId,
         TurnRange targetCoverage,
         TurnRange rawSourceRange,
         TurnRange protectedRawRange,
-        Long currentIncompleteTurn,
         int historyMemoryBudget,
         List<MessageBatch> batches) {
 
     public RollingColdCompactionPlan {
-        if (inputUpToMessageSequence < 0 || historyMemoryBudget <= 0) {
+        if (loadedThroughMessageSequence < 0 || historyMemoryBudget <= 0) {
             throw new IllegalArgumentException("Invalid rolling Cold plan budget or boundary");
         }
         targetCoverage = Objects.requireNonNull(targetCoverage, "targetCoverage");

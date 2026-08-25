@@ -61,9 +61,10 @@ public final class HierarchicalCompactionCoordinator {
         var input = assembler.compactionInput(state, summaryInputHardTokenBudget);
         RollingColdCompactionPlan plan =
                 planner.plan(
-                        execution.inputUpToMessageSequence(),
+                        state.loadedThroughMessageSequence(),
                         input.sourceCold(),
-                        allTurns(state),
+                        state.turns(),
+                        state.policy().recentRawTurns(),
                         input.historyMemoryBudget(),
                         input.summaryInputHardTokenBudget());
         if (plan.targetCoverage().isEmpty()) {
@@ -79,7 +80,7 @@ public final class HierarchicalCompactionCoordinator {
                         state.checkpoint().checkpointId(),
                         state.checkpoint().conversationSessionId(),
                         candidate.coldId(),
-                        execution.inputUpToMessageSequence(),
+                        state.loadedThroughMessageSequence(),
                         state.checkpoint().strategyGeneration() + 1L,
                         state.checkpoint().version());
         if (!checkpoints.compareAndSetCheckpoint(state.checkpoint(), replacement)) {
@@ -105,7 +106,7 @@ public final class HierarchicalCompactionCoordinator {
                                                         batch.endTurn(),
                                                         batch.startMessageSequence(),
                                                         batch.endMessageSequence()),
-                                                state.completedTurns().stream()
+                                                state.turns().stream()
                                                         .filter(
                                                                 turn ->
                                                                         turn.ordinal()
@@ -117,9 +118,9 @@ public final class HierarchicalCompactionCoordinator {
                                                         .toList()))
                         .toList();
         ConversationTurn first =
-                state.completedTurns().get(Math.toIntExact(plan.targetCoverage().startTurn() - 1));
+                state.turns().get(Math.toIntExact(plan.targetCoverage().startTurn() - 1));
         ConversationTurn last =
-                state.completedTurns().get(Math.toIntExact(plan.targetCoverage().endTurn() - 1));
+                state.turns().get(Math.toIntExact(plan.targetCoverage().endTurn() - 1));
         return new GenerationRequest(
                 state.request().execution().tenantId(),
                 state.request().execution().conversationSessionId(),
@@ -151,14 +152,6 @@ public final class HierarchicalCompactionCoordinator {
                 generated.identity().provider(),
                 generated.identity().model(),
                 generated.sourceContentSha256());
-    }
-
-    private static List<ConversationTurn> allTurns(HierarchicalContextState state) {
-        var turns = new java.util.ArrayList<>(state.completedTurns());
-        if (state.currentTurn() != null) {
-            turns.add(state.currentTurn());
-        }
-        return List.copyOf(turns);
     }
 
     /**

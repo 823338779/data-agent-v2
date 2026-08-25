@@ -74,7 +74,7 @@ public final class HierarchicalConversationHistoryLoader {
     /** 读取并校验请求 execution 所属会话的持久化服务。 */
     private final AgentExecutionService agentExecutions;
 
-    /** 按冻结会话序号边界读取真实消息的持久化服务。 */
+    /** 按会话读取全部真实消息的持久化服务。 */
     private final ConversationMessageService messages;
 
     /** 序列化工具 observation 和截断预览的 JSON 边界。 */
@@ -95,7 +95,7 @@ public final class HierarchicalConversationHistoryLoader {
         this.grouper = Objects.requireNonNull(grouper, "grouper");
     }
 
-    /** 在 execution 冻结的会话消息边界内确定性读取并重建完整与当前问答。 */
+    /** 校验触发 execution 后，确定性读取并重建会话全部轮次。 */
     public List<ConversationTurn> load(ContextExecutionRef executionRef) {
         ContextExecutionRef reference = Objects.requireNonNull(executionRef, "executionRef");
         AgentExecution execution = agentExecutions.findByExecutionId(reference.executionId());
@@ -106,10 +106,9 @@ public final class HierarchicalConversationHistoryLoader {
             throw new IllegalStateException(ERROR_EXECUTION_SESSION_MISMATCH);
         }
 
-        // 只通过冻结的 session/sequence 边界读取真实消息，避免当前 execution 之外的未来行泄漏。
+        // 当前禁止执行期间追加消息，因此 Hierarchical 直接整合会话全部已持久化历史。
         List<ConversationMessage> rows =
-                messages.findByConversationSessionIdUpTo(
-                        reference.conversationSessionId(), reference.inputUpToMessageSequence());
+                messages.findByConversationSessionId(reference.conversationSessionId());
         validateRows(reference, rows);
         List<ConversationTurnGrouper.SourceMessage> sources = new ArrayList<>(rows.size());
 
@@ -122,9 +121,7 @@ public final class HierarchicalConversationHistoryLoader {
                                 sequence, ContextMessage.user(row.getContent())));
             } else {
                 List<ContextMessage> rebuilt = rebuildAssistant(row);
-                sources.add(
-                        ConversationTurnGrouper.SourceMessage.assistant(
-                                sequence, !row.getContent().isBlank(), rebuilt));
+                sources.add(ConversationTurnGrouper.SourceMessage.assistant(sequence, rebuilt));
             }
         }
         return grouper.groupSources(sources);
@@ -139,7 +136,6 @@ public final class HierarchicalConversationHistoryLoader {
                     || !reference.conversationSessionId().equals(row.getConversationSessionId())
                     || row.getConversationMessageSequence() == null
                     || row.getConversationMessageSequence() <= previousSequence
-                    || row.getConversationMessageSequence() > reference.inputUpToMessageSequence()
                     || row.getRole() == null
                     || row.getContent() == null) {
                 throw new IllegalStateException(ERROR_INVALID_HISTORY);

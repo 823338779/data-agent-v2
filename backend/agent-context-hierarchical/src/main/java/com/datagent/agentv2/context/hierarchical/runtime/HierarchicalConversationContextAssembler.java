@@ -18,7 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/** 组装单一滚动 Cold、最近十个完整原始轮次以及完整当前 ReAct 轮次。 */
+/** 组装单一滚动 Cold 与尚未被 Cold 覆盖的全部原始轮次。 */
 public final class HierarchicalConversationContextAssembler {
     private static final String STRATEGY_ID = "hierarchical";
     private static final String MEMORY_WRAPPER =
@@ -50,16 +50,13 @@ public final class HierarchicalConversationContextAssembler {
             ConversationContextRequest request, HierarchicalContextPolicySnapshot policy) {
         HierarchicalCheckpoint checkpoint = requireCheckpoint(request);
         List<ConversationTurn> turns = history.load(request.execution());
-        List<ConversationTurn> completed =
-                turns.stream().filter(ConversationTurn::completed).toList();
-        ConversationTurn current =
-                turns.stream().filter(turn -> !turn.completed()).findFirst().orElse(null);
+        long loadedThrough = turns.isEmpty() ? 0L : turns.getLast().endMessageSequence();
         HierarchicalContextState provisional =
-                new HierarchicalContextState(request, policy, completed, current, checkpoint, 0);
+                new HierarchicalContextState(request, policy, turns, loadedThrough, checkpoint, 0);
         int estimated =
                 estimator.estimate(request, dynamicMessages(provisional, activeCold(checkpoint)));
         return new HierarchicalContextState(
-                request, policy, completed, current, checkpoint, estimated);
+                request, policy, turns, loadedThrough, checkpoint, estimated);
     }
 
     public PreparedConversationContext prepareCurrentView(HierarchicalContextState state) {
@@ -76,8 +73,8 @@ public final class HierarchicalConversationContextAssembler {
                     new HierarchicalContextState(
                             request,
                             policy,
-                            refreshed.completedTurns(),
-                            refreshed.currentTurn(),
+                            refreshed.turns(),
+                            refreshed.loadedThroughMessageSequence(),
                             checkpoint,
                             0);
         }
@@ -97,8 +94,8 @@ public final class HierarchicalConversationContextAssembler {
                 new HierarchicalContextState(
                         state.request(),
                         state.policy(),
-                        state.completedTurns(),
-                        state.currentTurn(),
+                        state.turns(),
+                        state.loadedThroughMessageSequence(),
                         checkpoint,
                         0);
         List<ContextMessage> dynamic = dynamicMessages(view, activeCold(checkpoint));
@@ -114,11 +111,10 @@ public final class HierarchicalConversationContextAssembler {
     private int historyMemoryBudget(HierarchicalContextState state) {
         List<ContextMessage> protectedMessages = new ArrayList<>();
         protectedMessages.add(ContextMessage.system(MEMORY_WRAPPER));
-        int protectedStart = Math.max(0, state.completedTurns().size() - 10);
-        state.completedTurns()
-                .subList(protectedStart, state.completedTurns().size())
+        int protectedStart = Math.max(0, state.turns().size() - state.policy().recentRawTurns());
+        state.turns()
+                .subList(protectedStart, state.turns().size())
                 .forEach(turn -> protectedMessages.addAll(turn.messages()));
-        if (state.currentTurn() != null) protectedMessages.addAll(state.currentTurn().messages());
         int remaining =
                 state.request().budget().hardInputLimitTokens()
                         - estimator.estimate(state.request(), protectedMessages);
@@ -137,10 +133,9 @@ public final class HierarchicalConversationContextAssembler {
             coveredThrough = cold.coverage().endTurnSequence();
         }
         long finalCoveredThrough = coveredThrough;
-        state.completedTurns().stream()
+        state.turns().stream()
                 .filter(turn -> turn.ordinal() > finalCoveredThrough)
                 .forEach(turn -> messages.addAll(turn.messages()));
-        if (state.currentTurn() != null) messages.addAll(state.currentTurn().messages());
         return List.copyOf(messages);
     }
 

@@ -16,18 +16,19 @@ class RollingColdCompactionPlannerTest {
             new RollingColdCompactionPlanner(new ConversationTokenEstimator());
 
     @Test
-    void firstCompactionProtectsExactlyTheLastTenCompletedTurns() {
-        var plan = planner.plan(240, null, turns(120), 2_000, 4_096);
+    void firstCompactionProtectsExactlyTheLastTenTurns() {
+        var plan = planner.plan(240, null, turns(120), 10, 2_000, 4_096);
 
         assertThat(plan.sourceColdId()).isNull();
         assertThat(plan.rawSourceRange()).isEqualTo(new TurnRange(1, 110));
         assertThat(plan.protectedRawRange()).isEqualTo(new TurnRange(111, 120));
+        assertThat(plan.loadedThroughMessageSequence()).isEqualTo(240L);
         assertThat(plan.batches()).isNotEmpty();
     }
 
     @Test
     void incrementalCompactionStartsImmediatelyAfterThePublishedCold() {
-        var plan = planner.plan(290, cold(110), turns(145), 2_000, 4_096);
+        var plan = planner.plan(290, cold(110), turns(145), 10, 2_000, 4_096);
 
         assertThat(plan.sourceColdId()).isEqualTo("cold-110");
         assertThat(plan.rawSourceRange()).isEqualTo(new TurnRange(111, 135));
@@ -36,11 +37,28 @@ class RollingColdCompactionPlannerTest {
 
     @Test
     void noNewRawStillAllowsPureColdRecompactionForASmallerBudget() {
-        var plan = planner.plan(290, cold(135), turns(145), 800, 4_096);
+        var plan = planner.plan(290, cold(135), turns(145), 10, 800, 4_096);
 
         assertThat(plan.rawSourceRange()).isEqualTo(TurnRange.EMPTY);
         assertThat(plan.targetCoverage()).isEqualTo(new TurnRange(1, 135));
         assertThat(plan.historyMemoryBudget()).isEqualTo(800);
+    }
+
+    @Test
+    void tenTurnsHaveNoCompressiblePrefix() {
+        var plan = planner.plan(20, null, turns(10), 10, 2_000, 4_096);
+
+        assertThat(plan.targetCoverage()).isEqualTo(TurnRange.EMPTY);
+        assertThat(plan.protectedRawRange()).isEqualTo(new TurnRange(1, 10));
+    }
+
+    @Test
+    void elevenTurnsCompressOnlyTheFirstTurn() {
+        var plan = planner.plan(22, null, turns(11), 10, 2_000, 4_096);
+
+        assertThat(plan.targetCoverage()).isEqualTo(new TurnRange(1, 1));
+        assertThat(plan.rawSourceRange()).isEqualTo(new TurnRange(1, 1));
+        assertThat(plan.protectedRawRange()).isEqualTo(new TurnRange(2, 11));
     }
 
     private static List<ConversationTurn> turns(int count) {
@@ -51,7 +69,6 @@ class RollingColdCompactionPlannerTest {
                             ordinal,
                             ordinal * 2L - 1,
                             ordinal * 2L,
-                            true,
                             List.of(
                                     ContextMessage.user("u" + ordinal),
                                     ContextMessage.assistant("a" + ordinal, null))));

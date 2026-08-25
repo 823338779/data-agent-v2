@@ -46,7 +46,6 @@ class RollingColdSummaryGeneratorTest {
                         1,
                         10,
                         11,
-                        true,
                         List.of(ContextMessage.user("问题"), ContextMessage.assistant("答案", null)));
 
         var generated =
@@ -120,7 +119,6 @@ class RollingColdSummaryGeneratorTest {
                 ordinal,
                 startMessage,
                 endMessage,
-                true,
                 List.of(ContextMessage.user(content), ContextMessage.assistant("答案", null)));
     }
 

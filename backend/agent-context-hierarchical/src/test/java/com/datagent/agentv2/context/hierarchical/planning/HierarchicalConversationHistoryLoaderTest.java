@@ -2,7 +2,11 @@ package com.datagent.agentv2.context.hierarchical.planning;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.datagent.agentv2.context.hierarchical.domain.ConversationTurn;
@@ -47,13 +51,12 @@ class HierarchicalConversationHistoryLoaderTest {
         ConversationMessage assistant = message("assistant", 2L, MessageRole.ASSISTANT, "sunny");
         assistant.setExecutionId("previous-execution");
         assistant.setThinkingProcess(List.of(toolProcess()));
-        when(messages.findByConversationSessionIdUpTo("session", 2L))
-                .thenReturn(List.of(user, assistant));
+        when(messages.findByConversationSessionId("session")).thenReturn(List.of(user, assistant));
 
         List<ConversationTurn> turns =
-                loader.load(new ContextExecutionRef("tenant", "session", "execution", 2L));
+                loader.load(new ContextExecutionRef("tenant", "session", "execution", 1L));
 
-        assertThat(turns).singleElement().extracting(ConversationTurn::completed).isEqualTo(true);
+        assertThat(turns).singleElement();
         assertThat(turns.getFirst().messages())
                 .extracting(ContextMessage::role)
                 .containsExactly(
@@ -68,6 +71,8 @@ class HierarchicalConversationHistoryLoaderTest {
                             assertThat(call.id()).isEqualTo("call-1");
                             assertThat(call.name()).isEqualTo("weather");
                         });
+        verify(messages).findByConversationSessionId("session");
+        verify(messages, never()).findByConversationSessionIdUpTo(anyString(), anyLong());
     }
 
     @Test

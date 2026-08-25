@@ -9,9 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-/** 保留最近十个完整轮次并把更老前缀顺序滚入单一 Cold。 */
+/** 保留策略指定的最近轮次原文，并把更老的连续前缀顺序滚入单一 Cold。 */
 public final class RollingColdCompactionPlanner {
-    private static final int PROTECTED_COMPLETED_TURNS = 10;
     private final ConversationTokenEstimator estimator;
 
     public RollingColdCompactionPlanner(ConversationTokenEstimator estimator) {
@@ -19,19 +18,18 @@ public final class RollingColdCompactionPlanner {
     }
 
     public RollingColdCompactionPlan plan(
-            long inputUpToMessageSequence,
+            long loadedThroughMessageSequence,
             HierarchicalCold sourceCold,
             List<ConversationTurn> turns,
+            int recentRawTurns,
             int historyMemoryBudget,
             int summaryInputHardTokenBudget) {
         List<ConversationTurn> frozen = List.copyOf(turns);
-        List<ConversationTurn> completed =
-                frozen.stream().filter(ConversationTurn::completed).toList();
-        ConversationTurn current =
-                frozen.stream().filter(turn -> !turn.completed()).reduce((a, b) -> b).orElse(null);
-        int protectedStartIndex = Math.max(0, completed.size() - PROTECTED_COMPLETED_TURNS);
-        List<ConversationTurn> protectedTurns =
-                completed.subList(protectedStartIndex, completed.size());
+        if (recentRawTurns <= 0) {
+            throw new IllegalArgumentException("recentRawTurns must be positive");
+        }
+        int protectedStartIndex = Math.max(0, frozen.size() - recentRawTurns);
+        List<ConversationTurn> protectedTurns = frozen.subList(protectedStartIndex, frozen.size());
         long protectedStart = protectedTurns.isEmpty() ? 0 : protectedTurns.getFirst().ordinal();
         long protectedEnd = protectedTurns.isEmpty() ? 0 : protectedTurns.getLast().ordinal();
         TurnRange protectedRange =
@@ -51,18 +49,17 @@ public final class RollingColdCompactionPlanner {
         List<ConversationTurn> rawTurns =
                 rawRange.isEmpty()
                         ? List.of()
-                        : completed.stream()
+                        : frozen.stream()
                                 .filter(turn -> turn.ordinal() >= rawRange.startTurn())
                                 .filter(turn -> turn.ordinal() <= rawRange.endTurn())
                                 .toList();
         List<MessageBatch> batches = batches(rawTurns, summaryInputHardTokenBudget);
         return new RollingColdCompactionPlan(
-                inputUpToMessageSequence,
+                loadedThroughMessageSequence,
                 sourceCold == null ? null : sourceCold.coldId(),
                 target,
                 rawRange,
                 protectedRange,
-                current == null ? null : current.ordinal(),
                 historyMemoryBudget,
                 batches);
     }

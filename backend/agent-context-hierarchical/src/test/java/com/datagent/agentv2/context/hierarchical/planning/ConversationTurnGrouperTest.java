@@ -28,11 +28,10 @@ class ConversationTurnGrouperTest {
     private final ConversationTurnGrouper grouper = new ConversationTurnGrouper();
 
     @Test
-    void groupsRetryAndToolProtocolIntoOneCompletedTurn() {
+    void groupsRetryAndToolProtocolIntoOneTurn() {
         List<ConversationTurn> turns = grouper.group(messagesWithFailedRunAndRetry());
 
         assertThat(turns).hasSize(1);
-        assertThat(turns.getFirst().completed()).isTrue();
         assertThat(turns.getFirst().messages())
                 .extracting(ContextMessage::role)
                 .containsExactly(USER, ASSISTANT, ASSISTANT, TOOL, ASSISTANT);
@@ -40,37 +39,55 @@ class ConversationTurnGrouperTest {
     }
 
     @Test
-    void separatesTheCurrentIncompleteTurnAndPreservesSourceSequenceRange() {
+    void separatesTurnsAndPreservesSourceSequenceRange() {
         List<ConversationTurn> turns =
                 grouper.groupSources(
                         List.of(
                                 ConversationTurnGrouper.SourceMessage.user(
                                         11L, ContextMessage.user(QUESTION)),
                                 ConversationTurnGrouper.SourceMessage.assistant(
-                                        15L,
-                                        true,
-                                        List.of(ContextMessage.assistant(FINAL_ANSWER, null))),
+                                        15L, List.of(ContextMessage.assistant(FINAL_ANSWER, null))),
                                 ConversationTurnGrouper.SourceMessage.user(
                                         21L, ContextMessage.user(NEXT_QUESTION)),
-                                ConversationTurnGrouper.SourceMessage.assistant(
-                                        22L, false, List.of())));
+                                ConversationTurnGrouper.SourceMessage.assistant(22L, List.of())));
 
         assertThat(turns).hasSize(2);
         assertThat(turns.getFirst())
                 .extracting(
                         ConversationTurn::ordinal,
                         ConversationTurn::startMessageSequence,
-                        ConversationTurn::endMessageSequence,
-                        ConversationTurn::completed)
-                .containsExactly(1L, 11L, 15L, true);
+                        ConversationTurn::endMessageSequence)
+                .containsExactly(1L, 11L, 15L);
         assertThat(turns.get(1))
                 .extracting(
                         ConversationTurn::ordinal,
                         ConversationTurn::startMessageSequence,
-                        ConversationTurn::endMessageSequence,
-                        ConversationTurn::completed)
-                .containsExactly(2L, 21L, 22L, false);
+                        ConversationTurn::endMessageSequence)
+                .containsExactly(2L, 21L, 22L);
         assertThat(turns.get(1).messages()).extracting(ContextMessage::role).containsExactly(USER);
+    }
+
+    @Test
+    void everyUserStartsANewTurnEvenWhenOlderAssistantsAreEmpty() {
+        List<ConversationTurn> turns =
+                grouper.groupSources(
+                        List.of(
+                                ConversationTurnGrouper.SourceMessage.user(
+                                        1L, ContextMessage.user("cancelled question")),
+                                ConversationTurnGrouper.SourceMessage.assistant(2L, List.of()),
+                                ConversationTurnGrouper.SourceMessage.user(
+                                        3L, ContextMessage.user("failed question")),
+                                ConversationTurnGrouper.SourceMessage.assistant(4L, List.of()),
+                                ConversationTurnGrouper.SourceMessage.user(
+                                        5L, ContextMessage.user("latest question")),
+                                ConversationTurnGrouper.SourceMessage.assistant(6L, List.of())));
+
+        assertThat(turns).hasSize(3);
+        assertThat(turns).extracting(ConversationTurn::ordinal).containsExactly(1L, 2L, 3L);
+        assertThat(turns)
+                .extracting(turn -> turn.messages().getFirst().content())
+                .containsExactly("cancelled question", "failed question", "latest question");
+        assertThat(turns.getLast().endMessageSequence()).isEqualTo(6L);
     }
 
     private static List<ContextMessage> messagesWithFailedRunAndRetry() {

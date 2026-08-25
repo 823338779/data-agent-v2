@@ -43,24 +43,23 @@ class HierarchicalCompactionCoordinatorTest {
                         request,
                         new HierarchicalContextPolicySnapshot(2, .75, .70),
                         List.of(),
-                        null,
+                        24L,
                         checkpoint,
                         8_000);
         var plan =
                 new RollingColdCompactionPlan(
-                        20,
+                        24,
                         null,
                         TurnRange.EMPTY,
                         TurnRange.EMPTY,
                         TurnRange.EMPTY,
-                        null,
                         2_000,
                         List.of());
         when(assembler.compactionInput(state, 32_768))
                 .thenReturn(
                         new HierarchicalConversationContextAssembler.CompactionInput(
                                 state, null, 2_000, 32_768));
-        when(planner.plan(eq(20L), any(), any(), eq(2_000), eq(32_768))).thenReturn(plan);
+        when(planner.plan(eq(24L), any(), any(), eq(10), eq(2_000), eq(32_768))).thenReturn(plan);
         var coordinator =
                 new HierarchicalCompactionCoordinator(
                         planner, generator, colds, checkpoints, assembler, control, 1_024, 32_768);
