@@ -38,7 +38,7 @@ Data Agent V2 是面向单实例部署的对话 Agent 工程，包含后端 Mave
 
 ### 会话上下文策略与分层压缩
 
-会话上下文默认使用 `hierarchical` 策略。服务实例只能选择一个策略：`raw` 直接使用原始历史，`lsm` 使用 LSM 摘要树，`hierarchical` 使用 Hot/Warm/Cold 分层摘要。未知策略或重复注册相同策略 ID 都会使服务启动失败。
+会话上下文默认使用 `hierarchical` 策略。服务实例只能选择一个策略：`raw` 直接使用原始历史，`lsm` 使用 LSM 摘要树，`hierarchical` 使用单一滚动 Cold 摘要。未知策略或重复注册相同策略 ID 都会使服务启动失败。
 
 | 环境变量 | 默认值 | 允许值或范围 | 说明 |
 | --- | --- | --- | --- |
@@ -47,10 +47,8 @@ Data Agent V2 是面向单实例部署的对话 Agent 工程，包含后端 Mave
 | `DATA_AGENT_CONTEXT_COMPACTION_MAX_LEVEL` | `4` | `1`～`8` | LSM 摘要树的配置顶层，顶层 ROOT 始终最多保留一个活动节点；仅在 `lsm` 策略下校验和生效。 |
 | `DATA_AGENT_CONTEXT_HIERARCHICAL_TRIGGER_RATIO` | `0.75` | `0 < target < trigger < 1` | hierarchical 触发压缩的上下文窗口比例。 |
 | `DATA_AGENT_CONTEXT_HIERARCHICAL_TARGET_RATIO` | `0.70` | `0 < target < trigger < 1` | hierarchical 压缩后争取达到的上下文窗口比例。 |
-| `DATA_AGENT_CONTEXT_HIERARCHICAL_RECENT_RAW_TURNS` | `10` | 正整数且小于总窗口 | hierarchical 通常原样保护的最近完整对话轮数；仅在硬输入上限无法满足时，允许从最老 Hot 轮次开始紧急退化。 |
-| `DATA_AGENT_CONTEXT_HIERARCHICAL_WARM_WINDOW_TURNS` | `100` | 大于最近原始轮数 | hierarchical 的 Hot + Warm 总窗口；默认由 10 轮 Hot 与其前 90 轮连续二进制 Warm 摘要组成，更早历史汇入单调前进的 Cold 摘要。 |
 
-LSM 默认在输入超过窗口的 75% 时触发并争取压缩至 65%；hierarchical 默认在超过 75% 时触发并争取压缩至 70%，维护 100 轮总窗口（默认 10 轮 Hot + 90 轮 Warm），超出部分推进 Cold。Hot 通常保持原样；只有固定内容与摘要已经无法满足硬输入上限时，才允许从最老 Hot 轮次开始紧急退化。压缩在当前请求的本机执行流程中同步完成，不创建后台压缩任务。
+LSM 默认在输入超过窗口的 75% 时触发并争取压缩至 65%；hierarchical 默认在超过 75% 时触发并争取压缩至 70%。Hierarchical 固定原样保护按 user 消息划分的最后 10 个轮次；更早的连续前缀按需滚入 Cold 摘要。失败或取消留下的空 assistant 不改变轮次边界。压缩在当前请求的本机执行流程中同步完成，不创建后台压缩任务。
 
 需要回滚到原始上下文行为时，应在所有实例中统一设置：
 

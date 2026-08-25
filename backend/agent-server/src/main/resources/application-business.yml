@@ -1,6 +1,6 @@
 data-agent:
   context:
-    # 会话上下文策略：raw 不压缩，lsm 使用 LSM 摘要树，hierarchical 使用 Hot/Warm/Cold 分层摘要。
+    # 会话上下文策略：raw 不压缩，lsm 使用 LSM 摘要树，hierarchical 使用滚动 Cold 摘要。
     # 当前默认启用 hierarchical；可通过 DATA_AGENT_CONTEXT_STRATEGY 在所有服务实例上统一覆盖。
     strategy: ${DATA_AGENT_CONTEXT_STRATEGY:hierarchical}
     # 以下参数仅在 strategy=lsm 时生效。
@@ -11,7 +11,7 @@ data-agent:
     hierarchical:
       trigger-ratio: ${DATA_AGENT_CONTEXT_HIERARCHICAL_TRIGGER_RATIO:0.75}
       target-ratio: ${DATA_AGENT_CONTEXT_HIERARCHICAL_TARGET_RATIO:0.70}
-      # 保留最近 10 轮原始对话。
+      # 算法固定原样保护按 user 消息划分的最后 10 个轮次。
   model:
     provider: ${DATA_AGENT_MODEL_PROVIDER:codex}
     codex:
