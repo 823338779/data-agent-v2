@@ -51,17 +51,13 @@ public class AgentExecutionSubmissionTransactionService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ConversationSession createOrReplay(
-            String sessionId,
-            String content,
-            String idempotencyKey,
-            String payloadHash) {
+            String sessionId, String content, String idempotencyKey, String payloadHash) {
         ConversationSession session = sessions.lockById(sessionId);
         if (session == null) {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, ERROR_CONVERSATION_SESSION_NOT_FOUND);
         }
-        AgentExecution replay =
-                executions.findRequest(sessionId, idempotencyKey);
+        AgentExecution replay = executions.findRequest(sessionId, idempotencyKey);
         if (replay != null) {
             requireSamePayload(replay, payloadHash);
             return session;
@@ -129,8 +125,7 @@ public class AgentExecutionSubmissionTransactionService {
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public ConversationSession replayAfterConstraintConflict(
             String sessionId, String idempotencyKey, String payloadHash) {
-        AgentExecution replay =
-                executions.findRequest(sessionId, idempotencyKey);
+        AgentExecution replay = executions.findRequest(sessionId, idempotencyKey);
         if (replay == null) {
             return null;
         }

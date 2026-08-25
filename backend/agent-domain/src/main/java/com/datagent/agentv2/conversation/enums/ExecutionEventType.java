@@ -32,6 +32,9 @@ public enum ExecutionEventType {
         return Arrays.stream(values())
                 .filter(candidate -> candidate.value.equals(value))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Unknown execution event type: " + value));
+                .orElseThrow(
+                        () ->
+                                new IllegalArgumentException(
+                                        "Unknown execution event type: " + value));
     }
 }

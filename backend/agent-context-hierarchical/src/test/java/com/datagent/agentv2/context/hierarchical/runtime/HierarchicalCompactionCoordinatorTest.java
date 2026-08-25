@@ -41,7 +41,7 @@ class HierarchicalCompactionCoordinatorTest {
         var state =
                 new HierarchicalContextState(
                         request,
-                        new HierarchicalContextPolicySnapshot(2, .75, .70, 10),
+                        new HierarchicalContextPolicySnapshot(2, .75, .70),
                         List.of(),
                         null,
                         checkpoint,

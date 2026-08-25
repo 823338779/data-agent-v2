@@ -418,7 +418,8 @@ public class ConversationProcessCoordinator {
     private AgentExecution requireOwnedLocked(LocalAgentExecution run, Instant now) {
         AgentExecution execution = requireExecutionLocked(run.executionId());
         boolean running =
-                execution.getStatus() == com.datagent.agentv2.conversation.enums.ExecutionStatus.RUNNING
+                execution.getStatus()
+                                == com.datagent.agentv2.conversation.enums.ExecutionStatus.RUNNING
                         && execution.getHardDeadlineAt() != null
                         && execution.getHardDeadlineAt().isAfter(now);
         if (!running) {

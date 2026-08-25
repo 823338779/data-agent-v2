@@ -23,21 +23,14 @@ public class HierarchicalContextProperties {
     /** 压缩完成后期望保留的上下文窗口比例。 */
     private double targetRatio = 0.70d;
 
-    /** 压缩期间直接保留的最近原始对话轮次数。 */
-    private int recentRawTurns = 10;
-
-    /** 确保水位合法且受保护原始轮数固定为十轮。 */
+    /** 确保压缩触发水位与目标水位关系合法。 */
     @AssertTrue(message = "Hierarchical context ratios and turn windows are invalid")
     public boolean isPolicyValid() {
-        return targetRatio > 0.0d
-                && targetRatio < triggerRatio
-                && triggerRatio < 1.0d
-                && recentRawTurns == 10;
+        return targetRatio > 0.0d && targetRatio < triggerRatio && triggerRatio < 1.0d;
     }
 
     /** 将当前服务配置冻结为一次 execution 使用的策略快照。 */
     public HierarchicalContextPolicySnapshot snapshot() {
-        return new HierarchicalContextPolicySnapshot(
-                POLICY_VERSION, triggerRatio, targetRatio, recentRawTurns);
+        return new HierarchicalContextPolicySnapshot(POLICY_VERSION, triggerRatio, targetRatio);
     }
 }

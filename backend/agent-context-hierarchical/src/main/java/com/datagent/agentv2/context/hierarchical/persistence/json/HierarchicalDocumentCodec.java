@@ -28,9 +28,7 @@ public final class HierarchicalDocumentCodec {
     }
 
     private static void validate(HierarchicalContextPolicySnapshot policy) {
-        if (policy == null
-                || policy.policyVersion() != 2
-                || policy.recentRawTurns() != 10) {
+        if (policy == null || policy.policyVersion() != 2) {
             throw new IllegalArgumentException("invalid hierarchical policy document");
         }
     }

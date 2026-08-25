@@ -1,8 +1,8 @@
 package com.datagent.agentv2.persistence;
 
+import com.datagent.agentv2.persistence.entity.ActivationStatus;
 import com.datagent.agentv2.persistence.entity.TenantEntity;
 import com.datagent.agentv2.persistence.entity.UserAccountEntity;
-import com.datagent.agentv2.persistence.entity.ActivationStatus;
 import com.datagent.agentv2.persistence.service.TenantService;
 import com.datagent.agentv2.persistence.service.UserAccountService;
 import com.datagent.agentv2.platform.context.OperatorContext;

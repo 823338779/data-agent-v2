@@ -105,7 +105,7 @@ class LsmCompactionPlannerTest {
                         turns,
                         LsmContextManifest.empty(),
                         List.of(),
-                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 10),
+                        new LsmContextPolicySnapshot(1, 5, 4),
                         new LsmPlanningInput.TokenPressure(20_000, 8_000, 16_000),
                         true);
 
@@ -367,7 +367,7 @@ class LsmCompactionPlannerTest {
                         completedTurns(127),
                         LsmContextManifest.empty(),
                         List.of(),
-                        new LsmContextPolicySnapshot(1, 5, 4, 10, 75, 65, 10),
+                        new LsmContextPolicySnapshot(1, 5, 4),
                         new LsmPlanningInput.TokenPressure(20_000, 8_000, 16_000),
                         true);
 
@@ -428,7 +428,7 @@ class LsmCompactionPlannerTest {
                         fanout,
                         maxLevel),
                 segments,
-                new LsmContextPolicySnapshot(1, fanout, maxLevel, 10, 75, 65, 10),
+                new LsmContextPolicySnapshot(1, fanout, maxLevel),
                 pressure,
                 false);
     }
@@ -459,7 +459,7 @@ class LsmCompactionPlannerTest {
                         previousFanout,
                         previousMaxLevel),
                 all,
-                new LsmContextPolicySnapshot(2, fanout, maxLevel, 10, 75, 65, 10),
+                new LsmContextPolicySnapshot(2, fanout, maxLevel),
                 new LsmPlanningInput.TokenPressure(7_000, 8_000, 16_000),
                 false);
     }

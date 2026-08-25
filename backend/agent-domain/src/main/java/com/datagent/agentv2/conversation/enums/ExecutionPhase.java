@@ -23,6 +23,7 @@ public enum ExecutionPhase {
         return Arrays.stream(values())
                 .filter(candidate -> candidate.name().equals(value))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Unknown execution phase: " + value));
+                .orElseThrow(
+                        () -> new IllegalArgumentException("Unknown execution phase: " + value));
     }
 }

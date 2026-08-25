@@ -12,7 +12,6 @@ data-agent:
       trigger-ratio: ${DATA_AGENT_CONTEXT_HIERARCHICAL_TRIGGER_RATIO:0.75}
       target-ratio: ${DATA_AGENT_CONTEXT_HIERARCHICAL_TARGET_RATIO:0.70}
       # 保留最近 10 轮原始对话。
-      recent-raw-turns: ${DATA_AGENT_CONTEXT_HIERARCHICAL_RECENT_RAW_TURNS:10}
   model:
     provider: ${DATA_AGENT_MODEL_PROVIDER:codex}
     codex:

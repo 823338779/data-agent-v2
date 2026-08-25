@@ -50,8 +50,7 @@ class ContextSummaryGeneratorTest {
             """;
     private static final String PROVIDER = "test-provider";
     private static final String MODEL = "test-summary-model";
-    private static final LsmContextPolicySnapshot POLICY =
-            new LsmContextPolicySnapshot(1, 3, 2, 10, 75, 65, 10);
+    private static final LsmContextPolicySnapshot POLICY = new LsmContextPolicySnapshot(1, 3, 2);
 
     @Mock private ContextSummaryModelPort model;
     @Mock private ConversationTokenEstimator estimator;
@@ -242,8 +241,7 @@ class ContextSummaryGeneratorTest {
                                         new SummaryGenerationIdentity(
                                                 2,
                                                 5,
-                                                new LsmContextPolicySnapshot(
-                                                        2, 3, 2, 10, 75, 65, 10),
+                                                new LsmContextPolicySnapshot(2, 3, 2),
                                                 baseline.modelIdentity())),
                                 factory.create(
                                         request,

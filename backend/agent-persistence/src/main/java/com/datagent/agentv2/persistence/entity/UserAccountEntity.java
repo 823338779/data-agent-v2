@@ -15,6 +15,7 @@ public final class UserAccountEntity extends TenantAuditedEntity {
 
     private String username;
     private String passwordHash;
+
     /** 用户账号启停状态。 */
     private ActivationStatus status;
 

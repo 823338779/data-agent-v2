@@ -13,9 +13,8 @@ public final class HierarchicalContextPolicy {
     public HierarchicalContextPolicy(HierarchicalContextPolicySnapshot snapshot) {
         this.snapshot = Objects.requireNonNull(snapshot, "snapshot");
         if (!(snapshot.targetRatio() > 0.0d
-                        && snapshot.targetRatio() < snapshot.triggerRatio()
-                        && snapshot.triggerRatio() < 1.0d)
-                || snapshot.recentRawTurns() != 10) {
+                && snapshot.targetRatio() < snapshot.triggerRatio()
+                && snapshot.triggerRatio() < 1.0d)) {
             throw new IllegalArgumentException("Invalid hierarchical context policy");
         }
     }

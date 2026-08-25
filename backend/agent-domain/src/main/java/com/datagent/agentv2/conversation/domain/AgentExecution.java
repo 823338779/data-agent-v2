@@ -26,7 +26,7 @@ public final class AgentExecution {
     /** 当前持久状态；非法字符串不能再进入领域状态机。 */
     private ExecutionStatus status;
 
-    /** 调用方幂等键，在同一会话和请求类型内唯一。 */
+    /** 调用方幂等键，在同一租户会话内唯一。 */
     private String requestIdempotencyKey;
 
     /** 规范化请求负载的 SHA-256，用于发现同键不同载荷。 */

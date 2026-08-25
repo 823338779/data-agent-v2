@@ -8,8 +8,8 @@ import static org.mockito.Mockito.when;
 
 import com.datagent.agentv2.context.lsm.domain.ConversationTurn;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
-import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
+import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmSummarySegmentEntity;
 import com.datagent.agentv2.context.lsm.persistence.json.LsmDocumentCodec;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmSummarySegmentRepository;
@@ -407,7 +407,7 @@ class LsmConversationContextAssemblerTest {
     }
 
     private static LsmContextPolicySnapshot policy() {
-        return new LsmContextPolicySnapshot(1, 3, 2, 10, 75, 65, 10);
+        return new LsmContextPolicySnapshot(1, 3, 2);
     }
 
     private static LsmConversationContextAssembler assembler(LsmSummarySegmentRepository segments) {

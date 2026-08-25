@@ -199,8 +199,7 @@ public class ConversationApplicationService {
         latestExecutions.forEach(
                 (conversationSessionId, run) -> {
                     activeBySession.put(
-                            conversationSessionId,
-                            run.getStatus() == ExecutionStatus.RUNNING);
+                            conversationSessionId, run.getStatus() == ExecutionStatus.RUNNING);
                     AgentExecutionStreamCheckpoint stream =
                             streamsByExecutionId.get(run.getExecutionId());
                     if (stream != null) {
@@ -303,7 +302,8 @@ public class ConversationApplicationService {
     public ConversationView submitMessage(
             String conversationSessionId, String content, String idempotencyKey) {
         ConversationSession session =
-                agentExecutionSubmissionService.submit(conversationSessionId, content, idempotencyKey);
+                agentExecutionSubmissionService.submit(
+                        conversationSessionId, content, idempotencyKey);
         return snapshot(session);
     }
 

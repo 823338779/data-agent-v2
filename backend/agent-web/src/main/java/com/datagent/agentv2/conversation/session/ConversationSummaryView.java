@@ -2,7 +2,6 @@ package com.datagent.agentv2.conversation.session;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.ConversationSession;
-import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.enums.SessionExecutionStatus;
 import java.time.LocalDateTime;
 
@@ -35,7 +34,6 @@ public record ConversationSummaryView(
                 session.getVersion(),
                 latestExecution == null
                         ? SessionExecutionStatus.IDLE
-                        : SessionExecutionStatus.fromExecutionStatus(
-                                latestExecution.getStatus()));
+                        : SessionExecutionStatus.fromExecutionStatus(latestExecution.getStatus()));
     }
 }

@@ -27,6 +27,7 @@ public enum ExecutionStatus {
         return Arrays.stream(values())
                 .filter(candidate -> candidate.value.equals(value))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Unknown execution status: " + value));
+                .orElseThrow(
+                        () -> new IllegalArgumentException("Unknown execution status: " + value));
     }
 }
