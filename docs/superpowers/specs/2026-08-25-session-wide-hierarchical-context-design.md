@@ -61,11 +61,11 @@ Hierarchical 每次准备上下文时，按 `conversationSessionId` 读取当前
 
 ### 3.4 逆序保护最近 N 轮
 
-Hierarchical 始终将最后 `recentRawTurns` 个轮次作为原文保护后缀，默认值为 10。更早的连续前缀才允许滚入 Cold 摘要。
+Hierarchical 始终将最后 10 个轮次作为原文保护后缀。更早的连续前缀才允许滚入 Cold 摘要。
 
 正在运行的请求必然位于最后一个轮次，因此自然包含在受保护后缀内，不需要单独识别当前轮次。
 
-`recentRawTurns` 以 `HierarchicalContextPolicySnapshot` 为唯一事实源。planner、assembler 和预算计算不得各自硬编码 10。
+最近原文轮数是 Hierarchical 的固定算法常量，不提供服务级配置。该常量只能在策略领域对象中定义一次，并通过 `recentRawTurns()` 暴露；planner、assembler 和预算计算不得各自硬编码 10。现有失效的 `DATA_AGENT_CONTEXT_HIERARCHICAL_RECENT_RAW_TURNS` 配置声明与 README 条目一并删除。
 
 ### 3.5 LSM 保持不变
 
@@ -264,7 +264,7 @@ turns.stream()
 
 ### 9.3 原文保护后缀
 
-保护数量由 `policy.recentRawTurns()` 提供：
+保护数量由策略领域对象的 `recentRawTurns()` 提供，当前固定为 10：
 
 ```text
 protectedCount = min(totalTurns, recentRawTurns)
@@ -457,7 +457,7 @@ execution 取消或失败时，当前模型调用停止，开放过程节点按�
 - 0～10 轮时没有可压缩前缀；
 - 11 轮时只允许压缩第 1 轮；
 - 13 轮时压缩第 1～3 轮并原文保护第 4～13 轮；
-- 非默认 `recentRawTurns` 配置被 planner 和 assembler 一致使用；
+- planner 和 assembler 使用同一个 `recentRawTurns()` 固定值，不分别声明常量；
 - 旧 Cold 覆盖部分前缀时只摘要后续缺口；
 - user-only 轮次可以进入完整摘要批次；
 - 单轮超过摘要硬预算时稳定失败。
@@ -509,7 +509,7 @@ execution 取消或失败时，当前模型调用停止，开放过程节点按�
 2. Hierarchical 不读取 triggering message ID 来识别当前问题。
 3. Hierarchical 不根据 assistant 正文或 execution 状态区分历史轮次和当前轮次。
 4. 每条 user 消息稳定开启一个轮次，空 assistant 不会丢失或劫持后续问题。
-5. 最近 `recentRawTurns` 轮始终保留原文，默认 10，且配置只有一个事实源。
+5. 最近 10 轮始终保留原文，固定值只有一个事实源，不暴露无效配置。
 6. 更早的连续轮次前缀按顺序进入单一 Rolling Cold。
 7. 当前 execution 的用户问题和最新工具结果自然位于未压缩后缀末尾。
 8. 旧 Hierarchical 派生摘要不会按新算法继续发布或读取。
