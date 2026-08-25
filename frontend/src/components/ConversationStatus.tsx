@@ -3,7 +3,6 @@ import { AgentExecutionStatus } from '../domain/agentPrototype';
 interface ConversationStatusProps {
   status: AgentExecutionStatus;
   onCancel: () => void;
-  onRetry: () => void;
 }
 
 const STATUS_LABELS: Record<AgentExecutionStatus, string> = {
@@ -15,7 +14,7 @@ const STATUS_LABELS: Record<AgentExecutionStatus, string> = {
 };
 
 /** 展示执行状态及该状态允许的最小控制集合。 */
-export function ConversationStatus({ status, onCancel, onRetry }: ConversationStatusProps) {
+export function ConversationStatus({ status, onCancel }: ConversationStatusProps) {
   const cancellable = status === 'running';
   return (
     <div className="conversation-status-block">
@@ -23,11 +22,6 @@ export function ConversationStatus({ status, onCancel, onRetry }: ConversationSt
       {cancellable && (
         <button type="button" className="run-control" onClick={onCancel}>
           取消运行
-        </button>
-      )}
-      {status === 'failed' && (
-        <button type="button" className="run-control" onClick={onRetry}>
-          重试运行
         </button>
       )}
       {status === 'cancelled' && <p>运行已取消，以下内容可能不完整。</p>}

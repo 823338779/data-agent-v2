@@ -101,21 +101,6 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AgentExecution' }
         '404': { $ref: '#/components/responses/NotFound' }
-  /api/v1/agent-sessions/{conversationSessionId}/executions/{executionId}:retry:
-    post:
-      operationId: retryAgentExecution
-      parameters:
-        - { $ref: '#/components/parameters/ConversationSessionId' }
-        - { $ref: '#/components/parameters/ExecutionId' }
-        - { $ref: '#/components/parameters/IdempotencyKey' }
-      responses:
-        '202':
-          description: 已创建并启动新的本机执行
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/AgentExecution' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/IdempotencyKeyReused' }
   /api/v1/agent-sessions/{conversationSessionId}/events:
     get:
       operationId: streamConversationSessionEvents

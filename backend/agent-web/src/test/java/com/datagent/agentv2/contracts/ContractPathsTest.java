@@ -25,7 +25,7 @@ class ContractPathsTest {
 
         assertThat(api.path("openapi").asText()).isEqualTo("3.1.0");
         assertThat(paths.size()).isEqualTo(REQUIRED.size());
-        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(9);
+        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(8);
         assertThat(REQUIRED)
                 .allSatisfy(
                         (path, methods) -> {
@@ -82,16 +82,10 @@ class ContractPathsTest {
     }
 
     @Test
-    void submissionAndRetryKeepIdempotencyKeys() throws IOException {
+    void submissionKeepsIdempotencyKey() throws IOException {
         JsonNode paths = YAML.readTree(ContractFiles.openApi().toFile()).path("paths");
 
         assertThat(paths.path(SESSION_PATH + "/messages").path("post").path("parameters"))
-                .extracting(node -> node.path("$ref").asText())
-                .contains("#/components/parameters/IdempotencyKey");
-        assertThat(
-                        paths.path(SESSION_PATH + "/executions/{executionId}:retry")
-                                .path("post")
-                                .path("parameters"))
                 .extracting(node -> node.path("$ref").asText())
                 .contains("#/components/parameters/IdempotencyKey");
     }
@@ -103,7 +97,6 @@ class ContractPathsTest {
         required.put(SESSION_PATH, Set.of("get", "patch"));
         required.put(SESSION_PATH + "/messages", Set.of("post"));
         required.put(SESSION_PATH + "/executions/{executionId}:cancel", Set.of("post"));
-        required.put(SESSION_PATH + "/executions/{executionId}:retry", Set.of("post"));
         required.put(SESSION_PATH + "/events", Set.of("get"));
         return required;
     }

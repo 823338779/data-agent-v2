@@ -180,7 +180,6 @@ export interface AgentBackendClient {
   ): Promise<ConversationSession>;
   submitMessage(conversationSessionId: string, content: string): Promise<ConversationSession>;
   cancelExecution(conversationSessionId: string, executionId: string): Promise<AgentExecution>;
-  retryExecution(conversationSessionId: string, executionId: string): Promise<AgentExecution>;
   subscribeSessionEvents(
     conversationSessionId: string,
     onEvent: (event: ConversationStreamEvent) => void,
@@ -413,10 +412,8 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
     return toSession(await json<BackendSession>(await fetchResponse(path, init, retryNetwork)));
   }
 
-  async function executionRequest(path: string, init?: RequestInit, retryNetwork = false) {
-    return toExecution(
-      await json<BackendAgentExecution>(await fetchResponse(path, init, retryNetwork)),
-    );
+  async function executionRequest(path: string, init?: RequestInit) {
+    return toExecution(await json<BackendAgentExecution>(await fetchResponse(path, init)));
   }
 
   function openSource(path: string): EventSource | undefined {
@@ -461,14 +458,6 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
       return executionRequest(
         `/${encodeURIComponent(conversationSessionId)}/executions/${encodeURIComponent(executionId)}:cancel`,
         { method: 'POST' },
-      );
-    },
-    retryExecution(conversationSessionId, executionId) {
-      const idempotencyKey = createIdempotencyKey();
-      return executionRequest(
-        `/${encodeURIComponent(conversationSessionId)}/executions/${encodeURIComponent(executionId)}:retry`,
-        { method: 'POST', headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey } },
-        true,
       );
     },
     subscribeSessionEvents(conversationSessionId, onEvent, onError) {

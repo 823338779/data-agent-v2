@@ -350,16 +350,6 @@ export default function App({ client }: AppProps) {
     }
   }
 
-  async function retryActiveExecution() {
-    if (!active?.execution) return;
-    try {
-      await backend.retryExecution(active.conversationSessionId, active.execution.executionId);
-      replaceSession(await backend.getSession(active.conversationSessionId));
-    } catch (failure) {
-      handleFailure(failure, '重试运行失败，请稍后重试。');
-    }
-  }
-
   return (
     <AppShell historyOpen={historyOpen} onToggleHistory={() => setHistoryOpen((open) => !open)}>
       {historyOpen && (
@@ -443,7 +433,6 @@ export default function App({ client }: AppProps) {
             <ConversationStatus
               status={active.execution?.status ?? 'idle'}
               onCancel={() => void cancelActiveExecution()}
-              onRetry={() => void retryActiveExecution()}
             />
           </header>
 

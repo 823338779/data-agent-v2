@@ -70,22 +70,13 @@ class ContentCenteredMessageIntegrationTest {
     }
 
     @Test
-    void retryCreatesOneNewAssistantAndMessageQueriesUseTheCenterRows() throws Exception {
+    void submissionCreatesOneAssistantAndMessageQueriesUseTheCenterRows() throws Exception {
         Cookie login = login();
         String conversationSessionId = createSession(login);
-        String originalExecutionId = submit(login, conversationSessionId);
-        cancel(login, conversationSessionId, originalExecutionId);
+        String executionId = submit(login, conversationSessionId);
 
-        String firstRetry = retry(login, conversationSessionId, originalExecutionId, "retry-key");
-        String replayedRetry =
-                retry(login, conversationSessionId, originalExecutionId, "retry-key");
-        String retryExecutionId = json.readTree(firstRetry).path("executionId").asString();
-        assertThat(json.readTree(replayedRetry).path("executionId").asString())
-                .isEqualTo(retryExecutionId);
-
-        // retry 继续引用原 user 消息，只为新 execution 创建一条 assistant 中心行。
         assertThat(roleCount(conversationSessionId, "user")).isEqualTo(1);
-        assertThat(roleCount(conversationSessionId, "assistant")).isEqualTo(2);
+        assertThat(roleCount(conversationSessionId, "assistant")).isEqualTo(1);
         assertThat(
                         jdbc.queryForObject(
                                 """
@@ -94,27 +85,26 @@ class ContentCenteredMessageIntegrationTest {
                                    and content = '' and thinking_process = '[]'::jsonb
                                 """,
                                 Integer.class,
-                                retryExecutionId))
+                                executionId))
                 .isEqualTo(1);
 
-        // 锁查询和有界会话查询都返回相同的真实中心消息，不生成工具辅助消息。
+        // 锁查询和有界会话查询必须返回同一组真实中心消息，不生成额外协议辅助行。
         ConversationMessage locked =
                 TenantContext.call(
                         TENANT_ID,
                         () ->
                                 transactions.execute(
                                         ignored ->
-                                                messages.lockAssistantByExecutionId(
-                                                        retryExecutionId)));
+                                                messages.lockAssistantByExecutionId(executionId)));
         assertThat(locked).isNotNull();
-        assertThat(locked.getExecutionId()).isEqualTo(retryExecutionId);
+        assertThat(locked.getExecutionId()).isEqualTo(executionId);
         assertThat(locked.getThinkingProcess()).isEmpty();
 
         List<ConversationMessage> executionMessages =
-                TenantContext.call(TENANT_ID, () -> messages.findByExecutionId(retryExecutionId));
+                TenantContext.call(TENANT_ID, () -> messages.findByExecutionId(executionId));
         assertThat(executionMessages)
                 .extracting(ConversationMessage::getRole)
-                .containsExactly(MessageRole.ASSISTANT);
+                .containsExactly(MessageRole.USER, MessageRole.ASSISTANT);
         List<ConversationMessage> sessionMessages =
                 TenantContext.call(
                         TENANT_ID,
@@ -123,7 +113,7 @@ class ContentCenteredMessageIntegrationTest {
                                         conversationSessionId, Long.MAX_VALUE));
         assertThat(sessionMessages)
                 .extracting(ConversationMessage::getRole)
-                .containsExactly(MessageRole.USER, MessageRole.ASSISTANT, MessageRole.ASSISTANT);
+                .containsExactly(MessageRole.USER, MessageRole.ASSISTANT);
     }
 
     private int roleCount(String conversationSessionId, String role) {
@@ -150,31 +140,6 @@ class ContentCenteredMessageIntegrationTest {
                         .getResponse()
                         .getContentAsString();
         return json.readTree(body).path("execution").path("executionId").asString();
-    }
-
-    private void cancel(Cookie login, String sessionId, String executionId) throws Exception {
-        mvc.perform(
-                        post(
-                                        "/api/v1/agent-sessions/{conversationSessionId}/executions/{executionId}:cancel",
-                                        sessionId,
-                                        executionId)
-                                .cookie(login))
-                .andExpect(status().isAccepted());
-    }
-
-    private String retry(Cookie login, String sessionId, String executionId, String key)
-            throws Exception {
-        return mvc.perform(
-                        post(
-                                        "/api/v1/agent-sessions/{conversationSessionId}/executions/{executionId}:retry",
-                                        sessionId,
-                                        executionId)
-                                .cookie(login)
-                                .header("Idempotency-Key", key))
-                .andExpect(status().isAccepted())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
     }
 
     private String createSession(Cookie login) throws Exception {

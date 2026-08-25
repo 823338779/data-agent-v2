@@ -106,19 +106,6 @@ public class ConversationController {
                                 controls.cancel(conversationSessionId, executionId)));
     }
 
-    @PostMapping("/{conversationSessionId}/executions/{executionId}:retry")
-    ResponseEntity<ConversationView.AgentExecutionView> retryExecution(
-            @PathVariable String conversationSessionId,
-            @PathVariable String executionId,
-            @RequestHeader(IDEMPOTENCY_KEY_HEADER) String idempotencyKey) {
-        return ResponseEntity.accepted()
-                .body(
-                        conversations.controlView(
-                                conversationSessionId,
-                                controls.retry(
-                                        conversationSessionId, executionId, idempotencyKey)));
-    }
-
     /** 创建对话会话所需的可选展示信息。 */
     record CreateConversationSessionRequest(
             @Size(max = 120) String title, @Size(max = 120) String tag) {}

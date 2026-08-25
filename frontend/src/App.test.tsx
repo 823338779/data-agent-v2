@@ -66,7 +66,6 @@ function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient
       },
     }),
     cancelExecution: vi.fn(),
-    retryExecution: vi.fn(),
     subscribeSessionEvents: vi.fn().mockReturnValue(() => undefined),
     ...overrides,
   };

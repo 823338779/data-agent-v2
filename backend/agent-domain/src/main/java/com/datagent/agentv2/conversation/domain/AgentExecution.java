@@ -24,7 +24,7 @@ public final class AgentExecution {
     /** 当前持久状态：running、done、cancelled 或 failed。 */
     private String status;
 
-    /** 幂等请求类型，用来区分消息提交和显式重试。 */
+    /** 幂等请求类型；当前固定为消息提交。 */
     private String requestType;
 
     /** 调用方幂等键，在同一会话和请求类型内唯一。 */
@@ -67,25 +67,6 @@ public final class AgentExecution {
         execution.hardDeadlineAt = Objects.requireNonNull(hardDeadlineAt, "hardDeadlineAt");
         execution.version = 0L;
         return execution;
-    }
-
-    /** 重试创建新的本机执行，不保存旧执行链路。 */
-    public static AgentExecution retry(
-            String executionId,
-            AgentExecution original,
-            String requestType,
-            String idempotencyKey,
-            String payloadHash,
-            Instant hardDeadlineAt) {
-        Objects.requireNonNull(original, "original");
-        return running(
-                executionId,
-                original.conversationSessionId,
-                original.triggeringConversationMessageId,
-                requestType,
-                idempotencyKey,
-                payloadHash,
-                hardDeadlineAt);
     }
 
     private static String requireText(String value, String name) {

@@ -21,8 +21,6 @@ public final class ExecutionConstants {
     public static final String ERROR_AGENT_EXECUTION_NOT_FOUND = "Agent execution not found";
     public static final String ERROR_EXECUTION_CANNOT_BE_CANCELLED =
             "Agent execution cannot be cancelled";
-    public static final String ERROR_ONLY_TERMINAL_EXECUTIONS_RETRY =
-            "only terminal Agent executions can be retried";
     public static final String ERROR_SESSION_CHANGED_CONCURRENTLY = "session changed concurrently";
     public static final String ERROR_HASH_ALGORITHM_UNAVAILABLE_SUFFIX = " is unavailable";
     public static final String DEFAULT_CONVERSATION_TITLE = "New conversation";
