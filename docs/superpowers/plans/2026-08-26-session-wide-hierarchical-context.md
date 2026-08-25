@@ -120,7 +120,7 @@ assertThat(boundedSessionMessages)
 Run:
 
 ```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am '-Dtest=ContentCenteredMessageIntegrationTest' test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am '-Dtest=ContentCenteredMessageIntegrationTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
 ```
 
 Expected: 测试编译失败，错误明确指出 `ConversationMessageService.findByConversationSessionId(String)` 不存在。
@@ -150,7 +150,7 @@ public List<ConversationMessage> findByConversationSessionId(String conversation
 Run:
 
 ```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am '-Dtest=ContentCenteredMessageIntegrationTest' test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am '-Dtest=ContentCenteredMessageIntegrationTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
 ```
 
 Expected: PASS；全量查询返回两条中心消息，有界查询在上界 1 时只返回 user。
@@ -298,7 +298,7 @@ void keepsEveryUncoveredTurnInOrderWithoutSelectingACurrentTurn() {
 Run:
 
 ```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am '-Dtest=ConversationTurnGrouperTest,HierarchicalConversationHistoryLoaderTest,RollingColdCompactionPlannerTest,HierarchicalConversationContextAssemblerTest' test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am '-Dtest=ConversationTurnGrouperTest,HierarchicalConversationHistoryLoaderTest,RollingColdCompactionPlannerTest,HierarchicalConversationContextAssemblerTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
 ```
 
 Expected: 编译或断言失败，原因包括旧 `completed` 字段、旧 assistant factory、旧有界查询或 assembler 缺少统一 `turns`。
@@ -572,7 +572,7 @@ Flyway helper 对 Hierarchical V2 使用 `target(MigrationVersion.fromVersion("2
 Run:
 
 ```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am '-Dtest=HierarchicalDerivedDataResetMigrationTest' test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am '-Dtest=HierarchicalDerivedDataResetMigrationTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
 ```
 
 Expected: 最后两个派生表计数仍为 1，断言失败。
@@ -606,7 +606,7 @@ private static final String RESET_LEGACY_CONTEXT_SCRIPT =
 Run:
 
 ```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am '-Dtest=*Hierarchical*MigrationTest,HierarchicalFlywayIntegrationTest' test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical -am '-Dtest=*Hierarchical*MigrationTest,HierarchicalFlywayIntegrationTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
 ```
 
 Expected: PASS；V3 后派生表为空且 session 保留，独立 Flyway history 顺序正确。
@@ -708,7 +708,7 @@ verify(summaryModel, never()).summarize(any());
 Run:
 
 ```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am '-Dtest=HierarchicalFullHistoryIntegrationTest' test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am '-Dtest=HierarchicalFullHistoryIntegrationTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
 ```
 
 Expected: PASS；旧 cancelled/failed user 均保留，最新 user 位于输入末尾，未调用摘要模型。
@@ -718,7 +718,7 @@ Expected: PASS；旧 cancelled/failed user 均保留，最新 user 位于输入�
 Run:
 
 ```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am '-Dtest=AgentExecutionSubmissionIntegrationTest#activeExecutionConflictsWithAnotherSubmission' test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am '-Dtest=AgentExecutionSubmissionIntegrationTest#activeExecutionConflictsWithAnotherSubmission' '-Dsurefire.failIfNoSpecifiedTests=false' test
 ```
 
 Expected: PASS；第二次提交返回冲突且没有新增消息。
@@ -784,7 +784,7 @@ Expected: 第一条无匹配；第二条只命中 `HierarchicalContextPolicySnap
 Run:
 
 ```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical,agent-server -am '-Dtest=*Hierarchical*Test,ContentCenteredMessageIntegrationTest,AgentExecutionSubmissionIntegrationTest' test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-context-hierarchical,agent-server -am '-Dtest=*Hierarchical*Test,ContentCenteredMessageIntegrationTest,AgentExecutionSubmissionIntegrationTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
 ```
 
 Expected: PASS。
