@@ -105,15 +105,22 @@ class ContentCenteredMessageIntegrationTest {
         assertThat(executionMessages)
                 .extracting(ConversationMessage::getRole)
                 .containsExactly(MessageRole.USER, MessageRole.ASSISTANT);
-        List<ConversationMessage> sessionMessages =
+        List<ConversationMessage> fullSessionMessages =
+                TenantContext.call(
+                        TENANT_ID,
+                        () -> messages.findByConversationSessionId(conversationSessionId));
+        assertThat(fullSessionMessages)
+                .extracting(ConversationMessage::getRole)
+                .containsExactly(MessageRole.USER, MessageRole.ASSISTANT);
+        List<ConversationMessage> boundedSessionMessages =
                 TenantContext.call(
                         TENANT_ID,
                         () ->
                                 messages.findByConversationSessionIdUpTo(
-                                        conversationSessionId, Long.MAX_VALUE));
-        assertThat(sessionMessages)
+                                        conversationSessionId, 1L));
+        assertThat(boundedSessionMessages)
                 .extracting(ConversationMessage::getRole)
-                .containsExactly(MessageRole.USER, MessageRole.ASSISTANT);
+                .containsExactly(MessageRole.USER);
     }
 
     private int roleCount(String conversationSessionId, String role) {

@@ -95,6 +95,18 @@ public class ConversationMessageService
                         .list());
     }
 
+    /** 按会话读取全部真实 user/assistant 中心消息，供不使用消息上界的上下文策略重建历史。 */
+    public List<ConversationMessage> findByConversationSessionId(String conversationSessionId) {
+        return toModels(
+                lambdaQuery()
+                        .eq(
+                                ConversationMessageEntity::getConversationSessionId,
+                                conversationSessionId)
+                        .in(ConversationMessageEntity::getRole, ROLE_USER, ROLE_ASSISTANT)
+                        .orderByAsc(ConversationMessageEntity::getConversationMessageSequence)
+                        .list());
+    }
+
     /** 按执行读取真实 user/assistant 消息，并保持会话内顺序。 */
     public List<ConversationMessage> findByExecutionId(String executionId) {
         return toModels(
