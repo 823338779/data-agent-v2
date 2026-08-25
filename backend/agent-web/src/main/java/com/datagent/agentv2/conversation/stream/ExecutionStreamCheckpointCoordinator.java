@@ -92,7 +92,7 @@ public final class ExecutionStreamCheckpointCoordinator {
                 accumulator.modelInvocationSequence(),
                 accumulator.outputDeltaSequence(),
                 accumulator.answer(),
-                accumulator.phase().value())) {
+                accumulator.phase())) {
             throw new ExecutionStoppedException(run.executionId());
         }
         accumulator.checkpointed(now);

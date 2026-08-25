@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.runtime.ExecutionStoppedException;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.platform.context.TenantContext;
@@ -43,7 +44,7 @@ class WebContextExecutionControlAdapterTest {
         AgentExecution execution = new AgentExecution();
         execution.setExecutionId(EXECUTION_ID);
         execution.setConversationSessionId(SESSION_ID);
-        execution.setStatus("running");
+        execution.setStatus(ExecutionStatus.RUNNING);
         execution.setHardDeadlineAt(deadline);
         return execution;
     }

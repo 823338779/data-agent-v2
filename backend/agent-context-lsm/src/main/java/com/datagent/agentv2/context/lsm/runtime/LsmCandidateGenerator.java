@@ -98,7 +98,7 @@ public final class LsmCandidateGenerator {
         entity.setSummarySegmentId(ids.next(SEGMENT_ID_PREFIX));
         entity.setConversationSessionId(request.execution().conversationSessionId());
         entity.setSegmentKey(summary.segmentKey());
-        entity.setKind(operation.targetKind().name());
+        entity.setKind(operation.targetKind());
         entity.setLevel(operation.targetLevel());
         entity.setStartTurnSequence(operation.coverage().startTurnSequence());
         entity.setEndTurnSequence(operation.coverage().endTurnSequence());

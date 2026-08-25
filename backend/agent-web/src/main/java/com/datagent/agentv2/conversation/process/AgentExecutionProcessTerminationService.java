@@ -1,6 +1,8 @@
 package com.datagent.agentv2.conversation.process;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.runtime.ExecutionStoppedException;
 import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
@@ -14,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class AgentExecutionProcessTerminationService {
 
-    private static final String STATUS_RUNNING = "running";
     private static final String CANCELLATION_CODE = "EXECUTION_CANCELLED";
     private static final String CANCELLATION_MESSAGE = "Execution was cancelled";
 
@@ -24,13 +25,16 @@ public class AgentExecutionProcessTerminationService {
 
     @Transactional
     public void failRunning(
-            LocalAgentExecution run, String failureCode, String message, Instant now) {
+            LocalAgentExecution run,
+            ExecutionFailureCode failureCode,
+            String message,
+            Instant now) {
         AgentExecution execution = executions.lockById(run.executionId());
-        if (execution == null || !STATUS_RUNNING.equals(execution.getStatus())) {
+        if (execution == null || execution.getStatus() != ExecutionStatus.RUNNING) {
             return;
         }
         String safeMessage = sanitizer.sanitizeText(message);
-        processes.failOpenItems(run.executionId(), failureCode, safeMessage, now);
+        processes.failOpenItems(run.executionId(), failureCode.value(), safeMessage, now);
         if (!executions.failRunning(
                 run.executionId(), execution.getVersion(), failureCode, safeMessage)) {
             throw new ExecutionStoppedException(run.executionId());
@@ -48,7 +52,7 @@ public class AgentExecutionProcessTerminationService {
     }
 
     private static void requireRunning(AgentExecution execution) {
-        if (!STATUS_RUNNING.equals(execution.getStatus())) {
+        if (execution.getStatus() != ExecutionStatus.RUNNING) {
             throw new ExecutionStoppedException(execution.getExecutionId());
         }
     }

@@ -36,6 +36,6 @@ public record ConversationSummaryView(
                 latestExecution == null
                         ? SessionExecutionStatus.IDLE
                         : SessionExecutionStatus.fromExecutionStatus(
-                                ExecutionStatus.fromValue(latestExecution.getStatus())));
+                                latestExecution.getStatus()));
     }
 }

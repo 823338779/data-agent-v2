@@ -200,7 +200,7 @@ public class ConversationApplicationService {
                 (conversationSessionId, run) -> {
                     activeBySession.put(
                             conversationSessionId,
-                            ExecutionStatus.RUNNING.value().equals(run.getStatus()));
+                            run.getStatus() == ExecutionStatus.RUNNING);
                     AgentExecutionStreamCheckpoint stream =
                             streamsByExecutionId.get(run.getExecutionId());
                     if (stream != null) {
@@ -428,7 +428,7 @@ public class ConversationApplicationService {
             return new ExecutionStreamCheckpointView(
                     execution.getExecutionId(),
                     stream.getModelInvocationSequence(),
-                    ExecutionPhase.fromValue(stream.getPhase()),
+                    stream.getPhase(),
                     stream.getOutputDeltaSequence(),
                     stream.getAnswer());
         }

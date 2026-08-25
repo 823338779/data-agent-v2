@@ -3,6 +3,8 @@ package com.datagent.agentv2.persistence.service;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
+import com.datagent.agentv2.conversation.enums.ExecutionPhase;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.persistence.entity.AgentExecutionStreamCheckpointEntity;
 import com.datagent.agentv2.persistence.mapping.ConversationPersistenceMapper;
 import com.datagent.agentv2.persistence.service.mapper.AgentExecutionStreamCheckpointMapper;
@@ -18,9 +20,6 @@ public class AgentExecutionStreamCheckpointService
                 AgentExecutionStreamCheckpointMapper, AgentExecutionStreamCheckpointEntity> {
 
     private static final String EMPTY_ANSWER = "";
-    private static final String PHASE_COMPLETED = "COMPLETED";
-    private static final String PHASE_CONNECTING_MODEL = "CONNECTING_MODEL";
-    private static final String STATUS_RUNNING = "running";
     private static final String EXISTS_RUNNING_EXECUTION =
             """
             select 1 from agent_execution execution
@@ -54,7 +53,7 @@ public class AgentExecutionStreamCheckpointService
             String executionId, long expectedVersion, long modelInvocationSequence) {
         AgentExecutionStreamCheckpointEntity changes = new AgentExecutionStreamCheckpointEntity();
         changes.setModelInvocationSequence(modelInvocationSequence);
-        changes.setPhase(PHASE_CONNECTING_MODEL);
+        changes.setPhase(ExecutionPhase.CONNECTING_MODEL.value());
         changes.setOutputDeltaSequence(0L);
         changes.setAnswer(EMPTY_ANSWER);
         return baseMapper.update(
@@ -74,10 +73,10 @@ public class AgentExecutionStreamCheckpointService
             long modelInvocationSequence,
             long outputDeltaSequence,
             String answer,
-            String phase) {
+            ExecutionPhase phase) {
         AgentExecutionStreamCheckpointEntity changes = new AgentExecutionStreamCheckpointEntity();
         changes.setAnswer(answer);
-        changes.setPhase(phase);
+        changes.setPhase(phase.value());
         changes.setOutputDeltaSequence(outputDeltaSequence);
         return baseMapper.update(
                         changes,
@@ -97,7 +96,7 @@ public class AgentExecutionStreamCheckpointService
     public boolean complete(
             String executionId, long expectedVersion, long modelInvocationSequence, String answer) {
         AgentExecutionStreamCheckpointEntity changes = new AgentExecutionStreamCheckpointEntity();
-        changes.setPhase(PHASE_COMPLETED);
+        changes.setPhase(ExecutionPhase.COMPLETED.value());
         changes.setAnswer(answer);
         return baseMapper.update(
                         changes,
@@ -116,6 +115,6 @@ public class AgentExecutionStreamCheckpointService
         return Wrappers.lambdaUpdate(AgentExecutionStreamCheckpointEntity.class)
                 .eq(AgentExecutionStreamCheckpointEntity::getExecutionId, executionId)
                 .eq(AgentExecutionStreamCheckpointEntity::getVersion, expectedVersion)
-                .exists(EXISTS_RUNNING_EXECUTION, STATUS_RUNNING);
+                .exists(EXISTS_RUNNING_EXECUTION, ExecutionStatus.RUNNING.value());
     }
 }

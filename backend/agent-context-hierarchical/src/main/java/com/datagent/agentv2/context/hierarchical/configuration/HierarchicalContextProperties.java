@@ -17,12 +17,6 @@ public class HierarchicalContextProperties {
     /** 标识当前策略快照契约的版本。 */
     private static final int POLICY_VERSION = 2;
 
-    /** 标识新摘要文档结构的版本。 */
-    private static final int SUMMARY_SCHEMA_VERSION = 2;
-
-    /** 标识生成摘要时使用的提示词版本。 */
-    private static final int SUMMARY_PROMPT_VERSION = 2;
-
     /** 开始压缩前允许使用的上下文窗口比例。 */
     private double triggerRatio = 0.75d;
 
@@ -44,11 +38,6 @@ public class HierarchicalContextProperties {
     /** 将当前服务配置冻结为一次 execution 使用的策略快照。 */
     public HierarchicalContextPolicySnapshot snapshot() {
         return new HierarchicalContextPolicySnapshot(
-                POLICY_VERSION,
-                triggerRatio,
-                targetRatio,
-                recentRawTurns,
-                SUMMARY_SCHEMA_VERSION,
-                SUMMARY_PROMPT_VERSION);
+                POLICY_VERSION, triggerRatio, targetRatio, recentRawTurns);
     }
 }

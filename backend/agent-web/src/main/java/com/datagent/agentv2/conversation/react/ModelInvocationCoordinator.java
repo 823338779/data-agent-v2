@@ -8,6 +8,7 @@ import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
 import com.datagent.agentv2.conversation.enums.ExecutionEventType;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.model.api.ModelOutputDelta;
 import com.datagent.agentv2.conversation.process.ConversationProcessCoordinator;
 import com.datagent.agentv2.conversation.runtime.ExecutionStoppedException;
@@ -145,7 +146,7 @@ public class ModelInvocationCoordinator {
                         run.conversationSessionId(),
                         run.executionId(),
                         sessions.nextExecutionEventSequence(run.conversationSessionId()),
-                        ExecutionEventType.DONE.value(),
+                        ExecutionEventType.DONE,
                         now));
     }
 
@@ -153,7 +154,7 @@ public class ModelInvocationCoordinator {
         AgentExecution execution = executions.lockById(run.executionId());
         boolean running =
                 execution != null
-                        && "running".equals(execution.getStatus())
+                        && execution.getStatus() == ExecutionStatus.RUNNING
                         && execution.getHardDeadlineAt() != null
                         && execution.getHardDeadlineAt().isAfter(now);
         if (!running) {

@@ -51,6 +51,7 @@ class ConversationExecutionSchemaMigrationTest {
         assertThat(columnNames("agent_execution"))
                 .contains("execution_id", "conversation_session_id", "status", "hard_deadline_at")
                 .doesNotContain(
+                        "request_type",
                         "execution_attempt_number",
                         "owner_user_id",
                         "owner_instance_id",
@@ -88,9 +89,9 @@ class ConversationExecutionSchemaMigrationTest {
         assertThat(constraintDefinition("ck_agent_execution_status"))
                 .contains("running", "done", "cancelled", "failed")
                 .doesNotContain("queued", "lost", "waiting_for_user", "waiting_confirmation");
-        assertThat(constraintDefinition("ck_agent_execution_request_type"))
-                .contains("message_submission")
-                .doesNotContain("execution_retry");
+        assertThat(constraintDefinition("uq_agent_execution_request_idempotency"))
+                .contains("tenant_id", "conversation_session_id", "request_idempotency_key")
+                .doesNotContain("request_type");
         assertThat(indexDefinition("uq_agent_execution_one_active"))
                 .contains("status", "running")
                 .doesNotContain("queued", "waiting_for_user", "waiting_confirmation");

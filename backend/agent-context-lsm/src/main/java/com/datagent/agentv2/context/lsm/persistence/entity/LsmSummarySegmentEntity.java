@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
 import com.datagent.agentv2.persistence.typehandler.JsonbStringTypeHandler;
+import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment.SegmentKind;
 import java.time.LocalDateTime;
 import lombok.Getter;
 import lombok.Setter;
@@ -31,8 +32,8 @@ public final class LsmSummarySegmentEntity {
     /** 按摘要输入确定性计算的段幂等键。 */
     private String segmentKey;
 
-    /** 段类型，取值为 STANDARD 或 ROOT。 */
-    private String kind;
+    /** 段类型；MyBatis 按枚举名写入数据库中的 STANDARD 或 ROOT。 */
+    private SegmentKind kind;
 
     /** 段所在 LSM 层级。 */
     private Integer level;

@@ -25,7 +25,7 @@ class ConversationViewCompositionTest {
         AgentExecution execution = new AgentExecution();
         execution.setExecutionId("execution-1");
         execution.setConversationSessionId("session-1");
-        execution.setStatus(ExecutionStatus.RUNNING.value());
+        execution.setStatus(ExecutionStatus.RUNNING);
         ConversationMessage message = new ConversationMessage();
         message.setConversationMessageId("message-1");
         message.setRole(MessageRole.USER);
@@ -34,7 +34,7 @@ class ConversationViewCompositionTest {
         message.setThinkingProcess(List.of());
         AgentExecutionStreamCheckpoint checkpoint = new AgentExecutionStreamCheckpoint();
         checkpoint.setModelInvocationSequence(2L);
-        checkpoint.setPhase(ExecutionPhase.ANSWERING.value());
+        checkpoint.setPhase(ExecutionPhase.ANSWERING);
         checkpoint.setOutputDeltaSequence(3L);
         checkpoint.setAnswer("answer");
 

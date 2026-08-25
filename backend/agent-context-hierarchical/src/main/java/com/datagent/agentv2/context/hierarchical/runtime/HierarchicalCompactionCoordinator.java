@@ -148,8 +148,6 @@ public final class HierarchicalCompactionCoordinator {
                 generated.persistedTokenCount(),
                 generated.renderedTokenCount(),
                 plan.historyMemoryBudget(),
-                2,
-                RollingColdSummaryGenerator.PROMPT_VERSION,
                 generated.identity().provider(),
                 generated.identity().model(),
                 generated.sourceContentSha256());

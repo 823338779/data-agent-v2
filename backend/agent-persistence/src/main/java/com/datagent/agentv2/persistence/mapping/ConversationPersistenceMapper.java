@@ -6,6 +6,10 @@ import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.domain.ConversationSession;
 import com.datagent.agentv2.conversation.domain.MessageRole;
+import com.datagent.agentv2.conversation.enums.ExecutionEventType;
+import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
+import com.datagent.agentv2.conversation.enums.ExecutionPhase;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.persistence.entity.AgentExecutionEntity;
 import com.datagent.agentv2.persistence.entity.AgentExecutionEventEntity;
 import com.datagent.agentv2.persistence.entity.AgentExecutionStreamCheckpointEntity;
@@ -31,6 +35,38 @@ public interface ConversationPersistenceMapper {
 
     default String toMessageRoleValue(MessageRole role) {
         return role.value();
+    }
+
+    default ExecutionStatus toExecutionStatus(String value) {
+        return ExecutionStatus.fromValue(value);
+    }
+
+    default String toExecutionStatusValue(ExecutionStatus status) {
+        return status.value();
+    }
+
+    default ExecutionEventType toExecutionEventType(String value) {
+        return ExecutionEventType.fromValue(value);
+    }
+
+    default String toExecutionEventTypeValue(ExecutionEventType type) {
+        return type.value();
+    }
+
+    default ExecutionPhase toExecutionPhase(String value) {
+        return ExecutionPhase.fromValue(value);
+    }
+
+    default String toExecutionPhaseValue(ExecutionPhase phase) {
+        return phase.value();
+    }
+
+    default ExecutionFailureCode toExecutionFailureCode(String value) {
+        return value == null ? null : ExecutionFailureCode.fromValue(value);
+    }
+
+    default String toExecutionFailureCodeValue(ExecutionFailureCode code) {
+        return code == null ? null : code.value();
     }
 
     ConversationSession toModel(ConversationSessionEntity entity);

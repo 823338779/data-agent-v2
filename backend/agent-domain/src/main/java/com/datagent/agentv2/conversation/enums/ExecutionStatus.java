@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 import java.util.Arrays;
 
-/** Agent 执行状态的有限业务取值。 */
+/** Agent 执行持久化状态；枚举值同时约束领域状态机和对外协议。 */
 public enum ExecutionStatus {
     RUNNING("running"),
     FAILED("failed"),
@@ -27,7 +27,6 @@ public enum ExecutionStatus {
         return Arrays.stream(values())
                 .filter(candidate -> candidate.value.equals(value))
                 .findFirst()
-                .orElseThrow(
-                        () -> new IllegalArgumentException("Unknown execution status: " + value));
+                .orElseThrow(() -> new IllegalArgumentException("Unknown execution status: " + value));
     }
 }

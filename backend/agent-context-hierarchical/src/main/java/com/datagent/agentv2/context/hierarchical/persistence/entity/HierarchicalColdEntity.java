@@ -30,8 +30,6 @@ public final class HierarchicalColdEntity {
     private Integer persistedTokenCount;
     private Integer renderedTokenCount;
     private Integer targetRenderedTokens;
-    private Integer summarySchemaVersion;
-    private Integer summaryPromptVersion;
     private String modelProvider;
     private String modelName;
     private String sourceContentSha256;

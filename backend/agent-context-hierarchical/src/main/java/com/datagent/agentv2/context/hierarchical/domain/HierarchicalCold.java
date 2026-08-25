@@ -12,8 +12,6 @@ public record HierarchicalCold(
         int persistedTokenCount,
         int renderedTokenCount,
         int targetRenderedTokens,
-        int summarySchemaVersion,
-        int summaryPromptVersion,
         String modelProvider,
         String modelName,
         String sourceContentSha256) {
@@ -29,9 +27,7 @@ public record HierarchicalCold(
         if (persistedTokenCount <= 0
                 || renderedTokenCount <= 0
                 || targetRenderedTokens <= 0
-                || renderedTokenCount > targetRenderedTokens
-                || summarySchemaVersion <= 0
-                || summaryPromptVersion <= 0) {
+                || renderedTokenCount > targetRenderedTokens) {
             throw new IllegalArgumentException("Invalid hierarchical Cold");
         }
     }

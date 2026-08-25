@@ -15,7 +15,8 @@ public final class TenantEntity extends AuditedEntity {
     private String tenantId;
 
     private String name;
-    private String status;
+    /** 租户启停状态。 */
+    private ActivationStatus status;
 
     @Version private Long version;
 }

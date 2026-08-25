@@ -53,8 +53,6 @@ public final class HierarchicalColdRepository {
         entity.setPersistedTokenCount(cold.persistedTokenCount());
         entity.setRenderedTokenCount(cold.renderedTokenCount());
         entity.setTargetRenderedTokens(cold.targetRenderedTokens());
-        entity.setSummarySchemaVersion(cold.summarySchemaVersion());
-        entity.setSummaryPromptVersion(cold.summaryPromptVersion());
         entity.setModelProvider(cold.modelProvider());
         entity.setModelName(cold.modelName());
         entity.setSourceContentSha256(cold.sourceContentSha256());
@@ -81,8 +79,6 @@ public final class HierarchicalColdRepository {
                 entity.getPersistedTokenCount(),
                 entity.getRenderedTokenCount(),
                 entity.getTargetRenderedTokens(),
-                entity.getSummarySchemaVersion(),
-                entity.getSummaryPromptVersion(),
                 entity.getModelProvider(),
                 entity.getModelName(),
                 entity.getSourceContentSha256());

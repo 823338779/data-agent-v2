@@ -1,6 +1,7 @@
 package com.datagent.agentv2.conversation.context;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.runtime.ExecutionStoppedException;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.platform.context.TenantContext;
@@ -26,7 +27,7 @@ public class WebContextExecutionControlAdapter implements ContextExecutionContro
                         && execution
                                 .conversationSessionId()
                                 .equals(locked.getConversationSessionId())
-                        && "running".equals(locked.getStatus())
+                        && locked.getStatus() == ExecutionStatus.RUNNING
                         && locked.getHardDeadlineAt() != null
                         && locked.getHardDeadlineAt().isAfter(Instant.now());
         if (!running) {

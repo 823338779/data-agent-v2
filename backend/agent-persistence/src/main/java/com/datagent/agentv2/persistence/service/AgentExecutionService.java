@@ -3,6 +3,8 @@ package com.datagent.agentv2.persistence.service;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.persistence.entity.AgentExecutionEntity;
 import com.datagent.agentv2.persistence.mapping.ConversationPersistenceMapper;
 import com.datagent.agentv2.persistence.service.mapper.AgentExecutionMapper;
@@ -16,11 +18,6 @@ import org.springframework.stereotype.Service;
 public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, AgentExecutionEntity> {
 
     private static final String LOCK_FOR_UPDATE = "FOR UPDATE";
-    private static final String STATUS_RUNNING = "running";
-    private static final String STATUS_DONE = "done";
-    private static final String STATUS_FAILED = "failed";
-    private static final String STATUS_CANCELLED = "cancelled";
-
     private final ConversationPersistenceMapper models;
 
     public AgentExecution lockById(String executionId) {
@@ -35,7 +32,7 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
         return models.toModel(
                 lambdaQuery()
                         .eq(AgentExecutionEntity::getConversationSessionId, conversationSessionId)
-                        .eq(AgentExecutionEntity::getStatus, STATUS_RUNNING)
+                        .eq(AgentExecutionEntity::getStatus, ExecutionStatus.RUNNING.value())
                         .last(LOCK_FOR_UPDATE)
                         .one());
     }
@@ -45,12 +42,10 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
                 lambdaQuery().eq(AgentExecutionEntity::getExecutionId, executionId).one());
     }
 
-    public AgentExecution findRequest(
-            String conversationSessionId, String requestType, String idempotencyKey) {
+    public AgentExecution findRequest(String conversationSessionId, String idempotencyKey) {
         return models.toModel(
                 lambdaQuery()
                         .eq(AgentExecutionEntity::getConversationSessionId, conversationSessionId)
-                        .eq(AgentExecutionEntity::getRequestType, requestType)
                         .eq(AgentExecutionEntity::getRequestIdempotencyKey, idempotencyKey)
                         .one());
     }
@@ -67,30 +62,34 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
     public List<AgentExecution> findRunning(int limit) {
         return models.toExecutionModels(
                 lambdaQuery()
-                        .eq(AgentExecutionEntity::getStatus, STATUS_RUNNING)
+                        .eq(AgentExecutionEntity::getStatus, ExecutionStatus.RUNNING.value())
                         .orderByAsc(AgentExecutionEntity::getId)
                         .last("LIMIT " + Math.max(0, limit))
                         .list());
     }
 
     public boolean completeRunning(String executionId, long expectedVersion) {
-        return updateRunningStatus(executionId, expectedVersion, STATUS_DONE, null, null);
+        return updateRunningStatus(executionId, expectedVersion, ExecutionStatus.DONE, null, null);
     }
 
     public boolean failRunning(
-            String executionId, long expectedVersion, String failureCode, String failureDetail) {
+            String executionId,
+            long expectedVersion,
+            ExecutionFailureCode failureCode,
+            String failureDetail) {
         return updateRunningStatus(
-                executionId, expectedVersion, STATUS_FAILED, failureCode, failureDetail);
+                executionId, expectedVersion, ExecutionStatus.FAILED, failureCode, failureDetail);
     }
 
     public boolean cancelRunning(String executionId, long expectedVersion) {
-        return updateRunningStatus(executionId, expectedVersion, STATUS_CANCELLED, null, null);
+        return updateRunningStatus(
+                executionId, expectedVersion, ExecutionStatus.CANCELLED, null, null);
     }
 
     public boolean hasActiveExecution(String conversationSessionId) {
         return lambdaQuery()
                         .eq(AgentExecutionEntity::getConversationSessionId, conversationSessionId)
-                        .eq(AgentExecutionEntity::getStatus, STATUS_RUNNING)
+                        .eq(AgentExecutionEntity::getStatus, ExecutionStatus.RUNNING.value())
                         .count()
                 > 0L;
     }
@@ -98,18 +97,20 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
     private boolean updateRunningStatus(
             String executionId,
             long expectedVersion,
-            String status,
-            String failureCode,
+            ExecutionStatus status,
+            ExecutionFailureCode failureCode,
             String failureDetail) {
         AgentExecutionEntity changes = new AgentExecutionEntity();
-        changes.setStatus(status);
-        changes.setFailureCode(failureCode);
+        changes.setStatus(status.value());
+        changes.setFailureCode(failureCode == null ? null : failureCode.value());
         changes.setFailureDetail(failureDetail);
         return baseMapper.update(
                         changes,
                         Wrappers.lambdaUpdate(AgentExecutionEntity.class)
                                 .eq(AgentExecutionEntity::getExecutionId, executionId)
-                                .eq(AgentExecutionEntity::getStatus, STATUS_RUNNING)
+                                .eq(
+                                        AgentExecutionEntity::getStatus,
+                                        ExecutionStatus.RUNNING.value())
                                 .eq(AgentExecutionEntity::getVersion, expectedVersion)
                                 .setIncrBy(AgentExecutionEntity::getVersion, 1))
                 == 1;

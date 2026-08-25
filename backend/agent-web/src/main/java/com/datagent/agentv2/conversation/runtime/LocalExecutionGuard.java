@@ -1,6 +1,7 @@
 package com.datagent.agentv2.conversation.runtime;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
@@ -20,7 +21,7 @@ public class LocalExecutionGuard {
         // 状态和截止时间必须在同一次读取结果上判断；任一条件不满足都禁止继续产生副作用。
         boolean running =
                 execution != null
-                        && "running".equals(execution.getStatus())
+                        && execution.getStatus() == ExecutionStatus.RUNNING
                         && execution.getHardDeadlineAt() != null
                         && execution.getHardDeadlineAt().isAfter(Instant.now());
         if (!running) {

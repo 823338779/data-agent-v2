@@ -44,12 +44,12 @@ public final class ExecutionStreamAccumulator {
             long modelInvocationSequence,
             long outputDeltaSequence,
             String answer,
-            String phase,
+            ExecutionPhase phase,
             Instant checkpointedAt) {
         this.modelInvocationSequence = modelInvocationSequence;
         this.outputDeltaSequence = outputDeltaSequence;
         this.answer = new StringBuilder(answer);
-        this.phase = ExecutionPhase.fromValue(phase);
+        this.phase = java.util.Objects.requireNonNull(phase, "phase");
         this.checkpointedAt = checkpointedAt;
     }
 

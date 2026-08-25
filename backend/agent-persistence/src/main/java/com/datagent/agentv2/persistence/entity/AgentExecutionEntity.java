@@ -24,9 +24,6 @@ public final class AgentExecutionEntity extends TenantAuditedEntity {
     /** 持久状态：running、done、cancelled 或 failed。 */
     private String status;
 
-    /** 幂等请求类型。 */
-    private String requestType;
-
     /** 调用方提供的会话级幂等键。 */
     private String requestIdempotencyKey;
 

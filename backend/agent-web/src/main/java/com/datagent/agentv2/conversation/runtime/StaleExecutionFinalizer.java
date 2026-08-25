@@ -1,5 +1,6 @@
 package com.datagent.agentv2.conversation.runtime;
 
+import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.ApplicationArguments;
@@ -15,7 +16,6 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public final class StaleExecutionFinalizer implements ApplicationRunner {
 
-    private static final String FAILURE_CODE = "PROCESS_RESTARTED";
     private static final String FAILURE_DETAIL = "execution stopped because the process restarted";
 
     private final AgentExecutionService executions;
@@ -28,6 +28,9 @@ public final class StaleExecutionFinalizer implements ApplicationRunner {
 
     private void fail(com.datagent.agentv2.conversation.domain.AgentExecution execution) {
         executions.failRunning(
-                execution.getExecutionId(), execution.getVersion(), FAILURE_CODE, FAILURE_DETAIL);
+                execution.getExecutionId(),
+                execution.getVersion(),
+                ExecutionFailureCode.PROCESS_RESTARTED,
+                FAILURE_DETAIL);
     }
 }

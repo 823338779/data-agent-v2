@@ -25,7 +25,10 @@ class HierarchicalFlywayIntegrationTest {
             "flyway_agent_context_hierarchical_schema_history";
     private static final String INITIAL_BASELINE_VERSION = "0";
     private static final String HIERARCHICAL_TABLE_PREFIX = "conversation_context_hierarchical_%";
-    private static final String MIGRATION_SCRIPT = "V1__create_hierarchical_context_store.sql";
+    private static final String INITIAL_MIGRATION_SCRIPT =
+            "V1__create_hierarchical_context_store.sql";
+    private static final String REMOVE_SINGLE_VALUE_FIELDS_SCRIPT =
+            "V2__remove_single_value_summary_versions.sql";
     private static final List<String> HIERARCHICAL_TABLES =
             List.of(
                     "conversation_context_hierarchical_checkpoint",
@@ -51,14 +54,18 @@ class HierarchicalFlywayIntegrationTest {
             throws SQLException {
         assertThat(hierarchicalTables()).containsExactlyElementsOf(HIERARCHICAL_TABLES);
         assertThat(tables()).contains(PRIMARY_HISTORY, HIERARCHICAL_HISTORY);
-        assertThat(migrationScripts(PRIMARY_HISTORY)).doesNotContain(MIGRATION_SCRIPT);
-        assertThat(migrationScripts(HIERARCHICAL_HISTORY)).contains(MIGRATION_SCRIPT);
+        assertThat(migrationScripts(PRIMARY_HISTORY)).doesNotContain(INITIAL_MIGRATION_SCRIPT);
+        assertThat(migrationScripts(HIERARCHICAL_HISTORY))
+                .contains(INITIAL_MIGRATION_SCRIPT, REMOVE_SINGLE_VALUE_FIELDS_SCRIPT);
     }
 
     @Test
     void incompatibleSchemaStartsFromOneMigration() throws SQLException {
         assertThat(migrationScripts(HIERARCHICAL_HISTORY))
-                .containsExactly("<< Flyway Baseline >>", MIGRATION_SCRIPT);
+                .containsExactly(
+                        "<< Flyway Baseline >>",
+                        INITIAL_MIGRATION_SCRIPT,
+                        REMOVE_SINGLE_VALUE_FIELDS_SCRIPT);
     }
 
     @Test
@@ -95,6 +102,8 @@ class HierarchicalFlywayIntegrationTest {
                                                 "persisted_token_count > 0",
                                                 "rendered_token_count > 0",
                                                 "rendered_token_count <= target_rendered_tokens"));
+        assertThat(columnNames("conversation_context_hierarchical_cold"))
+                .doesNotContain("summary_schema_version", "summary_prompt_version");
     }
 
     private static Flyway flyway(String location, String historyTable) {
@@ -131,6 +140,12 @@ class HierarchicalFlywayIntegrationTest {
     private static List<String> checkDefinitions(String table) throws SQLException {
         return query(
                 "select pg_get_constraintdef(oid) from pg_constraint where conrelid = ?::regclass and contype = 'c'",
+                table);
+    }
+
+    private static List<String> columnNames(String table) throws SQLException {
+        return query(
+                "select column_name from information_schema.columns where table_schema = 'public' and table_name = ? order by ordinal_position",
                 table);
     }
 

@@ -18,7 +18,7 @@ class LsmPersistenceStructMapperTest {
     void mapsPersistedSegmentWithoutDroppingSourceLineage() {
         LsmSummarySegmentEntity entity = new LsmSummarySegmentEntity();
         entity.setSummarySegmentId("segment-1");
-        entity.setKind(LsmSummarySegment.SegmentKind.STANDARD.name());
+        entity.setKind(LsmSummarySegment.SegmentKind.STANDARD);
         entity.setLevel(2);
         entity.setStartTurnSequence(11L);
         entity.setEndTurnSequence(20L);

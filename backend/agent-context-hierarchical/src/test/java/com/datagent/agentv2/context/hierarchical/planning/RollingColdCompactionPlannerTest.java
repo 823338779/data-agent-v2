@@ -68,8 +68,6 @@ class RollingColdCompactionPlannerTest {
                 100,
                 80,
                 100,
-                2,
-                2,
                 "provider",
                 "model",
                 "0".repeat(64));

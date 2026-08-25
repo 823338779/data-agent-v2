@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.datagent.agentv2.context.lsm.domain.ConversationTurn;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
+import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
 import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmSummarySegmentEntity;
 import com.datagent.agentv2.context.lsm.persistence.json.LsmDocumentCodec;
@@ -377,7 +378,7 @@ class LsmConversationContextAssemblerTest {
         LsmSummarySegmentEntity entity = new LsmSummarySegmentEntity();
         entity.setSummarySegmentId(id);
         entity.setConversationSessionId("session");
-        entity.setKind(kind);
+        entity.setKind(LsmSummarySegment.SegmentKind.valueOf(kind));
         entity.setLevel(level);
         entity.setStartTurnSequence(start);
         entity.setEndTurnSequence(end);

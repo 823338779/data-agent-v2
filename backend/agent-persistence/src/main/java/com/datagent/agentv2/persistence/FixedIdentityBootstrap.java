@@ -2,6 +2,7 @@ package com.datagent.agentv2.persistence;
 
 import com.datagent.agentv2.persistence.entity.TenantEntity;
 import com.datagent.agentv2.persistence.entity.UserAccountEntity;
+import com.datagent.agentv2.persistence.entity.ActivationStatus;
 import com.datagent.agentv2.persistence.service.TenantService;
 import com.datagent.agentv2.persistence.service.UserAccountService;
 import com.datagent.agentv2.platform.context.OperatorContext;
@@ -18,7 +19,6 @@ import org.springframework.stereotype.Component;
 public final class FixedIdentityBootstrap implements ApplicationRunner {
 
     private static final String TENANT_NAME = "Local";
-    private static final String ACTIVE_STATUS = "active";
     private static final String UNUSED_PASSWORD_HASH = "not-used";
 
     private final TenantService tenants;
@@ -31,7 +31,7 @@ public final class FixedIdentityBootstrap implements ApplicationRunner {
             TenantEntity tenant = new TenantEntity();
             tenant.setTenantId(TenantContext.TENANT_ID);
             tenant.setName(TENANT_NAME);
-            tenant.setStatus(ACTIVE_STATUS);
+            tenant.setStatus(ActivationStatus.ACTIVE);
             tenant.setVersion(0L);
             saveIfStillAbsent(() -> tenants.save(tenant));
         }
@@ -42,7 +42,7 @@ public final class FixedIdentityBootstrap implements ApplicationRunner {
             user.setUserId(OperatorContext.USER_ID);
             user.setUsername(OperatorContext.SUBJECT);
             user.setPasswordHash(UNUSED_PASSWORD_HASH);
-            user.setStatus(ACTIVE_STATUS);
+            user.setStatus(ActivationStatus.ACTIVE);
             user.setVersion(0L);
             saveIfStillAbsent(() -> users.save(user));
         }

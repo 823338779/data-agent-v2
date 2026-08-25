@@ -22,21 +22,16 @@ public enum ExecutionEventType {
         this.value = value;
     }
 
-    /** 返回数据库、SSE 与 REST 契约使用的稳定字符串。 */
     @JsonValue
     public String value() {
         return value;
     }
 
-    /** 将持久化或传输层字符串恢复为受约束的业务类型。 */
     @JsonCreator
     public static ExecutionEventType fromValue(String value) {
         return Arrays.stream(values())
                 .filter(candidate -> candidate.value.equals(value))
                 .findFirst()
-                .orElseThrow(
-                        () ->
-                                new IllegalArgumentException(
-                                        "Unknown execution event type: " + value));
+                .orElseThrow(() -> new IllegalArgumentException("Unknown execution event type: " + value));
     }
 }

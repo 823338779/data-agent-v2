@@ -13,7 +13,6 @@ import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.domain.ConversationSession;
 import com.datagent.agentv2.conversation.enums.ExecutionEventType;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
-import com.datagent.agentv2.conversation.enums.ExecutionRequestType;
 import com.datagent.agentv2.conversation.exception.ActiveExecutionConflictException;
 import com.datagent.agentv2.conversation.exception.IdempotencyKeyReusedException;
 import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
@@ -41,9 +40,6 @@ import org.springframework.web.server.ResponseStatusException;
 @RequiredArgsConstructor
 public class AgentExecutionSubmissionTransactionService {
 
-    private static final ExecutionRequestType REQUEST_TYPE =
-            ExecutionRequestType.MESSAGE_SUBMISSION;
-
     private final ConversationSessionService sessions;
     private final ConversationMessageService messages;
     private final AgentExecutionService executions;
@@ -65,7 +61,7 @@ public class AgentExecutionSubmissionTransactionService {
                     HttpStatus.NOT_FOUND, ERROR_CONVERSATION_SESSION_NOT_FOUND);
         }
         AgentExecution replay =
-                executions.findRequest(sessionId, REQUEST_TYPE.value(), idempotencyKey);
+                executions.findRequest(sessionId, idempotencyKey);
         if (replay != null) {
             requireSamePayload(replay, payloadHash);
             return session;
@@ -97,7 +93,6 @@ public class AgentExecutionSubmissionTransactionService {
                         ids.next(ID_PREFIX_EXECUTION),
                         sessionId,
                         userMessage.getConversationMessageId(),
-                        REQUEST_TYPE.value(),
                         idempotencyKey,
                         payloadHash,
                         now.plus(properties.deadline()));
@@ -116,11 +111,11 @@ public class AgentExecutionSubmissionTransactionService {
                         sessionId,
                         execution.getExecutionId(),
                         sequences.executionEvent(),
-                        ExecutionEventType.STARTED.value(),
+                        ExecutionEventType.STARTED,
                         now));
         streamCheckpoints.save(
                 AgentExecutionStreamCheckpoint.initial(
-                        execution.getExecutionId(), ExecutionPhase.PREPARING_CONTEXT.value()));
+                        execution.getExecutionId(), ExecutionPhase.PREPARING_CONTEXT));
         applicationEvents.publishEvent(
                 new LocalExecutionStarted(
                         new LocalAgentExecution(
@@ -135,7 +130,7 @@ public class AgentExecutionSubmissionTransactionService {
     public ConversationSession replayAfterConstraintConflict(
             String sessionId, String idempotencyKey, String payloadHash) {
         AgentExecution replay =
-                executions.findRequest(sessionId, REQUEST_TYPE.value(), idempotencyKey);
+                executions.findRequest(sessionId, idempotencyKey);
         if (replay == null) {
             return null;
         }

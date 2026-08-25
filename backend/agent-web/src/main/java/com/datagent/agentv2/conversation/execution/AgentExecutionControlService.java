@@ -26,7 +26,8 @@ import org.springframework.web.server.ResponseStatusException;
 @RequiredArgsConstructor
 public class AgentExecutionControlService {
 
-    private static final Set<String> TERMINAL = Set.of("done", "cancelled", "failed");
+    private static final Set<ExecutionStatus> TERMINAL =
+            Set.of(ExecutionStatus.DONE, ExecutionStatus.CANCELLED, ExecutionStatus.FAILED);
 
     private final ConversationSessionService sessions;
     private final AgentExecutionService executions;
@@ -43,14 +44,14 @@ public class AgentExecutionControlService {
         }
         Instant now = Instant.now();
         termination.cancelLocked(execution, now);
-        execution.setStatus(ExecutionStatus.CANCELLED.value());
+        execution.setStatus(ExecutionStatus.CANCELLED);
         events.save(
                 AgentExecutionEvent.occurred(
                         ids.next(ID_PREFIX_EXECUTION_EVENT),
                         sessionId,
                         executionId,
                         sessions.nextExecutionEventSequence(sessionId),
-                        ExecutionEventType.CANCELLED.value(),
+                        ExecutionEventType.CANCELLED,
                         now));
         applicationEvents.publishEvent(new LocalExecutionCancelled(executionId));
         return execution;

@@ -47,14 +47,14 @@ public final class LocalAgentExecutionLauncher {
             // 取消与超时共享停止信号；只有仍为 running 的记录才会被终止服务原子地置为失败。
             termination.failRunning(
                     execution,
-                    ExecutionFailureCode.DEADLINE_EXCEEDED.value(),
+                    ExecutionFailureCode.DEADLINE_EXCEEDED,
                     stopped.getMessage(),
                     Instant.now());
         } catch (RuntimeException failure) {
             // 未分类异常在进程边界统一收敛，防止数据库永久残留 running 状态。
             termination.failRunning(
                     execution,
-                    ExecutionFailureCode.INTERNAL_ERROR.value(),
+                    ExecutionFailureCode.INTERNAL_ERROR,
                     failure.getMessage(),
                     Instant.now());
         }

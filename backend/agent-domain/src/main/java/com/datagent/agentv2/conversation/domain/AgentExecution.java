@@ -1,5 +1,7 @@
 package com.datagent.agentv2.conversation.domain;
 
+import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import java.time.Instant;
 import java.util.Objects;
 import lombok.Getter;
@@ -21,11 +23,8 @@ public final class AgentExecution {
     /** 触发本次执行的用户消息标识。 */
     private String triggeringConversationMessageId;
 
-    /** 当前持久状态：running、done、cancelled 或 failed。 */
-    private String status;
-
-    /** 幂等请求类型；当前固定为消息提交。 */
-    private String requestType;
+    /** 当前持久状态；非法字符串不能再进入领域状态机。 */
+    private ExecutionStatus status;
 
     /** 调用方幂等键，在同一会话和请求类型内唯一。 */
     private String requestIdempotencyKey;
@@ -34,7 +33,7 @@ public final class AgentExecution {
     private String requestPayloadHash;
 
     /** 失败分类码；未失败时为空。 */
-    private String failureCode;
+    private ExecutionFailureCode failureCode;
 
     /** 可安全记录的失败摘要，不得包含凭据或完整敏感输入。 */
     private String failureDetail;
@@ -50,7 +49,6 @@ public final class AgentExecution {
             String executionId,
             String conversationSessionId,
             String triggeringMessageId,
-            String requestType,
             String idempotencyKey,
             String payloadHash,
             Instant hardDeadlineAt) {
@@ -60,8 +58,7 @@ public final class AgentExecution {
                 requireText(conversationSessionId, "conversationSessionId");
         execution.triggeringConversationMessageId =
                 requireText(triggeringMessageId, "triggeringMessageId");
-        execution.status = "running";
-        execution.requestType = requireText(requestType, "requestType");
+        execution.status = ExecutionStatus.RUNNING;
         execution.requestIdempotencyKey = requireText(idempotencyKey, "idempotencyKey");
         execution.requestPayloadHash = requireText(payloadHash, "payloadHash");
         execution.hardDeadlineAt = Objects.requireNonNull(hardDeadlineAt, "hardDeadlineAt");

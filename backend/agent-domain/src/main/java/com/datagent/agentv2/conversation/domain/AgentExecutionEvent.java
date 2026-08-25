@@ -1,5 +1,6 @@
 package com.datagent.agentv2.conversation.domain;
 
+import com.datagent.agentv2.conversation.enums.ExecutionEventType;
 import java.time.Instant;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -15,7 +16,7 @@ public final class AgentExecutionEvent {
     private String conversationSessionId;
     private String executionId;
     private Long executionEventSequence;
-    private String type;
+    private ExecutionEventType type;
     private Instant occurredAt;
     private Long version;
 
@@ -24,14 +25,14 @@ public final class AgentExecutionEvent {
             String sessionId,
             String executionId,
             long sequence,
-            String type,
+            ExecutionEventType type,
             Instant occurredAt) {
         AgentExecutionEvent event = new AgentExecutionEvent();
         event.executionEventId = eventId;
         event.conversationSessionId = sessionId;
         event.executionId = executionId;
         event.executionEventSequence = sequence;
-        event.type = type;
+        event.type = java.util.Objects.requireNonNull(type, "type");
         event.occurredAt = occurredAt;
         event.version = 0L;
         return event;

@@ -1,5 +1,6 @@
 package com.datagent.agentv2.conversation.domain;
 
+import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -17,7 +18,7 @@ public final class AgentExecutionStreamCheckpoint {
     private Long modelInvocationSequence;
 
     /** 当前执行阶段，用于进度展示和断线恢复。 */
-    private String phase;
+    private ExecutionPhase phase;
 
     /** 已持久化的最高输出增量序号，0 表示尚无输出。 */
     private Long outputDeltaSequence;
@@ -28,11 +29,11 @@ public final class AgentExecutionStreamCheckpoint {
     /** 快照并发更新使用的乐观锁版本。 */
     private Long version;
 
-    public static AgentExecutionStreamCheckpoint initial(String executionId, String phase) {
+    public static AgentExecutionStreamCheckpoint initial(String executionId, ExecutionPhase phase) {
         AgentExecutionStreamCheckpoint checkpoint = new AgentExecutionStreamCheckpoint();
         checkpoint.executionId = executionId;
         checkpoint.modelInvocationSequence = 0L;
-        checkpoint.phase = phase;
+        checkpoint.phase = java.util.Objects.requireNonNull(phase, "phase");
         checkpoint.outputDeltaSequence = 0L;
         checkpoint.answer = "";
         checkpoint.version = 0L;

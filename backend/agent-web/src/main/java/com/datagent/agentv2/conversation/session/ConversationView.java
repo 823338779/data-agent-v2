@@ -96,7 +96,7 @@ public record ConversationView(
                 AgentExecutionStreamCheckpoint checkpoint) {
             return new AgentExecutionView(
                     execution.getExecutionId(),
-                    ExecutionStatus.fromValue(execution.getStatus()),
+                    execution.getStatus(),
                     ConversationView.progress(checkpoint),
                     objective,
                     events,
@@ -124,7 +124,7 @@ public record ConversationView(
                 AgentExecutionStreamCheckpoint checkpoint) {
             return new AgentExecutionStateView(
                     execution.getExecutionId(),
-                    ExecutionStatus.fromValue(execution.getStatus()),
+                    execution.getStatus(),
                     ConversationView.progress(checkpoint),
                     objective,
                     AgentExecutionStreamCheckpointView.composeFromCheckpoint(checkpoint));
@@ -172,10 +172,10 @@ public record ConversationView(
             return new AgentExecutionEventView(
                     event.getExecutionEventId(),
                     event.getExecutionEventSequence(),
-                    ExecutionEventType.fromValue(event.getType()),
+                    event.getType(),
                     event.getOccurredAt(),
                     event.getExecutionId(),
-                    ExecutionStatus.fromValue(execution.getStatus()));
+                    execution.getStatus());
         }
     }
 
@@ -193,7 +193,7 @@ public record ConversationView(
                     ? null
                     : new AgentExecutionStreamCheckpointView(
                             checkpoint.getModelInvocationSequence(),
-                            ExecutionPhase.fromValue(checkpoint.getPhase()),
+                            checkpoint.getPhase(),
                             checkpoint.getOutputDeltaSequence(),
                             checkpoint.getAnswer());
         }
@@ -203,12 +203,7 @@ public record ConversationView(
         if (checkpoint == null) {
             return 0;
         }
-        ExecutionPhase executionPhase;
-        try {
-            executionPhase = ExecutionPhase.fromValue(checkpoint.getPhase());
-        } catch (IllegalArgumentException ignored) {
-            return 0;
-        }
+        ExecutionPhase executionPhase = checkpoint.getPhase();
         return switch (executionPhase) {
             case RECEIVED -> 5;
             case PREPARING_CONTEXT -> 15;
