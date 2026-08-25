@@ -17,7 +17,6 @@ import com.datagent.agentv2.conversation.enums.ExecutionRequestType;
 import com.datagent.agentv2.conversation.exception.ActiveExecutionConflictException;
 import com.datagent.agentv2.conversation.exception.IdempotencyKeyReusedException;
 import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
-import com.datagent.agentv2.conversation.runtime.LocalExecutionCancelled;
 import com.datagent.agentv2.conversation.runtime.LocalExecutionProperties;
 import com.datagent.agentv2.conversation.runtime.LocalExecutionStarted;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
@@ -50,7 +49,6 @@ public class AgentExecutionSubmissionTransactionService {
     private final AgentExecutionService executions;
     private final AgentExecutionEventService events;
     private final AgentExecutionStreamCheckpointService streamCheckpoints;
-    private final AgentExecutionControlService controls;
     private final LocalExecutionProperties properties;
     private final ApplicationEventPublisher applicationEvents;
     private final IdGenerator ids;
@@ -59,7 +57,6 @@ public class AgentExecutionSubmissionTransactionService {
     public ConversationSession createOrReplay(
             String sessionId,
             String content,
-            SubmissionConflictPolicy conflictPolicy,
             String idempotencyKey,
             String payloadHash) {
         ConversationSession session = sessions.lockById(sessionId);
@@ -74,33 +71,14 @@ public class AgentExecutionSubmissionTransactionService {
             return session;
         }
         AgentExecution active = executions.lockActiveByConversationSessionId(sessionId);
-        if (active != null && conflictPolicy != SubmissionConflictPolicy.STEER_ACTIVE) {
+        if (active != null) {
             throw new ActiveExecutionConflictException();
         }
 
         ConversationSession.AllocatedSequences sequences = session.allocateSubmissionSequences(2);
-        long startedSequence = sequences.executionEvent();
-        Instant cancelledAt = null;
-        if (active != null) {
-            cancelledAt = Instant.now();
-            controls.cancelForSteeringLocked(active, cancelledAt);
-            startedSequence++;
-            session.setExecutionEventSequence(startedSequence);
-        }
         if (!sessions.updateById(session)) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT, ERROR_SESSION_CHANGED_CONCURRENTLY);
-        }
-        if (active != null) {
-            events.save(
-                    AgentExecutionEvent.occurred(
-                            ids.next(ID_PREFIX_EXECUTION_EVENT),
-                            sessionId,
-                            active.getExecutionId(),
-                            sequences.executionEvent(),
-                            ExecutionEventType.CANCELLED.value(),
-                            cancelledAt));
-            applicationEvents.publishEvent(new LocalExecutionCancelled(active.getExecutionId()));
         }
 
         String userId = OperatorContext.requiredUserId();
@@ -137,7 +115,7 @@ public class AgentExecutionSubmissionTransactionService {
                         ids.next(ID_PREFIX_EXECUTION_EVENT),
                         sessionId,
                         execution.getExecutionId(),
-                        startedSequence,
+                        sequences.executionEvent(),
                         ExecutionEventType.STARTED.value(),
                         now));
         streamCheckpoints.save(

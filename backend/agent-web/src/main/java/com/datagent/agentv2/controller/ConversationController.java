@@ -1,7 +1,6 @@
 package com.datagent.agentv2.controller;
 
 import com.datagent.agentv2.conversation.execution.AgentExecutionControlService;
-import com.datagent.agentv2.conversation.execution.SubmissionConflictPolicy;
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
 import com.datagent.agentv2.conversation.session.ConversationSummaryView;
 import com.datagent.agentv2.conversation.session.ConversationTitleService;
@@ -92,7 +91,6 @@ public class ConversationController {
                         conversations.submitMessage(
                                 conversationSessionId,
                                 request.content(),
-                                SubmissionConflictPolicy.defaulted(request.conflictPolicy()),
                                 idempotencyKey));
     }
 
@@ -115,6 +113,5 @@ public class ConversationController {
             @NotBlank @Size(max = 120) String title, @Min(0) long expectedVersion) {}
 
     /** 向指定对话会话提交用户消息的请求。 */
-    record SubmitConversationMessageRequest(
-            @NotBlank @Size(max = 8000) String content, SubmissionConflictPolicy conflictPolicy) {}
+    record SubmitConversationMessageRequest(@NotBlank @Size(max = 8000) String content) {}
 }

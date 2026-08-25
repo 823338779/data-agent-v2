@@ -154,7 +154,7 @@ create table agent_execution (
     constraint ck_agent_execution_status
         check (status in ('running', 'done', 'cancelled', 'failed')),
     constraint ck_agent_execution_request_type
-        check (request_type = 'message_submission'),
+        check (request_type in ('message_submission', 'execution_retry')),
     constraint ck_agent_execution_request_payload_hash
         check (request_payload_hash ~ '^[0-9a-f]{64}$'),
     constraint ck_agent_execution_soft_delete check (
@@ -328,7 +328,7 @@ comment on column agent_execution.tenant_id is '执行所属租户。';
 comment on column agent_execution.conversation_session_id is '执行所属会话。';
 comment on column agent_execution.triggering_conversation_message_id is '触发本次执行的用户消息标识。';
 comment on column agent_execution.status is '执行状态：running、done、cancelled 或 failed。';
-comment on column agent_execution.request_type is '幂等请求类型；当前仅支持消息提交。';
+comment on column agent_execution.request_type is '幂等请求类型：消息提交或执行重试。';
 comment on column agent_execution.request_idempotency_key is '调用方提供的幂等键，在同会话和请求类型内唯一。';
 comment on column agent_execution.request_payload_hash is '规范化请求负载的 SHA-256，用于识别幂等键冲突。';
 comment on column agent_execution.failure_code is '失败分类码；非 failed 状态通常为空。';

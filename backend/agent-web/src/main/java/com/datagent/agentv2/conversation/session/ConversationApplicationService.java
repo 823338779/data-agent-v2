@@ -15,7 +15,6 @@ import com.datagent.agentv2.conversation.domain.MessageRole;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.execution.AgentExecutionSubmissionService;
-import com.datagent.agentv2.conversation.execution.SubmissionConflictPolicy;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
@@ -302,13 +301,9 @@ public class ConversationApplicationService {
     }
 
     public ConversationView submitMessage(
-            String conversationSessionId,
-            String content,
-            SubmissionConflictPolicy conflictPolicy,
-            String idempotencyKey) {
+            String conversationSessionId, String content, String idempotencyKey) {
         ConversationSession session =
-                agentExecutionSubmissionService.submit(
-                        conversationSessionId, content, conflictPolicy, idempotencyKey);
+                agentExecutionSubmissionService.submit(conversationSessionId, content, idempotencyKey);
         return snapshot(session);
     }
 

@@ -47,10 +47,6 @@ public class AgentExecutionProcessTerminationService {
         }
     }
 
-    public void cancelForSteeringLocked(AgentExecution execution, Instant now) {
-        cancelLocked(execution, now);
-    }
-
     private static void requireRunning(AgentExecution execution) {
         if (!STATUS_RUNNING.equals(execution.getStatus())) {
             throw new ExecutionStoppedException(execution.getExecutionId());

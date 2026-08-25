@@ -88,6 +88,9 @@ class ConversationExecutionSchemaMigrationTest {
         assertThat(constraintDefinition("ck_agent_execution_status"))
                 .contains("running", "done", "cancelled", "failed")
                 .doesNotContain("queued", "lost", "waiting_for_user", "waiting_confirmation");
+        assertThat(constraintDefinition("ck_agent_execution_request_type"))
+                .contains("message_submission")
+                .doesNotContain("execution_retry");
         assertThat(indexDefinition("uq_agent_execution_one_active"))
                 .contains("status", "running")
                 .doesNotContain("queued", "waiting_for_user", "waiting_confirmation");

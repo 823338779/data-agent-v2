@@ -56,10 +56,6 @@ public class AgentExecutionControlService {
         return execution;
     }
 
-    public void cancelForSteeringLocked(AgentExecution execution, Instant now) {
-        termination.cancelForSteeringLocked(execution, now);
-    }
-
     private AgentExecution requiredLockedExecution(String sessionId, String executionId) {
         AgentExecution execution = executions.lockById(executionId);
         if (execution == null || !sessionId.equals(execution.getConversationSessionId())) {

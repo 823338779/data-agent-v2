@@ -139,7 +139,7 @@ class AgentExecutionSubmissionIntegrationTest {
     }
 
     @Test
-    void activeExecutionStillConflictsWhenSteeringPolicyIsAbsent() throws Exception {
+    void activeExecutionConflictsWithAnotherSubmission() throws Exception {
         Cookie login = login();
         String conversationSessionId = createSession(login, "default-active-conflict");
         submit(login, conversationSessionId, "key-active-first", "first");
@@ -155,57 +155,6 @@ class AgentExecutionSubmissionIntegrationTest {
                 .andExpect(status().isConflict());
 
         assertCounts(conversationSessionId, 2, 1);
-    }
-
-    @Test
-    void steeringSubmissionCancelsActiveTurnAndCreatesOneActiveSuccessor() throws Exception {
-        Cookie login = login();
-        String conversationSessionId = createSession(login, "steer-active");
-        String original = submit(login, conversationSessionId, "key-steer-first", "first");
-
-        String steered = submitSteering(login, conversationSessionId, "key-steer-second", "second");
-
-        assertThat(executionId(steered)).isNotEqualTo(executionId(original));
-        assertCounts(conversationSessionId, 4, 2);
-        assertThat(
-                        jdbc.queryForObject(
-                                "select status from agent_execution where execution_id = ?",
-                                String.class,
-                                executionId(original)))
-                .isEqualTo("cancelled");
-        assertThat(
-                        jdbc.queryForObject(
-                                "select count(*) from agent_execution where conversation_session_id = ? and status = 'running'",
-                                Integer.class,
-                                conversationSessionId))
-                .isEqualTo(1);
-        assertThat(
-                        jdbc.queryForList(
-                                "select content from conversation_message where conversation_session_id = ? and role = 'user' order by conversation_message_sequence",
-                                String.class,
-                                conversationSessionId))
-                .containsExactly("first", "second");
-    }
-
-    @Test
-    void steeringReplayReturnsSuccessorWithoutCancellingIt() throws Exception {
-        Cookie login = login();
-        String conversationSessionId = createSession(login, "steer-replay");
-        submit(login, conversationSessionId, "key-steer-replay-first", "first");
-
-        String first =
-                submitSteering(login, conversationSessionId, "key-steer-replay-second", "second");
-        String replay =
-                submitSteering(login, conversationSessionId, "key-steer-replay-second", "second");
-
-        assertThat(executionId(replay)).isEqualTo(executionId(first));
-        assertCounts(conversationSessionId, 4, 2);
-        assertThat(
-                        jdbc.queryForObject(
-                                "select status from agent_execution where execution_id = ?",
-                                String.class,
-                                executionId(first)))
-                .isEqualTo("running");
     }
 
     @Test
@@ -236,27 +185,6 @@ class AgentExecutionSubmissionIntegrationTest {
                                 .header("X-Request-Id", "request-" + key)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"content\":\"" + content + "\"}"))
-                .andExpect(status().isAccepted())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-    }
-
-    private String submitSteering(
-            Cookie login, String conversationSessionId, String key, String content)
-            throws Exception {
-        return mvc.perform(
-                        post(
-                                        "/api/v1/agent-sessions/{conversationSessionId}/messages",
-                                        conversationSessionId)
-                                .cookie(login)
-                                .header("Idempotency-Key", key)
-                                .header("X-Request-Id", "request-" + key)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(
-                                        "{\"content\":\""
-                                                + content
-                                                + "\",\"conflictPolicy\":\"STEER_ACTIVE\"}"))
                 .andExpect(status().isAccepted())
                 .andReturn()
                 .getResponse()
