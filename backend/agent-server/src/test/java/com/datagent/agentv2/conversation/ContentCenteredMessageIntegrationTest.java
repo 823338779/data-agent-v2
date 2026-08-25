@@ -115,9 +115,7 @@ class ContentCenteredMessageIntegrationTest {
         List<ConversationMessage> boundedSessionMessages =
                 TenantContext.call(
                         TENANT_ID,
-                        () ->
-                                messages.findByConversationSessionIdUpTo(
-                                        conversationSessionId, 1L));
+                        () -> messages.findByConversationSessionIdUpTo(conversationSessionId, 1L));
         assertThat(boundedSessionMessages)
                 .extracting(ConversationMessage::getRole)
                 .containsExactly(MessageRole.USER);
