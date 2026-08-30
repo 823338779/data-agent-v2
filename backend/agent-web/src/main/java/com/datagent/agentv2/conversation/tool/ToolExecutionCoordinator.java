@@ -3,6 +3,7 @@ package com.datagent.agentv2.conversation.tool;
 import com.datagent.agentv2.conversation.process.ConversationProcessCoordinator;
 import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
 import com.datagent.agentv2.conversation.runtime.LocalExecutionGuard;
+import com.datagent.agentv2.conversation.tool.runtime.ExecutionToolViews;
 import jakarta.annotation.PreDestroy;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -23,7 +24,7 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
 
     private static final String ERROR_INVALID_RESULT = "Tool returned no result";
 
-    private final AgentToolRegistry tools;
+    private final ExecutionToolViews toolViews;
     private final LocalExecutionGuard guard;
     private final ConversationProcessCoordinator processes;
     private final ToolFailureSanitizer failures;
@@ -51,8 +52,12 @@ public final class ToolExecutionCoordinator implements AutoCloseable {
             PreparedToolInvocation invocation) {
         AgentTool tool;
         try {
-            tool = tools.require(invocation.call().name());
-        } catch (RuntimeException failure) {
+            tool =
+                    toolViews
+                            .require(run.executionId())
+                            .requireVisible(invocation.call().name())
+                            .tool();
+        } catch (Exception failure) {
             return failures.sanitize(failure);
         }
         AgentTool.InvocationContext context =

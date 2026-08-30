@@ -8,6 +8,9 @@ import com.datagent.agentv2.conversation.process.ConversationProcessCoordinator;
 import com.datagent.agentv2.conversation.react.ModelToolCall;
 import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
 import com.datagent.agentv2.conversation.runtime.LocalExecutionGuard;
+import com.datagent.agentv2.conversation.tool.runtime.ExecutionToolViews;
+import com.datagent.agentv2.conversation.tool.runtime.ToolPolicyProperties;
+import com.datagent.agentv2.conversation.tool.supply.ToolSupplyRegistry;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
@@ -30,12 +33,14 @@ class ToolExecutionCoordinatorTest {
                         processItemId,
                         new ModelToolCall("call", "echo", json.createObjectNode().put("x", 1)));
 
+        ExecutionToolViews toolViews =
+                new ExecutionToolViews(
+                        new ToolSupplyRegistry(List.of(tool)),
+                        new ToolPolicyProperties(List.of("echo"), List.of("echo")));
+        toolViews.open(run.executionId());
         try (ToolExecutionCoordinator coordinator =
                 new ToolExecutionCoordinator(
-                        new AgentToolRegistry(List.of(tool)),
-                        guard,
-                        processes,
-                        new ToolFailureSanitizer(json))) {
+                        toolViews, guard, processes, new ToolFailureSanitizer(json))) {
             List<ToolExecutionResult> results =
                     coordinator.executeModelInvocationTools(run, 1L, List.of(prepared));
 

@@ -4,7 +4,7 @@ package com.datagent.agentv2.conversation.enums;
 public enum ToolFailureCode {
     INVALID_ARGUMENTS("invalid_arguments"),
     ACCESS_DENIED("access_denied"),
-    TIMEOUT("timeout"),
+    TIMEOUT("tool_timeout"),
     TOOL_ERROR("tool_error");
 
     private final String value;

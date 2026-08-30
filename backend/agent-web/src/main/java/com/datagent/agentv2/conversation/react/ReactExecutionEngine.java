@@ -12,9 +12,9 @@ import com.datagent.agentv2.conversation.model.api.ModelInvocationResult;
 import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
 import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
 import com.datagent.agentv2.conversation.runtime.LocalExecutionGuard;
-import com.datagent.agentv2.conversation.tool.AgentToolRegistry;
 import com.datagent.agentv2.conversation.tool.PreparedToolInvocation;
 import com.datagent.agentv2.conversation.tool.ToolExecutionCoordinator;
+import com.datagent.agentv2.conversation.tool.runtime.ExecutionToolViews;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -49,8 +49,11 @@ public final class ReactExecutionEngine {
     /** 执行模型已经归档的工具调用。 */
     private final ToolExecutionCoordinator tools;
 
-    /** 提供当前 Agent 可暴露给模型的工具定义。 */
-    private final AgentToolRegistry registry;
+    /** 提供本次 execution 当前可见的工具快照。 */
+    private final ExecutionToolViews toolViews;
+
+    /** 把可见 Tool 映射为模型协议定义。 */
+    private final ToolModelDefinitionMapper toolDefinitions;
 
     /** 在循环推进前校验 owner、预算和取消状态。 */
     private final LocalExecutionGuard executionGuard;
@@ -82,7 +85,12 @@ public final class ReactExecutionEngine {
                     modelInvocationCoordinator.beginModelInvocation(run);
 
             // 每轮固定同一份工具定义，并把持久化消息上界和模型预算交给选中策略。
-            List<ModelToolDefinition> modelTools = registry.modelDefinitions();
+            // skill_read 可在前一轮激活新 Tool，因此每轮都必须重新读取可见集合。
+            List<ModelToolDefinition> modelTools =
+                    toolDefinitions.toModelDefinitions(
+                            toolViews.require(run.executionId()).visibleTools().stream()
+                                    .map(binding -> binding.tool())
+                                    .toList());
             ConversationContextRequest contextRequest =
                     contextRequests.create(run, modelInvocation, modelTools);
             PreparedConversationContext prepared = contexts.prepare(contextRequest);
