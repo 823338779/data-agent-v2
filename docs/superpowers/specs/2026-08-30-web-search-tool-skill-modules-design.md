@@ -1,6 +1,6 @@
 # 联网搜索与 Tool/Skill 独立模块设计
 
-> 状态：已完成方案评审，等待实施计划
+> 状态：设计已批准，实施计划已编写
 > 适用仓库：Data Agent V2
 > 设计日期：2026-08-30
 > 外部契约依据：[Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)
