@@ -6,7 +6,7 @@ data-agent:
     web-search:
       provider: tavily
       # 凭据仅从服务端环境变量注入，不进入 Tool 参数或日志。
-      api-key: ${DATA_AGENT_TAVILY_API_KEY:}
+      api-key: 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
       default-limit: ${DATA_AGENT_WEB_SEARCH_DEFAULT_LIMIT:5}
       default-depth: ${DATA_AGENT_WEB_SEARCH_DEFAULT_DEPTH:basic}
       connect-timeout: ${DATA_AGENT_WEB_SEARCH_CONNECT_TIMEOUT:5s}
