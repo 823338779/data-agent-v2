@@ -12,6 +12,39 @@
 - 你可以随时调整module架构、增加module、调整module都可以
 - 需要由人审计、评审或长期阅读的设计、规格、计划和说明文档统一使用中文编写。
 
+## Java 代码简化与框架优先
+
+- 实现功能前必须先检查父 POM、当前模块 POM、现有基类、注解处理器和相邻实现，优先复用项目已引入的框架能力，不得默认手写模板代码。
+- 新增 Java 类型或持久化操作前，必须确认：现有框架、基类或注解是否已提供该能力；相邻模块采用什么模式；当前是否在手写可生成的代码。如不使用已有框架能力，必须说明具体原因。
+
+### 持久化
+
+- 单表 CRUD 必须优先使用 MyBatis-Plus 的 `BaseMapper`、`IService`、`ServiceImpl`、分页能力和 Wrapper，不得重复实现框架已提供的通用增删改查。
+- 查询和更新条件优先使用 `LambdaQueryWrapper`、`LambdaUpdateWrapper` 或项目已有的类型安全封装，不得为普通等值、范围、排序和分页查询新增 XML SQL。
+- 只有多表关联、复杂聚合、批量操作、必须使用数据库特性，或有执行计划与性能证据表明通用实现不满足需求时，才允许编写自定义 SQL，并必须说明不使用框架能力的原因。
+- 继续遵守模块边界：业务模块不得直接访问 Mapper 或 MyBatis API，持久化实现统一收敛在 `agent-persistence`。
+
+### 构造器和依赖注入
+
+- Spring Bean 默认使用构造器注入；依赖字段声明为 `private final`，优先使用 Lombok `@RequiredArgsConstructor`，不得手写只做字段赋值的构造器。
+- 领域对象存在业务不变量时，应保留显式构造器或语义化静态工厂，不得为减少代码而绕过业务校验。
+- 持久化 Entity 如需无参构造器，优先使用 `@NoArgsConstructor(access = AccessLevel.PROTECTED)` 或项目约定的等价方式，不得无理由暴露公共构造器。
+
+### Getter、Setter 和数据对象
+
+- 不得手写只返回或赋值字段的 getter/setter；普通 Java Bean 使用精确的 Lombok 注解，例如 `@Getter`、`@Setter`、`@RequiredArgsConstructor`。
+- 不得默认对 Entity 使用 `@Data`；必须分别评估 setter、`equals/hashCode` 和 `toString` 对实体身份、关联字段及日志输出的影响。
+- 无需可变性的 Request、Response、简单 DTO 和值对象优先使用 Java `record`；只有框架兼容性或业务语义确实要求可变对象时才使用可变 Bean。
+- 领域对象不得为了方便组装或转换而暴露无业务约束的公共 setter。
+
+### 对象转换
+
+- 字段基本同构、无场景默认值的一对一转换优先使用 MapStruct，不得手写逐字段赋值的 `convert`、`toDto`、`toEntity` 方法。
+- MapStruct Mapper 统一使用 Spring component model，并通过构造器注入；字段名称或语义不一致时必须显式声明映射，不得依赖可能造成静默错误的猜测。
+- 涉及业务默认值、状态解释、多个数据来源或不同数据完备场景时，继续遵守“对象组装职责”，在目标 View、DTO 或 Response 内使用语义化的 `composeFromXxx(...)` 静态工厂。
+- MapStruct 和静态工厂都必须保持为无副作用的纯转换，不得查询数据库、调用外部服务或隐藏额外 I/O；应用服务仅负责事务、查询和编排。
+- 对简单、只出现一次且没有默认规则或语义转换的组装，可以直接使用构造器，不得为形式统一制造无意义的 Mapper 或工厂方法。
+
 ## 注释要求
 
 - 新增或修改的核心代码必须有充分的中文注释：类注释说明职责与边界，复杂代码块说明业务原因、执行顺序或关键不变量，不能只复述代码语法。
