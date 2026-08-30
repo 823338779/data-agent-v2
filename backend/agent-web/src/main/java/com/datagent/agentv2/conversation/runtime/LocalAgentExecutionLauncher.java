@@ -3,7 +3,9 @@ package com.datagent.agentv2.conversation.runtime;
 import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
 import com.datagent.agentv2.conversation.process.AgentExecutionProcessTerminationService;
 import com.datagent.agentv2.conversation.react.ReactExecutionEngine;
+import com.datagent.agentv2.conversation.tool.runtime.ExecutionToolViews;
 import com.datagent.agentv2.platform.context.TenantContext;
+import com.datagent.agentv2.skill.runtime.ExecutionSkillViews;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -23,6 +25,8 @@ public final class LocalAgentExecutionLauncher {
     private final LocalAgentExecutionRegistry registry;
     private final ReactExecutionEngine engine;
     private final AgentExecutionProcessTerminationService termination;
+    private final ExecutionToolViews toolViews;
+    private final ExecutionSkillViews skillViews;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void start(LocalExecutionStarted event) {
@@ -41,8 +45,14 @@ public final class LocalAgentExecutionLauncher {
     }
 
     private void executeInTenant(LocalAgentExecution execution) {
+        toolViews.open(execution.executionId());
         try {
-            engine.execute(execution);
+            skillViews.open(execution.executionId());
+            try {
+                engine.execute(execution);
+            } finally {
+                skillViews.close(execution.executionId());
+            }
         } catch (ExecutionStoppedException stopped) {
             // 取消与超时共享停止信号；只有仍为 running 的记录才会被终止服务原子地置为失败。
             termination.failRunning(
@@ -57,6 +67,8 @@ public final class LocalAgentExecutionLauncher {
                     ExecutionFailureCode.INTERNAL_ERROR,
                     failure.getMessage(),
                     Instant.now());
+        } finally {
+            toolViews.close(execution.executionId());
         }
     }
 }

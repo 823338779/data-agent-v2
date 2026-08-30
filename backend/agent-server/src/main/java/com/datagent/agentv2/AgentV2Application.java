@@ -7,7 +7,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 
 @SpringBootApplication
-@ConfigurationPropertiesScan("com.datagent.agentv2.conversation")
+@ConfigurationPropertiesScan("com.datagent.agentv2")
 public class AgentV2Application {
 
     private static final ZoneId SERVER_TIME_ZONE = ZoneId.of("Asia/Shanghai");

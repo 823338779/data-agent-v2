@@ -1,4 +1,18 @@
 data-agent:
+  tool:
+    # web_search 默认隐藏；只有读取 web-research Skill 后才在本次 execution 激活。
+    maximum: [system_timezone, current_time, skill_read, web_search]
+    initial: [system_timezone, current_time, skill_read]
+    web-search:
+      provider: tavily
+      # 凭据仅从服务端环境变量注入，不进入 Tool 参数或日志。
+      api-key: ${DATA_AGENT_TAVILY_API_KEY:}
+      default-limit: ${DATA_AGENT_WEB_SEARCH_DEFAULT_LIMIT:5}
+      default-depth: ${DATA_AGENT_WEB_SEARCH_DEFAULT_DEPTH:basic}
+      connect-timeout: ${DATA_AGENT_WEB_SEARCH_CONNECT_TIMEOUT:5s}
+      request-timeout: ${DATA_AGENT_WEB_SEARCH_REQUEST_TIMEOUT:20s}
+      tool-timeout: ${DATA_AGENT_WEB_SEARCH_TOOL_TIMEOUT:25s}
+      proxy: ${DATA_AGENT_WEB_SEARCH_PROXY:}
   context:
     # 会话上下文策略：raw 不压缩，lsm 使用 LSM 摘要树，hierarchical 使用滚动 Cold 摘要。
     # 当前默认启用 hierarchical；可通过 DATA_AGENT_CONTEXT_STRATEGY 在所有服务实例上统一覆盖。
