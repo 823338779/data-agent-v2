@@ -1,6 +1,7 @@
 package com.datagent.agentv2.conversation.context;
 
 import com.datagent.agentv2.conversation.react.ConversationContextLoader;
+import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -22,11 +23,12 @@ public class RawConversationContextStrategy implements ConversationContextStrate
 
     @Override
     public PreparedConversationContext prepare(ConversationContextRequest request) {
-        List<ContextMessage> contextMessages =
+        List<ContextMessage> contextMessages = new ArrayList<>(request.fixedSystemMessages());
+        contextMessages.addAll(
                 messages.toContextMessages(
                         loader.load(
                                 request.execution().executionId(),
-                                request.execution().inputUpToMessageSequence()));
+                                request.execution().inputUpToMessageSequence())));
         return new PreparedConversationContext(
                 STRATEGY_ID, contextMessages, request.budget().fixedInputTokens(), false, 0L);
     }

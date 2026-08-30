@@ -5,6 +5,7 @@ import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
 import com.datagent.agentv2.conversation.react.ModelInvocationCoordinator;
 import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
+import com.datagent.agentv2.skill.runtime.ExecutionSkillViews;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -19,6 +20,7 @@ public class ConversationContextRequestFactory {
     private final AgentExecutionService executions;
     private final ContextModelBudgetProvider budgets;
     private final ContextModelMessageMapper mappings;
+    private final ExecutionSkillViews skillViews;
 
     public ConversationContextRequest create(
             LocalAgentExecution run,
@@ -29,8 +31,9 @@ public class ConversationContextRequestFactory {
             throw new IllegalStateException(ERROR_EXECUTION_NOT_FOUND);
         }
 
-        // 当前 provider 没有独立 system 消息；该列表保留真实调用边界，未来出现时可原样传入。
-        List<ContextMessage> fixedSystemMessages = List.of();
+        String skillPrompt = skillViews.require(run.executionId()).systemPrompt();
+        List<ContextMessage> fixedSystemMessages =
+                skillPrompt.isBlank() ? List.of() : List.of(ContextMessage.system(skillPrompt));
         List<ContextToolDefinition> contextTools = mappings.toContextToolDefinitions(tools);
         return ConversationContextRequest.composeForInvocation(
                 new ContextExecutionRef(
