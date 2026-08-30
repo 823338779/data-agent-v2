@@ -94,9 +94,9 @@ $env:DATA_AGENT_MODEL_PROVIDER = 'codex'
 
 ### 内置 ReAct 验证工具
 
-服务启动后会自动注册三个无凭据的轻量工具：`system_timezone` 返回服务端 JVM 时区，`current_time` 返回同一时钟快照中的绝对时间和本地时间，`web_search` 通过 MediaWiki Action API 检索中文 Wikipedia 并返回最多 5 条标题、纯文本摘要和页面链接。网页检索仅用于验证工具调用链路，不是通用浏览器或全网搜索服务，运行环境需要能够访问 `https://zh.wikipedia.org`。
+Tool 和 Skill 分别由独立 Maven Module `agent-tool`、`agent-skill` 承载。服务启动后，`system_timezone`、`current_time`、`skill_read` 默认可见；`web_search` 默认隐藏。模型需要先读取 bundled `web-research` Skill，系统才会在本次 execution 内原子激活 `web_search`，下一轮 ReAct 才能看到它。
 
-可以使用“先获取服务端时区，再获取当前时间，然后检索中文 Wikipedia 中的 ReAct，最后汇总三步结果”作为验证提示。模型应经历至少三轮调用：选择工具、读取持久化 observation、继续选择工具，最后生成回答。
+联网搜索首版固定使用 Tavily，需通过 `DATA_AGENT_TAVILY_API_KEY` 配置服务端密钥；未配置时应用仍可启动，实际搜索返回 `web_search_not_configured`。搜索词会发送给 Tavily，Skill 会要求模型不要提交凭据、客户机密或未脱敏个人信息。可选环境变量包括 `DATA_AGENT_WEB_SEARCH_DEFAULT_LIMIT`、`DATA_AGENT_WEB_SEARCH_DEFAULT_DEPTH`、`DATA_AGENT_WEB_SEARCH_CONNECT_TIMEOUT`、`DATA_AGENT_WEB_SEARCH_REQUEST_TIMEOUT`、`DATA_AGENT_WEB_SEARCH_TOOL_TIMEOUT` 和 `DATA_AGENT_WEB_SEARCH_PROXY`。测试只使用 Fake Transport 或本机 Stub Server，不访问真实 Tavily。
 
 单实例联调分别启动：
 
