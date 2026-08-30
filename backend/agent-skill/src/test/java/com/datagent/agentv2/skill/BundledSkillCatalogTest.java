@@ -11,7 +11,7 @@ class BundledSkillCatalogTest {
                 new BundledSkillCatalog(
                         new ClasspathSkillResourceSource(), new SkillFrontmatterParser());
         assertThat(catalog.require("web-research").descriptor().requiredTools())
-                .containsExactly("web_search");
+                .containsExactly("web_search", "web_fetch");
         assertThat(catalog.require("web-research").digest()).matches("[0-9a-f]{64}");
     }
 }

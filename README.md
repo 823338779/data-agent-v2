@@ -94,9 +94,9 @@ $env:DATA_AGENT_MODEL_PROVIDER = 'codex'
 
 ### 内置 ReAct 验证工具
 
-Tool 和 Skill 分别由独立 Maven Module `agent-tool`、`agent-skill` 承载。服务启动后，`system_timezone`、`current_time`、`skill_read` 默认可见；`web_search` 默认隐藏。模型需要先读取 bundled `web-research` Skill，系统才会在本次 execution 内原子激活 `web_search`，下一轮 ReAct 才能看到它。
+Tool 和 Skill 分别由独立 Maven Module `agent-tool`、`agent-skill` 承载。服务启动后，`system_timezone`、`current_time`、`skill_read` 默认可见；`web_search`、`web_fetch` 默认隐藏。模型需要先读取 bundled `web-research` Skill，系统才会在本次 execution 内原子激活两个联网 Tool，下一轮 ReAct 才能看到它们。
 
-联网搜索首版固定使用 Tavily，需通过 `DATA_AGENT_TAVILY_API_KEY` 配置服务端密钥；未配置时应用仍可启动，实际搜索返回 `web_search_not_configured`。搜索词会发送给 Tavily，Skill 会要求模型不要提交凭据、客户机密或未脱敏个人信息。可选环境变量包括 `DATA_AGENT_WEB_SEARCH_DEFAULT_LIMIT`、`DATA_AGENT_WEB_SEARCH_DEFAULT_DEPTH`、`DATA_AGENT_WEB_SEARCH_CONNECT_TIMEOUT`、`DATA_AGENT_WEB_SEARCH_REQUEST_TIMEOUT`、`DATA_AGENT_WEB_SEARCH_TOOL_TIMEOUT` 和 `DATA_AGENT_WEB_SEARCH_PROXY`。测试只使用 Fake Transport 或本机 Stub Server，不访问真实 Tavily。
+联网搜索首版固定使用 Tavily，需通过 `DATA_AGENT_TAVILY_API_KEY` 配置服务端密钥；未配置时应用仍可启动，实际搜索返回 `web_search_not_configured`。`web_fetch` 用于继续读取搜索结果 URL 的 HTML 或纯文本正文，限制为公开 HTTP(S) 地址，并对每次重定向重新执行内网/本机地址检查、响应类型检查和响应体大小限制。搜索词和目标 URL 都属于外部数据，Skill 会要求模型不要提交凭据、客户机密或未脱敏个人信息，也不能把页面正文当作指令。搜索配置可使用 `DATA_AGENT_WEB_SEARCH_*` 环境变量；抓取超时、重定向数、响应体大小、正文字符数和 User-Agent 可使用对应的 `DATA_AGENT_WEB_FETCH_*` 环境变量覆盖。自动化测试不访问真实第三方服务。
 
 单实例联调分别启动：
 

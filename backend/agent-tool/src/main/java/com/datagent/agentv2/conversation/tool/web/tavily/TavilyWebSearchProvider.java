@@ -16,6 +16,9 @@ import java.net.http.HttpTimeoutException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+
+import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -24,6 +27,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 /** 将统一搜索请求映射到固定 Tavily Search API，不开放 Endpoint 或额外取数选项。 */
 @Component
+@RequiredArgsConstructor
 public final class TavilyWebSearchProvider implements WebSearchProvider {
 
     private static final URI ENDPOINT = URI.create("https://api.tavily.com/search");
@@ -32,17 +36,6 @@ public final class TavilyWebSearchProvider implements WebSearchProvider {
     private final WebSearchProperties properties;
     private final ObjectMapper json;
     private final WebSearchTelemetry telemetry;
-
-    public TavilyWebSearchProvider(
-            WebSearchTransport transport,
-            WebSearchProperties properties,
-            ObjectMapper json,
-            WebSearchTelemetry telemetry) {
-        this.transport = transport;
-        this.properties = properties;
-        this.json = json;
-        this.telemetry = telemetry;
-    }
 
     @Override
     public String id() {

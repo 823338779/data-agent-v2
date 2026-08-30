@@ -12,7 +12,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  */
 @ConfigurationProperties("data-agent.tool")
 public record ToolPolicyProperties(
-        @DefaultValue({"system_timezone", "current_time", "skill_read", "web_search"})
+        @DefaultValue({"system_timezone", "current_time", "skill_read", "web_search", "web_fetch"})
                 List<String> maximum,
         @DefaultValue({"system_timezone", "current_time", "skill_read"}) List<String> initial) {
 
