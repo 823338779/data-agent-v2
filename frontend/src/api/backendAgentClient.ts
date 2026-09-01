@@ -12,7 +12,7 @@ import {
   WorkflowStatus,
   WorkflowStep,
   WorkflowTaskRef,
-} from '../domain/agentPrototype';
+} from '../domain/agent';
 import { createIdempotencyKey } from './idempotencyKey';
 
 const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';

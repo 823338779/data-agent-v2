@@ -40,8 +40,4 @@ public final class BundledSkillCatalog {
     public List<SkillBundle> bundlesInOrder() {
         return new ArrayList<>(bundles.values());
     }
-
-    public List<SkillDescriptor> summaries() {
-        return bundles.values().stream().map(SkillBundle::descriptor).toList();
-    }
 }

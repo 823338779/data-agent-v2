@@ -50,13 +50,6 @@ public final class LocalSseRegistry {
         }
     }
 
-    /** 返回本实例是否保存指定 tenant/session 的有效 SSE 连接。 */
-    public boolean hasConnections(String tenantId, String conversationSessionId) {
-        CopyOnWriteArrayList<Connection> values =
-                connections.get(new SessionKey(tenantId, conversationSessionId));
-        return values != null && !values.isEmpty();
-    }
-
     /** 移除单个连接，并在集合变空时删除会话键。 */
     private void remove(SessionKey key, Connection connection) {
         // computeIfPresent 原子完成连接移除。

@@ -29,7 +29,7 @@ import { MessageProcessTimeline } from './components/MessageProcessTimeline';
 import { ConversationStatus } from './components/ConversationStatus';
 import { RunStreamPanel } from './components/RunStreamPanel';
 import { WorkflowRunPanel } from './components/WorkflowRunPanel';
-import { ConversationSession, formatTimestamp, isProcessingStatus } from './domain/agentPrototype';
+import { ConversationSession, formatTimestamp, isProcessingStatus } from './domain/agent';
 
 interface AppProps {
   client?: AgentBackendClient;

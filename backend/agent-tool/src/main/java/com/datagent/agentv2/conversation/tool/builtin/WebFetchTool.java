@@ -19,6 +19,7 @@ import javax.swing.text.MutableAttributeSet;
 import javax.swing.text.html.HTML;
 import javax.swing.text.html.HTMLEditorKit;
 import javax.swing.text.html.parser.ParserDelegator;
+import lombok.RequiredArgsConstructor;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -28,6 +29,7 @@ import tools.jackson.databind.node.ObjectNode;
 /** 获取一条公开网页并把 HTML/纯文本压缩为适合模型消费的结构化正文。 */
 @Component
 @Order(130)
+@RequiredArgsConstructor
 public final class WebFetchTool implements AgentTool {
 
     private static final String SCHEMA =
@@ -41,12 +43,6 @@ public final class WebFetchTool implements AgentTool {
     private final WebPageFetcher fetcher;
     private final WebFetchProperties properties;
     private final ObjectMapper json;
-
-    public WebFetchTool(WebPageFetcher fetcher, WebFetchProperties properties, ObjectMapper json) {
-        this.fetcher = fetcher;
-        this.properties = properties;
-        this.json = json;
-    }
 
     @Override
     public String name() {

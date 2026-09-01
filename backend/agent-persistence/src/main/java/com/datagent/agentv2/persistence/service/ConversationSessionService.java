@@ -7,7 +7,6 @@ import com.datagent.agentv2.persistence.entity.ConversationSessionEntity;
 import com.datagent.agentv2.persistence.mapping.ConversationPersistenceMapper;
 import com.datagent.agentv2.persistence.service.mapper.ConversationSessionMapper;
 import java.time.Instant;
-import java.util.Collection;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -82,32 +81,6 @@ public class ConversationSessionService
         return session.getExecutionEventSequence();
     }
 
-    /** 原子分配下一条不可变消息序号，供工具 Observation 和模型结果事务使用。 */
-    public long nextConversationMessageSequence(String conversationSessionId) {
-        // 消息序号和版本号必须在同一条 Wrapper UPDATE 中同步推进。
-        int updated =
-                baseMapper.update(
-                        new ConversationSessionEntity(),
-                        Wrappers.lambdaUpdate(ConversationSessionEntity.class)
-                                .eq(
-                                        ConversationSessionEntity::getConversationSessionId,
-                                        conversationSessionId)
-                                .setIncrBy(
-                                        ConversationSessionEntity::getConversationMessageSequence,
-                                        1)
-                                .setIncrBy(ConversationSessionEntity::getVersion, 1));
-        if (updated != 1) {
-            throw new IllegalStateException("agent session not found: " + conversationSessionId);
-        }
-        ConversationSessionEntity session =
-                lambdaQuery()
-                        .eq(
-                                ConversationSessionEntity::getConversationSessionId,
-                                conversationSessionId)
-                        .one();
-        return session.getConversationMessageSequence();
-    }
-
     public ConversationSession findByUuid(String conversationSessionId) {
         return models.toModel(
                 lambdaQuery()
@@ -115,19 +88,6 @@ public class ConversationSessionService
                                 ConversationSessionEntity::getConversationSessionId,
                                 conversationSessionId)
                         .one());
-    }
-
-    /** 按业务标识批量读取会话，以更新时间降序返回，并在持久化边界内完成模型转换。 */
-    public List<ConversationSession> findByConversationSessionIds(
-            Collection<String> conversationSessionIds) {
-        return models.toSessionModels(
-                lambdaQuery()
-                        .in(
-                                ConversationSessionEntity::getConversationSessionId,
-                                conversationSessionIds)
-                        .orderByDesc(ConversationSessionEntity::getUpdatedAt)
-                        .orderByDesc(ConversationSessionEntity::getConversationSessionId)
-                        .list());
     }
 
     /** 按更新时间降序读取当前租户内的全部会话。 */

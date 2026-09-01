@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentBackendClient, BackendApiError } from './api/backendAgentClient';
 import App from './App';
-import { ConversationSession } from './domain/agentPrototype';
+import { ConversationSession } from './domain/agent';
 
 const session: ConversationSession = {
   conversationSessionId: 'session_1',

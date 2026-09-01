@@ -1,4 +1,4 @@
-import { AgentExecutionStreamCheckpoint } from '../domain/agentPrototype';
+import { AgentExecutionStreamCheckpoint } from '../domain/agent';
 import { MarkdownContent } from './MarkdownContent';
 
 interface RunStreamPanelProps {

@@ -721,21 +721,6 @@ public class LsmConversationContextAssembler {
             rawMessages = List.copyOf(rawMessages);
             persistedSegments = List.copyOf(persistedSegments);
         }
-
-        public static ContextState forTest(
-                ConversationContextRequest request,
-                LsmContextPolicySnapshot policy,
-                List<ContextMessage> rawMessages,
-                int estimatedTokens) {
-            return new ContextState(
-                    request,
-                    policy,
-                    List.of(),
-                    rawMessages,
-                    LsmContextManifest.empty(),
-                    List.of(),
-                    estimatedTokens);
-        }
     }
 
     /** 原始问答及其真实数据库消息覆盖。 */

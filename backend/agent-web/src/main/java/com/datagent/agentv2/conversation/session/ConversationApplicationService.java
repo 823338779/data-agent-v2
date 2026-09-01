@@ -104,35 +104,6 @@ public class ConversationApplicationService {
     }
 
     @Transactional(readOnly = true)
-    public List<ConversationView.AgentExecutionUpdateView> replayEvents(
-            String conversationSessionId, long afterSequence) {
-        requiredSession(conversationSessionId);
-        return agentExecutionEventService
-                .findByConversationSessionIdAfter(conversationSessionId, afterSequence)
-                .stream()
-                .map(this::executionUpdate)
-                .toList();
-    }
-
-    @Transactional(readOnly = true)
-    public ExecutionStreamCheckpointView currentStream(String conversationSessionId) {
-        requiredSession(conversationSessionId);
-        List<AgentExecution> sessionExecutions =
-                agentExecutionService.findByConversationSessionIdOrderByCreatedAtDesc(
-                        conversationSessionId);
-        if (sessionExecutions.isEmpty()) {
-            return null;
-        }
-        AgentExecution run = sessionExecutions.getFirst();
-        AgentExecutionStreamCheckpoint stream =
-                agentExecutionStreamCheckpointService.findByExecutionId(run.getExecutionId());
-        if (stream == null) {
-            return null;
-        }
-        return ExecutionStreamCheckpointView.composeFromStream(run, stream);
-    }
-
-    @Transactional(readOnly = true)
     public SessionStreamRecoveryView reconcileStreams(Map<String, Long> afterSequenceBySession) {
         if (afterSequenceBySession.isEmpty()) {
             return SessionStreamRecoveryView.empty();
@@ -240,18 +211,6 @@ public class ConversationApplicationService {
         return agentExecutionService.hasActiveExecution(conversationSessionId);
     }
 
-    @Transactional(readOnly = true)
-    public ConversationView.AgentExecutionEventView eventView(AgentExecutionEvent event) {
-        // 重新读取已提交的 Agent 执行，确保实时事件与重放事件使用相同公开结构。
-        AgentExecution run = agentExecutionService.findByExecutionId(event.getExecutionId());
-        if (run == null
-                || !event.getConversationSessionId().equals(run.getConversationSessionId())) {
-            throw new ResponseStatusException(
-                    HttpStatus.NOT_FOUND, ERROR_AGENT_EXECUTION_NOT_FOUND);
-        }
-        return ConversationView.AgentExecutionEventView.composeFromEvent(event, run);
-    }
-
     /** 将持久执行事件转换为前端可直接幂等归约的轻量更新。 */
     @Transactional(readOnly = true)
     public ConversationView.AgentExecutionUpdateView executionUpdate(AgentExecutionEvent event) {
@@ -262,9 +221,7 @@ public class ConversationApplicationService {
                     HttpStatus.NOT_FOUND, ERROR_AGENT_EXECUTION_NOT_FOUND);
         }
         List<ConversationView.MessageView> relatedMessages =
-                conversationMessageService
-                        .findUserVisibleByExecutionId(run.getExecutionId())
-                        .stream()
+                conversationMessageService.findByExecutionId(run.getExecutionId()).stream()
                         .map(
                                 message ->
                                         ConversationView.MessageView.composeFromMessage(
@@ -316,7 +273,7 @@ public class ConversationApplicationService {
         }
         List<ConversationView.MessageView> messageViews =
                 conversationMessageService
-                        .findUserVisibleByConversationSessionId(conversationSessionId)
+                        .findByConversationSessionId(conversationSessionId)
                         .stream()
                         .map(
                                 message ->
@@ -338,7 +295,7 @@ public class ConversationApplicationService {
     private ConversationView snapshot(ConversationSession session) {
         // 先构建不含执行投影的消息视图，供每次 Agent 执行解析触发消息形成 objective。
         List<ConversationMessage> messageEntities =
-                conversationMessageService.findUserVisibleByConversationSessionId(
+                conversationMessageService.findByConversationSessionId(
                         session.getConversationSessionId());
         List<ConversationView.MessageView> baseMessageViews =
                 messageEntities.stream()

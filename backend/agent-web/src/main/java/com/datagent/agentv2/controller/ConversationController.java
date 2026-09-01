@@ -89,9 +89,7 @@ public class ConversationController {
         return ResponseEntity.accepted()
                 .body(
                         conversations.submitMessage(
-                                conversationSessionId,
-                                request.content(),
-                                idempotencyKey));
+                                conversationSessionId, request.content(), idempotencyKey));
     }
 
     @PostMapping("/{conversationSessionId}/executions/{executionId}:cancel")

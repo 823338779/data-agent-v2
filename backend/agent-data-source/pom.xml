@@ -30,6 +30,7 @@
       <groupId>com.starrocks</groupId>
       <artifactId>starrocks-connector-j</artifactId>
       <version>${starrocks-jdbc.version}</version>
+      <scope>runtime</scope>
     </dependency>
     <dependency>
       <groupId>com.github.jsqlparser</groupId>

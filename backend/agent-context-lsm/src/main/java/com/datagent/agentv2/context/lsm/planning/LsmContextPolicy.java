@@ -19,12 +19,6 @@ public final class LsmContextPolicy {
         return requiredSnapshot(snapshot).targetInputTokens(requiredBudget(budget));
     }
 
-    /** 超过硬边界时，模型调用前必须先完成有效压缩。 */
-    public boolean exceedsHardInputLimit(int estimatedInputTokens, ContextBudget budget) {
-        return checkedEstimatedTokens(estimatedInputTokens)
-                > requiredBudget(budget).hardInputLimitTokens();
-    }
-
     private static int checkedEstimatedTokens(int estimatedInputTokens) {
         if (estimatedInputTokens < 0) {
             throw new IllegalArgumentException("estimatedInputTokens must not be negative");

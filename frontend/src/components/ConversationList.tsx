@@ -1,5 +1,5 @@
 import { KeyboardEvent, useEffect, useRef, useState } from 'react';
-import { ConversationSession } from '../domain/agentPrototype';
+import { ConversationSession } from '../domain/agent';
 
 interface ConversationListProps {
   sessions: ConversationSession[];

@@ -1,4 +1,4 @@
-import { WorkflowSnapshot, WorkflowStep } from '../domain/agentPrototype';
+import { WorkflowSnapshot, WorkflowStep } from '../domain/agent';
 
 interface WorkflowRunPanelProps {
   workflow: WorkflowSnapshot;

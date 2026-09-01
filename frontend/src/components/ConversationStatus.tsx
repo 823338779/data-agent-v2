@@ -1,4 +1,4 @@
-import { AgentExecutionStatus } from '../domain/agentPrototype';
+import { AgentExecutionStatus } from '../domain/agent';
 
 interface ConversationStatusProps {
   status: AgentExecutionStatus;

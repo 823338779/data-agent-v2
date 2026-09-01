@@ -24,8 +24,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import lombok.RequiredArgsConstructor;
 
 /** 逐项生成并幂等保存当前压缩调用需要的不可变摘要段。 */
+@RequiredArgsConstructor
 public final class LsmCandidateGenerator {
 
     private static final String SEGMENT_ID_PREFIX = "context_summary_segment";
@@ -36,17 +38,6 @@ public final class LsmCandidateGenerator {
     private final LsmSummarySegmentRepository segments;
     private final LsmDocumentCodec documents;
     private final IdGenerator ids;
-
-    public LsmCandidateGenerator(
-            ContextSummaryGenerator generator,
-            LsmSummarySegmentRepository segments,
-            LsmDocumentCodec documents,
-            IdGenerator ids) {
-        this.generator = generator;
-        this.segments = segments;
-        this.documents = documents;
-        this.ids = ids;
-    }
 
     public GeneratedCompaction generate(CompactionRequest request, LsmCompactionPlan plan) {
         Map<String, CandidateInput> inputs = new LinkedHashMap<>();

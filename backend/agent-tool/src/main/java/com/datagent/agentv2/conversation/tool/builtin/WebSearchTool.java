@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
+import lombok.RequiredArgsConstructor;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -24,6 +25,7 @@ import tools.jackson.databind.node.ObjectNode;
 /** 校验模型参数、调用服务端指定 Provider，并生成结果与引用严格对齐的联网搜索 Tool。 */
 @Component
 @Order(120)
+@RequiredArgsConstructor
 public final class WebSearchTool implements AgentTool {
 
     private static final String PARAMETERS_SCHEMA =
@@ -37,15 +39,6 @@ public final class WebSearchTool implements AgentTool {
     private final WebSearchProviderRegistry providers;
     private final WebSearchProperties properties;
     private final ObjectMapper json;
-
-    public WebSearchTool(
-            WebSearchProviderRegistry providers,
-            WebSearchProperties properties,
-            ObjectMapper json) {
-        this.providers = providers;
-        this.properties = properties;
-        this.json = json;
-    }
 
     @Override
     public String name() {

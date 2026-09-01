@@ -29,7 +29,6 @@ public final class LsmContextMetrics {
     private static final String COMPACTION_INPUT_TOKENS = "agent_context_compaction_input_tokens";
     private static final String COMPACTION_OUTPUT_TOKENS = "agent_context_compaction_output_tokens";
     private static final String COMPRESSION_RATIO = "agent_context_compression_ratio";
-    private static final String ESTIMATION_ERROR_RATIO = "agent_context_estimation_error_ratio";
     private static final String MANIFEST_CAS_CONFLICTS =
             "agent_context_manifest_cas_conflicts_total";
     private static final String WINDOW_EXCEEDED = "agent_context_window_exceeded_total";
@@ -46,9 +45,6 @@ public final class LsmContextMetrics {
 
     /** 最近一次模型窗口利用率；不携带业务正文或标识符。 */
     private final AtomicReference<Double> utilizationRatio = new AtomicReference<>(0d);
-
-    /** 最近一次估算误差比率。 */
-    private final AtomicReference<Double> estimationErrorRatio = new AtomicReference<>(0d);
 
     /** 已注册的有限层级 gauge，防止并发写入重复注册同一 meter。 */
     private final ConcurrentMap<Integer, Boolean> activeSegmentGauges = new ConcurrentHashMap<>();
@@ -103,7 +99,6 @@ public final class LsmContextMetrics {
         // 全局 gauges 只保留最新服务观测值，不绑定任何租户或对话标识。
         registry.gauge(INPUT_ESTIMATED_TOKENS, inputEstimatedTokens);
         registry.gauge(UTILIZATION_RATIO, utilizationRatio, AtomicReference::get);
-        registry.gauge(ESTIMATION_ERROR_RATIO, estimationErrorRatio, AtomicReference::get);
         manifestCasConflicts = registry.counter(MANIFEST_CAS_CONFLICTS);
         windowExceeded = registry.counter(WINDOW_EXCEEDED);
     }
@@ -144,16 +139,6 @@ public final class LsmContextMetrics {
                     sessionId, new SessionContribution(counts, clock.instant()));
         }
         counts.keySet().forEach(this::registerActiveSegmentsGaugeIfAbsent);
-    }
-
-    /** 会话被显式清理时同步移除其贡献，且不创建任何会话维度 meter。 */
-    public synchronized void cleanupActiveSegments(String conversationSessionId) {
-        String sessionId = Objects.requireNonNull(conversationSessionId, "conversationSessionId");
-        if (sessionId.isBlank()) {
-            throw new IllegalArgumentException("conversationSessionId must not be blank");
-        }
-        expireSessionContributions(clock.instant());
-        activeSegmentsBySession.remove(sessionId);
     }
 
     int trackedSessionCount() {
@@ -209,11 +194,6 @@ public final class LsmContextMetrics {
         summary(COMPACTION_OUTPUT_TOKENS, levelTag).record(outputTokens);
         double ratio = inputTokens == 0L ? 0d : (double) outputTokens / inputTokens;
         summary(COMPRESSION_RATIO, levelTag).record(ratio);
-    }
-
-    /** 更新最新估算误差比率。 */
-    public void recordEstimationError(double ratio) {
-        estimationErrorRatio.set(nonNegativeFinite(ratio));
     }
 
     public void recordManifestCasConflict() {

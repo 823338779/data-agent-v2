@@ -79,11 +79,6 @@ public final class ExecutionToolView {
         return new ToolActivationResult(List.copyOf(requested), alreadyActivated);
     }
 
-    /** 返回最大允许集合，顺序与系统 Tool 注册顺序一致。 */
-    public List<String> maximumNames() {
-        return maximumBindings.stream().map(ToolBinding::runtimeName).toList();
-    }
-
     /** 返回当前可见集合，顺序与系统 Tool 注册顺序一致。 */
     public synchronized List<String> visibleNames() {
         return visibleTools().stream().map(ToolBinding::runtimeName).toList();

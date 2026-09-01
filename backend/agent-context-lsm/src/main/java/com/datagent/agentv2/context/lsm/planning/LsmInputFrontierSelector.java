@@ -56,24 +56,6 @@ public final class LsmInputFrontierSelector {
         return selection;
     }
 
-    /** 返回能够表达目标区间的最粗有效 frontier，供目标水位预算不足但仍需执行硬上限检查时使用。 */
-    public FrontierSelection selectMinimum(
-            List<LsmSummarySegment> availableSegments, LsmSummarySegment.Coverage targetCoverage) {
-        Objects.requireNonNull(availableSegments, "availableSegments");
-        Objects.requireNonNull(targetCoverage, "targetCoverage");
-        Map<String, LsmSummarySegment> byId = indexById(availableSegments);
-        List<LsmSummarySegment> frontier = initialFrontier(availableSegments, targetCoverage);
-        List<LsmSummarySegment> parents = parents(availableSegments, targetCoverage);
-        while (true) {
-            LsmSummarySegment replacement = firstUsefulParent(parents, frontier, byId);
-            if (replacement == null) {
-                return selection(frontier);
-            }
-            replaceDescendants(frontier, replacement);
-            frontier.sort(CHRONOLOGICAL);
-        }
-    }
-
     private static LsmSummarySegment firstUsefulParent(
             List<LsmSummarySegment> parents,
             List<LsmSummarySegment> frontier,

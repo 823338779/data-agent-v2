@@ -1,8 +1,4 @@
-import {
-  BoundedProcessPayload,
-  formatTimestamp,
-  ThinkingProcessItem,
-} from '../domain/agentPrototype';
+import { BoundedProcessPayload, formatTimestamp, ThinkingProcessItem } from '../domain/agent';
 
 interface MessageProcessTimelineProps {
   items: ThinkingProcessItem[];

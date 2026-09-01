@@ -13,10 +13,12 @@ import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.Publish
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import java.time.LocalDateTime;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /** 以 manifest version/generation CAS 原子发布本次调用生成的摘要视图。 */
+@RequiredArgsConstructor
 public class LsmManifestPublicationTransaction {
 
     private final LsmContextManifestRepository manifests;
@@ -25,21 +27,6 @@ public class LsmManifestPublicationTransaction {
     private final LsmInvariantValidator invariants;
     private final LsmDocumentCodec documents;
     private final LsmContextMetrics metrics;
-
-    public LsmManifestPublicationTransaction(
-            LsmContextManifestRepository manifests,
-            LsmSummarySegmentRepository segments,
-            ContextExecutionControlPort executions,
-            LsmInvariantValidator invariants,
-            LsmDocumentCodec documents,
-            LsmContextMetrics metrics) {
-        this.manifests = manifests;
-        this.segments = segments;
-        this.executions = executions;
-        this.invariants = invariants;
-        this.documents = documents;
-        this.metrics = metrics;
-    }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public PublishResult publish(CompactionRequest request, GeneratedCompaction generated) {

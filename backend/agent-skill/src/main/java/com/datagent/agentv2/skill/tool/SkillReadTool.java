@@ -6,6 +6,7 @@ import com.datagent.agentv2.conversation.tool.runtime.ToolActivationResult;
 import com.datagent.agentv2.skill.runtime.ExecutionSkillView;
 import com.datagent.agentv2.skill.runtime.ExecutionSkillViews;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -19,6 +20,7 @@ import tools.jackson.databind.node.ObjectNode;
 /** 读取 bundled Skill 资源，并在读取主指令时原子激活其受限 Tool 依赖。 */
 @Component
 @Order(115)
+@RequiredArgsConstructor
 public final class SkillReadTool implements AgentTool {
     private static final Logger LOG = LoggerFactory.getLogger("agent.skill.read");
     private static final String SCHEMA =
@@ -28,15 +30,6 @@ public final class SkillReadTool implements AgentTool {
     private final ExecutionSkillViews skillViews;
     private final ObjectProvider<ExecutionToolViews> toolViews;
     private final ObjectMapper json;
-
-    public SkillReadTool(
-            ExecutionSkillViews skillViews,
-            ObjectProvider<ExecutionToolViews> toolViews,
-            ObjectMapper json) {
-        this.skillViews = skillViews;
-        this.toolViews = toolViews;
-        this.json = json;
-    }
 
     @Override
     public String name() {

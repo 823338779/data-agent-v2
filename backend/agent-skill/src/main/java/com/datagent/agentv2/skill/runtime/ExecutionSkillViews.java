@@ -3,17 +3,15 @@ package com.datagent.agentv2.skill.runtime;
 import com.datagent.agentv2.skill.BundledSkillCatalog;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 /** 管理 executionId 到 Skill 快照的进程内生命周期。 */
 @Service
+@RequiredArgsConstructor
 public final class ExecutionSkillViews {
     private final BundledSkillCatalog catalog;
     private final ConcurrentMap<String, ExecutionSkillView> views = new ConcurrentHashMap<>();
-
-    public ExecutionSkillViews(BundledSkillCatalog catalog) {
-        this.catalog = catalog;
-    }
 
     public ExecutionSkillView open(String executionId) {
         ExecutionSkillView created = new ExecutionSkillView(catalog);
