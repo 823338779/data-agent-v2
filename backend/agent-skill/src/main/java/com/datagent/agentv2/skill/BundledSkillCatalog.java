@@ -11,7 +11,16 @@ import org.springframework.stereotype.Service;
 public final class BundledSkillCatalog {
     private final Map<String, SkillBundle> bundles;
 
-    public BundledSkillCatalog(SkillResourceSource source, SkillFrontmatterParser parser) {
+    public BundledSkillCatalog(
+            SkillResourceSource source,
+            SkillBundleFactory bundleFactory,
+            List<SkillDefinition> definitions) {
+        Map<String, SkillDefinition> definitionsById = new LinkedHashMap<>();
+        for (SkillDefinition definition : definitions) {
+            if (definitionsById.put(definition.logicalId(), definition) != null)
+                throw new IllegalStateException(
+                        "Duplicate skill definition: " + definition.logicalId());
+        }
         Map<String, Map<String, byte[]>> grouped = new LinkedHashMap<>();
         source.load()
                 .forEach(
@@ -25,9 +34,15 @@ public final class BundledSkillCatalog {
         Map<String, SkillBundle> parsed = new LinkedHashMap<>();
         grouped.forEach(
                 (id, resources) -> {
-                    if (parsed.put(id, parser.parse(id, resources)) != null)
+                    SkillDefinition definition = definitionsById.remove(id);
+                    if (definition == null)
+                        throw new IllegalStateException("Missing skill definition: " + id);
+                    if (parsed.put(id, bundleFactory.create(definition, resources)) != null)
                         throw new IllegalStateException("Duplicate skill: " + id);
                 });
+        if (!definitionsById.isEmpty())
+            throw new IllegalStateException(
+                    "Missing skill resource: " + definitionsById.keySet().iterator().next());
         this.bundles = Map.copyOf(parsed);
     }
 

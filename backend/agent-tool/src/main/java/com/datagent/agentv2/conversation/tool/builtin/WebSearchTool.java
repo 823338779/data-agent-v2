@@ -28,6 +28,9 @@ import tools.jackson.databind.node.ObjectNode;
 @RequiredArgsConstructor
 public final class WebSearchTool implements AgentTool {
 
+    /** 注册给模型并供 Skill 声明依赖的稳定工具标识。 */
+    public static final String TOOL_ID = "web_search";
+
     private static final String PARAMETERS_SCHEMA =
             """
             {"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":400},"limit":{"type":"integer","minimum":1,"maximum":20},"search_depth":{"type":"string","enum":["basic","advanced"]}}}
@@ -42,7 +45,7 @@ public final class WebSearchTool implements AgentTool {
 
     @Override
     public String name() {
-        return "web_search";
+        return TOOL_ID;
     }
 
     @Override

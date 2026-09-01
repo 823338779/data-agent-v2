@@ -1,10 +1,3 @@
----
-name: web-research
-description: 当问题需要最新信息或外部公开资料时使用。
-required_tools:
-  - web_search
-  - web_fetch
----
 # 联网研究
 
 用于查询近期事实和外部公开资料。先用 `web_search` 定位候选来源，再用 `web_fetch` 读取需要核验的页面正文。不要把凭据、令牌、客户机密或未脱敏个人信息放入搜索词或 URL。

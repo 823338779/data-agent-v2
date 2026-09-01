@@ -32,6 +32,9 @@ import tools.jackson.databind.node.ObjectNode;
 @RequiredArgsConstructor
 public final class WebFetchTool implements AgentTool {
 
+    /** 注册给模型并供 Skill 声明依赖的稳定工具标识。 */
+    public static final String TOOL_ID = "web_fetch";
+
     private static final String SCHEMA =
             """
             {"type":"object","additionalProperties":false,"required":["url"],"properties":{"url":{"type":"string","minLength":1,"maxLength":2048},"max_chars":{"type":"integer","minimum":1000,"maximum":20000}}}
@@ -46,7 +49,7 @@ public final class WebFetchTool implements AgentTool {
 
     @Override
     public String name() {
-        return "web_fetch";
+        return TOOL_ID;
     }
 
     @Override
