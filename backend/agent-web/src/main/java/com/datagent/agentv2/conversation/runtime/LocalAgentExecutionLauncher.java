@@ -2,8 +2,8 @@ package com.datagent.agentv2.conversation.runtime;
 
 import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
 import com.datagent.agentv2.conversation.process.AgentExecutionProcessTerminationService;
-import com.datagent.agentv2.conversation.react.ReactExecutionEngine;
 import com.datagent.agentv2.conversation.tool.runtime.ExecutionToolViews;
+import com.datagent.agentv2.conversation.workflow.RoutedAgentExecutionEngine;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.skill.runtime.ExecutionSkillViews;
 import java.time.Instant;
@@ -23,7 +23,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 public final class LocalAgentExecutionLauncher {
 
     private final LocalAgentExecutionRegistry registry;
-    private final ReactExecutionEngine engine;
+    private final RoutedAgentExecutionEngine engine;
     private final AgentExecutionProcessTerminationService termination;
     private final ExecutionToolViews toolViews;
     private final ExecutionSkillViews skillViews;

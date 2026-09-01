@@ -162,6 +162,8 @@ describe('backend agent client', () => {
       'message_update',
       'stream_snapshot',
       'assistant_delta',
+      'workflow_snapshot',
+      'workflow_update',
     ]);
     unsubscribe();
     expect(close).toHaveBeenCalledOnce();
@@ -312,5 +314,66 @@ describe('backend agent client', () => {
 
     expect(advanced.messages[0]).toMatchObject({ content: '新回答', version: 2 });
     expect(duplicate).toBe(advanced);
+  });
+
+  it('reduces workflow snapshot and only the next matching update', () => {
+    const current = {
+      ...session,
+      execution: {
+        executionId: 'execution_1',
+        status: 'running' as const,
+        progress: 10,
+        objective: '分析销售额',
+        events: [],
+        streamCheckpoint: null,
+      },
+    };
+    const snapshot = applyConversationStreamEvent(current, {
+      type: 'workflow_snapshot',
+      conversationSessionId: 'session_1',
+      executionId: 'execution_1',
+      occurredAt: '2026-08-30T12:00:00Z',
+      workflow: {
+        workflowId: 'workflow_1',
+        executionId: 'execution_1',
+        latestSequence: 1,
+        status: 'running',
+        currentStep: 'generate_sql',
+        tasks: [],
+        startedAt: '2026-08-30T12:00:00Z',
+        updatedAt: '2026-08-30T12:00:00Z',
+      },
+    });
+    const update = {
+      type: 'workflow_update' as const,
+      conversationSessionId: 'session_1',
+      executionId: 'execution_1',
+      workflowId: 'workflow_1',
+      sequence: 2,
+      eventType: 'step_succeeded' as const,
+      step: 'explain_sql' as const,
+      status: 'running' as const,
+      task: { taskId: 'sales', purpose: '统计销售额', index: 1, total: 1 },
+      detail: {
+        semanticResourceNames: [],
+        sql: 'SELECT SUM(paid_amount) FROM fact_orders LIMIT 1000',
+        returnedRows: null,
+        truncated: null,
+        attempt: 1,
+        maxAttempts: 3,
+        elapsedMillis: 5,
+        message: 'SQL 已通过预检',
+        failureCode: null,
+      },
+      occurredAt: '2026-08-30T12:00:01Z',
+    };
+    const advanced = applyConversationStreamEvent(snapshot, update);
+    const duplicate = applyConversationStreamEvent(advanced, update);
+    const gap = applyConversationStreamEvent(advanced, { ...update, sequence: 4 });
+
+    expect(advanced.workflow?.latestSequence).toBe(2);
+    expect(advanced.workflow?.tasks[0].sql).toContain('SELECT SUM');
+    expect(duplicate).toBe(advanced);
+    expect(gap).toBe(advanced);
   });
 });

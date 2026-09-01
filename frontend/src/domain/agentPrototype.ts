@@ -103,6 +103,50 @@ export interface AgentExecution {
   streamCheckpoint: AgentExecutionStreamCheckpoint | null;
 }
 
+export type WorkflowStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
+export type WorkflowStep =
+  | 'discover_semantic_resources'
+  | 'build_query_plan'
+  | 'validate_query_plan'
+  | 'generate_sql'
+  | 'validate_sql'
+  | 'explain_sql'
+  | 'execute_query'
+  | 'verify_results'
+  | 'analyze_results'
+  | 'finalize_response';
+
+export interface WorkflowTaskRef {
+  taskId: string;
+  purpose: string;
+  /** 从 1 开始的任务位置。 */
+  index: number;
+  total: number;
+}
+
+export interface WorkflowTaskSnapshot {
+  task: WorkflowTaskRef;
+  currentStep: WorkflowStep;
+  /** 仅在本地策略和 StarRocks EXPLAIN 均成功后出现的完整 SQL。 */
+  sql: string | null;
+  returnedRows: number | null;
+  truncated: boolean | null;
+  attempt: number | null;
+  message: string | null;
+}
+
+/** 当前页面内的瞬时 Workflow 状态；REST 刷新不会恢复。 */
+export interface WorkflowSnapshot {
+  workflowId: string;
+  executionId: string;
+  latestSequence: number;
+  status: WorkflowStatus;
+  currentStep: WorkflowStep;
+  tasks: WorkflowTaskSnapshot[];
+  startedAt: string;
+  updatedAt: string;
+}
+
 /** 用户与 Agent 之间的一段连续对话。 */
 export interface ConversationSession {
   conversationSessionId: string;
@@ -116,6 +160,7 @@ export interface ConversationSession {
   latestExecutionStatus?: AgentExecutionStatus;
   messages: ConversationMessage[];
   execution: AgentExecution | null;
+  workflow?: WorkflowSnapshot | null;
 }
 
 const BEIJING_TIME_ZONE = 'Asia/Shanghai';

@@ -38,6 +38,8 @@ class ContractExamplesTest {
                     "execution_update",
                     "message_update",
                     "assistant_delta",
+                    "workflow_snapshot",
+                    "workflow_update",
                     STREAM_SNAPSHOT);
 
     @ParameterizedTest
@@ -118,6 +120,8 @@ class ContractExamplesTest {
                 .isEqualTo("conversation.detail");
         assertThat(schemaNode.path("x-frontend-projection").path("message_update").asString())
                 .isEqualTo("conversation.message");
+        assertThat(schemaNode.path("x-frontend-projection").path("workflow_update").asString())
+                .isEqualTo("conversation.workflow");
     }
 
     @Test

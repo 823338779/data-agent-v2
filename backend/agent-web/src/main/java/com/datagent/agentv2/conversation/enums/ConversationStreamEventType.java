@@ -17,7 +17,13 @@ public enum ConversationStreamEventType {
     SNAPSHOT("stream_snapshot"),
 
     /** 模型实时生成的单个回答增量。 */
-    ASSISTANT_DELTA("assistant_delta");
+    ASSISTANT_DELTA("assistant_delta"),
+
+    /** 当前进程内活动数据 Workflow 的完整快照。 */
+    WORKFLOW_SNAPSHOT("workflow_snapshot"),
+
+    /** 当前进程内数据 Workflow 的单调步骤更新。 */
+    WORKFLOW_UPDATE("workflow_update");
 
     /** 对外 SSE event name 和 JSON 枚举值。 */
     private final String value;

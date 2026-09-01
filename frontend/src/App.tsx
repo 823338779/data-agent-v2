@@ -28,6 +28,7 @@ import { MarkdownContent } from './components/MarkdownContent';
 import { MessageProcessTimeline } from './components/MessageProcessTimeline';
 import { ConversationStatus } from './components/ConversationStatus';
 import { RunStreamPanel } from './components/RunStreamPanel';
+import { WorkflowRunPanel } from './components/WorkflowRunPanel';
 import { ConversationSession, formatTimestamp, isProcessingStatus } from './domain/agentPrototype';
 
 interface AppProps {
@@ -468,11 +469,18 @@ export default function App({ client }: AppProps) {
                         <time>{formatTimestamp(message.timestamp)}</time>
                       </header>
                       {message.role === 'assistant' ? (
-                        visibleAssistantContent ? (
-                          <MarkdownContent content={visibleAssistantContent} />
-                        ) : isActiveAssistant && activeIsProcessing ? (
-                          <RunStreamPanel checkpoint={active.execution?.streamCheckpoint ?? null} />
-                        ) : null
+                        <>
+                          {isActiveAssistant && active.workflow && (
+                            <WorkflowRunPanel workflow={active.workflow} />
+                          )}
+                          {visibleAssistantContent ? (
+                            <MarkdownContent content={visibleAssistantContent} />
+                          ) : isActiveAssistant && activeIsProcessing ? (
+                            <RunStreamPanel
+                              checkpoint={active.execution?.streamCheckpoint ?? null}
+                            />
+                          ) : null}
+                        </>
                       ) : (
                         <p className="plain-message-content">{message.content}</p>
                       )}
@@ -487,7 +495,10 @@ export default function App({ client }: AppProps) {
                 active.execution &&
                 !activeAssistantMessage &&
                 (activeIsProcessing || activeExecutionAnswer) && (
-                  <RunStreamPanel checkpoint={active.execution.streamCheckpoint} />
+                  <>
+                    {active.workflow && <WorkflowRunPanel workflow={active.workflow} />}
+                    <RunStreamPanel checkpoint={active.execution.streamCheckpoint} />
+                  </>
                 )}
             </div>
           </div>

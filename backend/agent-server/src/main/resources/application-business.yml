@@ -6,7 +6,7 @@ data-agent:
     web-search:
       provider: tavily
       # 凭据仅从服务端环境变量注入，不进入 Tool 参数或日志。
-      api-key: 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
+      api-key: ${DATA_AGENT_TAVILY_API_KEY:}
       default-limit: ${DATA_AGENT_WEB_SEARCH_DEFAULT_LIMIT:5}
       default-depth: ${DATA_AGENT_WEB_SEARCH_DEFAULT_DEPTH:basic}
       connect-timeout: ${DATA_AGENT_WEB_SEARCH_CONNECT_TIMEOUT:5s}
@@ -44,3 +44,25 @@ data-agent:
       working-directory: ${DATA_AGENT_MODEL_CODEX_WORKING_DIRECTORY:}
   execution:
     deadline: ${DATA_AGENT_EXECUTION_DEADLINE:10m}
+  workflow:
+    # 未配置真实 StarRocks 与语义目录前保持关闭；启用后连接或语义不一致会在启动期失败。
+    enabled: ${DATA_AGENT_WORKFLOW_ENABLED:false}
+    max-query-tasks: ${DATA_AGENT_WORKFLOW_MAX_QUERY_TASKS:5}
+    max-query-plan-attempts: ${DATA_AGENT_WORKFLOW_MAX_PLAN_ATTEMPTS:3}
+    max-sql-attempts-per-task: ${DATA_AGENT_WORKFLOW_MAX_SQL_ATTEMPTS:3}
+    max-transient-query-retries: ${DATA_AGENT_WORKFLOW_MAX_TRANSIENT_RETRIES:1}
+    max-generated-sql-bytes: ${DATA_AGENT_WORKFLOW_MAX_SQL_BYTES:64KB}
+    max-semantic-resources: ${DATA_AGENT_WORKFLOW_MAX_SEMANTIC_RESOURCES:30}
+    max-analysis-input-bytes: ${DATA_AGENT_WORKFLOW_MAX_ANALYSIS_BYTES:512KB}
+    hard-timeout: ${DATA_AGENT_WORKFLOW_TIMEOUT:120s}
+  datasource:
+    jdbc-url: ${DATA_AGENT_STARROCKS_JDBC_URL:}
+    username: ${DATA_AGENT_STARROCKS_USERNAME:}
+    password: ${DATA_AGENT_STARROCKS_PASSWORD:}
+    default-catalog: ${DATA_AGENT_STARROCKS_CATALOG:default_catalog}
+    default-database: ${DATA_AGENT_STARROCKS_DATABASE:analytics}
+    connect-timeout: ${DATA_AGENT_STARROCKS_CONNECT_TIMEOUT:5s}
+    query-timeout: ${DATA_AGENT_STARROCKS_QUERY_TIMEOUT:30s}
+    max-rows: ${DATA_AGENT_STARROCKS_MAX_ROWS:1000}
+    max-result-bytes: ${DATA_AGENT_STARROCKS_MAX_RESULT_BYTES:4MB}
+    semantic-config: classpath:semantic/starrocks.yaml

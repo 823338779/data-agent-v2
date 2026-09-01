@@ -557,6 +557,67 @@ textarea:focus-visible {
 .run-stream-panel {
   margin: 0 0 28px 44px;
 }
+.workflow-run-panel {
+  margin: 0 0 20px;
+  padding: 14px 16px;
+  border: 1px solid #e1ded8;
+  border-radius: 12px;
+  background: #faf9f6;
+  color: #4f4b45;
+  font-size: 12px;
+}
+.workflow-run-panel > header,
+.workflow-task-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.workflow-status {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #ece9e2;
+  text-transform: uppercase;
+}
+.workflow-status.failed,
+.workflow-status.cancelled,
+.workflow-status.timed_out {
+  color: #9a3f2a;
+}
+.workflow-current-step {
+  margin: 8px 0;
+  color: #6d665d;
+}
+.workflow-run-panel ol {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.workflow-run-panel li {
+  padding: 11px;
+  border: 1px solid #e7e3dc;
+  border-radius: 9px;
+  background: #fff;
+}
+.workflow-run-panel li p {
+  margin: 6px 0 0;
+  color: #6d665d;
+  font-size: 11px;
+}
+.workflow-sql {
+  margin-top: 10px;
+}
+.workflow-sql > span {
+  font-weight: 650;
+}
+.workflow-sql pre {
+  max-width: 100%;
+  margin: 6px 0 0;
+  overflow-x: auto;
+  white-space: pre;
+}
 .stream-loading {
   display: inline-flex;
   align-items: center;
