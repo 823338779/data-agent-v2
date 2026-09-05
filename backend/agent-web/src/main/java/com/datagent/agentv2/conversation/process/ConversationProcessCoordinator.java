@@ -7,6 +7,7 @@ import com.datagent.agentv2.conversation.domain.ModelThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
 import com.datagent.agentv2.conversation.domain.ToolThinkingProcessItem;
+import com.datagent.agentv2.conversation.domain.event.ConversationMessageChanged;
 import com.datagent.agentv2.conversation.react.ModelToolCall;
 import com.datagent.agentv2.conversation.runtime.ExecutionStoppedException;
 import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;

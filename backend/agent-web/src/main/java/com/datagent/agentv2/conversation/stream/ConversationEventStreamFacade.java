@@ -1,9 +1,9 @@
 package com.datagent.agentv2.conversation.stream;
 
+import com.datagent.agentv2.conversation.domain.event.ConversationMessageChanged;
 import com.datagent.agentv2.conversation.enums.ConversationStreamEventType;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
-import com.datagent.agentv2.conversation.process.ConversationMessageChanged;
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
 import com.datagent.agentv2.conversation.session.ConversationView;
 import com.datagent.agentv2.conversation.workflow.WorkflowSseEventPublisher.WorkflowEventPublished;

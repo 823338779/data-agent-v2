@@ -1,4 +1,4 @@
-package com.datagent.agentv2.conversation.process;
+package com.datagent.agentv2.conversation.domain.event;
 
 /** 一条中心消息成功更新后的稳定内部通知。 */
 public record ConversationMessageChanged(
