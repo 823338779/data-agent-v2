@@ -72,7 +72,7 @@
   "$defs": {
     "message": {
       "type": "object",
-      "required": ["conversationMessageId", "executionId", "role", "author", "content", "version", "thinkingProcess", "createdAt"],
+      "required": ["conversationMessageId", "executionId", "role", "author", "content", "version", "thinkingProcess", "artifacts", "uiBlocks", "createdAt"],
       "properties": {
         "conversationMessageId": { "type": "string" },
         "executionId": { "type": ["string", "null"] },
@@ -81,7 +81,42 @@
         "content": { "type": "string" },
         "version": { "type": "integer", "minimum": 0 },
         "thinkingProcess": { "type": "array", "items": { "$ref": "#/$defs/processItem" } },
+        "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifact" } },
+        "uiBlocks": { "type": "array", "items": { "$ref": "#/$defs/uiBlock" } },
         "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "artifactType", "displayName", "mediaType", "sizeBytes", "sha256", "pageOrSheetCount", "downloadUrl"],
+      "properties": {
+        "artifactId": { "type": "string" },
+        "artifactType": { "enum": ["DOCX", "PPTX", "XLSX"] },
+        "displayName": { "type": "string" },
+        "mediaType": { "type": "string" },
+        "sizeBytes": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "pageOrSheetCount": { "type": ["integer", "null"], "minimum": 1 },
+        "downloadUrl": { "type": "string", "pattern": "^/api/v1/agent-sessions/[^/]+/artifacts/[^/]+/content$" }
+      }
+    },
+    "uiBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blockId", "type", "schemaVersion", "variant", "payload", "displayOrder"],
+      "properties": {
+        "blockId": { "type": "string" },
+        "type": { "const": "artifact-card" },
+        "schemaVersion": { "const": 1 },
+        "variant": { "type": "string" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["artifactId"],
+          "properties": { "artifactId": { "type": "string" } }
+        },
+        "displayOrder": { "type": "integer", "minimum": 0 }
       }
     },
     "processItem": {

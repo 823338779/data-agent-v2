@@ -14,6 +14,13 @@ public record ArtifactDownload(
         String storageKey,
         ArtifactStorage storage) {
 
+    /** 在响应提交前完成大小和摘要预检，避免完整性失败被误报为成功下载。 */
+    public void validate() throws IOException {
+        try (ArtifactReadHandle ignored = storage.openReady(storageKey, sizeBytes, sha256)) {
+            // openReady 已完成全文件摘要校验；此处只关闭预检流。
+        }
+    }
+
     public void copyTo(OutputStream output) throws IOException {
         try (ArtifactReadHandle handle = storage.openReady(storageKey, sizeBytes, sha256)) {
             handle.inputStream().transferTo(output);

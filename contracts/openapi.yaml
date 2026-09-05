@@ -88,6 +88,23 @@ paths:
               schema: { $ref: '#/components/schemas/ConversationSession' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/agent-sessions/{conversationSessionId}/artifacts/{artifactId}/content:
+    get:
+      operationId: downloadConversationArtifact
+      parameters:
+        - { $ref: '#/components/parameters/ConversationSessionId' }
+        - { $ref: '#/components/parameters/ArtifactId' }
+      responses:
+        '200':
+          description: 已通过会话归属与完整性校验的 Office 文件流
+          headers:
+            Content-Disposition: { schema: { type: string } }
+            ETag: { schema: { type: string } }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /api/v1/agent-sessions/{conversationSessionId}/executions/{executionId}:cancel:
     post:
       operationId: cancelAgentExecution
@@ -134,6 +151,11 @@ components:
       in: path
       required: true
       schema: { type: string, minLength: 1 }
+    ArtifactId:
+      name: artifactId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 80 }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -228,7 +250,7 @@ components:
         snapshotAt: { type: string, format: date-time }
     ConversationMessage:
       type: object
-      required: [conversationMessageId, executionId, role, author, content, version, thinkingProcess, createdAt]
+      required: [conversationMessageId, executionId, role, author, content, version, thinkingProcess, artifacts, uiBlocks, createdAt]
       properties:
         conversationMessageId: { type: string }
         executionId: { type: [string, 'null'] }
@@ -239,11 +261,48 @@ components:
         thinkingProcess:
           type: array
           items: { type: object, additionalProperties: true }
+        artifacts:
+          type: array
+          items: { $ref: '#/components/schemas/ArtifactView' }
+        uiBlocks:
+          type: array
+          items: { $ref: '#/components/schemas/MessageUiBlockView' }
         createdAt: { type: string, format: date-time }
         execution:
           oneOf:
             - { $ref: '#/components/schemas/AgentExecution' }
             - { type: 'null' }
+    ArtifactView:
+      type: object
+      additionalProperties: false
+      required: [artifactId, artifactType, displayName, mediaType, sizeBytes, sha256, pageOrSheetCount, downloadUrl]
+      properties:
+        artifactId: { type: string }
+        artifactType: { type: string, enum: [DOCX, PPTX, XLSX] }
+        displayName: { type: string }
+        mediaType: { type: string }
+        sizeBytes: { type: integer, format: int64, minimum: 1 }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        pageOrSheetCount: { type: [integer, 'null'], minimum: 1 }
+        downloadUrl:
+          type: string
+          pattern: '^/api/v1/agent-sessions/[^/]+/artifacts/[^/]+/content$'
+    MessageUiBlockView:
+      type: object
+      additionalProperties: false
+      required: [blockId, type, schemaVersion, variant, payload, displayOrder]
+      properties:
+        blockId: { type: string }
+        type: { type: string, const: artifact-card }
+        schemaVersion: { type: integer, const: 1 }
+        variant: { type: string }
+        payload:
+          type: object
+          additionalProperties: false
+          required: [artifactId]
+          properties:
+            artifactId: { type: string }
+        displayOrder: { type: integer, minimum: 0 }
     AgentExecution:
       type: object
       required: [executionId, status, progress, objective, events]

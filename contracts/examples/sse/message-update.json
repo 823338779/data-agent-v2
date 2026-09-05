@@ -6,7 +6,7 @@
     "executionId": "execution_demo",
     "role": "assistant",
     "author": "assistant",
-    "content": "",
+    "content": "报告已生成。\n\n<agent-ui block-id=\"ui_block_demo\"></agent-ui>",
     "version": 2,
     "thinkingProcess": [
       {
@@ -26,6 +26,28 @@
         "modelInvocationSequence": 1,
         "modelProvider": "codex",
         "modelName": "gpt-5"
+      }
+    ],
+    "artifacts": [
+      {
+        "artifactId": "artifact_demo",
+        "artifactType": "DOCX",
+        "displayName": "报告.docx",
+        "mediaType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "sizeBytes": 3,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "pageOrSheetCount": 1,
+        "downloadUrl": "/api/v1/agent-sessions/session_demo/artifacts/artifact_demo/content"
+      }
+    ],
+    "uiBlocks": [
+      {
+        "blockId": "ui_block_demo",
+        "type": "artifact-card",
+        "schemaVersion": 1,
+        "variant": "default",
+        "payload": { "artifactId": "artifact_demo" },
+        "displayOrder": 0
       }
     ],
     "createdAt": "2026-08-01T06:00:00Z",

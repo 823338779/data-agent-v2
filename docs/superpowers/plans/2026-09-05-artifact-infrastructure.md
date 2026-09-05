@@ -601,7 +601,7 @@ Keep an overload `composeFromMessage(message, execution)` delegating to `Message
 
 Introduce one private helper that receives all `ConversationMessage` values, calls `ArtifactQueryService.findByMessageIds(...)` once, and builds views. `messageViewById` may issue a one-message batch call. The existing after-commit `ConversationMessageChanged` listener then automatically emits the new card via `message_update`.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [x] **Step 5: Run GREEN and commit**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-web -am `
@@ -625,18 +625,18 @@ git commit -m "feat: expose artifact blocks in message views"
 - Modify: `contracts/examples/sse/message-update.json`
 - Modify: `backend/agent-web/src/test/java/com/datagent/agentv2/contracts/ContractExamplesTest.java`
 
-- [ ] **Step 1: Write MVC tests before the controller**
+- [x] **Step 1: Write MVC tests before the controller**
 
 Assert 200 headers/body streaming, RFC 5987 UTF-8 filename, exact MIME, `Content-Length`, quoted `ETag`; 404 for missing/wrong session/not READY; 409 or 500 with a stable safe problem response for size/SHA mismatch; no response contains `storageKey` or an absolute path.
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-web -am `
   '-Dtest=ArtifactControllerTest' test
 ```
 
-- [ ] **Step 3: Implement streaming download**
+- [x] **Step 3: Implement streaming download**
 
 ```java
 @GetMapping("/api/v1/agent-sessions/{sessionId}/artifacts/{artifactId}/content")
@@ -656,7 +656,7 @@ public ResponseEntity<StreamingResponseBody> download(
 
 `ArtifactDownload.copyTo` must open through `ArtifactStorage.openReady`, verify digest/size before sending the first byte by preflight validation, and close the stream. For the 50 MiB ceiling, do not materialize the entire file in heap.
 
-- [ ] **Step 4: Update OpenAPI/SSE schemas and valid examples**
+- [x] **Step 4: Update OpenAPI/SSE schemas and valid examples**
 
 Define `ArtifactView`, `MessageUiBlockView` and `artifact-card@1` payload. The OpenAPI path documents 200/404/integrity failure. Examples include one card marker in content and matching structured block/artifact arrays; no storage key appears.
 
