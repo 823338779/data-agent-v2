@@ -660,7 +660,7 @@ public ResponseEntity<StreamingResponseBody> download(
 
 Define `ArtifactView`, `MessageUiBlockView` and `artifact-card@1` payload. The OpenAPI path documents 200/404/integrity failure. Examples include one card marker in content and matching structured block/artifact arrays; no storage key appears.
 
-- [ ] **Step 5: Run controller and contract tests, then commit**
+- [x] **Step 5: Run controller and contract tests, then commit**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-web -am `
@@ -703,11 +703,11 @@ export interface MessageUiBlock {
 }
 ```
 
-- [ ] **Step 1: Add RED client mapping tests**
+- [x] **Step 1: Add RED client mapping tests**
 
 Test REST snapshot and `message_update` mapping. New fields pass through; legacy payloads with absent fields map to `artifacts: []` and `uiBlocks: []`; untrusted download URLs are not synthesized client-side.
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 ```powershell
 Set-Location .\frontend
@@ -715,7 +715,7 @@ npm.cmd test -- backendAgentClient.test.ts
 Set-Location ..
 ```
 
-- [ ] **Step 3: Implement strict but backward-compatible mapping**
+- [x] **Step 3: Implement strict but backward-compatible mapping**
 
 Add runtime guards for Artifact type, positive size, block ID/type/schema version and same-origin relative download URL beginning with `/api/v1/agent-sessions/`. Invalid items are omitted rather than rendered. Keep message mapping pure:
 
@@ -729,7 +729,7 @@ function toMessage(message: BackendMessage): ConversationMessage {
 }
 ```
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 ```powershell
 Set-Location .\frontend

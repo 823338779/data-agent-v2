@@ -57,6 +57,29 @@ export interface ToolThinkingProcessItem extends ProcessItemBase {
 /** 与一条 assistant 正文绑定、按 sequence 有序展示的过程节点。 */
 export type ThinkingProcessItem = ModelThinkingProcessItem | ToolThinkingProcessItem;
 
+export type ArtifactType = 'DOCX' | 'PPTX' | 'XLSX';
+
+/** 服务端完成完整性校验后公开给消息卡片的不可变文件元数据。 */
+export interface MessageArtifact {
+  artifactId: string;
+  artifactType: ArtifactType;
+  displayName: string;
+  mediaType: string;
+  sizeBytes: number;
+  sha256: string;
+  pageOrSheetCount: number | null;
+  downloadUrl: string;
+}
+
+/** Markdown 占位符引用的受控 UI 描述；只有前端注册过的 type@version 才会渲染。 */
+export interface MessageUiBlock {
+  blockId: string;
+  type: string;
+  schemaVersion: number;
+  variant: string;
+  payload: unknown;
+}
+
 /** 可恢复的回答流检查点。 */
 export interface AgentExecutionStreamCheckpoint {
   modelInvocationSequence: number;
@@ -77,6 +100,8 @@ export interface ConversationMessage {
   version: number;
   /** 与当前消息正文一同持久化的有序思考和工具过程。 */
   thinkingProcess: ThinkingProcessItem[];
+  artifacts: MessageArtifact[];
+  uiBlocks: MessageUiBlock[];
   /** 回答对应的持久化 Agent 执行，用于恢复该条消息自己的执行过程。 */
   execution: AgentExecution | null;
 }

@@ -86,6 +86,29 @@ describe('backend agent client', () => {
               createdAt: '2026-08-01T08:02:00Z',
               version: 2,
               thinkingProcess: [],
+              artifacts: [
+                {
+                  artifactId: 'artifact_1',
+                  artifactType: 'DOCX',
+                  displayName: 'report.docx',
+                  mediaType:
+                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                  sizeBytes: 3,
+                  sha256: 'a'.repeat(64),
+                  pageOrSheetCount: 1,
+                  downloadUrl:
+                    '/api/v1/agent-sessions/session_1/artifacts/artifact_1/content',
+                },
+              ],
+              uiBlocks: [
+                {
+                  blockId: 'block_1',
+                  type: 'artifact-card',
+                  schemaVersion: 1,
+                  variant: 'default',
+                  payload: { artifactId: 'artifact_1' },
+                },
+              ],
               execution,
             },
           ],
@@ -97,6 +120,12 @@ describe('backend agent client', () => {
     const [mapped] = await createFetchAgentBackendClient({ fetchImpl }).listSessions();
 
     expect(mapped.messages[0]).toMatchObject({ role: 'user', content: '分析订单延迟' });
+    expect(mapped.messages[0]).toMatchObject({ artifacts: [], uiBlocks: [] });
+    expect(mapped.messages[1].artifacts[0]).toMatchObject({
+      artifactId: 'artifact_1',
+      artifactType: 'DOCX',
+    });
+    expect(mapped.messages[1].uiBlocks[0]).toMatchObject({ blockId: 'block_1' });
     expect(mapped.messages[1].execution?.streamCheckpoint).not.toHaveProperty('reasoning');
     expect(mapped.execution).toMatchObject({ status: 'running', progress: 5 });
     expect(mapped).not.toHaveProperty('metricPlatformCredential');

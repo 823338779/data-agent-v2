@@ -4,7 +4,9 @@ import {
   AgentExecutionStreamCheckpoint,
   ConversationMessage,
   ConversationSession,
+  MessageArtifact,
   MessageRole,
+  MessageUiBlock,
   ModelThinkingProcessItem,
   ThinkingProcessItem,
   ToolThinkingProcessItem,
@@ -52,6 +54,8 @@ interface BackendMessage {
   content: string;
   version: number;
   thinkingProcess: BackendThinkingProcessItem[];
+  artifacts?: unknown[];
+  uiBlocks?: unknown[];
   createdAt: string;
   execution: BackendAgentExecution | null;
 }
@@ -459,8 +463,75 @@ function toMessage(message: BackendMessage): ConversationMessage {
     timestamp: message.createdAt,
     version: message.version,
     thinkingProcess: message.thinkingProcess.map(toThinkingProcessItem),
+    artifacts: (message.artifacts ?? []).flatMap(toArtifact),
+    uiBlocks: (message.uiBlocks ?? []).flatMap(toUiBlock),
     execution: message.execution ? toExecution(message.execution) : null,
   };
+}
+
+function toArtifact(value: unknown): MessageArtifact[] {
+  if (!isRecord(value)) return [];
+  const artifactType = value.artifactType;
+  const downloadUrl = value.downloadUrl;
+  if (
+    !['DOCX', 'PPTX', 'XLSX'].includes(String(artifactType)) ||
+    typeof value.artifactId !== 'string' ||
+    typeof value.displayName !== 'string' ||
+    typeof value.mediaType !== 'string' ||
+    typeof value.sizeBytes !== 'number' ||
+    !Number.isSafeInteger(value.sizeBytes) ||
+    value.sizeBytes <= 0 ||
+    typeof value.sha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(value.sha256) ||
+    (value.pageOrSheetCount !== null &&
+      (typeof value.pageOrSheetCount !== 'number' ||
+        !Number.isSafeInteger(value.pageOrSheetCount) ||
+        value.pageOrSheetCount <= 0)) ||
+    typeof downloadUrl !== 'string' ||
+    !/^\/api\/v1\/agent-sessions\/[^/]+\/artifacts\/[^/]+\/content$/.test(downloadUrl)
+  ) {
+    return [];
+  }
+  return [
+    {
+      artifactId: value.artifactId,
+      artifactType: artifactType as MessageArtifact['artifactType'],
+      displayName: value.displayName,
+      mediaType: value.mediaType,
+      sizeBytes: value.sizeBytes,
+      sha256: value.sha256,
+      pageOrSheetCount: value.pageOrSheetCount as number | null,
+      downloadUrl,
+    },
+  ];
+}
+
+function toUiBlock(value: unknown): MessageUiBlock[] {
+  if (
+    !isRecord(value) ||
+    typeof value.blockId !== 'string' ||
+    !/^[a-zA-Z0-9_-]{1,80}$/.test(value.blockId) ||
+    typeof value.type !== 'string' ||
+    typeof value.schemaVersion !== 'number' ||
+    !Number.isSafeInteger(value.schemaVersion) ||
+    value.schemaVersion < 1 ||
+    typeof value.variant !== 'string'
+  ) {
+    return [];
+  }
+  return [
+    {
+      blockId: value.blockId,
+      type: value.type,
+      schemaVersion: value.schemaVersion,
+      variant: value.variant,
+      payload: value.payload,
+    },
+  ];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** 兼容缺少 type 的旧快照，并在进入页面状态前恢复过程节点的判别字段。 */
