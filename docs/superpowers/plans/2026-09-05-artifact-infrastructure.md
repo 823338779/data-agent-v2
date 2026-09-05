@@ -960,7 +960,7 @@ git commit -m "test: verify artifact delivery foundation"
 **Files:**
 - Verify only; modify production files only if a verification reveals a defect covered by this plan.
 
-- [ ] **Step 1: Run the complete backend reactor**
+- [x] **Step 1: Run the complete backend reactor**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B verify
@@ -968,7 +968,7 @@ git commit -m "test: verify artifact delivery foundation"
 
 Expected: `BUILD SUCCESS`; no real sandbox, Python, LibreOffice or network dependency is needed because Artifact remains disabled by default and tests use Fake Runner.
 
-- [ ] **Step 2: Run the complete frontend suite/build**
+- [x] **Step 2: Run the complete frontend suite/build**
 
 ```powershell
 Set-Location .\frontend
@@ -979,7 +979,7 @@ Set-Location ..
 
 Expected: Vitest, Prettier, TypeScript and Vite succeed.
 
-- [ ] **Step 3: Run explicit security scans**
+- [x] **Step 3: Run explicit security scans**
 
 ```powershell
 rg "ProcessBuilder|Runtime\.getRuntime\(\)\.exec|cmd\.exe|powershell\.exe|/bin/(sh|bash)" backend/agent-artifact/src/main
@@ -989,7 +989,7 @@ rg "storageKey|rootDirectory" contracts frontend/src/domain frontend/src/api
 
 Expected: first two scans return no matches. The third may match private backend-client transport names only if they are not part of public interfaces; preferred result is no match in contracts/frontend.
 
-- [ ] **Step 4: Check dependency and repository scope**
+- [x] **Step 4: Check dependency and repository scope**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-artifact dependency:tree
@@ -999,6 +999,6 @@ git diff --check
 
 Expected: no Web/Server dependency under `agent-artifact`; no generated files, credentials, local Artifact data, `target/`, `dist/` or unrelated changes are staged; `git diff --check` is clean.
 
-- [ ] **Step 5: Record the slice boundary in the handoff**
+- [x] **Step 5: Record the slice boundary in the handoff**
 
 State explicitly that this slice proves storage → metadata → message projection → UI Block → download, but does not yet claim real DOCX/PPTX/XLSX generation. The next implementation plan must start with the Word slice: audited Python runtime resources, Linux rootless Podman Runner, Windows Restricted Token/Job Object Runner, `word-artifact` Skill, `artifact_build`/`artifact_inspect`, render-and-verify QA, then repeat the verified pattern for XLSX and PPTX.
