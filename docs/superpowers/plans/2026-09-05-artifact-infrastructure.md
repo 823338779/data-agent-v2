@@ -380,18 +380,18 @@ git commit -m "feat: add artifact sandbox contracts"
 - Create: `backend/agent-artifact/src/main/java/com/datagent/agentv2/artifact/storage/ArtifactReadHandle.java`
 - Test: `backend/agent-artifact/src/test/java/com/datagent/agentv2/artifact/storage/LocalArtifactStorageTest.java`
 
-- [ ] **Step 1: Write failing temporary-directory tests**
+- [x] **Step 1: Write failing temporary-directory tests**
 
 Cover: generated storage keys only; same-root staging; publish produces `ready/{artifactId}/output.{ext}`; existing final file is never overwritten; `..`, absolute paths, wrong extension and symlink escapes are rejected; size limit is enforced while writing; SHA-256 and size are recomputed while opening; atomic-move failure leaves no READY handle.
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-artifact -am `
   '-Dtest=LocalArtifactStorageTest' test
 ```
 
-- [ ] **Step 3: Implement the narrow storage API**
+- [x] **Step 3: Implement the narrow storage API**
 
 ```java
 public interface ArtifactStorage {
@@ -405,7 +405,7 @@ public interface ArtifactStorage {
 
 Resolve with `root.resolve(relative).normalize()` and require `candidate.startsWith(root)`. Reject every existing symlink component with `Files.isSymbolicLink`. Write through a counting/digest stream into `staging/{buildJobId}/output.{ext}`. Publish only using `Files.move(source, target, StandardCopyOption.ATOMIC_MOVE)` with no `REPLACE_EXISTING`. Keep display names exclusively in metadata; never use them as filesystem names.
 
-- [ ] **Step 4: Run GREEN on Windows and keep tests platform-neutral**
+- [x] **Step 4: Run GREEN on Windows and keep tests platform-neutral**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-artifact -am `
@@ -414,7 +414,7 @@ Resolve with `root.resolve(relative).normalize()` and require `candidate.startsW
 
 Expected: all storage checks pass without requiring Python, LibreOffice, Podman or native Windows launchers.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add backend/agent-artifact/src/main/java/com/datagent/agentv2/artifact/storage `

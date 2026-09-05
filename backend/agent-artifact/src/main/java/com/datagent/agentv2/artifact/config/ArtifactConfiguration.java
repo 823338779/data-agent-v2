@@ -4,6 +4,9 @@ import com.datagent.agentv2.artifact.sandbox.ArtifactSandboxRunner;
 import com.datagent.agentv2.artifact.sandbox.ArtifactSandboxSelector;
 import com.datagent.agentv2.artifact.sandbox.ArtifactStartupValidator;
 import com.datagent.agentv2.artifact.sandbox.OperatingSystemDetector;
+import com.datagent.agentv2.artifact.storage.ArtifactStorage;
+import com.datagent.agentv2.artifact.storage.LocalArtifactStorage;
+import java.io.IOException;
 import java.util.List;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -24,6 +27,11 @@ public class ArtifactConfiguration {
     ArtifactSandboxSelector artifactSandboxSelector(
             OperatingSystemDetector detector, List<ArtifactSandboxRunner> runners) {
         return new ArtifactSandboxSelector(detector, runners);
+    }
+
+    @Bean
+    ArtifactStorage artifactStorage(ArtifactProperties properties) throws IOException {
+        return new LocalArtifactStorage(properties);
     }
 
     @Bean
