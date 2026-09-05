@@ -233,18 +233,19 @@ git commit -m "feat: add artifact persistence schema"
 - Create: `backend/agent-persistence/src/main/java/com/datagent/agentv2/persistence/mapping/ArtifactPersistenceMapper.java`
 - Test: `backend/agent-persistence/src/test/java/com/datagent/agentv2/persistence/service/artifact/ArtifactPersistenceServiceTest.java`
 
-- [ ] **Step 1: Write failing service tests against mocked BaseMapper dependencies**
+- [x] **Step 1: Write failing persistence service tests**
 
-Cover: batch relations by message IDs preserve `display_order`; Artifact lookup uses one `IN` query; UI Block batch query uses one `IN` query; cross-tenant behavior relies on the existing tenant interceptor; interrupted non-terminal jobs transition only from the five active states.
+Use a real PostgreSQL/MyBatis-Plus test context because `ServiceImpl.lambdaQuery()` requires Mapper proxy metadata that a plain Mockito Mapper does not provide. Cover: batch relations by message IDs preserve `display_order`; UI Block batch query uses the same tenant boundary; empty collections do not query; interrupted non-terminal jobs transition only from the four active states.
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-persistence -am `
+  '-Dsurefire.failIfNoSpecifiedTests=false' `
   '-Dtest=ArtifactPersistenceServiceTest' test
 ```
 
-- [ ] **Step 3: Implement entities, BaseMapper and ServiceImpl classes**
+- [x] **Step 3: Implement entities, BaseMapper and ServiceImpl classes**
 
 Use `@TableName(autoResultMap = true)`, `@Getter`, `@Setter`, `@NoArgsConstructor(access = AccessLevel.PROTECTED)` and existing `TenantAuditedEntity`. JSONB fields use the project `JsonbStringTypeHandler`. Example batch method:
 
@@ -262,7 +263,7 @@ public List<ConversationMessageArtifactEntity> listByMessageIds(Collection<Strin
 
 Do not add custom XML. Use a Spring component-model MapStruct mapper for isomorphic fields; explicitly map enum string fields and JSON payload/specification.
 
-- [ ] **Step 4: Run persistence tests and formatting**
+- [x] **Step 4: Run persistence tests and formatting**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-persistence -am `
@@ -272,7 +273,7 @@ Do not add custom XML. Use a Spring component-model MapStruct mapper for isomorp
 
 Expected: tests pass; no mapper is accessed outside `agent-persistence`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add backend/agent-persistence
