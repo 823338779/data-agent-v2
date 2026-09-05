@@ -44,6 +44,17 @@ data-agent:
       working-directory: ${DATA_AGENT_MODEL_CODEX_WORKING_DIRECTORY:}
   execution:
     deadline: ${DATA_AGENT_EXECUTION_DEADLINE:10m}
+  artifact:
+    # 首个基础设施切片默认关闭；启用后必须存在当前系统对应的唯一健康沙箱 Runner。
+    enabled: ${DATA_AGENT_ARTIFACT_ENABLED:false}
+    root-directory: ${DATA_AGENT_ARTIFACT_ROOT:./data/artifacts}
+    max-concurrent-builds: ${DATA_AGENT_ARTIFACT_MAX_CONCURRENT_BUILDS:1}
+    max-build-duration: ${DATA_AGENT_ARTIFACT_MAX_BUILD_DURATION:180s}
+    max-build-attempts-per-execution: ${DATA_AGENT_ARTIFACT_MAX_ATTEMPTS:3}
+    max-input-bytes: ${DATA_AGENT_ARTIFACT_MAX_INPUT_BYTES:20971520}
+    max-output-bytes: ${DATA_AGENT_ARTIFACT_MAX_OUTPUT_BYTES:52428800}
+    min-free-disk-bytes: ${DATA_AGENT_ARTIFACT_MIN_FREE_DISK_BYTES:1073741824}
+    staging-retention: ${DATA_AGENT_ARTIFACT_STAGING_RETENTION:24h}
   workflow:
     # 未配置真实 StarRocks 与语义目录前保持关闭；启用后连接或语义不一致会在启动期失败。
     enabled: ${DATA_AGENT_WORKFLOW_ENABLED:false}

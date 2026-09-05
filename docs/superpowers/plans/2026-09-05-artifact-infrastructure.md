@@ -322,17 +322,17 @@ public record SandboxRunRequest(
 
 `fixedEntrypoint` is an application enum-backed identifier such as `word/build`, never a command or path supplied by the model. Before later production use, replace it with a dedicated enum if more than three values appear.
 
-- [ ] **Step 1: Write RED tests for platform selection and fail-closed behavior**
+- [x] **Step 1: Write RED tests for platform selection and fail-closed behavior**
 
 Cover `Linux`, `Windows 11`, case/whitespace; reject macOS/unknown; reject zero or two matching runners; reject unhealthy probe; do not probe or require a runner when feature is disabled; choose exactly one healthy current-platform runner.
 
-- [ ] **Step 2: Run and confirm RED because the Module is absent**
+- [x] **Step 2: Run and confirm RED because the Module is absent**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-artifact test
 ```
 
-- [ ] **Step 3: Add the Module and strict properties**
+- [x] **Step 3: Add the Module and strict properties**
 
 Defaults:
 
@@ -352,7 +352,7 @@ data-agent:
 
 Use `@ConfigurationProperties("data-agent.artifact")` with Bean Validation: positive sizes/durations, max attempts 1–3, and a non-null root. Do not add `unsafe`, `none`, arbitrary command, network, image, or launcher arguments.
 
-- [ ] **Step 4: Implement selector/startup validator and run GREEN**
+- [x] **Step 4: Implement selector/startup validator and run GREEN**
 
 `ArtifactStartupValidator` runs only when enabled, validates the storage root and invokes `ArtifactSandboxSelector.requireHealthyRunner()`. Its exception must name the platform and stable reason but must not include credentials, environment dumps or paths outside the configured root.
 
@@ -361,7 +361,7 @@ Use `@ConfigurationProperties("data-agent.artifact")` with Bean Validation: posi
   '-Dtest=OperatingSystemDetectorTest,ArtifactSandboxSelectorTest' test
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add backend/pom.xml backend/agent-artifact backend/agent-server/src/main/resources/application-business.yml
