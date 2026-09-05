@@ -858,7 +858,7 @@ Set-Location ..
 
 Expected: all Vitest tests pass; TypeScript and Vite production build succeed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add frontend/src
@@ -873,22 +873,22 @@ git commit -m "feat: add downloadable artifact cards"
 - Create: `backend/agent-artifact/src/main/java/com/datagent/agentv2/artifact/recovery/ArtifactRecoveryRunner.java`
 - Test: `backend/agent-artifact/src/test/java/com/datagent/agentv2/artifact/recovery/ArtifactRecoveryRunnerTest.java`
 
-- [ ] **Step 1: Write RED recovery tests**
+- [x] **Step 1: Write RED recovery tests**
 
 Assert runner is absent when feature disabled; when enabled, startup changes only `PREPARED/RUNNING/RENDERING/VERIFYING` jobs to `FAILED` with `PROCESS_RESTARTED`, leaves terminal rows unchanged, and deletes only staging directories older than configured retention. A storage cleanup failure is logged/observed and does not delete database metadata.
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-artifact -am `
   '-Dtest=ArtifactRecoveryRunnerTest' test
 ```
 
-- [ ] **Step 3: Implement conditional startup recovery**
+- [x] **Step 3: Implement conditional startup recovery**
 
 Use `ApplicationRunner` plus `@ConditionalOnProperty(prefix = "data-agent.artifact", name = "enabled", havingValue = "true")`. Persist failure status through `ArtifactBuildJobService` before storage cleanup. Emit only counts, durations and stable codes to logs/metrics; do not log specs, paths or filenames.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-artifact -am `
