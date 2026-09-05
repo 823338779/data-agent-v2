@@ -486,7 +486,7 @@ The download query must join through the message relation and verify the related
   '-Dtest=ArtifactQueryServiceTest,ArtifactPersistenceServiceTest' test
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add backend/agent-artifact/src/main/java/com/datagent/agentv2/artifact/application `
@@ -505,18 +505,18 @@ git commit -m "feat: query artifact message projections"
 - Create: `backend/agent-artifact/src/test/java/com/datagent/agentv2/artifact/application/ArtifactPublicationServiceTest.java`
 - Modify if needed: `backend/agent-persistence/src/main/java/com/datagent/agentv2/persistence/service/ConversationMessageService.java`
 
-- [ ] **Step 1: Write RED tests for transaction ordering and compensation**
+- [x] **Step 1: Write RED tests for transaction ordering and compensation**
 
 Cover: only a completed staged file can publish; storage move happens before READY metadata; transaction inserts Artifact, relation and `artifact-card@1` UI Block; assistant message is locked by execution ID and touched through existing optimistic update; event is published with the new version; duplicate artifact/job publication is rejected; DB failure after move invokes exact-final-file cleanup and never returns success.
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-artifact -am `
   '-Dtest=ArtifactPublicationServiceTest' test
 ```
 
-- [ ] **Step 3: Implement publication with a narrow internal request**
+- [x] **Step 3: Implement publication with a narrow internal request**
 
 ```java
 public record ArtifactPublicationRequest(
@@ -532,7 +532,7 @@ public record ArtifactPublicationRequest(
 
 The service derives all IDs with `IdGenerator`, sanitizes `displayName` to a basename with the expected extension, and creates UI payload containing only `artifactId`. Use `@Transactional` for database writes and event publication. If the transaction callback throws after the move, delete only the exact `ready/{newArtifactId}` path returned by `StoredArtifact`; never accept a caller-computed cleanup path.
 
-- [ ] **Step 4: Run GREEN and verify no Web dependency**
+- [x] **Step 4: Run GREEN and verify no Web dependency**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-artifact -am `
