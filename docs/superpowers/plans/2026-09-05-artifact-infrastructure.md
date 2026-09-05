@@ -908,7 +908,7 @@ git commit -m "feat: recover interrupted artifact work"
 - Create: `backend/agent-server/src/test/java/com/datagent/agentv2/artifact/FakeArtifactSandboxRunner.java`
 - Modify: `backend/agent-server/src/test/java/com/datagent/agentv2/server/ModuleBoundaryTest.java`
 
-- [ ] **Step 1: Write RED end-to-end and context tests**
+- [x] **Step 1: Write RED end-to-end and context tests**
 
 `ArtifactDeliveryIntegrationTest` uses PostgreSQL Testcontainers and a temporary artifact root. Arrange a session/execution/assistant placeholder, create deterministic fixture bytes through `ArtifactStorage.createStaging`, publish them, then assert:
 
@@ -920,7 +920,7 @@ git commit -m "feat: recover interrupted artifact work"
 
 `ArtifactStartupIntegrationTest` creates minimal `ApplicationContextRunner` contexts: disabled/no runner succeeds; enabled/no runner fails; enabled/unhealthy Fake fails; enabled/healthy current-platform Fake succeeds.
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am `
@@ -928,7 +928,7 @@ git commit -m "feat: recover interrupted artifact work"
   '-Dtest=ArtifactDeliveryIntegrationTest,ArtifactStartupIntegrationTest,ModuleBoundaryTest' test
 ```
 
-- [ ] **Step 3: Complete only the missing wiring exposed by the tests**
+- [x] **Step 3: Complete only the missing wiring exposed by the tests**
 
 Add `agent-artifact` after `agent-skill` in the reactor and as a direct dependency of `agent-web`; keep `agent-server` as the only executable. Register properties without narrowing `@ConfigurationPropertiesScan`; prefer `@EnableConfigurationProperties(ArtifactProperties.class)` in Artifact configuration. Update module boundary assertions:
 
@@ -937,7 +937,7 @@ Add `agent-artifact` after `agent-skill` in the reactor and as a direct dependen
 - `agent-web` may depend on `agent-artifact`;
 - only `agent-persistence` may contain Artifact Mapper/MyBatis imports.
 
-- [ ] **Step 4: Run the full relevant backend verification**
+- [x] **Step 4: Run the full relevant backend verification**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-domain,agent-persistence,agent-artifact,agent-web,agent-server -am test
@@ -946,7 +946,7 @@ Add `agent-artifact` after `agent-skill` in the reactor and as a direct dependen
 
 Expected: all selected reactor tests and Spotless checks pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add backend

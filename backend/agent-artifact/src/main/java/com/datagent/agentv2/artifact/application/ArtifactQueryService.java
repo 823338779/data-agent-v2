@@ -47,16 +47,6 @@ public final class ArtifactQueryService {
         this.storage = storage;
     }
 
-    /** 测试批量投影时不需要打开文件存储。 */
-    ArtifactQueryService(
-            ConversationMessageArtifactService relations,
-            ArtifactObjectService objects,
-            MessageUiBlockService blocks,
-            ConversationMessageService messages,
-            ArtifactJsonDocumentCodec json) {
-        this(relations, objects, blocks, messages, json, null);
-    }
-
     public Map<String, MessageArtifactBundle> findByMessageIds(
             String sessionId, Collection<String> messageIds) {
         List<String> ids = List.copyOf(messageIds);
@@ -71,14 +61,19 @@ public final class ArtifactQueryService {
                         .toList();
         Map<String, ArtifactObjectEntity> byArtifact =
                 objects.listByArtifactIds(artifactIds).stream()
-                        .collect(Collectors.toMap(ArtifactObjectEntity::getArtifactId, Function.identity()));
+                        .collect(
+                                Collectors.toMap(
+                                        ArtifactObjectEntity::getArtifactId, Function.identity()));
         Map<String, List<ArtifactProjection>> artifactsByMessage = new HashMap<>();
         relationRows.forEach(
                 relation -> {
                     ArtifactObjectEntity artifact = byArtifact.get(relation.getArtifactId());
-                    if (artifact != null && ArtifactStatus.READY.name().equals(artifact.getStatus())) {
+                    if (artifact != null
+                            && ArtifactStatus.READY.name().equals(artifact.getStatus())) {
                         artifactsByMessage
-                                .computeIfAbsent(relation.getConversationMessageId(), ignored -> new java.util.ArrayList<>())
+                                .computeIfAbsent(
+                                        relation.getConversationMessageId(),
+                                        ignored -> new java.util.ArrayList<>())
                                 .add(toProjection(sessionId, artifact));
                     }
                 });
@@ -99,7 +94,8 @@ public final class ArtifactQueryService {
                                 Collectors.groupingBy(
                                         Map.Entry::getKey,
                                         LinkedHashMap::new,
-                                        Collectors.mapping(Map.Entry::getValue, Collectors.toList())));
+                                        Collectors.mapping(
+                                                Map.Entry::getValue, Collectors.toList())));
         Map<String, MessageArtifactBundle> result = new LinkedHashMap<>();
         ids.forEach(
                 id ->
@@ -118,7 +114,10 @@ public final class ArtifactQueryService {
         }
         boolean belongs =
                 relations.listByArtifactId(artifactId).stream()
-                        .map(row -> messages.findByConversationMessageId(row.getConversationMessageId()))
+                        .map(
+                                row ->
+                                        messages.findByConversationMessageId(
+                                                row.getConversationMessageId()))
                         .filter(java.util.Objects::nonNull)
                         .map(ConversationMessage::getConversationSessionId)
                         .anyMatch(sessionId::equals);

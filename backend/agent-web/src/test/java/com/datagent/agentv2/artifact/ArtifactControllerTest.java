@@ -2,9 +2,11 @@ package com.datagent.agentv2.artifact;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.datagent.agentv2.artifact.application.ArtifactDownload;
@@ -15,6 +17,7 @@ import java.io.ByteArrayInputStream;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class ArtifactControllerTest {
@@ -40,19 +43,19 @@ class ArtifactControllerTest {
                                         digest,
                                         "ready/artifact-1/output.docx",
                                         storage)));
-        MockMvc mvc =
-                MockMvcBuilders.standaloneSetup(new ArtifactController(artifacts)).build();
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new ArtifactController(artifacts)).build();
 
-        mvc.perform(
-                        get(
-                                "/api/v1/agent-sessions/session-1/artifacts/artifact-1/content"))
+        MvcResult response =
+                mvc.perform(get("/api/v1/agent-sessions/session-1/artifacts/artifact-1/content"))
+                        .andExpect(request().asyncStarted())
+                        .andReturn();
+        mvc.perform(asyncDispatch(response))
                 .andExpect(status().isOk())
                 .andExpect(content().bytes(bytes))
                 .andExpect(header().string("Content-Length", "3"))
                 .andExpect(header().string("ETag", '"' + digest + '"'))
                 .andExpect(
-                        header()
-                                .string(
+                        header().string(
                                         "Content-Disposition",
                                         org.hamcrest.Matchers.containsString(
                                                 "filename*=UTF-8''%E6%8A%A5%E5%91%8A.docx")));
@@ -61,14 +64,10 @@ class ArtifactControllerTest {
     @Test
     void hidesMissingOrCrossSessionArtifact() throws Exception {
         ArtifactQueryService artifacts = mock(ArtifactQueryService.class);
-        when(artifacts.findDownload("session-2", "artifact-1"))
-                .thenReturn(Optional.empty());
-        MockMvc mvc =
-                MockMvcBuilders.standaloneSetup(new ArtifactController(artifacts)).build();
+        when(artifacts.findDownload("session-2", "artifact-1")).thenReturn(Optional.empty());
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new ArtifactController(artifacts)).build();
 
-        mvc.perform(
-                        get(
-                                "/api/v1/agent-sessions/session-2/artifacts/artifact-1/content"))
+        mvc.perform(get("/api/v1/agent-sessions/session-2/artifacts/artifact-1/content"))
                 .andExpect(status().isNotFound());
     }
 }

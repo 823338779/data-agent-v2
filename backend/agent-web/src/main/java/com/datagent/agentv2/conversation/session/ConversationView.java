@@ -1,9 +1,9 @@
 package com.datagent.agentv2.conversation.session;
 
-import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.artifact.application.ArtifactProjection;
 import com.datagent.agentv2.artifact.application.MessageArtifactBundle;
 import com.datagent.agentv2.artifact.application.MessageUiBlockProjection;
+import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;

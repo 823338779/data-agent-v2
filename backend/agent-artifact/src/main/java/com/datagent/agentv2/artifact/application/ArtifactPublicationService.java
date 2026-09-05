@@ -29,7 +29,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /** 将已验证的 staging 文件原子发布，并在同一数据库事务中关联 assistant 消息。 */
 @Service
 @Slf4j
-public final class ArtifactPublicationService {
+public class ArtifactPublicationService {
 
     private final ArtifactStorage storage;
     private final ArtifactObjectService objects;
@@ -60,16 +60,19 @@ public final class ArtifactPublicationService {
     }
 
     @Transactional
-    public ArtifactPublicationResult publish(ArtifactPublicationRequest request) throws IOException {
+    public ArtifactPublicationResult publish(ArtifactPublicationRequest request)
+            throws IOException {
         String artifactId = ids.next("artifact");
         String uiBlockId = ids.next("ui_block");
         StoredArtifact stored = storage.publish(artifactId, request.stagedArtifact());
         AtomicBoolean cleaned = new AtomicBoolean();
         registerRollbackCleanup(stored, cleaned);
         try {
-            ConversationMessage message = messages.lockAssistantByExecutionId(request.executionId());
+            ConversationMessage message =
+                    messages.lockAssistantByExecutionId(request.executionId());
             if (message == null) {
-                throw new IllegalStateException("assistant message is unavailable for artifact publication");
+                throw new IllegalStateException(
+                        "assistant message is unavailable for artifact publication");
             }
             ArtifactObjectEntity artifact = new ArtifactObjectEntity();
             artifact.setArtifactId(artifactId);
@@ -78,7 +81,8 @@ public final class ArtifactPublicationService {
             artifact.setSpecificationVersion(request.specificationVersion());
             artifact.setArtifactType(request.artifactType().name());
             artifact.setStatus(ArtifactStatus.READY.name());
-            artifact.setDisplayName(safeDisplayName(request.displayName(), request.artifactType().extension()));
+            artifact.setDisplayName(
+                    safeDisplayName(request.displayName(), request.artifactType().extension()));
             artifact.setMediaType(request.artifactType().mediaType());
             artifact.setStorageKey(stored.storageKey());
             artifact.setSizeBytes(stored.sizeBytes());
@@ -105,7 +109,9 @@ public final class ArtifactPublicationService {
 
             String marker = "<agent-ui block-id=\"" + uiBlockId + "\"></agent-ui>";
             message.completeAssistantContent(
-                    message.getContent().isBlank() ? marker : message.getContent() + "\n\n" + marker);
+                    message.getContent().isBlank()
+                            ? marker
+                            : message.getContent() + "\n\n" + marker);
             requireSaved(messages.updateById(message));
             events.publishEvent(
                     new ConversationMessageChanged(
@@ -120,9 +126,7 @@ public final class ArtifactPublicationService {
         }
     }
 
-    /**
-     * 文件移动发生在数据库提交之前，因此必须覆盖提交阶段失败，而不仅是方法体内异常；回调只持有服务端返回的精确正式文件句柄。
-     */
+    /** 文件移动发生在数据库提交之前，因此必须覆盖提交阶段失败，而不仅是方法体内异常；回调只持有服务端返回的精确正式文件句柄。 */
     private void registerRollbackCleanup(StoredArtifact stored, AtomicBoolean cleaned) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
             return;
@@ -135,7 +139,9 @@ public final class ArtifactPublicationService {
                             try {
                                 storage.deletePublished(stored);
                             } catch (IOException failure) {
-                                log.error("Artifact rollback cleanup failed: code=FINAL_FILE_DELETE_FAILED", failure);
+                                log.error(
+                                        "Artifact rollback cleanup failed: code=FINAL_FILE_DELETE_FAILED",
+                                        failure);
                             }
                         }
                     }

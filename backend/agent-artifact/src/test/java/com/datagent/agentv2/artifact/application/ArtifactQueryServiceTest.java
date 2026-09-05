@@ -21,7 +21,8 @@ class ArtifactQueryServiceTest {
 
     @Test
     void assemblesMessageArtifactsWithThreeBulkQueries() {
-        ConversationMessageArtifactService relations = mock(ConversationMessageArtifactService.class);
+        ConversationMessageArtifactService relations =
+                mock(ConversationMessageArtifactService.class);
         ArtifactObjectService objects = mock(ArtifactObjectService.class);
         MessageUiBlockService blocks = mock(MessageUiBlockService.class);
         ConversationMessageService messages = mock(ConversationMessageService.class);
@@ -55,14 +56,14 @@ class ArtifactQueryServiceTest {
                         objects,
                         blocks,
                         messages,
-                        new ArtifactJsonDocumentCodec());
+                        new ArtifactJsonDocumentCodec(),
+                        mock(com.datagent.agentv2.artifact.storage.ArtifactStorage.class));
 
         Map<String, MessageArtifactBundle> result =
                 service.findByMessageIds("session-1", List.of("message-1", "message-2"));
 
         assertThat(result.get("message-1").artifacts().getFirst().downloadUrl())
-                .isEqualTo(
-                        "/api/v1/agent-sessions/session-1/artifacts/artifact-1/content");
+                .isEqualTo("/api/v1/agent-sessions/session-1/artifacts/artifact-1/content");
         assertThat(result.get("message-1").uiBlocks()).hasSize(1);
         assertThat(result.get("message-2")).isEqualTo(MessageArtifactBundle.empty());
         verify(relations).listByMessageIds(List.of("message-1", "message-2"));

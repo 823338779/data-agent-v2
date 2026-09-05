@@ -36,12 +36,14 @@ class ArtifactPublicationServiceTest {
         StagedArtifact staged = storage.createStaging("job-1", ArtifactType.DOCX);
         storage.write(staged, new ByteArrayInputStream(new byte[] {1, 2, 3}));
         ArtifactObjectService objects = mock(ArtifactObjectService.class);
-        ConversationMessageArtifactService relations = mock(ConversationMessageArtifactService.class);
+        ConversationMessageArtifactService relations =
+                mock(ConversationMessageArtifactService.class);
         MessageUiBlockService blocks = mock(MessageUiBlockService.class);
         ConversationMessageService messages = mock(ConversationMessageService.class);
         ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
         ConversationMessage message =
-                ConversationMessage.assistantPlaceholder("message-1", "session-1", "execution-1", 2);
+                ConversationMessage.assistantPlaceholder(
+                        "message-1", "session-1", "execution-1", 2);
         when(messages.lockAssistantByExecutionId("execution-1")).thenReturn(message);
         when(messages.updateById(message)).thenReturn(true);
         when(objects.save(any())).thenReturn(true);
@@ -66,7 +68,10 @@ class ArtifactPublicationServiceTest {
                                 "execution-1",
                                 ArtifactType.DOCX,
                                 "report.docx",
-                                JsonMapper.builder().build().createObjectNode().put("title", "Report"),
+                                JsonMapper.builder()
+                                        .build()
+                                        .createObjectNode()
+                                        .put("title", "Report"),
                                 1,
                                 1,
                                 staged));

@@ -23,12 +23,16 @@ class ModuleBoundaryTest {
             "classpath*:com/datagent/agentv2/context/lsm/**/*.class";
     private static final String PERSISTENCE_CLASS_PATTERN =
             "classpath*:com/datagent/agentv2/persistence/**/*.class";
+    private static final String ARTIFACT_CLASS_PATTERN =
+            "classpath*:com/datagent/agentv2/artifact/**/*.class";
     private static final String LSM_PACKAGE_REFERENCE = "com/datagent/agentv2/context/lsm/";
     private static final List<String> LSM_FORBIDDEN_REFERENCES =
             List.of(
                     "com/datagent/agentv2/conversation/react/",
                     "com/datagent/agentv2/conversation/model/",
                     "com/datagent/agentv2/server/");
+    private static final List<String> ARTIFACT_FORBIDDEN_REFERENCES =
+            List.of("com/datagent/agentv2/controller/", "com/datagent/agentv2/server/");
 
     @Test
     void onlyServerDeclaresASpringBootApplication() {
@@ -109,6 +113,26 @@ class ModuleBoundaryTest {
             }
         }
 
+        assertThat(resources).isNotEmpty();
+        assertThat(violations).isEmpty();
+    }
+
+    @Test
+    void artifactModuleDoesNotReferenceWebOrServerImplementations() throws Exception {
+        var resources =
+                new PathMatchingResourcePatternResolver().getResources(ARTIFACT_CLASS_PATTERN);
+        List<String> violations = new ArrayList<>();
+        for (var resource : resources) {
+            String classBytes;
+            try (InputStream input = resource.getInputStream()) {
+                classBytes = new String(input.readAllBytes(), StandardCharsets.ISO_8859_1);
+            }
+            for (String forbiddenReference : ARTIFACT_FORBIDDEN_REFERENCES) {
+                if (classBytes.contains(forbiddenReference)) {
+                    violations.add(resource.getFilename() + " -> " + forbiddenReference);
+                }
+            }
+        }
         assertThat(resources).isNotEmpty();
         assertThat(violations).isEmpty();
     }

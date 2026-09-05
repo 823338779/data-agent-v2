@@ -68,9 +68,11 @@ class ConversationViewCompositionTest {
         assertThat(summary.tag()).isEmpty();
         assertThat(summary.status()).isEqualTo(SessionExecutionStatus.RUNNING);
         assertThat(messageView.version()).isZero();
-        assertThat(messageView.artifacts()).extracting(ArtifactProjection::artifactId)
+        assertThat(messageView.artifacts())
+                .extracting(ArtifactProjection::artifactId)
                 .containsExactly("artifact-1");
-        assertThat(messageView.uiBlocks()).extracting(MessageUiBlockProjection::blockId)
+        assertThat(messageView.uiBlocks())
+                .extracting(MessageUiBlockProjection::blockId)
                 .containsExactly("block-1");
         assertThat(executionView.progress()).isEqualTo(70);
         assertThat(executionView.streamCheckpoint().answer()).isEqualTo("answer");
