@@ -172,20 +172,21 @@ git commit -m "feat: add artifact domain contracts"
 - `conversation_message_artifact`：消息与 Artifact 关联、展示顺序；同一消息同一 Artifact 唯一。
 - `message_ui_block`：消息、block ID、type、schema version、variant、payload JSONB、展示顺序；block ID 全局唯一。
 
-- [ ] **Step 1: Write a PostgreSQL Testcontainers migration test before adding V4**
+- [x] **Step 1: Write a PostgreSQL Testcontainers migration test before adding V4**
 
 The test must query `information_schema.columns`, `pg_constraint`, `pg_indexes` and `pg_description`. Assert all four tables, tenant/session/message indexes, unique business IDs, positive size/count checks, status checks, foreign keys, and non-empty Chinese comments on every business column.
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-persistence -am `
+  '-Dsurefire.failIfNoSpecifiedTests=false' `
   '-Dtest=ArtifactSchemaMigrationTest' test
 ```
 
 Expected: test fails because V4 and the four tables are absent.
 
-- [ ] **Step 3: Create V4 with explicit checks and indexes**
+- [x] **Step 3: Create V4 with explicit checks and indexes**
 
 Representative constraints:
 
@@ -200,16 +201,17 @@ constraint uk_message_ui_block_id unique (tenant_id, ui_block_id)
 
 Use `comment on table` and `comment on column` for tables, business keys, tenant/audit/version/soft-delete fields. Foreign keys must bind tenant-owned session, execution, message and Artifact rows without introducing cascade deletion of formal files.
 
-- [ ] **Step 4: Run migration and existing schema tests for GREEN**
+- [x] **Step 4: Run migration and existing schema tests for GREEN**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-persistence -am `
+  '-Dsurefire.failIfNoSpecifiedTests=false' `
   '-Dtest=ArtifactSchemaMigrationTest,ConversationExecutionSchemaMigrationTest' test
 ```
 
 Expected: both migration suites pass on PostgreSQL.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add backend/agent-persistence/src/main/resources/db/migration/V4__add_artifact_delivery_foundation.sql `
