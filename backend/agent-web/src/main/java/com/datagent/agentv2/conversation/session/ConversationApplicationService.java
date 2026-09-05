@@ -6,6 +6,8 @@ import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERR
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_CONVERSATION_SESSION_NOT_FOUND;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_CONVERSATION_SESSION;
 
+import com.datagent.agentv2.artifact.application.ArtifactQueryService;
+import com.datagent.agentv2.artifact.application.MessageArtifactBundle;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
@@ -46,6 +48,7 @@ public class ConversationApplicationService {
     private final AgentExecutionStreamCheckpointService agentExecutionStreamCheckpointService;
     private final AgentExecutionSubmissionService agentExecutionSubmissionService;
     private final IdGenerator idGenerator;
+    private final ArtifactQueryService artifactQueryService;
 
     @Transactional
     public ConversationView create(String title, String tag) {
@@ -183,14 +186,18 @@ public class ConversationApplicationService {
         // 同一批查询读取各活跃会话最新 assistant，用消息 ID/version 驱动跨实例全量替换。
         Map<String, ConversationView.MessageView> assistantMessagesBySession =
                 new LinkedHashMap<>();
-        conversationMessageService
-                .findAssistantsByConversationSessionIds(conversationSessionIds)
+        List<ConversationMessage> assistantMessages =
+                conversationMessageService.findAssistantsByConversationSessionIds(
+                        conversationSessionIds);
+        assistantMessages.stream()
+                .collect(Collectors.groupingBy(ConversationMessage::getConversationSessionId))
                 .forEach(
-                        message ->
-                                assistantMessagesBySession.put(
-                                        message.getConversationSessionId(),
-                                        ConversationView.MessageView.composeFromMessage(
-                                                message, null)));
+                        (sessionId, sessionMessages) ->
+                                composeMessageViews(sessionId, sessionMessages, Map.of())
+                                        .forEach(
+                                                message ->
+                                                        assistantMessagesBySession.put(
+                                                                sessionId, message)));
         return SessionStreamRecoveryView.composeFromReconciliation(
                 immutableEventMap(eventsBySession),
                 Map.copyOf(snapshotsBySession),
@@ -221,12 +228,10 @@ public class ConversationApplicationService {
                     HttpStatus.NOT_FOUND, ERROR_AGENT_EXECUTION_NOT_FOUND);
         }
         List<ConversationView.MessageView> relatedMessages =
-                conversationMessageService.findByExecutionId(run.getExecutionId()).stream()
-                        .map(
-                                message ->
-                                        ConversationView.MessageView.composeFromMessage(
-                                                message, null))
-                        .toList();
+                composeMessageViews(
+                        run.getConversationSessionId(),
+                        conversationMessageService.findByExecutionId(run.getExecutionId()),
+                        Map.of());
         String objective =
                 relatedMessages.stream()
                         .filter(
@@ -253,7 +258,7 @@ public class ConversationApplicationService {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, ERROR_CONVERSATION_SESSION_NOT_FOUND);
         }
-        return ConversationView.MessageView.composeFromMessage(message, null);
+        return composeMessageViews(conversationSessionId, List.of(message), Map.of()).getFirst();
     }
 
     public ConversationView submitMessage(
@@ -272,14 +277,11 @@ public class ConversationApplicationService {
                     HttpStatus.NOT_FOUND, ERROR_AGENT_EXECUTION_NOT_FOUND);
         }
         List<ConversationView.MessageView> messageViews =
-                conversationMessageService
-                        .findByConversationSessionId(conversationSessionId)
-                        .stream()
-                        .map(
-                                message ->
-                                        ConversationView.MessageView.composeFromMessage(
-                                                message, null))
-                        .toList();
+                composeMessageViews(
+                        conversationSessionId,
+                        conversationMessageService.findByConversationSessionId(
+                                conversationSessionId),
+                        Map.of());
         return executionView(run, messageViews);
     }
 
@@ -297,13 +299,11 @@ public class ConversationApplicationService {
         List<ConversationMessage> messageEntities =
                 conversationMessageService.findByConversationSessionId(
                         session.getConversationSessionId());
+        Map<String, MessageArtifactBundle> artifactBundles =
+                artifactQueryService.findByMessageIds(
+                        session.getConversationSessionId(), messageIds(messageEntities));
         List<ConversationView.MessageView> baseMessageViews =
-                messageEntities.stream()
-                        .map(
-                                message ->
-                                        ConversationView.MessageView.composeFromMessage(
-                                                message, null))
-                        .toList();
+                composeMessageViews(messageEntities, Map.of(), artifactBundles);
         List<AgentExecution> executionEntities =
                 agentExecutionService.findByConversationSessionIdOrderByCreatedAtDesc(
                         session.getConversationSessionId());
@@ -318,16 +318,7 @@ public class ConversationApplicationService {
                                         Function.identity(),
                                         (first, ignored) -> first));
         List<ConversationView.MessageView> messageViews =
-                messageEntities.stream()
-                        .map(
-                                message ->
-                                        ConversationView.MessageView.composeFromMessage(
-                                                message,
-                                                message.getRole() == MessageRole.ASSISTANT
-                                                        ? executionViewsById.get(
-                                                                message.getExecutionId())
-                                                        : null))
-                        .toList();
+                composeMessageViews(messageEntities, executionViewsById, artifactBundles);
         ConversationView.AgentExecutionView latestAgentExecutionView =
                 executionEntities.isEmpty()
                         ? null
@@ -357,6 +348,38 @@ public class ConversationApplicationService {
                         .orElse(EMPTY_TEXT);
         return ConversationView.AgentExecutionView.composeFromExecution(
                 run, objective, eventViews, stream);
+    }
+
+    /** 每个会话先批量读取一次附件，避免消息数量增长时产生 N+1 查询。 */
+    private List<ConversationView.MessageView> composeMessageViews(
+            String sessionId,
+            List<ConversationMessage> messages,
+            Map<String, ConversationView.AgentExecutionView> executionsById) {
+        Map<String, MessageArtifactBundle> bundles =
+                artifactQueryService.findByMessageIds(sessionId, messageIds(messages));
+        return composeMessageViews(messages, executionsById, bundles);
+    }
+
+    private static List<ConversationView.MessageView> composeMessageViews(
+            List<ConversationMessage> messages,
+            Map<String, ConversationView.AgentExecutionView> executionsById,
+            Map<String, MessageArtifactBundle> artifactBundles) {
+        return messages.stream()
+                .map(
+                        message ->
+                                ConversationView.MessageView.composeFromMessage(
+                                        message,
+                                        message.getRole() == MessageRole.ASSISTANT
+                                                ? executionsById.get(message.getExecutionId())
+                                                : null,
+                                        artifactBundles.getOrDefault(
+                                                message.getConversationMessageId(),
+                                                MessageArtifactBundle.empty())))
+                .toList();
+    }
+
+    private static List<String> messageIds(List<ConversationMessage> messages) {
+        return messages.stream().map(ConversationMessage::getConversationMessageId).toList();
     }
 
     private static String normalizedTitle(String title) {

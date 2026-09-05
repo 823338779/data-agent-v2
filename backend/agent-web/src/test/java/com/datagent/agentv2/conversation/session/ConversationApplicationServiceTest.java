@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.datagent.agentv2.artifact.application.ArtifactQueryService;
 import com.datagent.agentv2.conversation.domain.ConversationSession;
 import com.datagent.agentv2.conversation.execution.AgentExecutionSubmissionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
@@ -30,6 +31,7 @@ class ConversationApplicationServiceTest {
                 mock(AgentExecutionStreamCheckpointService.class);
         AgentExecutionSubmissionService submissions = mock(AgentExecutionSubmissionService.class);
         IdGenerator ids = mock(IdGenerator.class);
+        ArtifactQueryService artifacts = mock(ArtifactQueryService.class);
         LocalDateTime createdAt = LocalDateTime.parse("2026-08-22T10:00:00");
         LocalDateTime updatedAt = LocalDateTime.parse("2026-08-22T10:00:01");
         when(ids.next("conversation_session")).thenReturn("conversation-session-1");
@@ -44,7 +46,14 @@ class ConversationApplicationServiceTest {
                 .save(any(ConversationSession.class));
         ConversationApplicationService service =
                 new ConversationApplicationService(
-                        sessions, messages, executions, events, checkpoints, submissions, ids);
+                        sessions,
+                        messages,
+                        executions,
+                        events,
+                        checkpoints,
+                        submissions,
+                        ids,
+                        artifacts);
 
         ConversationView view = service.create("Test conversation", null);
 
@@ -56,6 +65,6 @@ class ConversationApplicationServiceTest {
         assertThat(view.version()).isZero();
         assertThat(view.messages()).isEmpty();
         assertThat(view.execution()).isNull();
-        verifyNoInteractions(messages, executions, events, checkpoints, submissions);
+        verifyNoInteractions(messages, executions, events, checkpoints, submissions, artifacts);
     }
 }

@@ -542,7 +542,7 @@ The service derives all IDs with `IdGenerator`, sanitizes `displayName` to a bas
 
 Expected: publication tests pass; dependency tree contains no `agent-web` or `agent-server`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add backend/agent-artifact backend/agent-persistence/src/main/java/com/datagent/agentv2/persistence/service/ConversationMessageService.java
@@ -561,18 +561,18 @@ git commit -m "feat: publish artifacts to assistant messages"
 - Test: `backend/agent-web/src/test/java/com/datagent/agentv2/conversation/session/ConversationViewCompositionTest.java`
 - Test: `backend/agent-web/src/test/java/com/datagent/agentv2/conversation/session/ConversationApplicationServiceTest.java`
 
-- [ ] **Step 1: Extend tests first**
+- [x] **Step 1: Extend tests first**
 
 Add assertions that snapshot/history/message-update views include ordered `artifacts` and `uiBlocks`, missing relations become empty lists, and fetching a session with multiple messages invokes one batch artifact lookup. Existing execution/thinking projection assertions must remain unchanged.
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-web -am `
   '-Dtest=ConversationViewCompositionTest,ConversationApplicationServiceTest' test
 ```
 
-- [ ] **Step 3: Extend `MessageView` and its semantic factory**
+- [x] **Step 3: Extend `MessageView` and its semantic factory**
 
 ```java
 public record MessageView(
@@ -597,7 +597,7 @@ public record MessageView(
 
 Keep an overload `composeFromMessage(message, execution)` delegating to `MessageArtifactBundle.empty()` only if it materially reduces test churn; production query paths must always pass the bulk-loaded bundle.
 
-- [ ] **Step 4: Batch-load once in every list/snapshot path and once in single-message path**
+- [x] **Step 4: Batch-load once in every list/snapshot path and once in single-message path**
 
 Introduce one private helper that receives all `ConversationMessage` values, calls `ArtifactQueryService.findByMessageIds(...)` once, and builds views. `messageViewById` may issue a one-message batch call. The existing after-commit `ConversationMessageChanged` listener then automatically emits the new card via `message_update`.
 
