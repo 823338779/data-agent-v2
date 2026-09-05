@@ -454,18 +454,18 @@ public record MessageArtifactBundle(
 }
 ```
 
-- [ ] **Step 1: Write a RED test proving three bulk queries, not N+1**
+- [x] **Step 1: Write a RED test proving three bulk queries, not N+1**
 
 For three message IDs, verify one call for message-artifact relations, one `IN` call for Artifact objects, and one call for UI Blocks. Assert stable order and that download URLs are server-derived as `/api/v1/agent-sessions/{sessionId}/artifacts/{artifactId}/content`.
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-artifact -am `
   '-Dtest=ArtifactQueryServiceTest' test
 ```
 
-- [ ] **Step 3: Implement batch assembly in application memory**
+- [x] **Step 3: Implement batch assembly in application memory**
 
 Expose:
 
@@ -479,7 +479,7 @@ Optional<ArtifactDownload> findDownload(
 
 The download query must join through the message relation and verify the related message belongs to the requested session. Return `Optional.empty()` for missing/wrong-session/wrong-tenant/not-READY; do not reveal which check failed. Do not expose `storageKey` through projection records.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-artifact -am `
