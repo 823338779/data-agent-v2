@@ -474,7 +474,11 @@ export default function App({ client }: AppProps) {
                             <WorkflowRunPanel workflow={active.workflow} />
                           )}
                           {visibleAssistantContent ? (
-                            <MarkdownContent content={visibleAssistantContent} />
+                            <MarkdownContent
+                              content={visibleAssistantContent}
+                              artifacts={message.artifacts}
+                              uiBlocks={message.uiBlocks}
+                            />
                           ) : isActiveAssistant && activeIsProcessing ? (
                             <RunStreamPanel
                               checkpoint={active.execution?.streamCheckpoint ?? null}

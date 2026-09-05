@@ -96,8 +96,7 @@ describe('backend agent client', () => {
                   sizeBytes: 3,
                   sha256: 'a'.repeat(64),
                   pageOrSheetCount: 1,
-                  downloadUrl:
-                    '/api/v1/agent-sessions/session_1/artifacts/artifact_1/content',
+                  downloadUrl: '/api/v1/agent-sessions/session_1/artifacts/artifact_1/content',
                 },
               ],
               uiBlocks: [

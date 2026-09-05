@@ -480,6 +480,76 @@ textarea:focus-visible {
 .markdown-content > :last-child {
   margin-bottom: 0;
 }
+
+.artifact-card {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 0.8rem 0;
+  padding: 0.8rem;
+  border: 1px solid var(--border-color, #dbe3ec);
+  border-radius: 0.75rem;
+  background: var(--surface-color, #fff);
+}
+
+.artifact-card__icon {
+  display: grid;
+  flex: 0 0 2.5rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  place-items: center;
+  border-radius: 0.6rem;
+  color: #2563eb;
+  background: #eff6ff;
+}
+
+.artifact-card__details {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.artifact-card__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-card__meta,
+.ui-block-fallback {
+  color: var(--muted-color, #64748b);
+  font-size: 0.8rem;
+}
+
+.artifact-card__download {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.55rem;
+  color: #fff !important;
+  background: #2563eb;
+  text-decoration: none;
+}
+
+.artifact-card__download:focus-visible {
+  outline: 3px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+@media (max-width: 520px) {
+  .artifact-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .artifact-card__download {
+    width: 100%;
+    justify-content: center;
+  }
+}
 .markdown-content h1,
 .markdown-content h2,
 .markdown-content h3,

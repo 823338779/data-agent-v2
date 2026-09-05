@@ -751,11 +751,11 @@ git commit -m "feat: map artifact message metadata"
 - Modify: `frontend/src/components/MarkdownContent.tsx`
 - Create: `frontend/src/components/MarkdownContent.test.tsx`
 
-- [ ] **Step 1: Write RED parser and renderer tests**
+- [x] **Step 1: Write RED parser and renderer tests**
 
 Cover exact double-quoted marker, surrounding Markdown preservation, malformed/single-quoted/extra-attribute tags staying inert, duplicate marker rendering once, missing block, unknown `type@version`, raw `<script>` text never executing, and unreferenced artifacts being appended once below Markdown.
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 ```powershell
 Set-Location .\frontend
@@ -763,7 +763,7 @@ npm.cmd test -- parseAgentUiPlaceholders.test.ts UiBlockRenderer.test.tsx Markdo
 Set-Location ..
 ```
 
-- [ ] **Step 3: Implement strict segmentation without an HTML parser**
+- [x] **Step 3: Implement strict segmentation without an HTML parser**
 
 Use a fixed scanner/regex only for this grammar:
 
@@ -785,7 +785,7 @@ const renderers: Record<string, UiBlockComponent> = {
 
 Resolve `artifact-card@1` payload only as `{ artifactId: string }`, then find the matching Artifact from the separate structured array. Payload cannot override filename, MIME, size, URL, class name or style.
 
-- [ ] **Step 4: Run GREEN and verify forbidden APIs are absent**
+- [x] **Step 4: Run GREEN and verify forbidden APIs are absent**
 
 ```powershell
 Set-Location .\frontend
@@ -796,7 +796,7 @@ Set-Location ..
 
 Expected: tests pass; `rg` returns no match and therefore exits with code 1.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add frontend/src/components
@@ -814,11 +814,11 @@ git commit -m "feat: render controlled markdown ui blocks"
 - Modify: `frontend/src/App.tsx`
 - Modify: `frontend/src/styles.css`
 
-- [ ] **Step 1: Write RED interaction tests**
+- [x] **Step 1: Write RED interaction tests**
 
 Assert DOCX/PPTX/XLSX icons and labels, localized byte size, optional page/slide/sheet count, accessible file name, `<a download>` exact href, no click-time blob buffering, missing Artifact safe fallback, and keyboard-visible download action.
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 ```powershell
 Set-Location .\frontend
@@ -826,7 +826,7 @@ npm.cmd test -- ArtifactCardBlock.test.tsx MarkdownContent.test.tsx
 Set-Location ..
 ```
 
-- [ ] **Step 3: Implement card and pass structured fields from `App.tsx`**
+- [x] **Step 3: Implement card and pass structured fields from `App.tsx`**
 
 ```tsx
 <MarkdownContent
@@ -847,7 +847,7 @@ Use `FileText`, `Presentation`, `Sheet`, `Download` from `lucide-react`. The act
 
 Do not use `fetch(...).blob()` or `URL.createObjectURL`. Apply existing color, spacing, focus and responsive conventions; keep the card usable at narrow widths.
 
-- [ ] **Step 4: Run component suite and build**
+- [x] **Step 4: Run component suite and build**
 
 ```powershell
 Set-Location .\frontend
