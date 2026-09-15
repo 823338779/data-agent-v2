@@ -6,6 +6,7 @@ import com.datagent.agentv2.git.config.GitProperties;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.*;
+import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.*;
@@ -239,6 +240,67 @@ class GitRepositoryClientTest {
         assertFalse(thread.isAlive());
         assertNotNull(failure.get());
         assertEquals("GIT_INTERRUPTED", failure.get().code());
+    }
+
+    @Test
+    void inheritedConfigParametersCannotInjectGitConfiguration() {
+        var environment = new HashMap<String, String>();
+        environment.put("GIT_CONFIG_PARAMETERS", "'core.sshCommand'='malicious-helper'");
+
+        GitCommandRunner.removeGitOverrides(environment);
+
+        assertFalse(environment.containsKey("GIT_CONFIG_PARAMETERS"));
+    }
+
+    @Test
+    void unchangedBinaryAndOversizedBaselineFilesDoNotBlockTextSnapshot() throws Exception {
+        Path workspace = temp.resolve("workspace");
+        repository.cloneRepository(workspace);
+        Files.write(workspace.resolve("chart.png"), new byte[] {0, 1, 2, 3});
+        Files.writeString(workspace.resolve("large.txt"), "x".repeat(600 * 1024));
+        run(workspace, "git", "add", "chart.png", "large.txt");
+        run(
+                workspace,
+                "git",
+                "-c",
+                "user.name=seed",
+                "-c",
+                "user.email=seed@example.test",
+                "commit",
+                "-m",
+                "baseline assets");
+        Files.writeString(workspace.resolve("metrics.yml"), "new\n");
+
+        var snapshot = repository.freeze(workspace);
+
+        assertEquals(
+                List.of("metrics.yml"),
+                snapshot.changes().stream().map(change -> change.path()).toList());
+    }
+
+    @Test
+    void deletingBinaryBaselineFileIsRejected() throws Exception {
+        Path workspace = temp.resolve("workspace");
+        repository.cloneRepository(workspace);
+        Files.write(workspace.resolve("chart.png"), new byte[] {0, 1, 2, 3});
+        run(workspace, "git", "add", "chart.png");
+        run(
+                workspace,
+                "git",
+                "-c",
+                "user.name=seed",
+                "-c",
+                "user.email=seed@example.test",
+                "commit",
+                "-m",
+                "binary baseline");
+        Files.delete(workspace.resolve("chart.png"));
+
+        var error =
+                assertThrows(
+                        com.datagent.agentv2.git.model.GitException.class,
+                        () -> repository.freeze(workspace));
+        assertEquals("GIT_BINARY_FILE", error.code());
     }
 
     private String commitChange(Path workspace, String base, String file) throws Exception {

@@ -66,7 +66,7 @@ backend/mvnw.cmd -f backend/pom.xml -B -pl agent-git -am -Dsurefire.failIfNoSpec
 - Git runner 默认拒绝协议，只允许 `file/http/https/ssh`，并清除可覆盖仓库、对象库、传输 helper、diff 和动态配置的继承环境变量。
 - 超时、中断和异常统一终止 Git 进程树并取消输出读取；只有真实 `InterruptedException` 恢复线程中断标志并返回 `GIT_INTERRUPTED`。
 - 更新和删除在摘要比较前验证旧文件确为受支持的 UTF-8 非 NUL 文本。
-- 新增真实 CRLF + `.gitattributes`、中文文件名、gitignore 文件、三类候选上限、二进制更新/删除和中断清理回归。
+- 新增真实 CRLF + `.gitattributes`、中文文件名、gitignore 文件、三类候选上限、二进制更新/删除，以及中断返回码与调用线程退出回归。生产实现负责终止已发现的 Git 子进程树；测试没有把 OS 进程枚举结构固化为契约。
 
 最终 GREEN 命令：
 
@@ -75,3 +75,17 @@ backend/mvnw.cmd -f backend/pom.xml -B -pl agent-git -am -Dsurefire.failIfNoSpec
 ```
 
 输出摘要：`Tests run: 12, Failures: 0, Errors: 0, Skipped: 0`，`BUILD SUCCESS`。随后运行 `backend/mvnw.cmd -f backend/pom.xml -B -pl agent-git -am spotless:check`。
+
+## Fix round 2（复审整改）
+
+评审基线为 `13e3c69`。focused RED 首先在测试编译阶段确认 `removeGitOverrides` 尚不可验证；原实现运行“基线包含 PNG 和 600 KiB 文件、只修改 YAML”场景也会因逐文件读取而拒绝冻结。
+
+整改后，runner 同时移除 `GIT_CONFIG_PARAMETERS`，关闭通过该环境变量注入 `core.sshCommand` 等动态配置的入口。冻结从 `HEAD` 填充临时 index，使用未过滤 raw blob ID 判断文件是否实际变化：未修改条目原样保留；新增/修改文本才执行 UTF-8、NUL 和大小验证并写入 raw blob；删除条目读取基线 blob，拒绝二进制或超限删除。因此仓库已有的大文件、PNG 不会阻塞无关文本维护，删除不支持文件也不会绕过边界。
+
+focused GREEN 命令：
+
+```text
+backend/mvnw.cmd -f backend/pom.xml -B -pl agent-git -am -Dsurefire.failIfNoSpecifiedTests=false -Dtest=GitRepositoryClientTest#inheritedConfigParametersCannotInjectGitConfiguration+unchangedBinaryAndOversizedBaselineFilesDoNotBlockTextSnapshot+deletingBinaryBaselineFileIsRejected test
+```
+
+focused 输出：`Tests run: 3, Failures: 0, Errors: 0, Skipped: 0`。完整 Task 1 GREEN 继续使用前述两个测试类命令，输出为 `Tests run: 15, Failures: 0, Errors: 0, Skipped: 0`，`BUILD SUCCESS`。

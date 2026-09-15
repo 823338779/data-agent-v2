@@ -90,7 +90,9 @@ public final class GitCommandRunner {
                 throw new GitException("GIT_OUTPUT_TOO_LARGE", "Git 命令输出超过服务端上限");
             }
             return new Result(
-                    process.exitValue(), new String(captured.bytes(), StandardCharsets.UTF_8));
+                    process.exitValue(),
+                    new String(captured.bytes(), StandardCharsets.UTF_8),
+                    isValidUtf8(captured.bytes()));
         } catch (GitException exception) {
             throw exception;
         } catch (InterruptedException exception) {
@@ -137,7 +139,7 @@ public final class GitCommandRunner {
         return System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win");
     }
 
-    private static void removeGitOverrides(Map<String, String> environment) {
+    static void removeGitOverrides(Map<String, String> environment) {
         environment
                 .keySet()
                 .removeIf(
@@ -155,8 +157,22 @@ public final class GitCommandRunner {
                                         || key.equals("GIT_ALLOW_PROTOCOL")
                                         || key.equals("GIT_PROTOCOL_FROM_USER")
                                         || key.equals("GIT_CONFIG_COUNT")
+                                        || key.equals("GIT_CONFIG_PARAMETERS")
                                         || key.startsWith("GIT_CONFIG_KEY_")
                                         || key.startsWith("GIT_CONFIG_VALUE_"));
+    }
+
+    private static boolean isValidUtf8(byte[] bytes) {
+        try {
+            StandardCharsets.UTF_8
+                    .newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(java.nio.ByteBuffer.wrap(bytes));
+            return true;
+        } catch (java.nio.charset.CharacterCodingException exception) {
+            return false;
+        }
     }
 
     /** 中断和超时必须终止整个子进程树，否则延迟执行的 hook/helper 仍可能继续写入。 */
@@ -175,7 +191,7 @@ public final class GitCommandRunner {
         }
     }
 
-    public record Result(int exitCode, String output) {}
+    public record Result(int exitCode, String output, boolean validUtf8) {}
 
     private record CapturedOutput(byte[] bytes, boolean truncated) {}
 }

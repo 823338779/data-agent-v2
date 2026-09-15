@@ -76,12 +76,21 @@ public final class GitRepositoryClient {
         }
         Map<String, String> env = Map.of("GIT_INDEX_FILE", index.toString());
         try {
-            runner.run(workspace, List.of("read-tree", "--empty"), env);
+            runner.run(workspace, List.of("read-tree", "HEAD"), env);
             List<String> workspacePaths = scanWorkspaceFiles(workspace);
-            Map<String, String> baselineModes = readBaselineModes(workspace);
+            Map<String, BaselineEntry> baselineEntries = readBaselineEntries(workspace);
             GitWorkspaceFiles files = new GitWorkspaceFiles(properties);
             for (String path : workspacePaths) {
-                // hash-object 默认不应用 clean/eol/working-tree-encoding 过滤器，tree 保留审阅时原始字节。
+                String rawBlob =
+                        text(
+                                runner.run(
+                                        workspace,
+                                        List.of("hash-object", "--no-filters", "--", path)));
+                BaselineEntry baseline = baselineEntries.remove(path);
+                if (baseline != null && baseline.objectId().equals(rawBlob)) {
+                    continue;
+                }
+                // 只校验实际新增或修改内容；未修改的基线二进制和大文件保持原 tree 条目。
                 files.read(workspace, path);
                 String blob =
                         text(
@@ -94,12 +103,17 @@ public final class GitRepositoryClient {
                                 "update-index",
                                 "--add",
                                 "--cacheinfo",
-                                baselineModes.getOrDefault(path, "100644")
+                                (baseline == null ? "100644" : baseline.mode())
                                         + ","
                                         + blob
                                         + ","
                                         + path),
                         env);
+            }
+            for (BaselineEntry deleted : baselineEntries.values()) {
+                validateDeletedBaseline(workspace, deleted);
+                runner.run(
+                        workspace, List.of("update-index", "--remove", "--", deleted.path()), env);
             }
             String tree = text(runner.run(workspace, List.of("write-tree"), env));
             String names =
@@ -294,23 +308,38 @@ public final class GitRepositoryClient {
         }
     }
 
-    private Map<String, String> readBaselineModes(Path workspace) {
-        String output = runner.run(workspace, List.of("ls-tree", "-r", "-z", "HEAD")).output();
-        Map<String, String> modes = new HashMap<>();
+    private Map<String, BaselineEntry> readBaselineEntries(Path workspace) {
+        String output =
+                runner.run(workspace, List.of("ls-tree", "-r", "-z", "--long", "HEAD")).output();
+        Map<String, BaselineEntry> entries = new HashMap<>();
         for (String entry : output.split("\u0000", -1)) {
             if (entry.isEmpty()) continue;
             int tab = entry.indexOf('\t');
             if (tab < 0) throw new GitException("GIT_SNAPSHOT_FAILED", "Git tree 条目格式无效");
-            String[] metadata = entry.substring(0, tab).split(" ");
-            if (metadata.length != 3) {
+            String[] metadata = entry.substring(0, tab).trim().split("\\s+");
+            if (metadata.length != 4) {
                 throw new GitException("GIT_SNAPSHOT_FAILED", "Git tree 条目元数据无效");
             }
             if (metadata[0].equals("160000")) {
                 throw new GitException("GIT_PATH_REJECTED", "候选不支持 Git 子模块");
             }
-            modes.put(entry.substring(tab + 1), metadata[0]);
+            String path = entry.substring(tab + 1);
+            entries.put(
+                    path,
+                    new BaselineEntry(metadata[0], metadata[2], Long.parseLong(metadata[3]), path));
         }
-        return modes;
+        return entries;
+    }
+
+    private void validateDeletedBaseline(Path workspace, BaselineEntry baseline) {
+        if (baseline.size() > properties.maxFileBytes()) {
+            throw new GitException("GIT_FILE_TOO_LARGE", "删除的基线文件超过服务端上限");
+        }
+        GitCommandRunner.Result content =
+                runner.run(workspace, List.of("cat-file", "blob", baseline.objectId()));
+        if (!content.validUtf8() || content.output().indexOf('\0') >= 0) {
+            throw new GitException("GIT_BINARY_FILE", "拒绝删除不支持的二进制基线文件");
+        }
     }
 
     private static boolean isRootGitMetadata(Path relative) {
@@ -337,4 +366,6 @@ public final class GitRepositoryClient {
         for (Path part : path) if (part.toString().equalsIgnoreCase(".git")) return true;
         return false;
     }
+
+    private record BaselineEntry(String mode, String objectId, long size, String path) {}
 }
