@@ -89,3 +89,11 @@ backend/mvnw.cmd -f backend/pom.xml -B -pl agent-git -am -Dsurefire.failIfNoSpec
 ```
 
 focused 输出：`Tests run: 3, Failures: 0, Errors: 0, Skipped: 0`。完整 Task 1 GREEN 继续使用前述两个测试类命令，输出为 `Tests run: 15, Failures: 0, Errors: 0, Skipped: 0`，`BUILD SUCCESS`。
+
+## Fix round 3（基线二进制更新边界）
+
+评审基线为 `2e093a8`。新增真实仓库测试：把已提交的 NUL 二进制 `chart.png` 直接替换为 `text\n` 后冻结。RED 输出为 `Expected GitException to be thrown, but nothing was thrown`，证明原逻辑只验证更新后的内容。
+
+修复将删除路径的基线文本验证复用于已跟踪文件更新：raw blob ID 变化且存在基线条目时，先按基线 size、UTF-8 和 NUL 规则确认原文件受支持，再验证新内容并替换临时 index。未变化的基线 PNG/大文件仍直接保留，不扩大扫描限制。
+
+focused GREEN 命令覆盖二进制替换、二进制删除及未修改基线资源三种相邻行为，输出 `Tests run: 3, Failures: 0, Errors: 0, Skipped: 0`，`BUILD SUCCESS`。完整验证命令仍为前述 `GitRepositoryClientTest,GitWorkspaceFilesTest`，最终输出 `Tests run: 16, Failures: 0, Errors: 0, Skipped: 0`；Spotless check 同样为 `BUILD SUCCESS`。

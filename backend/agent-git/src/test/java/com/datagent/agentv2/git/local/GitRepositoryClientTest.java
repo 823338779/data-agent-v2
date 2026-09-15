@@ -303,6 +303,31 @@ class GitRepositoryClientTest {
         assertEquals("GIT_BINARY_FILE", error.code());
     }
 
+    @Test
+    void replacingBinaryBaselineFileWithUtf8TextIsRejected() throws Exception {
+        Path workspace = temp.resolve("workspace");
+        repository.cloneRepository(workspace);
+        Files.write(workspace.resolve("chart.png"), new byte[] {0, 1, 2, 3});
+        run(workspace, "git", "add", "chart.png");
+        run(
+                workspace,
+                "git",
+                "-c",
+                "user.name=seed",
+                "-c",
+                "user.email=seed@example.test",
+                "commit",
+                "-m",
+                "binary baseline");
+        Files.writeString(workspace.resolve("chart.png"), "text\n");
+
+        var error =
+                assertThrows(
+                        com.datagent.agentv2.git.model.GitException.class,
+                        () -> repository.freeze(workspace));
+        assertEquals("GIT_BINARY_FILE", error.code());
+    }
+
     private String commitChange(Path workspace, String base, String file) throws Exception {
         Files.writeString(workspace.resolve(file), file + "\n");
         String tree = repository.freeze(workspace).treeId();

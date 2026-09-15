@@ -90,6 +90,9 @@ public final class GitRepositoryClient {
                 if (baseline != null && baseline.objectId().equals(rawBlob)) {
                     continue;
                 }
+                if (baseline != null) {
+                    validateBaselineText(workspace, baseline);
+                }
                 // 只校验实际新增或修改内容；未修改的基线二进制和大文件保持原 tree 条目。
                 files.read(workspace, path);
                 String blob =
@@ -111,7 +114,7 @@ public final class GitRepositoryClient {
                         env);
             }
             for (BaselineEntry deleted : baselineEntries.values()) {
-                validateDeletedBaseline(workspace, deleted);
+                validateBaselineText(workspace, deleted);
                 runner.run(
                         workspace, List.of("update-index", "--remove", "--", deleted.path()), env);
             }
@@ -331,14 +334,14 @@ public final class GitRepositoryClient {
         return entries;
     }
 
-    private void validateDeletedBaseline(Path workspace, BaselineEntry baseline) {
+    private void validateBaselineText(Path workspace, BaselineEntry baseline) {
         if (baseline.size() > properties.maxFileBytes()) {
-            throw new GitException("GIT_FILE_TOO_LARGE", "删除的基线文件超过服务端上限");
+            throw new GitException("GIT_FILE_TOO_LARGE", "待修改的基线文件超过服务端上限");
         }
         GitCommandRunner.Result content =
                 runner.run(workspace, List.of("cat-file", "blob", baseline.objectId()));
         if (!content.validUtf8() || content.output().indexOf('\0') >= 0) {
-            throw new GitException("GIT_BINARY_FILE", "拒绝删除不支持的二进制基线文件");
+            throw new GitException("GIT_BINARY_FILE", "拒绝修改不支持的二进制基线文件");
         }
     }
 
