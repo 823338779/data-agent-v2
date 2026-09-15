@@ -40,6 +40,22 @@ class GitRepositoryClientTest {
     }
 
     @Test
+    void perFileDiffTreatsBracketCharactersAsLiteralPath() throws Exception {
+        Path workspace = temp.resolve("literal-diff");
+        repository.cloneRepository(workspace);
+        String base = repository.head(workspace);
+        Files.writeString(workspace.resolve("a[1].yml"), "literal-file\n");
+        Files.writeString(workspace.resolve("a1.yml"), "other-file\n");
+        var snapshot = repository.freeze(workspace);
+
+        String diff = repository.diffFile(workspace, base, snapshot.treeId(), "a[1].yml");
+
+        assertTrue(diff.contains("+literal-file"));
+        assertFalse(diff.contains("+other-file"));
+        assertFalse(diff.contains("b/a1.yml"));
+    }
+
+    @Test
     void retainedSnapshotSurvivesGarbageCollectionWithoutCreatingCommit() throws Exception {
         Path workspace = temp.resolve("retained");
         repository.cloneRepository(workspace);

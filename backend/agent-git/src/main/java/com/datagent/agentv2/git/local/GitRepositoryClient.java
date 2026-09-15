@@ -105,11 +105,12 @@ public final class GitRepositoryClient {
         }
     }
 
-    /** 仅供应用层按已登记文件生成完整审阅 diff，调用方先校验文件归属。 */
+    /** 按已登记文件生成完整审阅 diff；路径必须按字面匹配，避免方括号等字符扩展到其他文件。 */
     public String diffFile(Path workspace, String base, String tree, String file) {
         return runner.run(
                         workspace,
                         List.of(
+                                "--literal-pathspecs",
                                 "diff-tree",
                                 "--no-ext-diff",
                                 "--no-color",
@@ -274,9 +275,16 @@ public final class GitRepositoryClient {
                         authorEmail,
                         "GIT_COMMITTER_DATE",
                         timestamp);
-        return text(
-                runner.run(
-                        workspace, List.of("commit-tree", tree, "-p", parent, "-m", message), env));
+        String commit =
+                text(
+                        runner.run(
+                                workspace,
+                                List.of("commit-tree", tree, "-p", parent, "-m", message),
+                                env));
+        // 此方法只在授权后调用。返回并登记 commitId 前保活提交本身，tree 引用无法保护其父方向的 commit。
+        // 名称由内容寻址 ID 固定，重复生成可幂等写入；首版永久保留，且 push 从不包含该本地 namespace。
+        runner.run(workspace, List.of("update-ref", "refs/agent-submissions/" + commit, commit));
+        return commit;
     }
 
     public void pushMain(Path workspace, String commit, String expectedParent) {

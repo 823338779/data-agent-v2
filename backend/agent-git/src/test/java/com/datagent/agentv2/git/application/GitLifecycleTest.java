@@ -299,6 +299,41 @@ class GitLifecycleTest {
     }
 
     @Test
+    void recordedUnpushedCommitSurvivesGcAndRecoveryRetry() throws Exception {
+        var c = candidate("one");
+        var stopped = org.mockito.Mockito.spy(git);
+        // 模拟 commit 登记完成、push 尚未执行时进程退出；Error 不被正常失败收敛路径吞掉。
+        org.mockito.Mockito.doThrow(new AssertionError("process stopped before push"))
+                .when(stopped)
+                .pushMain(
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.anyString());
+        submissions =
+                new GitSubmissionService(
+                        workspaces, changes, changeRecords, stopped, queue::add, Clock.systemUTC());
+        submissions.confirm("one", c.changeId(), c.version());
+        assertThrows(AssertionError.class, () -> queue.remove().run());
+        var registered = changes.detail("one", c.changeId());
+        assertEquals(GitChangeStatus.SUBMITTING, registered.status());
+        assertNotNull(registered.commitId());
+        var w = workspaceRecords.find("one", "metrics");
+        run(properties.workspaceRoot().resolve(w.getStorageKey()), "gc", "--prune=now");
+
+        rebuild();
+        new GitRecoveryRunner(changeRecords, submissions).recover();
+        var recovered = changes.detail("one", c.changeId());
+        assertEquals(GitChangeStatus.FAILED, recovered.status());
+        assertEquals("GIT_RETRY_REQUIRED", recovered.errorCode());
+        assertTrue(queue.isEmpty());
+        submissions.retry("one", c.changeId(), recovered.version());
+        queue.remove().run();
+        var pushed = changes.detail("one", c.changeId());
+        assertEquals(GitChangeStatus.PUSHED, pushed.status());
+        assertEquals(registered.commitId(), pushed.commitId());
+    }
+
+    @Test
     void recordedButUnpushedCommitIsReusedByUserRetry() {
         var c = candidate("one");
         submissions.confirm("one", c.changeId(), c.version());
