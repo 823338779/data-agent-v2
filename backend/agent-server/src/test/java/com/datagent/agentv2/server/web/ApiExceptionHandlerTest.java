@@ -53,8 +53,36 @@ class ApiExceptionHandlerTest {
                 .andExpect(jsonPath("$.requestId", matchesPattern("request_[a-f0-9]{32}")));
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "GIT_CONFLICT,409",
+        "GIT_CHANGE_NOT_FOUND,404",
+        "GIT_NOT_CONFIGURED,503",
+        "GIT_LIMIT_EXCEEDED,413",
+        "GIT_COMMAND_FAILED,503",
+        "GIT_TIMEOUT,504"
+    })
+    void gitFailuresKeepStableCodesAndNeverReturnCommandOutput(String code, int expectedStatus)
+            throws Exception {
+        mvc.perform(get("/__test/git-failure").param("code", code))
+                .andExpect(status().is(expectedStatus))
+                .andExpect(jsonPath("$.code").value(code))
+                .andExpect(
+                        org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                                .string(
+                                        org.hamcrest.Matchers.not(
+                                                org.hamcrest.Matchers.containsString(
+                                                        "secret-stderr"))));
+    }
+
     @RestController
     static class FailureFixtureController {
+
+        @GetMapping("/__test/git-failure")
+        void gitFail(@org.springframework.web.bind.annotation.RequestParam String code) {
+            throw new com.datagent.agentv2.git.model.GitException(
+                    code, "secret-stderr credential-value /server/private");
+        }
 
         @GetMapping("/__test/failure")
         void fail() {

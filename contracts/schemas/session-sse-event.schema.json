@@ -109,6 +109,12 @@
       }
     },
     "uiBlock": {
+      "oneOf": [
+        { "$ref": "#/$defs/artifactCard" },
+        { "$ref": "#/$defs/gitChangeCard" }
+      ]
+    },
+    "artifactCard": {
       "type": "object",
       "additionalProperties": false,
       "required": ["blockId", "type", "schemaVersion", "variant", "payload", "displayOrder"],
@@ -122,6 +128,24 @@
           "additionalProperties": false,
           "required": ["artifactId"],
           "properties": { "artifactId": { "type": "string" } }
+        },
+        "displayOrder": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "gitChangeCard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blockId", "type", "schemaVersion", "variant", "payload", "displayOrder"],
+      "properties": {
+        "blockId": { "type": "string" },
+        "type": { "const": "git-change-card" },
+        "schemaVersion": { "const": 1 },
+        "variant": { "type": "string" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["changeId", "sessionId"],
+          "properties": { "changeId": { "type": "string", "minLength": 1 }, "sessionId": { "type": "string", "minLength": 1 } }
         },
         "displayOrder": { "type": "integer", "minimum": 0 }
       }

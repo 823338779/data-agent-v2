@@ -4,6 +4,7 @@
   <parent><groupId>com.datagent</groupId><artifactId>data-agent-v2</artifactId><version>0.1.0-SNAPSHOT</version><relativePath>../pom.xml</relativePath></parent>
   <artifactId>agent-skill</artifactId>
   <dependencies>
+    <dependency><groupId>com.datagent</groupId><artifactId>agent-git</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>com.datagent</groupId><artifactId>agent-tool</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.springframework</groupId><artifactId>spring-context</artifactId></dependency>
     <dependency><groupId>org.springframework</groupId><artifactId>spring-core</artifactId></dependency>

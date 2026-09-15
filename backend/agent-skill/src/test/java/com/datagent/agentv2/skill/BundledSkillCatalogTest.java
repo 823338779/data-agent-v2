@@ -11,7 +11,8 @@ class BundledSkillCatalogTest {
     void loadsWebResearchRequiredToolsFromCodeDefinition() {
         BundledSkillCatalog catalog =
                 new BundledSkillCatalog(
-                        new ClasspathSkillResourceSource(),
+                        new ClasspathSkillResourceSource(
+                                new org.springframework.mock.env.MockEnvironment()),
                         new SkillBundleFactory(),
                         List.of(new WebResearchSkillDefinition()));
         SkillBundle bundle = catalog.require("web-research");
