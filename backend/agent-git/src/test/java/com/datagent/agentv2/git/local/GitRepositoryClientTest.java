@@ -40,6 +40,54 @@ class GitRepositoryClientTest {
     }
 
     @Test
+    void retainedSnapshotSurvivesGarbageCollectionWithoutCreatingCommit() throws Exception {
+        Path workspace = temp.resolve("retained");
+        repository.cloneRepository(workspace);
+        String base = repository.head(workspace);
+        Files.writeString(workspace.resolve("metrics.yml"), "retained\n");
+        var snapshot = repository.freeze(workspace);
+        repository.retainSnapshot(workspace, "gc_test", snapshot.treeId());
+        run(workspace, "git", "gc", "--prune=now");
+        repository.verifyTree(workspace, snapshot.treeId());
+        assertEquals(
+                "retained\n", repository.readTreeFile(workspace, snapshot.treeId(), "metrics.yml"));
+        assertEquals(base, repository.head(workspace));
+    }
+
+    @Test
+    void acceptedCommitMovesOnlyLocalBaselineAndSnapshotDiffIsPerFile() throws Exception {
+        Path workspace = temp.resolve("accepted");
+        repository.cloneRepository(workspace);
+        String base = repository.head(workspace);
+        Files.writeString(workspace.resolve("metrics.yml"), "new\n");
+        Files.writeString(workspace.resolve("extra.yml"), "extra\n");
+        var snapshot = repository.freeze(workspace);
+        repository.verifyTree(workspace, snapshot.treeId());
+        String diff = repository.diffFile(workspace, base, snapshot.treeId(), "metrics.yml");
+        assertTrue(diff.contains("+new"));
+        assertFalse(diff.contains("extra.yml"));
+        String commit =
+                repository.createCommit(
+                        workspace,
+                        snapshot.treeId(),
+                        base,
+                        "update",
+                        "Agent",
+                        "agent@test",
+                        Instant.now());
+        repository.pushMain(workspace, commit, base);
+        repository.acceptSubmittedCommit(workspace, commit);
+        assertEquals(commit, repository.head(workspace));
+        assertEquals("new\n", Files.readString(workspace.resolve("metrics.yml")));
+        assertEquals(
+                "GIT_EMPTY_CHANGE",
+                assertThrows(
+                                com.datagent.agentv2.git.model.GitException.class,
+                                () -> repository.freeze(workspace))
+                        .code());
+    }
+
+    @Test
     void freezeWritesImmutableTreeWithoutMovingHead() throws Exception {
         Path workspace = temp.resolve("workspace");
         repository.cloneRepository(workspace);

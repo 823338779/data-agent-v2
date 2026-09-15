@@ -55,6 +55,73 @@ public final class GitRepositoryClient {
         return text(runner.run(workspace, List.of("rev-parse", "HEAD")));
     }
 
+    /** 远端已接受后同步本地基线，只移动引用和 index，不改写已审阅的工作文件。 */
+    public void acceptSubmittedCommit(Path workspace, String commit) {
+        runner.run(workspace, List.of("update-ref", "HEAD", commit));
+        runner.run(workspace, List.of("read-tree", commit));
+    }
+
+    /** 冻结 tree 及全部可达对象必须完整，不能仅因 tree ID 存在就批准损坏快照。 */
+    public void verifyTree(Path workspace, String tree) {
+        runner.run(workspace, List.of("fsck", "--full", "--no-reflogs", "--no-dangling", tree));
+    }
+
+    /** 专用本地 ref 仅保活候选 tree，避免 GC 清理未确认对象；不创建 commit、不移动分支且从不推送该 namespace。 */
+    public void retainSnapshot(Path workspace, String changeId, String tree) {
+        if (!changeId.matches("[A-Za-z0-9_-]{1,128}"))
+            throw new GitException("GIT_SNAPSHOT_FAILED", "候选标识无效");
+        runner.run(workspace, List.of("update-ref", "refs/agent-candidates/" + changeId, tree, ""));
+    }
+
+    /** 恢复只读取 commit 对象，不创建提交；防止损坏的已登记 ID 指向其他已推送提交而误报成功。 */
+    public void verifyCommit(
+            Path workspace,
+            String commit,
+            String tree,
+            String parent,
+            String message,
+            String authorName,
+            String authorEmail,
+            Instant time) {
+        String identity = authorName + " <" + authorEmail + "> " + time.getEpochSecond() + " +0000";
+        String expected =
+                "tree "
+                        + tree
+                        + "\nparent "
+                        + parent
+                        + "\nauthor "
+                        + identity
+                        + "\ncommitter "
+                        + identity
+                        + "\n\n"
+                        + message
+                        + (message.endsWith("\n") ? "" : "\n");
+        try {
+            String actual = runner.run(workspace, List.of("cat-file", "commit", commit)).output();
+            if (!expected.equals(actual))
+                throw new GitException("GIT_COMMIT_CORRUPT", "提交对象与确认元信息不一致");
+        } catch (GitException failure) {
+            throw new GitException("GIT_COMMIT_CORRUPT", "提交对象缺失或与确认元信息不一致");
+        }
+    }
+
+    /** 仅供应用层按已登记文件生成完整审阅 diff，调用方先校验文件归属。 */
+    public String diffFile(Path workspace, String base, String tree, String file) {
+        return runner.run(
+                        workspace,
+                        List.of(
+                                "diff-tree",
+                                "--no-ext-diff",
+                                "--no-color",
+                                "--full-index",
+                                "-p",
+                                base,
+                                tree,
+                                "--",
+                                file))
+                .output();
+    }
+
     public GitSnapshot freeze(Path workspace) {
         return freeze(workspace, "");
     }
