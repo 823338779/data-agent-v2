@@ -16,12 +16,16 @@ import com.datagent.agentv2.skill.tool.SkillReadTool;
 import java.nio.file.*;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -99,6 +103,15 @@ class GitWebIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired GitWorkspaceService workspaces;
     @Autowired GitChangeService changes;
+
+    @Autowired
+    @Qualifier("gitSubmissionExecutor")
+    ExecutorService gitExecutor;
+
+    @Autowired
+    @Qualifier("gitStartupRecovery")
+    ApplicationRunner startupRecovery;
+
     @Autowired List<AgentTool> registeredTools;
     @Autowired GitSessionResolver sessions;
     @Autowired FailEvents events;
@@ -210,6 +223,39 @@ class GitWebIntegrationTest {
     }
 
     @Test
+    void confirmationAfterStartupCaptureSurvivesDelayedRecovery() throws Exception {
+        Run r = execution();
+        GitChangeView c = candidate(r);
+        var workerPaused = new CountDownLatch(1);
+        var releaseWorker = new CountDownLatch(1);
+        gitExecutor.submit(
+                () -> {
+                    workerPaused.countDown();
+                    releaseWorker.await();
+                    return null;
+                });
+        try {
+            assertThat(workerPaused.await(5, TimeUnit.SECONDS)).isTrue();
+            // 模拟启动 runner 已返回而后台恢复尚未运行，此时新确认只能排在恢复后面。
+            startupRecovery.run(new DefaultApplicationArguments());
+            mvc.perform(
+                            post(base(r, c) + "/confirm")
+                                    .contentType("application/json")
+                                    .content("{\"version\":" + c.version() + "}"))
+                    .andExpect(status().isAccepted())
+                    .andExpect(jsonPath("$.status").value("SUBMITTING"));
+            assertThat(changes.detail(r.session(), c.changeId()).commitId()).isNull();
+        } finally {
+            releaseWorker.countDown();
+        }
+        gitExecutor.submit(() -> {}).get(15, TimeUnit.SECONDS);
+        var completed = changes.detail(r.session(), c.changeId());
+        assertThat(completed.status()).isEqualTo(GitChangeStatus.PUSHED);
+        assertThat(run(ROOT, "--git-dir=" + ROOT.resolve("remote.git"), "rev-parse", "main").trim())
+                .isEqualTo(completed.commitId());
+    }
+
+    @Test
     void cardIncludesTrustedSessionAndConfirmIsVersionedAndIdempotent() throws Exception {
         Run r = execution();
         GitChangeView c = candidate(r);
@@ -256,6 +302,15 @@ class GitWebIntegrationTest {
                                 .content("{\"version\":999}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("GIT_CONFLICT"));
+        long initialCommits =
+                Long.parseLong(
+                        run(
+                                        ROOT,
+                                        "--git-dir=" + ROOT.resolve("remote.git"),
+                                        "rev-list",
+                                        "--count",
+                                        "main")
+                                .trim());
         String request = "{\"version\":" + c.version() + "}";
         mvc.perform(post(base + "/confirm").contentType("application/json").content(request))
                 .andExpect(status().isAccepted());
@@ -279,7 +334,7 @@ class GitWebIntegrationTest {
                                         "--count",
                                         "main")
                                 .trim())
-                .isEqualTo("2");
+                .isEqualTo(Long.toString(initialCommits + 1));
         assertThat(
                         jdbc.queryForObject(
                                 "select count(*) from git_change where change_id=?",

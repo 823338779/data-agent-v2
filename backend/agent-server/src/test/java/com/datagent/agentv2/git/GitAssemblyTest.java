@@ -60,10 +60,15 @@ class GitAssemblyTest {
     @Test
     @ExtendWith(OutputCaptureExtension.class)
     void backgroundRecoveryFailureIsObservableWithoutExceptionDetails(CapturedOutput output) {
-        var recovery = mock(GitRecoveryRunner.class);
-        doThrow(new IllegalStateException("secret-token /private/path stderr"))
-                .when(recovery)
-                .recover();
+        var records = mock(GitChangePersistenceService.class);
+        var submissions = mock(GitSubmissionService.class);
+        var legacy = new GitChangeEntity();
+        legacy.setConversationSessionId("session");
+        legacy.setChangeId("change");
+        when(records.unfinished()).thenReturn(List.of(legacy));
+        when(submissions.reconcile("session", "change"))
+                .thenThrow(new IllegalStateException("secret-token /private/path stderr"));
+        var recovery = new GitRecoveryRunner(records, submissions);
         runner(true)
                 .withBean(
                         "failedRecovery",
@@ -76,6 +81,32 @@ class GitAssemblyTest {
                                     .run(
                                             new org.springframework.boot
                                                     .DefaultApplicationArguments());
+                            ((ExecutorService) ctx.getBean("gitSubmissionExecutor"))
+                                    .submit(() -> {})
+                                    .get(5, TimeUnit.SECONDS);
+                            assertThat(output.getAll())
+                                    .contains("Git 启动恢复失败，请通过卡片核实遗留提交")
+                                    .doesNotContain("secret-token", "/private/path", "stderr");
+                        });
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void startupCaptureFailureIsObservableWithoutExceptionDetails(CapturedOutput output) {
+        var records = mock(GitChangePersistenceService.class);
+        when(records.unfinished())
+                .thenThrow(new IllegalStateException("secret-token /private/path stderr"));
+        var recovery = new GitRecoveryRunner(records, mock(GitSubmissionService.class));
+        runner(true)
+                .withBean(
+                        "failedCapture",
+                        GitRecoveryRunner.class,
+                        () -> recovery,
+                        definition -> definition.setPrimary(true))
+                .run(
+                        ctx -> {
+                            ctx.getBean(ApplicationRunner.class)
+                                    .run(new DefaultApplicationArguments());
                             ((ExecutorService) ctx.getBean("gitSubmissionExecutor"))
                                     .submit(() -> {})
                                     .get(5, TimeUnit.SECONDS);

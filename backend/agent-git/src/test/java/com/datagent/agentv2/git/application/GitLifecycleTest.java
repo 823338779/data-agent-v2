@@ -197,7 +197,7 @@ class GitLifecycleTest {
         var c = candidate("one");
         submissions.confirm("one", c.changeId(), c.version());
         rebuild();
-        new GitRecoveryRunner(changeRecords, submissions).recover();
+        new GitRecoveryRunner(changeRecords, submissions).captureRecovery().run();
         assertEquals(GitChangeStatus.FAILED, changes.detail("one", c.changeId()).status());
         assertTrue(queue.isEmpty());
         var failed = changes.detail("one", c.changeId());
@@ -214,7 +214,7 @@ class GitLifecycleTest {
         var pushed = changes.detail("one", c.changeId());
         jdbc.update("update git_change set status='VERIFYING' where change_id=?", c.changeId());
         rebuild();
-        new GitRecoveryRunner(changeRecords, submissions).recover();
+        new GitRecoveryRunner(changeRecords, submissions).captureRecovery().run();
         assertEquals(GitChangeStatus.PUSHED, changes.detail("one", c.changeId()).status());
         assertEquals(pushed.commitId(), changes.detail("one", c.changeId()).commitId());
         assertTrue(queue.isEmpty());
@@ -241,7 +241,7 @@ class GitLifecycleTest {
                 c.baseCommit(),
                 c.changeId());
         rebuild();
-        new GitRecoveryRunner(changeRecords, submissions).recover();
+        new GitRecoveryRunner(changeRecords, submissions).captureRecovery().run();
         assertEquals(GitChangeStatus.FAILED, changes.detail("one", c.changeId()).status());
         assertEquals("GIT_COMMIT_CORRUPT", changes.detail("one", c.changeId()).errorCode());
     }
@@ -321,7 +321,7 @@ class GitLifecycleTest {
         run(properties.workspaceRoot().resolve(w.getStorageKey()), "gc", "--prune=now");
 
         rebuild();
-        new GitRecoveryRunner(changeRecords, submissions).recover();
+        new GitRecoveryRunner(changeRecords, submissions).captureRecovery().run();
         var recovered = changes.detail("one", c.changeId());
         assertEquals(GitChangeStatus.FAILED, recovered.status());
         assertEquals("GIT_RETRY_REQUIRED", recovered.errorCode());
@@ -350,7 +350,7 @@ class GitLifecycleTest {
                         record.getCommitTime());
         assertTrue(changeRecords.recordCommit(record, commit));
         rebuild();
-        new GitRecoveryRunner(changeRecords, submissions).recover();
+        new GitRecoveryRunner(changeRecords, submissions).captureRecovery().run();
         var failed = changes.detail("one", c.changeId());
         assertEquals(GitChangeStatus.FAILED, failed.status());
         submissions.retry("one", c.changeId(), failed.version());
@@ -370,7 +370,7 @@ class GitLifecycleTest {
         Path offline = temp.resolve("offline.git");
         Files.move(remote, offline);
         rebuild();
-        new GitRecoveryRunner(changeRecords, submissions).recover();
+        new GitRecoveryRunner(changeRecords, submissions).captureRecovery().run();
         assertEquals(GitChangeStatus.VERIFYING, changes.detail("one", c.changeId()).status());
         assertThrows(GitException.class, () -> workspaces.prepare("one", true));
         Files.move(offline, remote);
@@ -461,7 +461,7 @@ class GitLifecycleTest {
                 properties.workspaceRoot().resolve(w.getStorageKey()).resolve("metrics.yml"),
                 "external\n");
         rebuild();
-        new GitRecoveryRunner(changeRecords, submissions).recover();
+        new GitRecoveryRunner(changeRecords, submissions).captureRecovery().run();
         assertEquals(GitChangeStatus.PUSHED, changes.detail("one", c.changeId()).status());
         assertEquals("BROKEN", workspaceRecords.find("one", "metrics").getStatus());
     }

@@ -48,17 +48,26 @@ public class GitRuntimeConfiguration {
     ApplicationRunner gitStartupRecovery(
             GitRecoveryRunner recovery,
             @Qualifier("gitSubmissionExecutor") ExecutorService executor) {
-        // 远端核实可能超时，启动线程只投递一次，避免遗留 Git 任务阻塞所有会话的 readiness。
-        return args ->
-                executor.execute(
-                        () -> {
-                            try {
-                                recovery.recover();
-                            } catch (RuntimeException failure) {
-                                // 异步失败必须可观察；异常消息和堆栈可能含远端凭据、路径或 stderr，不能直接记录。
-                                log.error("Git 启动恢复失败，请通过卡片核实遗留提交");
-                            }
-                        });
+        // 就绪前固定遗留 ID；只有短数据库查询在启动线程执行，远端核实仍不阻塞 readiness。
+        return args -> {
+            Runnable recoveryTask;
+            try {
+                recoveryTask = recovery.captureRecovery();
+            } catch (RuntimeException failure) {
+                // 捕获失败同样只记录固定说明，不把数据库异常详情带入日志或阻塞非 Git 能力。
+                log.error("Git 启动恢复失败，请通过卡片核实遗留提交");
+                return;
+            }
+            executor.execute(
+                    () -> {
+                        try {
+                            recoveryTask.run();
+                        } catch (RuntimeException failure) {
+                            // 异步失败必须可观察；异常消息和堆栈可能含远端凭据、路径或 stderr，不能直接记录。
+                            log.error("Git 启动恢复失败，请通过卡片核实遗留提交");
+                        }
+                    });
+        };
     }
 
     /** 能力开关同时扩展最大集合，初始集合仍不暴露 Git；其他未知配置继续由原有严格校验拒绝。 */

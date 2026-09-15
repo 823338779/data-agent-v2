@@ -10,13 +10,30 @@ public final class GitRecoveryRunner {
     private final GitChangePersistenceService records;
     private final GitSubmissionService submissions;
 
-    public void recover() {
-        TenantContext.run(
-                TenantContext.TENANT_ID,
-                () -> {
-                    for (var change : records.unfinished())
-                        submissions.reconcile(
-                                change.getConversationSessionId(), change.getChangeId());
-                });
+    /** 就绪前只做一次短查询并冻结 ID；返回的任务仅核实这批遗留记录，不能选入随后新确认的提交。 */
+    public Runnable captureRecovery() {
+        var targets =
+                TenantContext.call(
+                        TenantContext.TENANT_ID,
+                        () ->
+                                records.unfinished().stream()
+                                        .map(
+                                                change ->
+                                                        new RecoveryTarget(
+                                                                change.getConversationSessionId(),
+                                                                change.getChangeId()))
+                                        .toList());
+        // 不捕获可变 Entity，也不在后台重查 unfinished，否则新 SUBMITTING 会被误判为遗留失败。
+        return () ->
+                TenantContext.run(
+                        TenantContext.TENANT_ID,
+                        () ->
+                                targets.forEach(
+                                        target ->
+                                                submissions.reconcile(
+                                                        target.sessionId(), target.changeId())));
     }
+
+    /** 仅保留恢复归属定位所需的不可变 ID，不携带可能已经变化的提交状态。 */
+    private record RecoveryTarget(String sessionId, String changeId) {}
 }
