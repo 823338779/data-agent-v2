@@ -975,11 +975,11 @@ textarea:focus-visible {
 .session-sidebar {
   /* 桌面端必须参与横向布局，为对话主体保留固定空间，避免侧边栏覆盖消息。 */
   position: relative;
-  flex: 0 0 280px;
-  width: 280px;
+  flex: 0 0 300px;
+  width: 300px;
   padding: 14px 12px 22px;
   border: 0;
-  background: #f9f9f9;
+  background: #f7f5f1;
 }
 .sidebar-new-session {
   justify-content: flex-start;
@@ -1192,7 +1192,7 @@ textarea:focus-visible {
     position: absolute;
     inset: 0 auto 0 0;
     z-index: 12;
-    width: min(88vw, 280px);
+    width: min(88vw, 300px);
     box-shadow: 12px 0 34px rgb(0 0 0 / 10%);
   }
   .message-list {
@@ -1209,4 +1209,189 @@ textarea:focus-visible {
     width: calc(100% - 20px);
     margin: 0 10px 10px;
   }
+}
+
+/* 分组只改变导航层级；每行的打开与整理入口保持为独立可聚焦控件。 */
+.session-sidebar .icon-button {
+  border: 0;
+  cursor: pointer;
+}
+.sidebar-section {
+  margin-top: 20px;
+}
+.sidebar-section h2 {
+  margin: 0;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #817d76;
+}
+.sidebar-section-heading,
+.sidebar-project-heading {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.sidebar-section-heading {
+  justify-content: space-between;
+}
+.sidebar-project {
+  margin-top: 3px;
+}
+.project-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  padding: 9px 2px;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+.project-toggle svg {
+  flex-shrink: 0;
+}
+.project-toggle span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.project-sessions {
+  padding-left: 20px;
+}
+.session-row {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  border-radius: 8px;
+}
+.session-row:has(.session-link.active) {
+  background: #e9e6e0;
+}
+.session-row .session-link {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 6px 9px 8px;
+  gap: 3px;
+}
+.session-row .session-link.active {
+  background: transparent;
+}
+.session-link-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.session-row .session-link-title {
+  font-weight: 400;
+}
+.session-origin {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #817d76;
+  font-size: 10px;
+}
+.session-actions {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 30px;
+  color: #8a857d;
+}
+.sidebar-project-heading > .icon-button {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 30px;
+}
+.sidebar-empty {
+  color: #99938b;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 3px 8px 8px;
+}
+.sidebar-menu,
+.sidebar-project-editor,
+.sidebar-delete,
+.sidebar-feedback {
+  width: 100%;
+  padding: 8px;
+  margin: 4px 0 8px;
+  border: 1px solid #ded9d1;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12px;
+}
+.sidebar-menu {
+  display: grid;
+  gap: 4px;
+}
+.sidebar-menu button,
+.sidebar-project-editor button,
+.sidebar-delete button,
+.sidebar-feedback button {
+  border: 0;
+  padding: 8px;
+  border-radius: 5px;
+  background: #f5f3ef;
+  color: #45403a;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+}
+.sidebar-menu button:hover,
+.sidebar-project-editor button:hover,
+.sidebar-delete button:hover {
+  background: #e9e6e0;
+}
+.sidebar-menu label {
+  display: grid;
+  gap: 5px;
+  padding: 4px 8px;
+  color: #817d76;
+}
+.sidebar-menu select,
+.sidebar-project-editor input {
+  min-width: 0;
+  width: 100%;
+  padding: 7px;
+  border: 1px solid #ded9d1;
+  border-radius: 5px;
+  background: #fff;
+  font: inherit;
+  color: #292724;
+}
+.sidebar-project-editor div {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.sidebar-delete p {
+  margin: 0 0 8px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.sidebar-delete button + button {
+  margin-left: 5px;
+  color: #a23926;
+}
+.sidebar-feedback {
+  color: #a23926;
+  line-height: 1.7;
+}
+.sidebar-feedback button {
+  display: block;
+  margin-top: 6px;
+}
+.conversation-sidebar-content button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.conversation-sidebar-content button:focus-visible,
+.conversation-sidebar-content select:focus-visible {
+  outline: 2px solid #7b776e;
+  outline-offset: 1px;
 }

@@ -9,6 +9,8 @@ const session = {
   conversationSessionId: 'session_1',
   title: '后端会话',
   tag: '',
+  projectId: null,
+  pinnedAt: null,
   createdAt: '2026-08-01T08:00:00Z',
   updatedAt: '2026-08-01T08:00:00Z',
   version: 4,

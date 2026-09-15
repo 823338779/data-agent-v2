@@ -46,6 +46,7 @@ class ContractExamplesTest {
     @ValueSource(
             strings = {
                 "session-create.yaml",
+                "conversation-sidebar.yaml",
                 "conversation-summary.yaml",
                 "session-running.yaml",
                 "problem-validation.yaml"

@@ -1,15 +1,18 @@
 package com.datagent.agentv2.controller;
 
 import com.datagent.agentv2.conversation.execution.AgentExecutionControlService;
+import com.datagent.agentv2.conversation.project.ConversationOrganizationService;
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
 import com.datagent.agentv2.conversation.session.ConversationSummaryView;
 import com.datagent.agentv2.conversation.session.ConversationTitleService;
 import com.datagent.agentv2.conversation.session.ConversationView;
 import com.datagent.agentv2.conversation.stream.ConversationEventStreamFacade;
 import com.datagent.agentv2.conversation.summary.ConversationSummaryStreamFacade;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.net.URI;
 import java.util.List;
@@ -20,6 +23,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -39,6 +43,7 @@ public class ConversationController {
     private final AgentExecutionControlService controls;
     private final ConversationEventStreamFacade eventStreams;
     private final ConversationSummaryStreamFacade summaryStream;
+    private final ConversationOrganizationService organizations;
 
     @GetMapping
     List<ConversationSummaryView> list() {
@@ -48,7 +53,8 @@ public class ConversationController {
     @PostMapping
     ResponseEntity<ConversationView> create(
             @Valid @RequestBody CreateConversationSessionRequest request) {
-        ConversationView created = conversations.create(request.title(), request.tag());
+        ConversationView created =
+                conversations.create(request.title(), request.tag(), request.projectId());
         return ResponseEntity.created(
                         URI.create("/api/v1/agent-sessions/" + created.conversationSessionId()))
                 .body(created);
@@ -57,6 +63,19 @@ public class ConversationController {
     @GetMapping("/{conversationSessionId}")
     ConversationView get(@PathVariable String conversationSessionId) {
         return conversations.get(conversationSessionId);
+    }
+
+    /** 归属与置顶为显式赋值，null 项目和 false 置顶分别表示清除。 */
+    @PutMapping("/{conversationSessionId}/organization")
+    ConversationSummaryView organize(
+            @PathVariable String conversationSessionId,
+            @Valid @RequestBody SetOrganizationRequest request) {
+        organizations.setOrganization(
+                conversationSessionId,
+                request.projectId(),
+                request.pinned(),
+                request.expectedVersion());
+        return conversations.summary(conversationSessionId);
     }
 
     @PatchMapping("/{conversationSessionId}")
@@ -104,7 +123,15 @@ public class ConversationController {
 
     /** 创建对话会话所需的可选展示信息。 */
     record CreateConversationSessionRequest(
-            @Size(max = 120) String title, @Size(max = 120) String tag) {}
+            @Size(max = 120) String title,
+            @Size(max = 120) String tag,
+            @Size(min = 1, max = 64) String projectId) {}
+
+    /** projectId 必须出现但允许 null，禁止缺失字段被解释为移出项目。 */
+    record SetOrganizationRequest(
+            @JsonProperty(required = true) @Size(min = 1, max = 64) String projectId,
+            @NotNull Boolean pinned,
+            @NotNull @Min(0) Long expectedVersion) {}
 
     /** 局部更新会话标题所需的标题内容和会话乐观锁版本。 */
     record RenameConversationSessionRequest(

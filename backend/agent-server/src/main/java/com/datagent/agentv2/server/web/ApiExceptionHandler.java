@@ -107,13 +107,18 @@ public final class ApiExceptionHandler {
     /**
      * 处理请求体字段违反 Bean Validation 约束的异常。
      *
-     * @param exception 请求体字段校验异常
+     * @param exception 请求解析、必填参数或字段校验异常
      * @param request 当前 HTTP 请求
      * @return HTTP 400 问题详情响应
      */
-    @ExceptionHandler(MethodArgumentNotValidException.class)
+    @ExceptionHandler({
+        MethodArgumentNotValidException.class,
+        org.springframework.http.converter.HttpMessageNotReadableException.class,
+        org.springframework.web.bind.MissingServletRequestParameterException.class,
+        org.springframework.web.method.annotation.HandlerMethodValidationException.class
+    })
     ResponseEntity<ProblemDetail> handleMethodArgumentNotValid(
-            MethodArgumentNotValidException exception, HttpServletRequest request) {
+            Exception exception, HttpServletRequest request) {
         // 请求体校验错误统一返回稳定错误码，避免被兜底处理器误报为服务端故障。
         return problem(
                 HttpStatus.BAD_REQUEST,

@@ -38,6 +38,14 @@ Data Agent V2 是面向单实例部署的对话 Agent 工程，包含后端 Mave
 - PostgreSQL 默认连接参数为 `data_agent/data_agent_local_dev`，可通过 `DATA_AGENT_DB_URL`、`DATA_AGENT_DB_USERNAME`、`DATA_AGENT_DB_PASSWORD` 覆盖。
 - Ollama 默认使用 `qwen3.5:9b`。先执行 `ollama pull qwen3.5:9b`，再通过 `SPRING_AI_OLLAMA_BASE_URL` 指定服务地址；模型、超时和最大输出分别可由 `DATA_AGENT_MODEL_OLLAMA_MODEL`、`DATA_AGENT_MODEL_OLLAMA_TIMEOUT`、`DATA_AGENT_MODEL_OLLAMA_MAX_OUTPUT_TOKENS` 覆盖。
 
+### 会话侧栏分组
+
+侧栏分为「置顶」「项目」「未分组会话」。项目仅整理会话，不共享文件、知识、指令或上下文；支持创建、改名、折叠、删除，以及项目内新建会话。会话菜单可置顶、取消置顶或移动归属，置顶会话只在置顶区出现，取消后回到原项目。
+
+删除项目会把其中会话移至未分组，保留消息、置顶和正在运行的执行。搜索继续匹配标题和 tag，临时展开命中项目；折叠状态按 API 地址保存在浏览器中。可见页面每分钟刷新侧栏，重新聚焦或切回页面时立即刷新；详情 SSE 的生命周期保持独立。
+
+本次主数据库迁移为 `V5__add_conversation_projects.sql`。前后端配套发布，启动新后端时先由 Flyway 迁移，历史会话默认未分组、不置顶。设计及验证记录见 [会话分组实施计划](docs/superpowers/plans/2026-09-15-session-grouping.md)。
+
 ### 会话上下文策略与分层压缩
 
 会话上下文默认使用 `hierarchical` 策略。服务实例只能选择一个策略：`raw` 直接使用原始历史，`lsm` 使用 LSM 摘要树，`hierarchical` 使用单一滚动 Cold 摘要。未知策略或重复注册相同策略 ID 都会使服务启动失败。

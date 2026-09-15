@@ -21,6 +21,30 @@ public class ConversationSessionService
             "last_activity_at = greatest(last_activity_at, {0})";
     private final ConversationPersistenceMapper models;
 
+    /** 组织字段只能通过此局部更新写入，显式 null 用于移出项目和取消置顶。 */
+    public boolean updateOrganization(
+            String sessionId, String projectId, Instant pinnedAt, long expectedVersion) {
+        return baseMapper.update(
+                        new ConversationSessionEntity(),
+                        Wrappers.lambdaUpdate(ConversationSessionEntity.class)
+                                .eq(ConversationSessionEntity::getConversationSessionId, sessionId)
+                                .eq(ConversationSessionEntity::getVersion, expectedVersion)
+                                .set(ConversationSessionEntity::getProjectId, projectId)
+                                .set(ConversationSessionEntity::getPinnedAt, pinnedAt)
+                                .setIncrBy(ConversationSessionEntity::getVersion, 1))
+                == 1;
+    }
+
+    /** 调用方已锁项目；在同一事务中解除关联并推进版本，避免旧会话快照覆盖更新。 */
+    public int detachProject(String projectId) {
+        return baseMapper.update(
+                new ConversationSessionEntity(),
+                Wrappers.lambdaUpdate(ConversationSessionEntity.class)
+                        .eq(ConversationSessionEntity::getProjectId, projectId)
+                        .set(ConversationSessionEntity::getProjectId, null)
+                        .setIncrBy(ConversationSessionEntity::getVersion, 1));
+    }
+
     public ConversationSession lockById(String conversationSessionId) {
         return models.toModel(
                 lambdaQuery()

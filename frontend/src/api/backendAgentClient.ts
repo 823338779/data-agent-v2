@@ -16,6 +16,11 @@ import {
   WorkflowTaskRef,
 } from '../domain/agent';
 import { createIdempotencyKey } from './idempotencyKey';
+import {
+  ConversationProject,
+  ConversationSidebarSnapshot,
+  SetConversationOrganization,
+} from '../domain/sidebar';
 
 const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
 const JSON_CONTENT_TYPE = 'application/json';
@@ -120,6 +125,8 @@ interface BackendSessionSummary {
   conversationSessionId: string;
   title: string;
   tag: string | null;
+  projectId?: string | null;
+  pinnedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -226,8 +233,25 @@ export class BackendApiError extends Error {
 }
 
 export interface AgentBackendClient {
+  getSidebar(signal?: AbortSignal): Promise<ConversationSidebarSnapshot>;
+  getSidebarStorageKey(): string;
+  createProject(name: string): Promise<ConversationProject>;
+  renameProject(
+    projectId: string,
+    name: string,
+    expectedVersion: number,
+  ): Promise<ConversationProject>;
+  deleteProject(projectId: string, expectedVersion: number): Promise<void>;
+  setOrganization(
+    sessionId: string,
+    request: SetConversationOrganization,
+  ): Promise<ConversationSession>;
   listSessions(): Promise<ConversationSession[]>;
-  createSession(title: string, tag: string): Promise<ConversationSession>;
+  createSession(
+    title: string,
+    tag: string,
+    projectId?: string | null,
+  ): Promise<ConversationSession>;
   getSession(conversationSessionId: string): Promise<ConversationSession>;
   renameSession(
     conversationSessionId: string,
@@ -547,6 +571,8 @@ function toSession(session: BackendSession | BackendSessionSummary): Conversatio
     conversationSessionId: session.conversationSessionId,
     title: session.title,
     tag: session.tag ?? '',
+    projectId: session.projectId ?? null,
+    pinnedAt: session.pinnedAt ?? null,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     version: session.version,
@@ -563,7 +589,8 @@ async function json<T>(response: Response): Promise<T> {
 }
 
 export function createFetchAgentBackendClient(options: ClientOptions = {}): AgentBackendClient {
-  const baseUrl = options.baseUrl ?? '/api/v1/agent-sessions';
+  const baseUrl = (options.baseUrl ?? '/api/v1/agent-sessions').replace(/\/+$/, '');
+  const apiBase = baseUrl.slice(0, baseUrl.lastIndexOf('/'));
   const fetchImpl = options.fetchImpl ?? fetch;
   const eventSourceFactory =
     options.eventSourceFactory ??
@@ -603,11 +630,59 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
   }
 
   return {
+    getSidebarStorageKey() {
+      return `data-agent:sidebar:${apiBase}:collapsed`;
+    },
+    async getSidebar(signal) {
+      const value = await json<{
+        projects: ConversationProject[];
+        sessions: BackendSessionSummary[];
+      }>(await fetchImpl(`${apiBase}/agent-sidebar`, { signal }));
+      return { projects: value.projects, sessions: value.sessions.map(toSession) };
+    },
+    async createProject(name) {
+      return json<ConversationProject>(
+        await fetchImpl(`${apiBase}/agent-projects`, {
+          method: 'POST',
+          headers: { 'Content-Type': JSON_CONTENT_TYPE },
+          body: JSON.stringify({ name }),
+        }),
+      );
+    },
+    async renameProject(projectId, name, expectedVersion) {
+      return json<ConversationProject>(
+        await fetchImpl(`${apiBase}/agent-projects/${encodeURIComponent(projectId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': JSON_CONTENT_TYPE },
+          body: JSON.stringify({ name, expectedVersion }),
+        }),
+      );
+    },
+    async deleteProject(projectId, expectedVersion) {
+      const response = await fetchImpl(
+        `${apiBase}/agent-projects/${encodeURIComponent(projectId)}?expectedVersion=${expectedVersion}`,
+        { method: 'DELETE' },
+      );
+      if (!response.ok) throw new BackendApiError(response.status);
+    },
+    async setOrganization(sessionId, request) {
+      return toSession(
+        await json<BackendSessionSummary>(
+          await fetchResponse(`/${encodeURIComponent(sessionId)}/organization`, {
+            method: 'PUT',
+            body: JSON.stringify(request),
+          }),
+        ),
+      );
+    },
     async listSessions() {
       return (await json<BackendSessionSummary[]>(await fetchResponse(''))).map(toSession);
     },
-    createSession(title, tag) {
-      return sessionRequest('', { method: 'POST', body: JSON.stringify({ title, tag }) });
+    createSession(title, tag, projectId) {
+      return sessionRequest('', {
+        method: 'POST',
+        body: JSON.stringify({ title, tag, projectId }),
+      });
     },
     getSession(conversationSessionId) {
       return sessionRequest(`/${encodeURIComponent(conversationSessionId)}`);

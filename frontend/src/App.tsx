@@ -1,13 +1,4 @@
-import {
-  ArrowRight,
-  ArrowUp,
-  Bot,
-  MessageSquarePlus,
-  PanelLeftClose,
-  RefreshCw,
-  Search,
-  UserRound,
-} from 'lucide-react';
+import { ArrowRight, ArrowUp, Bot, PanelLeftClose, RefreshCw, UserRound } from 'lucide-react';
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AgentBackendClient,
@@ -23,7 +14,8 @@ import {
   WorkspaceRoute,
 } from './app/workspaceRoute';
 import { AppShell } from './components/shell/AppShell';
-import { ConversationList } from './components/ConversationList';
+import { ConversationSidebar } from './components/ConversationSidebar';
+import { SidebarMutationResult, useConversationSidebar } from './app/useConversationSidebar';
 import { MarkdownContent } from './components/MarkdownContent';
 import { MessageProcessTimeline } from './components/MessageProcessTimeline';
 import { ConversationStatus } from './components/ConversationStatus';
@@ -40,7 +32,6 @@ const TITLE_CONFLICT_MESSAGE = '标题已在其他位置更新，已加载最新
 const TITLE_SAVE_ERROR_MESSAGE = '标题保存失败，请稍后重试。';
 const STREAM_INTERRUPTED_MESSAGE = '实时状态连接已中断；会话内容仍可继续查看。';
 const FIXED_SUBJECT = 'admin';
-export const BACKGROUND_POLL_INTERVAL_MS = 60_000;
 
 /** 会话更新时间为权威顺序；业务标识只用于相同时间戳下保持稳定。 */
 function sortSessionsByUpdatedAt(sessions: ConversationSession[]): ConversationSession[] {
@@ -59,12 +50,12 @@ function isCompletedStreamEvent(event: ConversationStreamEvent): boolean {
 
 export default function App({ client }: AppProps) {
   const backend = useMemo(() => client ?? createFetchAgentBackendClient(), [client]);
+  const sidebar = useConversationSidebar(backend);
   const [route, setRoute] = useState<WorkspaceRoute>(parseWorkspaceRoute);
   const [sessions, setSessions] = useState<ConversationSession[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [search, setSearch] = useState('');
   const [prompt, setPrompt] = useState('');
-  const [loading, setLoading] = useState(true);
+  const loading = sidebar.loading;
   const [sending, setSending] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,9 +66,6 @@ export default function App({ client }: AppProps) {
     route.kind === 'session'
       ? sessions.find((session) => session.conversationSessionId === route.conversationSessionId)
       : undefined;
-  const visibleSessions = sessions.filter((session) =>
-    `${session.title} ${session.tag}`.toLowerCase().includes(search.trim().toLowerCase()),
-  );
   const assistantMessages =
     active?.messages.filter((message) => message.role === 'assistant') ?? [];
   const hasMessageExecutionMetadata = assistantMessages.some(
@@ -103,11 +91,17 @@ export default function App({ client }: AppProps) {
   const activeStatus = active?.execution?.status ?? active?.latestExecutionStatus ?? 'idle';
   // SSE effect 只依赖“是否仍在处理”，避免同一处理阶段内的状态细化触发先关闭再重连。
   const activeIsProcessing = isProcessingStatus(activeStatus);
-  const hasBackgroundProcessingSession = sessions.some(
-    (session) =>
-      session.conversationSessionId !==
-        (route.kind === 'session' ? route.conversationSessionId : null) &&
-      isProcessingStatus(session.execution?.status ?? session.latestExecutionStatus ?? 'idle'),
+  // 仅当前详情的运行状态参与显示；旧详情和 SSE 不得恢复侧栏的旧归属、置顶或标题。
+  const sidebarSnapshot = useMemo(
+    () => ({
+      ...sidebar.snapshot,
+      sessions: sidebar.snapshot.sessions.map((summary) =>
+        summary.conversationSessionId === active?.conversationSessionId && active.execution
+          ? { ...summary, latestExecutionStatus: active.execution.status }
+          : summary,
+      ),
+    }),
+    [sidebar.snapshot, active],
   );
 
   function handleFailure(failure: unknown, message: string) {
@@ -143,39 +137,12 @@ export default function App({ client }: AppProps) {
                 ...summary,
                 messages: detail.messages,
                 execution: detail.execution,
+                workflow: detail.workflow,
               }
             : summary;
         }),
       ),
     );
-  }
-
-  async function loadSessions() {
-    setLoading(true);
-    setError(null);
-    try {
-      const loaded = await backend.listSessions();
-      mergeSessionSummaries(loaded);
-      if (
-        route.kind === 'session' &&
-        !loaded.some((item) => item.conversationSessionId === route.conversationSessionId)
-      ) {
-        navigateWorkspace({ kind: 'home' }, true);
-      }
-    } catch (failure) {
-      handleFailure(failure, '暂时无法读取会话，请检查服务端后重试。');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  /** 后台轮询失败不打断当前会话，只保留现有摘要等待下一次轮询。 */
-  async function loadSessionSummariesSilently() {
-    try {
-      mergeSessionSummaries(await backend.listSessions());
-    } catch (failure) {
-      handleFailure(failure, '后台会话状态更新失败，将在下一周期重试。');
-    }
   }
 
   useEffect(() => subscribeWorkspaceRoute(setRoute), []);
@@ -189,10 +156,10 @@ export default function App({ client }: AppProps) {
     return () => media.removeEventListener('change', collapseOnNarrowScreen);
   }, []);
   useEffect(() => {
-    void loadSessions();
-    // 首次加载由后端会话列表决定可用页面。
+    mergeSessionSummaries(sidebar.snapshot.sessions);
+    // 摘要快照更新列表字段；消息、执行和 Workflow 继续由详情生命周期管理。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend]);
+  }, [sidebar.snapshot]);
 
   // 每次打开会话都先读取权威详情，只有该响应完成后才允许建立对应详情流。
   useEffect(() => {
@@ -253,37 +220,25 @@ export default function App({ client }: AppProps) {
     return close;
   }, [active?.conversationSessionId, activeIsProcessing, backend, loadedDetailSessionId]);
 
-  // 未打开的处理中会话只通过一分钟摘要轮询更新，不占用任何长连接。
-  useEffect(() => {
-    if (!hasBackgroundProcessingSession) return;
-    const timer = window.setInterval(
-      () => void loadSessionSummariesSilently(),
-      BACKGROUND_POLL_INTERVAL_MS,
-    );
-    return () => window.clearInterval(timer);
-    // 轮询只由是否存在后台处理中会话控制。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend, hasBackgroundProcessingSession]);
-
   useEffect(() => {
     const element = messagesRef.current;
     if (element) element.scrollTop = element.scrollHeight;
   }, [active?.messages.length, active?.execution?.streamCheckpoint?.answer]);
 
-  async function createSession() {
-    if (creating) return;
+  async function createSession(projectId: string | null = null): Promise<SidebarMutationResult> {
+    if (creating) return { outcome: 'rejected', refreshed: false };
     setCreating(true);
     setError(null);
     try {
-      const session = await backend.createSession('新会话', '');
-      replaceSession(session);
-      navigateWorkspace({
-        kind: 'session',
-        conversationSessionId: session.conversationSessionId,
+      return await sidebar.mutate(async () => {
+        const session = await backend.createSession('新会话', '', projectId);
+        replaceSession(session);
+        navigateWorkspace({
+          kind: 'session',
+          conversationSessionId: session.conversationSessionId,
+        });
+        setHistoryOpen(false);
       });
-      setHistoryOpen(false);
-    } catch (failure) {
-      handleFailure(failure, '新会话创建失败，请稍后重试。');
     } finally {
       setCreating(false);
     }
@@ -299,6 +254,7 @@ export default function App({ client }: AppProps) {
       const session = await backend.submitMessage(active.conversationSessionId, content);
       replaceSession(session);
       setPrompt('');
+      void sidebar.refresh();
     } catch (failure) {
       handleFailure(failure, '消息发送失败，输入内容已保留。');
     } finally {
@@ -324,11 +280,13 @@ export default function App({ client }: AppProps) {
     setError(null);
     try {
       replaceSession(await backend.renameSession(conversationSessionId, title, session.version));
+      await sidebar.refresh();
       return true;
     } catch (failure) {
       if (failure instanceof BackendApiError && failure.status === 409) {
         try {
           replaceSession(await backend.getSession(conversationSessionId));
+          await sidebar.refresh();
           setError(TITLE_CONFLICT_MESSAGE);
           return true;
         } catch (refreshFailure) {
@@ -369,29 +327,28 @@ export default function App({ client }: AppProps) {
               <PanelLeftClose size={17} />
             </button>
           </div>
-          <button
-            className="sidebar-new-session"
-            type="button"
-            onClick={() => void createSession()}
-            disabled={creating}
-          >
-            <MessageSquarePlus size={17} />
-            {creating ? '正在创建…' : '新会话'}
-          </button>
-          <label className="session-search">
-            <Search size={15} />
-            <span className="sr-only">搜索会话</span>
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="搜索会话"
-            />
-          </label>
-          <ConversationList
-            sessions={visibleSessions}
+          <ConversationSidebar
+            key={backend.getSidebarStorageKey()}
+            snapshot={sidebarSnapshot}
+            loading={sidebar.loading}
+            busy={sidebar.busy}
+            error={sidebar.error}
+            storageKey={backend.getSidebarStorageKey()}
             activeSessionId={active?.conversationSessionId}
             onOpen={openSession}
             onRename={renameSession}
+            onCreateSession={createSession}
+            onCreateProject={(name) => sidebar.mutate(() => backend.createProject(name))}
+            onRenameProject={(id, name, version) =>
+              sidebar.mutate(() => backend.renameProject(id, name, version))
+            }
+            onDeleteProject={(id, version) =>
+              sidebar.mutate(() => backend.deleteProject(id, version))
+            }
+            onSetOrganization={(id, request) =>
+              sidebar.mutate(() => backend.setOrganization(id, request))
+            }
+            onRefresh={sidebar.refresh}
           />
         </aside>
       )}
@@ -401,7 +358,11 @@ export default function App({ client }: AppProps) {
             <p className="eyebrow">DATA AGENT</p>
             <h1>从一个清晰的问题开始。</h1>
             <p>创建会话，提交分析目标，并在同一处查看服务端返回的消息与运行状态。</p>
-            <button type="button" onClick={() => void createSession()} disabled={creating}>
+            <button
+              type="button"
+              onClick={() => void createSession()}
+              disabled={creating || sidebar.busy || loading}
+            >
               {creating ? '正在创建…' : '开始新会话'}
               <ArrowRight size={17} />
             </button>
@@ -537,10 +498,16 @@ export default function App({ client }: AppProps) {
       )}
 
       {loading && <div className="loading-state">正在读取会话…</div>}
-      {error && (
+      {(error || (!historyOpen && sidebar.error)) && (
         <div className="error-banner" role="alert">
-          <span>{error}</span>
-          <button type="button" onClick={() => void loadSessions()}>
+          <span>{error ?? sidebar.error}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              void sidebar.refresh();
+            }}
+          >
             重试
           </button>
         </div>

@@ -4,6 +4,8 @@
   "session": {
     "conversationSessionId": "session_demo",
     "title": "示例会话",
+    "projectId": null,
+    "pinnedAt": null,
     "messages": [
       {
         "conversationMessageId": "message_assistant_demo",

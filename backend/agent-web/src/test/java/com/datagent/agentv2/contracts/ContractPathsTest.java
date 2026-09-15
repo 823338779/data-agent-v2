@@ -25,7 +25,7 @@ class ContractPathsTest {
 
         assertThat(api.path("openapi").asText()).isEqualTo("3.1.0");
         assertThat(paths.size()).isEqualTo(REQUIRED.size());
-        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(9);
+        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(14);
         assertThat(REQUIRED)
                 .allSatisfy(
                         (path, methods) -> {
@@ -93,6 +93,10 @@ class ContractPathsTest {
     private static Map<String, Set<String>> requiredOperations() {
         Map<String, Set<String>> required = new LinkedHashMap<>();
         required.put("/api/v1/agent-sessions", Set.of("get", "post"));
+        required.put("/api/v1/agent-sidebar", Set.of("get"));
+        required.put("/api/v1/agent-projects", Set.of("post"));
+        required.put("/api/v1/agent-projects/{projectId}", Set.of("patch", "delete"));
+        required.put(SESSION_PATH + "/organization", Set.of("put"));
         required.put("/api/v1/agent-sessions/summary-events", Set.of("get"));
         required.put(SESSION_PATH, Set.of("get", "patch"));
         required.put(SESSION_PATH + "/messages", Set.of("post"));

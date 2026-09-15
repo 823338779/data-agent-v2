@@ -11,7 +11,14 @@
       "enum": ["session_snapshot", "execution_update", "message_update", "assistant_delta", "stream_snapshot", "workflow_snapshot", "workflow_update"]
     },
     "conversationSessionId": { "type": "string", "minLength": 1 },
-    "session": { "type": "object" },
+    "session": {
+      "type": "object",
+      "required": ["projectId", "pinnedAt"],
+      "properties": {
+        "projectId": { "type": ["string", "null"] },
+        "pinnedAt": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
     "execution": { "type": "object" },
     "event": { "type": "object" },
     "messages": { "type": "array", "items": { "$ref": "#/$defs/message" } },

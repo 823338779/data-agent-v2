@@ -177,6 +177,10 @@ export interface ConversationSession {
   conversationSessionId: string;
   title: string;
   tag: string;
+  /** 侧栏归属；null 表示未分组，不参与会话上下文。 */
+  projectId: string | null;
+  /** 置顶时间；null 表示未置顶，与归属独立。 */
+  pinnedAt: string | null;
   createdAt: string;
   updatedAt: string;
   /** 会话共享字段更新使用的服务端乐观锁版本。 */

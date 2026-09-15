@@ -21,6 +21,12 @@ public final class ConversationSessionEntity extends TenantAuditedEntity {
     /** 用于检索、评测隔离或业务分类的会话标签。 */
     private String tag;
 
+    /** 仅用于侧栏归属，空表示未分组。 */
+    private String projectId;
+
+    /** 置顶时间；空表示未置顶，移动项目时保留。 */
+    private Instant pinnedAt;
+
     /** 当前已分配的最大会话消息序号。 */
     private Long conversationMessageSequence;
 

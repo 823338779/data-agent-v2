@@ -8,6 +8,8 @@ const session: ConversationSession = {
   conversationSessionId: 'session_1',
   title: '订单延迟分析',
   tag: 'debug',
+  projectId: null,
+  pinnedAt: null,
   createdAt: '2026-08-01T08:00:00Z',
   updatedAt: '2026-08-01T08:00:00Z',
   version: 4,
@@ -35,7 +37,14 @@ function completedExecution(
 }
 
 function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient {
+  const readSummaries = overrides.listSessions ?? vi.fn().mockResolvedValue([session]);
   return {
+    getSidebar: vi.fn(async () => ({ projects: [], sessions: await readSummaries() })),
+    getSidebarStorageKey: () => 'test-sidebar',
+    createProject: vi.fn(),
+    renameProject: vi.fn(),
+    deleteProject: vi.fn(),
+    setOrganization: vi.fn(),
     listSessions: vi.fn().mockResolvedValue([session]),
     createSession: vi
       .fn()
@@ -525,19 +534,28 @@ describe('server-backed conversation workspace', () => {
 
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
 
-    expect(listSessions).toHaveBeenCalledTimes(2);
+    expect(backend.getSidebar).toHaveBeenCalledTimes(2);
     expect(screen.getAllByText('当前详情回答')).toHaveLength(1);
     expect(backend.subscribeSessionEvents).not.toHaveBeenCalled();
   });
 
   it('renames a session from the sidebar and updates the active heading', async () => {
     const renamed = { ...session, title: '新的会话标题', version: 5 };
-    const backend = client({ renameSession: vi.fn().mockResolvedValue(renamed) });
+    const backend = client({
+      renameSession: vi.fn().mockResolvedValue(renamed),
+      getSidebar: vi
+        .fn()
+        .mockResolvedValueOnce({ projects: [], sessions: [session] })
+        .mockResolvedValue({ projects: [], sessions: [renamed] }),
+    });
     render(<App client={backend} />);
     await openSession('订单延迟分析');
     expect(await screen.findByRole('heading', { name: '订单延迟分析' })).toBeInTheDocument();
     const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
-    const sessionButton = await within(sidebar).findByRole('button', { name: /订单延迟分析/ });
+    const sessionButton = await within(sidebar).findByRole('button', {
+      name: '订单延迟分析',
+      exact: true,
+    });
     fireEvent.doubleClick(sessionButton);
     const titleInput = within(sidebar).getByRole('textbox', {
       name: '编辑“订单延迟分析”标题',
@@ -553,17 +571,95 @@ describe('server-backed conversation workspace', () => {
     expect(await screen.findByRole('heading', { name: '新的会话标题' })).toBeInTheDocument();
   });
 
+  it('keeps organization from the sidebar when an old detail arrives and preserves workflow on refresh', async () => {
+    let resolveDetail!: (value: ConversationSession) => void;
+    const oldDetail = new Promise<ConversationSession>((resolve) => {
+      resolveDetail = resolve;
+    });
+    const project = {
+      projectId: 'p_new',
+      name: '新分组',
+      version: 0,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    };
+    const summary = { ...session, projectId: project.projectId, version: 6 };
+    const snapshot = { projects: [project], sessions: [summary] };
+    const execution = {
+      ...completedExecution('execution_1', '详情已保留'),
+      status: 'running' as const,
+    };
+    const detail: ConversationSession = {
+      ...session,
+      execution,
+      messages: [
+        {
+          conversationMessageId: 'answer_saved',
+          role: 'assistant',
+          author: 'Agent',
+          content: '详情已保留',
+          timestamp: session.updatedAt,
+          version: 0,
+          thinkingProcess: [],
+          executionId: 'execution_1',
+          execution,
+        },
+      ],
+      workflow: {
+        workflowId: 'workflow_1',
+        executionId: 'execution_1',
+        latestSequence: 1,
+        status: 'running',
+        currentStep: 'execute_query',
+        tasks: [],
+        startedAt: session.createdAt,
+        updatedAt: session.updatedAt,
+      },
+    };
+    const backend = client({
+      getSidebar: vi.fn().mockResolvedValue(snapshot),
+      getSession: vi.fn().mockReturnValue(oldDetail),
+    });
+    render(<App client={backend} />);
+    await openSession('订单延迟分析');
+    await act(async () => {
+      resolveDetail(detail);
+    });
+    const projectRegion = screen.getByRole('region', { name: '项目' });
+    expect(
+      within(projectRegion).getByRole('button', { name: '订单延迟分析 处理中', exact: true }),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('region', { name: '未分组会话' })).queryByText('订单延迟分析'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('查询数据')).toBeInTheDocument();
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(screen.getByText('查询数据')).toBeInTheDocument();
+    expect(screen.getAllByText('详情已保留')).toHaveLength(1);
+    expect(backend.listSessions).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '新分组', exact: true }));
+    expect(screen.getByRole('heading', { name: '订单延迟分析' })).toBeInTheDocument();
+  });
+
   it('reloads the server title when a rename conflicts', async () => {
     const latest = { ...session, title: '其他位置的标题', version: 5 };
     const backend = client({
       renameSession: vi.fn().mockRejectedValue(new BackendApiError(409)),
       getSession: vi.fn().mockResolvedValue(latest),
+      getSidebar: vi
+        .fn()
+        .mockResolvedValueOnce({ projects: [], sessions: [session] })
+        .mockResolvedValue({ projects: [], sessions: [latest] }),
     });
     render(<App client={backend} />);
     fireEvent.click(await screen.findByRole('button', { name: '展开会话列表' }));
     const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
 
-    fireEvent.doubleClick(await within(sidebar).findByRole('button', { name: /订单延迟分析/ }));
+    fireEvent.doubleClick(
+      await within(sidebar).findByRole('button', { name: '订单延迟分析', exact: true }),
+    );
     const titleInput = within(sidebar).getByRole('textbox', {
       name: '编辑“订单延迟分析”标题',
     });
@@ -575,6 +671,29 @@ describe('server-backed conversation workspace', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       '标题已在其他位置更新，已加载最新标题。',
     );
-    expect(within(sidebar).getByRole('button', { name: /其他位置的标题/ })).toBeInTheDocument();
+    expect(
+      within(sidebar).getByRole('button', { name: '其他位置的标题', exact: true }),
+    ).toBeInTheDocument();
+  });
+
+  it('allows sending a message while an organization write is pending', async () => {
+    let finish!: (value: ConversationSession) => void;
+    const pending = new Promise<ConversationSession>((resolve) => {
+      finish = resolve;
+    });
+    const backend = client({ setOrganization: vi.fn().mockReturnValue(pending) });
+    render(<App client={backend} />);
+    await openSession('订单延迟分析');
+    fireEvent.click(screen.getByRole('button', { name: '订单延迟分析的更多操作' }));
+    fireEvent.click(screen.getByRole('button', { name: '置顶会话' }));
+    expect(screen.getByRole('button', { name: '新会话', exact: true })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '继续对话' } });
+    fireEvent.keyDown(screen.getByLabelText('输入消息'), { key: 'Enter' });
+    await waitFor(() =>
+      expect(backend.submitMessage).toHaveBeenCalledWith('session_1', '继续对话'),
+    );
+    await act(async () => {
+      finish(session);
+    });
   });
 });

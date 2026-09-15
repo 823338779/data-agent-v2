@@ -79,6 +79,8 @@ public interface ConversationPersistenceMapper {
     @Mapping(target = "updatedAt", ignore = true)
     @Mapping(target = "deletedAt", ignore = true)
     @Mapping(target = "deleted", ignore = true)
+    @Mapping(target = "projectId", ignore = true)
+    @Mapping(target = "pinnedAt", ignore = true)
     void updateEntity(ConversationSession model, @MappingTarget ConversationSessionEntity entity);
 
     void updateModel(ConversationSessionEntity entity, @MappingTarget ConversationSession model);

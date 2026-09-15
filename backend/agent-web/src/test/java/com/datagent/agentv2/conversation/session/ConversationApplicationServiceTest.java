@@ -53,7 +53,10 @@ class ConversationApplicationServiceTest {
                         checkpoints,
                         submissions,
                         ids,
-                        artifacts);
+                        artifacts,
+                        mock(
+                                com.datagent.agentv2.persistence.service.ConversationProjectService
+                                        .class));
 
         ConversationView view = service.create("Test conversation", null);
 

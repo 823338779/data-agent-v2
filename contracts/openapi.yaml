@@ -5,6 +5,82 @@ info:
   description: 单实例本地执行模式下的会话 REST 与 SSE 契约。
 
 paths:
+  /api/v1/agent-sidebar:
+    get:
+      operationId: getConversationSidebar
+      responses:
+        '200':
+          description: 同一数据库快照中的活动项目和全部会话摘要
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationSidebar' }
+  /api/v1/agent-projects:
+    post:
+      operationId: createConversationProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateConversationProjectRequest' }
+      responses:
+        '201':
+          description: 已创建项目
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationProject' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+  /api/v1/agent-projects/{projectId}:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectId' }
+    patch:
+      operationId: renameConversationProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenameConversationProjectRequest' }
+      responses:
+        '200':
+          description: 已重命名项目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationProject' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      operationId: deleteConversationProject
+      parameters:
+        - name: expectedVersion
+          in: query
+          required: true
+          schema: { type: integer, format: int64, minimum: 0 }
+      responses:
+        '204': { description: 项目已逻辑删除，会话移至未分组并保留置顶 }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/agent-sessions/{conversationSessionId}/organization:
+    put:
+      operationId: setConversationOrganization
+      parameters:
+        - { $ref: '#/components/parameters/ConversationSessionId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetConversationOrganizationRequest' }
+      responses:
+        '200':
+          description: 已设置归属和置顶，不读取会话正文
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationSessionSummary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /api/v1/agent-sessions:
     get:
       operationId: listConversationSessions
@@ -30,6 +106,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ConversationSession' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/agent-sessions/summary-events:
     get:
       operationId: streamConversationSummaries
@@ -141,6 +218,11 @@ paths:
 
 components:
   parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 64 }
     ConversationSessionId:
       name: conversationSessionId
       in: path
@@ -185,12 +267,53 @@ components:
           example:
             code: IDEMPOTENCY_KEY_REUSED
   schemas:
+    ConversationProject:
+      type: object
+      required: [projectId, name, version, createdAt, updatedAt]
+      properties:
+        projectId: { type: string }
+        name: { type: string }
+        version: { type: integer, format: int64, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ConversationSidebar:
+      type: object
+      required: [projects, sessions]
+      properties:
+        projects:
+          type: array
+          items: { $ref: '#/components/schemas/ConversationProject' }
+        sessions:
+          type: array
+          items: { $ref: '#/components/schemas/ConversationSessionSummary' }
+    CreateConversationProjectRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, description: 去除首尾空白后为1至60个UTF-16代码单元 }
+    RenameConversationProjectRequest:
+      type: object
+      additionalProperties: false
+      required: [name, expectedVersion]
+      properties:
+        name: { type: string, description: 去除首尾空白后为1至60个UTF-16代码单元 }
+        expectedVersion: { type: integer, format: int64, minimum: 0 }
+    SetConversationOrganizationRequest:
+      type: object
+      additionalProperties: false
+      required: [projectId, pinned, expectedVersion]
+      properties:
+        projectId: { type: [string, 'null'], minLength: 1, maxLength: 64 }
+        pinned: { type: boolean }
+        expectedVersion: { type: integer, format: int64, minimum: 0 }
     CreateConversationSessionRequest:
       type: object
       additionalProperties: false
       properties:
         title: { type: [string, 'null'], maxLength: 120 }
         tag: { type: [string, 'null'], maxLength: 120 }
+        projectId: { type: [string, 'null'], minLength: 1, maxLength: 64 }
     RenameConversationSessionRequest:
       type: object
       additionalProperties: false
@@ -206,11 +329,13 @@ components:
         content: { type: string, minLength: 1, maxLength: 8000 }
     ConversationSession:
       type: object
-      required: [conversationSessionId, title, tag, createdAt, updatedAt, version, messages]
+      required: [conversationSessionId, title, tag, projectId, pinnedAt, createdAt, updatedAt, version, messages]
       properties:
         conversationSessionId: { type: string }
         title: { type: string }
         tag: { type: string }
+        projectId: { type: [string, 'null'] }
+        pinnedAt: { type: [string, 'null'], format: date-time }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         version: { type: integer, format: int64 }
@@ -223,11 +348,13 @@ components:
             - { type: 'null' }
     ConversationSessionSummary:
       type: object
-      required: [conversationSessionId, title, tag, createdAt, updatedAt, version, status]
+      required: [conversationSessionId, title, tag, projectId, pinnedAt, createdAt, updatedAt, version, status]
       properties:
         conversationSessionId: { type: string }
         title: { type: string }
         tag: { type: string }
+        projectId: { type: [string, 'null'] }
+        pinnedAt: { type: [string, 'null'], format: date-time }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         version: { type: integer, format: int64 }

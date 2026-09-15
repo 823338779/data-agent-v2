@@ -22,6 +22,10 @@ public record ConversationView(
         String conversationSessionId,
         String title,
         String tag,
+        /** 侧栏归属，空表示未分组，不改变会话上下文。 */
+        String projectId,
+        /** 置顶时间，空表示未置顶。 */
+        Instant pinnedAt,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
         long version,
@@ -40,6 +44,8 @@ public record ConversationView(
                 session.getConversationSessionId(),
                 session.getTitle(),
                 session.getTag() == null ? "" : session.getTag(),
+                session.getProjectId(),
+                session.getPinnedAt(),
                 session.getCreatedAt(),
                 session.getUpdatedAt(),
                 session.getVersion(),

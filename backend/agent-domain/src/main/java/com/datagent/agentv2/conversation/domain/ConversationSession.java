@@ -21,6 +21,12 @@ public final class ConversationSession {
     /** 会话检索和业务分类标签。 */
     private String tag;
 
+    /** 侧栏项目归属；空表示未分组，不参与上下文选择。 */
+    private String projectId;
+
+    /** 置顶时间；空表示未置顶，与项目归属互相独立。 */
+    private Instant pinnedAt;
+
     /** 当前已分配的最大消息序号。 */
     private Long conversationMessageSequence;
 

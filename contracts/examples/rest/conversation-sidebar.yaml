@@ -1,0 +1,18 @@
+schema: ConversationSidebar
+value:
+  projects:
+    - projectId: project_demo
+      name: 经营分析
+      version: 0
+      createdAt: 2026-09-15T08:00:00Z
+      updatedAt: 2026-09-15T08:00:00Z
+  sessions:
+    - conversationSessionId: session_demo
+      title: 每周经营数据复盘
+      tag: analysis
+      projectId: project_demo
+      pinnedAt: 2026-09-15T08:01:00Z
+      createdAt: 2026-09-15T08:00:00Z
+      updatedAt: 2026-09-15T08:01:00Z
+      version: 1
+      status: idle

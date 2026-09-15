@@ -21,6 +21,7 @@ import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
+import com.datagent.agentv2.persistence.service.ConversationProjectService;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
@@ -49,15 +50,31 @@ public class ConversationApplicationService {
     private final AgentExecutionSubmissionService agentExecutionSubmissionService;
     private final IdGenerator idGenerator;
     private final ArtifactQueryService artifactQueryService;
+    private final ConversationProjectService projects;
 
     @Transactional
     public ConversationView create(String title, String tag) {
+        return create(title, tag, null);
+    }
+
+    /** 项目仅决定新会话归属；先锁项目再保存，避免与项目删除交错。 */
+    @Transactional
+    public ConversationView create(String title, String tag, String projectId) {
+        if (projectId != null) {
+            if (projectId.isBlank() || projectId.length() > 64) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid project id");
+            }
+            if (projects.lockByProjectId(projectId) == null) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Project not found");
+            }
+        }
         ConversationSession session =
                 ConversationSession.create(
                         idGenerator.next(ID_PREFIX_CONVERSATION_SESSION),
                         normalizedTitle(title),
                         tag,
                         Instant.now());
+        session.setProjectId(projectId);
         conversationSessionService.save(session);
         return ConversationView.composeFromNewSession(session);
     }
@@ -93,6 +110,17 @@ public class ConversationApplicationService {
     @Transactional(readOnly = true)
     public ConversationView get(String conversationSessionId) {
         return snapshot(requiredSession(conversationSessionId));
+    }
+
+    /** 组织操作只返回轻量摘要，不额外读取消息或产物。 */
+    @Transactional(readOnly = true)
+    public ConversationSummaryView summary(String sessionId) {
+        var session = requiredSession(sessionId);
+        var executions =
+                agentExecutionService.findByConversationSessionIdsOrderByCreatedAtDesc(
+                        List.of(sessionId));
+        return ConversationSummaryView.composeFromSession(
+                session, executions.isEmpty() ? null : executions.getFirst());
     }
 
     /** 为首次 SSE 连接读取一次权威会话投影及其持久事件水位。 */
