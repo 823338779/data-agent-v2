@@ -41,5 +41,7 @@ public record GitProperties(
                 || maxDiffBytes <= 0) {
             throw new IllegalArgumentException("Git 配置不完整或上限无效");
         }
+        // 子进程在各会话 clone 中执行；固定绝对根目录，避免临时 index 相对于 clone 二次解析。
+        workspaceRoot = workspaceRoot.toAbsolutePath().normalize();
     }
 }

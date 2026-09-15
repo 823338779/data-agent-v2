@@ -40,6 +40,42 @@ class GitRepositoryClientTest {
     }
 
     @Test
+    void relativeRootFreezesChangedFileFromCloneWorkingDirectory() throws Exception {
+        Path root = Files.createTempDirectory(Path.of("target"), "relative-git-");
+        assertFalse(root.isAbsolute());
+        try {
+            var relative =
+                    new GitRepositoryClient(
+                            new GitProperties(
+                                    "git",
+                                    remote.toString(),
+                                    root,
+                                    Duration.ofSeconds(10),
+                                    1024 * 1024,
+                                    512 * 1024,
+                                    20,
+                                    100,
+                                    5 * 1024 * 1024,
+                                    2 * 1024 * 1024));
+            Path workspace = root.resolve("workspace").toAbsolutePath();
+            relative.cloneRepository(workspace);
+            Files.writeString(workspace.resolve("metrics.yml"), "relative-root\n");
+            var snapshot = relative.freeze(workspace);
+            assertEquals(1, snapshot.changes().size());
+            assertEquals(
+                    "relative-root\n",
+                    relative.readTreeFile(workspace, snapshot.treeId(), "metrics.yml"));
+        } finally {
+            try (var paths = Files.walk(root)) {
+                for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                    path.toFile().setWritable(true);
+                    Files.deleteIfExists(path);
+                }
+            }
+        }
+    }
+
+    @Test
     void perFileDiffTreatsBracketCharactersAsLiteralPath() throws Exception {
         Path workspace = temp.resolve("literal-diff");
         repository.cloneRepository(workspace);

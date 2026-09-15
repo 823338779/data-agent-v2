@@ -84,7 +84,14 @@ public class GitChangeController {
     }
 
     private GitChangeResponse response(String session, GitChangeView view) {
-        return GitChangeResponse.composeFromChange(view, changes.files(session, view.changeId()));
+        try {
+            return GitChangeResponse.composeFromChange(
+                    view, changes.files(session, view.changeId()));
+        } catch (GitException failure) {
+            // 归属和按钮状态已校验；已知审阅损坏只影响审阅能力，不得改写或遮蔽持久化提交事实。
+            if (!"GIT_SNAPSHOT_CORRUPT".equals(failure.code())) throw failure;
+            return GitChangeResponse.composeFromUnavailableReview(view);
+        }
     }
 
     /** 版本由最新详情提供，0 是合法的首次候选版本。 */

@@ -9,6 +9,8 @@ import java.util.List;
  *
  * @param version 按钮 CAS 版本，客户端每次用最新详情值，不自行递增
  * @param commitId 已生成提交的对象标识；尚未生成时为 null，存在不代表已经推送
+ * @param reviewAvailable 本次读取的冻结审阅材料是否完整可用；false 时必须禁用确认和重试
+ * @param files 审阅材料不可用时为 null，不表示空变更；可用时提供完整文件摘要
  * @param errorSummary 由稳定错误码解释的安全提示，绝不使用 Git stderr
  */
 public record GitChangeResponse(
@@ -20,11 +22,25 @@ public record GitChangeResponse(
         String summary,
         String commitMessage,
         String commitId,
+        boolean reviewAvailable,
         List<FileSummary> files,
         String errorCode,
         String errorSummary) {
     public static GitChangeResponse composeFromChange(
             GitChangeView change, List<GitSnapshotStore.SnapshotFile> files) {
+        return compose(
+                change,
+                files.stream()
+                        .map(f -> new FileSummary(f.fileId(), f.status(), f.path()))
+                        .toList());
+    }
+
+    /** 审阅材料不可用时仍返回持久化状态，调用方仅可在已知快照损坏时使用。 */
+    public static GitChangeResponse composeFromUnavailableReview(GitChangeView change) {
+        return compose(change, null);
+    }
+
+    private static GitChangeResponse compose(GitChangeView change, List<FileSummary> files) {
         return new GitChangeResponse(
                 change.changeId(),
                 change.version(),
@@ -34,7 +50,8 @@ public record GitChangeResponse(
                 change.summary(),
                 change.commitMessage(),
                 change.commitId(),
-                files.stream().map(f -> new FileSummary(f.fileId(), f.status(), f.path())).toList(),
+                files != null,
+                files,
                 change.errorCode(),
                 GitErrorMessages.summary(change.errorCode()));
     }

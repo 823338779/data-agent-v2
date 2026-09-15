@@ -10,6 +10,7 @@ const pending = {
   summary: '调整指标',
   commitMessage: 'update metrics',
   commitId: null,
+  reviewAvailable: true,
   files: [{ fileId: '0', status: 'M', path: 'metrics.yml' }],
   errorCode: null,
   errorSummary: null,
@@ -247,4 +248,51 @@ it('retries a failed diff only when reopened, not when collapsed', async () => {
   expect(fetchMock).toHaveBeenCalledTimes(2);
   fireEvent.click(screen.getByRole('button', { name: '查看差异 metrics.yml' }));
   expect(await screen.findByText('+恢复内容')).toBeInTheDocument();
+});
+
+it('disables approval when pending review material is unavailable', async () => {
+  fetchMock.mockResolvedValueOnce(response({ ...pending, reviewAvailable: false, files: null }));
+  mount();
+  expect(await screen.findByText(/审阅材料不可用/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '确认提交' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '取消' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: /查看差异/ })).not.toBeInTheDocument();
+});
+
+it.each(['FAILED', 'PUSHED'])(
+  'recovers stored %s after action failure with unavailable review',
+  async (status) => {
+    fetchMock
+      .mockResolvedValueOnce(response(pending))
+      .mockResolvedValueOnce(
+        response({ code: 'GIT_SNAPSHOT_CORRUPT', detail: '候选快照不可用' }, 409),
+      )
+      .mockResolvedValueOnce(
+        response({
+          ...pending,
+          status,
+          version: 2,
+          commitId: 'saved-commit',
+          errorCode: status === 'FAILED' ? 'GIT_SNAPSHOT_CORRUPT' : null,
+          reviewAvailable: false,
+          files: null,
+        }),
+      );
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: '确认提交' }));
+    expect(
+      await screen.findByText(status === 'FAILED' ? '提交失败' : '已推送'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('saved-commit')).toBeInTheDocument();
+    expect(screen.getByText(/审阅材料不可用/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '确认提交' })).toBeDisabled();
+    expect(screen.queryByText('加载失败')).not.toBeInTheDocument();
+  },
+);
+
+it('shows frozen file checks and explicitly excludes metric business validation', async () => {
+  mount();
+  expect(await screen.findByText(/冻结时基础检查已通过/)).toHaveTextContent('UTF-8');
+  expect(screen.getByText(/冻结时基础检查已通过/)).toHaveTextContent('文件与 Git 变更完整性');
+  expect(screen.getByText(/未进行指标业务口径校验/)).toBeInTheDocument();
 });

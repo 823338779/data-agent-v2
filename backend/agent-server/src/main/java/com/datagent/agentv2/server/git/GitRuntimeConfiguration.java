@@ -8,6 +8,7 @@ import com.datagent.agentv2.persistence.service.git.GitChangePersistenceService;
 import java.time.Clock;
 import java.util.*;
 import java.util.concurrent.*;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.ApplicationRunner;
@@ -15,6 +16,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.*;
 
 /** 服务级异步提交和一次启动恢复；生命周期由 server 关闭，不查询指标平台。 */
+@Slf4j
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(prefix = "data-agent.git", name = "enabled", havingValue = "true")
 public class GitRuntimeConfiguration {
@@ -43,8 +45,20 @@ public class GitRuntimeConfiguration {
     }
 
     @Bean
-    ApplicationRunner gitStartupRecovery(GitRecoveryRunner recovery) {
-        return args -> recovery.recover();
+    ApplicationRunner gitStartupRecovery(
+            GitRecoveryRunner recovery,
+            @Qualifier("gitSubmissionExecutor") ExecutorService executor) {
+        // 远端核实可能超时，启动线程只投递一次，避免遗留 Git 任务阻塞所有会话的 readiness。
+        return args ->
+                executor.execute(
+                        () -> {
+                            try {
+                                recovery.recover();
+                            } catch (RuntimeException failure) {
+                                // 异步失败必须可观察；异常消息和堆栈可能含远端凭据、路径或 stderr，不能直接记录。
+                                log.error("Git 启动恢复失败，请通过卡片核实遗留提交");
+                            }
+                        });
     }
 
     /** 能力开关同时扩展最大集合，初始集合仍不暴露 Git；其他未知配置继续由原有严格校验拒绝。 */

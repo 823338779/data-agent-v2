@@ -180,7 +180,10 @@ export function GitChangeCardBlock({
     }
   }
 
-  const retryable = change?.status === 'FAILED' && retryableErrors.has(change.errorCode ?? '');
+  const retryable =
+    change?.reviewAvailable &&
+    change.status === 'FAILED' &&
+    retryableErrors.has(change.errorCode ?? '');
   return (
     <section className="git-change-card" aria-label="Git 变更确认">
       <header>
@@ -214,29 +217,42 @@ export function GitChangeCardBlock({
               </>
             )}
           </dl>
-          <ul>
-            {change.files.map((file) => (
-              <li key={file.fileId}>
-                <div>
-                  <code>{file.status}</code> <span>{file.path}</span>
-                  <button
-                    type="button"
-                    aria-expanded={opened === file.fileId}
-                    disabled={loadingDiff !== null}
-                    onClick={() => void openDiff(file.fileId)}
-                  >
-                    {opened === file.fileId ? '收起差异' : '查看差异'} {file.path}
-                  </button>
-                </div>
-                {opened === file.fileId && (
-                  <pre className="git-change-card__diff">
-                    {diffs[file.fileId] ??
-                      (loadingDiff === file.fileId ? '加载差异中…' : '差异加载失败，请收起后重试')}
-                  </pre>
-                )}
-              </li>
-            ))}
-          </ul>
+          <p>
+            冻结时基础检查已通过：变更文件 UTF-8、文件与 Git
+            变更完整性及大小限制；未进行指标业务口径校验。
+          </p>
+          {!change.reviewAvailable && (
+            <p role="alert">
+              审阅材料不可用：冻结快照缺失或完整性校验失败，无法查看差异或批准提交。已保存的提交状态仍可查询。
+            </p>
+          )}
+          {change.reviewAvailable && change.files && (
+            <ul>
+              {change.files.map((file) => (
+                <li key={file.fileId}>
+                  <div>
+                    <code>{file.status}</code> <span>{file.path}</span>
+                    <button
+                      type="button"
+                      aria-expanded={opened === file.fileId}
+                      disabled={loadingDiff !== null}
+                      onClick={() => void openDiff(file.fileId)}
+                    >
+                      {opened === file.fileId ? '收起差异' : '查看差异'} {file.path}
+                    </button>
+                  </div>
+                  {opened === file.fileId && (
+                    <pre className="git-change-card__diff">
+                      {diffs[file.fileId] ??
+                        (loadingDiff === file.fileId
+                          ? '加载差异中…'
+                          : '差异加载失败，请收起后重试')}
+                    </pre>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
           {change.errorSummary && <p>{change.errorSummary}</p>}
           {(change.status === 'RECONFIRM_REQUIRED' ||
             change.status === 'INVALIDATED' ||
@@ -247,7 +263,7 @@ export function GitChangeCardBlock({
           <footer>
             <button
               type="button"
-              disabled={busy || change.status !== 'PENDING_CONFIRMATION'}
+              disabled={busy || !change.reviewAvailable || change.status !== 'PENDING_CONFIRMATION'}
               onClick={() => void act('confirm')}
             >
               确认提交

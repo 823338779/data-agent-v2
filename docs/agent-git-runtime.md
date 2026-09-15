@@ -67,7 +67,7 @@ payload 两个 ID 均由服务器写入。候选、UI Block、正文占位符和
 详情示例（字段含 null，files 不含 diff）：
 
 ```json
-{"changeId":"gc_示例","version":0,"status":"PENDING_CONFIRMATION","branch":"main","baseCommit":"提交对象标识","summary":"调整指标","commitMessage":"update metrics","commitId":null,"files":[{"fileId":"0","status":"M","path":"metrics.yml"}],"errorCode":null,"errorSummary":null}
+{"changeId":"gc_示例","version":0,"status":"PENDING_CONFIRMATION","branch":"main","baseCommit":"提交对象标识","summary":"调整指标","commitMessage":"update metrics","commitId":null,"reviewAvailable":true,"files":[{"fileId":"0","status":"M","path":"metrics.yml"}],"errorCode":null,"errorSummary":null}
 ```
 
 确认/重试返回后，前端通过 GET 详情刷新异步状态；后台不会发起模型调用。卡片发布复用现有 message_update，不引入独立 Git SSE 事件。
@@ -79,3 +79,12 @@ payload 两个 ID 均由服务器写入。候选、UI Block、正文占位符和
 ## 终答边界
 
 `ModelInvocationCoordinator.completeFinalAnswer` 在原终答落库位置调用可选的 `GitFinalAnswerComposer`，将当前 assistant 消息已登记的 Git 卡片占位符补回最终文字，并同时写入流检查点。否则正常模型回答会覆盖工具发布的占位符。此接入不修改 ReAct 循环、AgentTool SPI、执行状态机、artifact 投影或 artifact 终答行为。Git 关闭时该服务不存在，原终答行为保持不变。
+
+
+### 审阅可用性与基础检查
+
+详情和按钮响应增加 `reviewAvailable`：完整快照可读时为 true；仅当已知快照缺失或摘要损坏时为 false，此时 `files=null`，明确表示无法审阅，不能解释为空变更。状态、版本、commitId 和错误字段仍来自数据库，已核实的 PUSHED 不因材料损坏而改变。确认和重试禁用，取消及结果核实仍遵循原归属、版本与状态规则；`/files`、`/diff` 仍对损坏材料返回 GIT_SNAPSHOT_CORRUPT（409）。其他异常不作成功响应。
+
+卡片说明冻结时通过变更文件 UTF-8、文件与 Git 变更完整性及大小限制检查；这仅是冻结当时的基础检查，不表示当前材料仍可用，也未进行指标业务口径校验。
+
+工作根目录在配置边界转为绝对规范化路径，相对路径以服务进程启动目录为基准。启动恢复只向受管串行执行器投递一次后台核实，不等待远端完成而阻塞 readiness；后台异常记录固定安全日志，不输出异常详情、路径或凭据。恢复不自动确认或推送。

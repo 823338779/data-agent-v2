@@ -23,7 +23,10 @@ export interface GitChange {
   summary: string;
   commitMessage: string;
   commitId: string | null;
-  files: GitFileSummary[];
+  /** false 表示冻结审阅材料丢失或损坏，禁止确认和重试；不改变已保存的提交阶段。 */
+  reviewAvailable: boolean;
+  /** 不可审阅时为 null，不能解释为空变更。 */
+  files: GitFileSummary[] | null;
   errorCode: string | null;
   errorSummary: string | null;
 }

@@ -714,7 +714,7 @@ components:
     GitChange:
       type: object
       additionalProperties: false
-      required: [changeId, version, status, branch, baseCommit, summary, commitMessage, commitId, files, errorCode, errorSummary]
+      required: [changeId, version, status, branch, baseCommit, summary, commitMessage, commitId, reviewAvailable, files, errorCode, errorSummary]
       properties:
         changeId: { type: string }
         version: { type: integer, format: int64, minimum: 0 }
@@ -724,8 +724,10 @@ components:
         summary: { type: string }
         commitMessage: { type: string }
         commitId: { type: [string, 'null'] }
+        reviewAvailable: { type: boolean, description: 本次冻结审阅材料是否完整可用，false 时禁止确认和重试，不改变持久化提交阶段 }
         files:
-          type: array
+          description: 审阅材料不可用时为 null，不代表空变更
+          type: [array, 'null']
           items: { $ref: '#/components/schemas/GitChangeFile' }
         errorCode: { type: [string, 'null'] }
         errorSummary: { type: [string, 'null'], description: 稳定错误码的安全说明，不返回 Git stderr }

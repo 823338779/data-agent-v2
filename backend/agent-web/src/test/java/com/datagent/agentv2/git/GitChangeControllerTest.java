@@ -1,5 +1,6 @@
 package com.datagent.agentv2.git;
 
+import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -52,6 +53,22 @@ class GitChangeControllerTest {
     }
 
     @Test
+    void unrelatedMaterialLookupFailuresAreNotHidden() {
+        when(changes.detail("s1", "c1")).thenReturn(view());
+        when(changes.files("s1", "c1")).thenThrow(new GitException("GIT_CHANGE_NOT_FOUND", "不存在"));
+        runner.run(
+                ctx -> {
+                    var controller = ctx.getBean(GitChangeController.class);
+                    assertThatThrownBy(() -> controller.detail("s1", "c1"))
+                            .isInstanceOfSatisfying(
+                                    GitException.class,
+                                    failure ->
+                                            assertThat(failure.code())
+                                                    .isEqualTo("GIT_CHANGE_NOT_FOUND"));
+                });
+    }
+
+    @Test
     void confirmReturnsAcceptedAndFileSummaryWithoutDiff() {
         when(submissions.confirm("s1", "c1", 1)).thenReturn(view());
         when(changes.files("s1", "c1"))
@@ -71,6 +88,7 @@ class GitChangeControllerTest {
                                             .content("{\"version\":1}"))
                             .andExpect(status().isAccepted())
                             .andExpect(jsonPath("$.changeId").value("c1"))
+                            .andExpect(jsonPath("$.reviewAvailable").value(true))
                             .andExpect(jsonPath("$.files[0].path").value("metrics.yml"))
                             .andExpect(jsonPath("$.files[0].diff").doesNotExist());
                 });

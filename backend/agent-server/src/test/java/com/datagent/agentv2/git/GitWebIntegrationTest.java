@@ -19,6 +19,8 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -284,6 +286,89 @@ class GitWebIntegrationTest {
                                 Integer.class,
                                 c.changeId()))
                 .isOne();
+        // 已推送的事实来自远端核实；之后审阅材料丢失或损坏不得遮蔽它。
+        for (boolean missing : new boolean[] {true, false}) {
+            damageSnapshot(c, missing);
+            mvc.perform(get(base))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.status").value("PUSHED"))
+                    .andExpect(jsonPath("$.commitId").value(commit))
+                    .andExpect(jsonPath("$.reviewAvailable").value(false));
+            mvc.perform(post(base + "/confirm").contentType("application/json").content(request))
+                    .andExpect(status().isAccepted())
+                    .andExpect(jsonPath("$.status").value("PUSHED"))
+                    .andExpect(jsonPath("$.commitId").value(commit));
+            mvc.perform(
+                            post(base + "/reconcile")
+                                    .contentType("application/json")
+                                    .content(
+                                            "{\"version\":"
+                                                    + changes.detail(r.session(), c.changeId())
+                                                            .version()
+                                                    + "}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.status").value("PUSHED"))
+                    .andExpect(jsonPath("$.commitId").value(commit));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void unavailableReviewStillAllowsMetadataAndCancellation(boolean missing) throws Exception {
+        Run r = execution();
+        GitChangeView c = candidate(r);
+        damageSnapshot(c, missing);
+        mvc.perform(get(base(r, c)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PENDING_CONFIRMATION"))
+                .andExpect(jsonPath("$.reviewAvailable").value(false))
+                .andExpect(jsonPath("$.files").value(org.hamcrest.Matchers.nullValue()));
+        mvc.perform(
+                        post(base(r, c) + "/cancel")
+                                .contentType("application/json")
+                                .content("{\"version\":" + c.version() + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELLED"))
+                .andExpect(jsonPath("$.reviewAvailable").value(false));
+        mvc.perform(get(base(r, c)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELLED"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void failedConfirmationRemainsQueryableWhenReviewIsUnavailable(boolean missing)
+            throws Exception {
+        Run r = execution();
+        GitChangeView c = candidate(r);
+        damageSnapshot(c, missing);
+        mvc.perform(
+                        post(base(r, c) + "/confirm")
+                                .contentType("application/json")
+                                .content("{\"version\":" + c.version() + "}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("GIT_SNAPSHOT_CORRUPT"));
+        mvc.perform(get(base(r, c)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.errorCode").value("GIT_SNAPSHOT_CORRUPT"))
+                .andExpect(jsonPath("$.reviewAvailable").value(false));
+        mvc.perform(get("/api/v1/agent-sessions/other/git-changes/" + c.changeId()))
+                .andExpect(status().isNotFound());
+        mvc.perform(get(base(r, c) + "/files"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("GIT_SNAPSHOT_CORRUPT"));
+    }
+
+    void damageSnapshot(GitChangeView c, boolean missing) throws Exception {
+        String key =
+                jdbc.queryForObject(
+                        "select snapshot_storage_key from git_change where change_id=?",
+                        String.class,
+                        c.changeId());
+        Path snapshot = ROOT.resolve("data").resolve(key);
+        if (missing) Files.delete(snapshot);
+        else Files.writeString(snapshot, "corrupt");
     }
 
     @Test

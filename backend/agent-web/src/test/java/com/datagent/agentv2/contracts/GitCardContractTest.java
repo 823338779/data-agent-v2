@@ -12,6 +12,31 @@ class GitCardContractTest {
     final JsonMapper json = new JsonMapper();
 
     @Test
+    void detailContractRepresentsUnavailableReviewWithoutHidingPushedMetadata() throws Exception {
+        var api =
+                json.readTree(
+                        new YAMLMapper()
+                                .readTree(ContractFiles.root().resolve("openapi.yaml").toFile())
+                                .toString());
+        var document = json.createObjectNode();
+        document.set("components", api.path("components"));
+        document.put("$ref", "#/components/schemas/GitChange");
+        var schema =
+                SchemaRegistry.withDefaultDialect(Draft202012.getInstance()).getSchema(document);
+        var response =
+                json.readTree(
+                        """
+                {"changeId":"c1","version":3,"status":"PUSHED","branch":"main",
+                 "baseCommit":"base","summary":"指标","commitMessage":"update","commitId":"commit",
+                 "reviewAvailable":false,"files":null,"errorCode":null,"errorSummary":null}
+                """);
+        assertThat(schema.validate(response)).isEmpty();
+        var missingAvailability = response.deepCopy();
+        ((tools.jackson.databind.node.ObjectNode) missingAvailability).remove("reviewAvailable");
+        assertThat(schema.validate(missingAvailability)).isNotEmpty();
+    }
+
+    @Test
     void bothRestAndSseAcceptOnlyTypedCardPayloads() throws Exception {
         var git =
                 json.readTree(
