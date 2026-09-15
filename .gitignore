@@ -24,6 +24,7 @@ Thumbs.db
 **/.env.local
 **/.env.*.local
 /.superpowers/
+/.worktrees/
 /tmp/
 
 # 本地评测数据只保留来源说明；原始语料及其预览、索引等派生文件均由下载脚本恢复。

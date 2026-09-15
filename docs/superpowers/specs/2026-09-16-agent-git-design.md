@@ -2,7 +2,7 @@
 
 日期：2026-09-16
 
-状态：设计稿，待用户审阅；尚未进入实现
+状态：用户已确认，按最小侵入边界实施
 
 适用范围：Data Agent V2 单实例部署
 
@@ -136,7 +136,7 @@ Skill 指导 Agent 阅读仓库规范、寻找相关定义、尽量保持修改�
 
 复用消息 `uiBlocks` 的受控 type/schemaVersion 注册机制，payload 保存 `changeId`，不把全量 diff 放入会话 SSE。卡片挂载时获取详情，diff 按文件加载。提交中采用短时轮询详情接口；终态停止轮询，切换页面或刷新后可以重新获取。Agent 不需要保持运行或重新调用模型来完成按钮操作。
 
-现有 UI Block 投影位于 artifact 包，实施时只把共用投影及通用查询职责提取到消息展示层，不让 Git 业务依赖 Office 产物模块。保留既有 `artifact-card@1` 契约与显示行为。
+现有 UI Block 投影和查询职责保留在原位置，不做包迁移或职责抽取。复用已有消息查询对不同类型 UI Block 的透传能力，新增 `git-change-card@1` 注册和独立详情接口。`agent-git` 不依赖 Office 产物模块。保留既有 `artifact-card@1` 契约与显示行为。
 
 ### 7.3 修改与取消
 
@@ -227,7 +227,7 @@ push 超时、连接中断或进程在 push 附近退出时，先进入 `VERIFYI
 | `agent-skill` | bundled 仓库维护 Skill 与工具依赖声明 |
 | `agent-domain` | 必要的变更状态和值对象 |
 | `agent-persistence` | Entity、ServiceImpl、迁移、状态 CAS 与元数据查询 |
-| `agent-web` | 会话绑定、确认 REST、消息卡片发布与通用 UI 投影 |
+| `agent-web` | 会话绑定、确认 REST、Git 消息卡片发布；复用已有 UI 投影 |
 | `agent-server` | 运行时配置与装配 |
 | 前端 | `git-change-card@1`、diff 查看与按钮操作 |
 
@@ -236,6 +236,8 @@ push 超时、连接中断或进程在 push 附近退出时，先进入 `VERIFYI
 `git_change_prepare` 通过 `agent-git` 定义的窄接口请求卡片发布，`agent-web` 实现该接口并完成消息归属检查、候选登记与 UI Block 关联的短事务。文件快照在事务前生成；提交失败留下的未登记快照不可进入确认流程。这样 Tools 无需反向引用 Web 模块，候选与卡片也不会出现一方成功、一方缺失的已登记状态。
 
 沿用项目构造器注入、Lombok、record、MapStruct 和语义化组装工厂约定。新增持久化操作不手写已有框架提供的通用 CRUD。
+
+侵入边界：不重构 ReAct 循环、`AgentTool` SPI、会话执行状态机、上下文压缩或数据分析 Workflow。Git 确认发生在独立 HTTP 接口，不使原 execution 暂停、等待或恢复。只扩展模块依赖、注册、配置、卡片契约和必要业务接口。
 
 ## 13. 验证与完成条件
 
@@ -279,4 +281,4 @@ push 超时、连接中断或进程在 push 附近退出时，先进入 `VERIFYI
 - 已区分草稿、冻结 tree、确认记录、commit 和远端接受状态。
 - 确认前允许准备对象但不创建 commit；确认后 commit 元信息固定，重试复用相同提交。
 - 已覆盖主分支竞争、响应丢失、服务重启、继续编辑使旧卡片失效。
-- 本文仅为设计稿；需要用户审阅后再进入实现计划。
+- 用户已确认按最小侵入边界实施；后续以实现计划记录执行和验证进度。
