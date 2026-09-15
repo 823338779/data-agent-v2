@@ -42,7 +42,7 @@ class GitToolsTest {
                                             20,
                                             100,
                                             1000000,
-                                            100000))
+                                            2097152))
                     .withBean(GitWorkspaceService.class, () -> workspaces)
                     .withBean(GitChangeService.class, () -> changes)
                     .withBean(
@@ -219,6 +219,63 @@ class GitToolsTest {
                     assertThat(result.path("items").get(0).path("text").asString()).hasSize(300);
                     assertThat(result.path("total").asInt()).isEqualTo(2);
                     assertThat(result.path("nextOffset").isNull()).isTrue();
+                });
+    }
+
+    @Test
+    void diffPaginationCrossesOneMillionAndReconstructsTheCompleteSupportedDiff() {
+        String diff = "a".repeat(1000000) + "TAIL".repeat(125000);
+        when(workspaces.diff("session-1"))
+                .thenReturn(
+                        new GitSnapshot(
+                                "tree", "digest", diff, List.of(new GitFileChange("M", "a"))));
+        runner.run(
+                ctx -> {
+                    var tool = tool(ctx, "git_diff");
+                    StringBuilder collected = new StringBuilder();
+                    int offset = 0;
+                    while (true) {
+                        var page =
+                                tool.execute(
+                                        json.createObjectNode().put("offset", offset), invocation);
+                        String content = page.path("diff").asString();
+                        assertThat(content.length()).isBetween(1, 12000);
+                        collected.append(content);
+                        if (page.path("nextOffset").isNull()) break;
+                        int next = page.path("nextOffset").asInt();
+                        assertThat(next).isEqualTo(offset + content.length());
+                        offset = next;
+                    }
+                    assertThat(collected.toString()).isEqualTo(diff);
+                });
+    }
+
+    @Test
+    void diffOffsetsBeyondContentAreEmptyAndNumbersBeyondIntegerRangeAreRejected() {
+        when(workspaces.diff("session-1"))
+                .thenReturn(
+                        new GitSnapshot(
+                                "tree", "digest", "small", List.of(new GitFileChange("M", "a"))));
+        runner.run(
+                ctx -> {
+                    var tool = tool(ctx, "git_diff");
+                    var page =
+                            tool.execute(
+                                    json.createObjectNode()
+                                            .put("offset", Integer.MAX_VALUE)
+                                            .put("limit", 20000),
+                                    invocation);
+                    assertThat(page.path("diff").asString()).isEmpty();
+                    assertThat(page.path("nextOffset").isNull()).isTrue();
+                    for (long invalid : new long[] {-1, 2147483648L, Long.MAX_VALUE}) {
+                        assertThatThrownBy(
+                                        () ->
+                                                tool.execute(
+                                                        json.createObjectNode()
+                                                                .put("offset", invalid),
+                                                        invocation))
+                                .isInstanceOf(IllegalArgumentException.class);
+                    }
                 });
     }
 

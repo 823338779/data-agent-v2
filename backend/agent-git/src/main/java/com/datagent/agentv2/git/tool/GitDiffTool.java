@@ -19,7 +19,7 @@ public final class GitDiffTool implements AgentTool {
     public static final String TOOL_ID = "git_diff";
     private static final String SCHEMA =
             """
-        {"type":"object","additionalProperties":false,"required":[],"properties":{"offset":{"type":"integer","minimum":0,"maximum":1000000},"limit":{"type":"integer","minimum":1,"maximum":20000},"fileOffset":{"type":"integer","minimum":0,"maximum":1000000},"fileLimit":{"type":"integer","minimum":1,"maximum":50}}}
+        {"type":"object","additionalProperties":false,"required":[],"properties":{"offset":{"type":"integer","minimum":0,"maximum":2147483647},"limit":{"type":"integer","minimum":1,"maximum":20000},"fileOffset":{"type":"integer","minimum":0,"maximum":1000000},"fileLimit":{"type":"integer","minimum":1,"maximum":50}}}
         """;
     private final GitToolSupport support;
 
@@ -52,9 +52,12 @@ public final class GitDiffTool implements AgentTool {
                 session -> {
                     var snapshot = support.getWorkspaces().diff(session);
                     int start = Math.min(number(args, "offset", 0), snapshot.diff().length());
+                    // 游标覆盖 Java String 和 maxDiffBytes 的完整 int 范围；先取剩余长度，避免加法溢出。
                     int end =
-                            Math.min(
-                                    start + number(args, "limit", 12000), snapshot.diff().length());
+                            start
+                                    + Math.min(
+                                            number(args, "limit", 12000),
+                                            snapshot.diff().length() - start);
                     var files =
                             page(
                                     snapshot.changes(),
