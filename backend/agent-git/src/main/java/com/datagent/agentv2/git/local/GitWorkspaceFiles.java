@@ -72,8 +72,11 @@ public final class GitWorkspaceFiles {
                 if (exists) throw new GitException("GIT_CONTENT_CONFLICT", "新增文件已存在");
                 validateContent(operation.content());
             } else {
-                if (!exists
-                        || !Objects.equals(operation.expectedSha256(), sha256(readBytes(target)))) {
+                byte[] original = exists ? readBytes(target) : null;
+                if (original != null) {
+                    decode(original);
+                }
+                if (!exists || !Objects.equals(operation.expectedSha256(), sha256(original))) {
                     throw new GitException("GIT_CONTENT_CONFLICT", "文件摘要已变化");
                 }
                 if (operation.type() == FileOperation.Type.UPDATE)

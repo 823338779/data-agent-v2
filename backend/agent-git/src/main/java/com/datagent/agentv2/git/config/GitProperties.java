@@ -3,7 +3,16 @@ package com.datagent.agentv2.git.config;
 import java.nio.file.Path;
 import java.time.Duration;
 
-/** Git 本地能力的固定服务端配置；这些值不得由模型输入覆盖。 */
+/**
+ * Git 本地能力的固定服务端配置；这些值不得由模型输入覆盖。
+ *
+ * @param maxCommandOutputBytes 单条 Git 命令允许捕获的 stdout/stderr 字节数
+ * @param maxFileBytes 单个工作区文本文件的 UTF-8 字节上限
+ * @param maxFilesPerOperation 单次结构化文件操作的文件数上限
+ * @param maxCandidateFiles 单份冻结候选的变更文件数上限
+ * @param maxCandidateBytes 候选变更涉及的新旧文件内容字节总上限
+ * @param maxDiffBytes 候选完整 diff 的 UTF-8 字节上限
+ */
 public record GitProperties(
         String executable,
         String remoteUri,

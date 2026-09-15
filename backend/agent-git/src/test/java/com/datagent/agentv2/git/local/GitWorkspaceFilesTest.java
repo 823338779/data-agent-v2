@@ -89,6 +89,26 @@ class GitWorkspaceFilesTest {
         assertCode("GIT_LIMIT_EXCEEDED", () -> files.apply(root, tooMany));
     }
 
+    @Test
+    void updateAndDeleteRejectBinaryEvenWhenDigestMatches() throws Exception {
+        Files.write(root.resolve("binary.dat"), new byte[] {1, 0, 2});
+        String digest = sha256(Files.readAllBytes(root.resolve("binary.dat")));
+
+        assertCode(
+                "GIT_BINARY_FILE",
+                () ->
+                        files.apply(
+                                root, List.of(FileOperation.update("binary.dat", digest, "text"))));
+        assertCode(
+                "GIT_BINARY_FILE",
+                () -> files.apply(root, List.of(FileOperation.delete("binary.dat", digest))));
+    }
+
+    private static String sha256(byte[] bytes) throws Exception {
+        return java.util.HexFormat.of()
+                .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+    }
+
     private static void assertCode(String code, Executable action) {
         GitException error = assertThrows(GitException.class, action);
         assertEquals(code, error.code());

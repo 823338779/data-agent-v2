@@ -46,7 +46,7 @@ backend/mvnw.cmd -f backend/pom.xml -B -pl agent-git -am -Dsurefire.failIfNoSpec
 
 首次有效 RED 在测试编译阶段失败，原因是 `GitRepositoryClient`、`GitProperties`、`GitWorkspaceFiles` 和 model API 尚不存在。输出上限补充周期先得到 `expected GIT_OUTPUT_TOO_LARGE but was GIT_COMMAND_FAILED`，随后修正为持续排空子进程管道、保留有界内容并返回稳定错误码。
 
-GREEN 使用同一模块命令：`Tests run: 7, Failures: 0, Errors: 0, Skipped: 0`，`BUILD SUCCESS`。格式验证 `backend/mvnw.cmd -f backend/pom.xml -B -pl agent-git -am spotless:check` 通过，12 个 Java 文件保持 clean。
+首次交付的最终 GREEN 使用同一模块命令：`Tests run: 8, Failures: 0, Errors: 0, Skipped: 0`，`BUILD SUCCESS`。格式验证 `backend/mvnw.cmd -f backend/pom.xml -B -pl agent-git -am spotless:check` 通过，12 个 Java 文件保持 clean。
 
 ## 自审与限制
 
@@ -54,3 +54,24 @@ GREEN 使用同一模块命令：`Tests run: 7, Failures: 0, Errors: 0, Skipped:
 - 文件测试验证增改删、搜索/列表、摘要冲突、路径边界、链接、二进制、单文件和单批数量上限。
 - 该层只提供 Git/文件基础，不实现确认授权、候选持久化、会话锁和状态机；这些由后续任务编排。
 - Windows 创建符号链接可能受系统权限限制；测试在系统明确拒绝创建链接时跳过该断言，生产代码仍使用 `NOFOLLOW_LINKS` 和逐级父目录检查拒绝链接。
+
+## Fix round 1（独立评审整改）
+
+评审基线为 `0ffe93f`。新增回归测试后，首次 RED 共运行 12 个测试并得到 3 个明确失败：中文路径未按原名返回、Git 中断返回了错误的稳定码、正确摘要可覆盖二进制文件；其余新限额测试也开始约束忽略文件和候选范围。换用 NUL 路径协议的首轮实现还暴露了 `PatternSyntaxException: Illegal octal escape sequence`，据此改为按真实 NUL 字符拆分。
+
+整改内容：
+
+- 冻结时扫描工作区 UTF-8 普通文件，以 `hash-object --no-filters` 按原始字节写 blob，再用临时 index 构建 tree；保留基线文件 mode，拒绝链接、嵌套 `.git` 和子模块。
+- `diff-tree --name-status -z` 与 `ls-tree -z` 使用机器格式处理中文和特殊路径；tree 元数据查询失败返回 `GIT_SNAPSHOT_FAILED`，不再按大小 0 继续。
+- Git runner 默认拒绝协议，只允许 `file/http/https/ssh`，并清除可覆盖仓库、对象库、传输 helper、diff 和动态配置的继承环境变量。
+- 超时、中断和异常统一终止 Git 进程树并取消输出读取；只有真实 `InterruptedException` 恢复线程中断标志并返回 `GIT_INTERRUPTED`。
+- 更新和删除在摘要比较前验证旧文件确为受支持的 UTF-8 非 NUL 文本。
+- 新增真实 CRLF + `.gitattributes`、中文文件名、gitignore 文件、三类候选上限、二进制更新/删除和中断清理回归。
+
+最终 GREEN 命令：
+
+```text
+backend/mvnw.cmd -f backend/pom.xml -B -pl agent-git -am -Dsurefire.failIfNoSpecifiedTests=false -Dtest=GitRepositoryClientTest,GitWorkspaceFilesTest test
+```
+
+输出摘要：`Tests run: 12, Failures: 0, Errors: 0, Skipped: 0`，`BUILD SUCCESS`。随后运行 `backend/mvnw.cmd -f backend/pom.xml -B -pl agent-git -am spotless:check`。

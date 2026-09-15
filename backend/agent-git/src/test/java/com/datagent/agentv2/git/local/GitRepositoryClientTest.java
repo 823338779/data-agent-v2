@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.*;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -153,6 +154,93 @@ class GitRepositoryClientTest {
         assertNotEquals(first.candidateDigest(), second.candidateDigest());
     }
 
+    @Test
+    void freezePreservesUnicodePathIgnoredFileAndCrlfDespiteAttributes() throws Exception {
+        Path workspace = temp.resolve("workspace");
+        repository.cloneRepository(workspace);
+        Files.writeString(workspace.resolve(".gitattributes"), "*.txt text eol=lf\n");
+        Files.writeString(workspace.resolve(".gitignore"), "ignored.txt\n");
+        Files.writeString(workspace.resolve("指标.txt"), "第一行\r\n第二行\r\n");
+        Files.writeString(workspace.resolve("ignored.txt"), "ignored\r\n");
+
+        var snapshot = repository.freeze(workspace);
+
+        assertTrue(snapshot.changes().stream().anyMatch(change -> change.path().equals("指标.txt")));
+        assertTrue(
+                snapshot.changes().stream()
+                        .anyMatch(change -> change.path().equals("ignored.txt")));
+        assertEquals(
+                "第一行\r\n第二行\r\n", repository.readTreeFile(workspace, snapshot.treeId(), "指标.txt"));
+        assertEquals(
+                "ignored\r\n",
+                repository.readTreeFile(workspace, snapshot.treeId(), "ignored.txt"));
+        assertEquals(
+                "GIT_LIMIT_EXCEEDED",
+                assertThrows(
+                                com.datagent.agentv2.git.model.GitException.class,
+                                () ->
+                                        new GitRepositoryClient(properties(100, 1, 1024 * 1024))
+                                                .freeze(workspace))
+                        .code());
+    }
+
+    @Test
+    void freezeEnforcesCandidateFileByteAndDiffLimits() throws Exception {
+        Path workspace = temp.resolve("workspace");
+        repository.cloneRepository(workspace);
+        Files.writeString(workspace.resolve("one.txt"), "one\n");
+        Files.writeString(workspace.resolve("two.txt"), "two\n");
+
+        assertEquals(
+                "GIT_LIMIT_EXCEEDED",
+                assertThrows(
+                                com.datagent.agentv2.git.model.GitException.class,
+                                () ->
+                                        new GitRepositoryClient(properties(1, 1024, 1024))
+                                                .freeze(workspace))
+                        .code());
+        assertEquals(
+                "GIT_LIMIT_EXCEEDED",
+                assertThrows(
+                                com.datagent.agentv2.git.model.GitException.class,
+                                () ->
+                                        new GitRepositoryClient(properties(100, 1, 1024))
+                                                .freeze(workspace))
+                        .code());
+        assertEquals(
+                "GIT_LIMIT_EXCEEDED",
+                assertThrows(
+                                com.datagent.agentv2.git.model.GitException.class,
+                                () ->
+                                        new GitRepositoryClient(properties(100, 1024, 1))
+                                                .freeze(workspace))
+                        .code());
+    }
+
+    @Test
+    void interruptTerminatesBlockedGitProcess() throws Exception {
+        AtomicReference<com.datagent.agentv2.git.model.GitException> failure =
+                new AtomicReference<>();
+        Thread thread =
+                new Thread(
+                        () -> {
+                            try {
+                                new GitCommandRunner(properties())
+                                        .run(temp, List.of("hash-object", "--stdin"));
+                            } catch (com.datagent.agentv2.git.model.GitException exception) {
+                                failure.set(exception);
+                            }
+                        });
+        thread.start();
+        Thread.sleep(300);
+        thread.interrupt();
+        thread.join(3000);
+
+        assertFalse(thread.isAlive());
+        assertNotNull(failure.get());
+        assertEquals("GIT_INTERRUPTED", failure.get().code());
+    }
+
     private String commitChange(Path workspace, String base, String file) throws Exception {
         Files.writeString(workspace.resolve(file), file + "\n");
         String tree = repository.freeze(workspace).treeId();
@@ -167,6 +255,11 @@ class GitRepositoryClientTest {
     }
 
     private GitProperties properties() {
+        return properties(100, 5 * 1024 * 1024, 2 * 1024 * 1024);
+    }
+
+    private GitProperties properties(
+            int maxCandidateFiles, long maxCandidateBytes, int maxDiffBytes) {
         return new GitProperties(
                 "git",
                 remote.toString(),
@@ -175,9 +268,9 @@ class GitRepositoryClientTest {
                 1024 * 1024,
                 512 * 1024,
                 20,
-                100,
-                5 * 1024 * 1024,
-                2 * 1024 * 1024);
+                maxCandidateFiles,
+                maxCandidateBytes,
+                maxDiffBytes);
     }
 
     private static void run(Path directory, String... command) throws Exception {

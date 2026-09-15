@@ -51,24 +51,38 @@ public final class GitCommandRunner {
                         "-c",
                         "core.autocrlf=false",
                         "-c",
+                        "protocol.allow=never",
+                        "-c",
                         "protocol.ext.allow=never",
                         "-c",
-                        "protocol.file.allow=always"));
+                        "protocol.file.allow=always",
+                        "-c",
+                        "protocol.http.allow=always",
+                        "-c",
+                        "protocol.https.allow=always",
+                        "-c",
+                        "protocol.ssh.allow=always"));
         command.addAll(arguments);
         ProcessBuilder builder =
                 new ProcessBuilder(command).directory(directory.toFile()).redirectErrorStream(true);
         Map<String, String> environment = builder.environment();
+        removeGitOverrides(environment);
         environment.put("GIT_TERMINAL_PROMPT", "0");
         environment.put("GIT_CONFIG_NOSYSTEM", "1");
         environment.put("GIT_CONFIG_GLOBAL", isWindows() ? "NUL" : "/dev/null");
         environment.put("GIT_ASKPASS", isWindows() ? "cmd /c exit 1" : "/bin/false");
+        environment.put("GIT_ALLOW_PROTOCOL", "file:http:https:ssh");
         environment.putAll(extraEnvironment);
+        Process process = null;
+        CompletableFuture<CapturedOutput> output = null;
         try {
-            Process process = builder.start();
-            CompletableFuture<CapturedOutput> output =
-                    CompletableFuture.supplyAsync(() -> readBounded(process.getInputStream()));
+            process = builder.start();
+            Process runningProcess = process;
+            output =
+                    CompletableFuture.supplyAsync(
+                            () -> readBounded(runningProcess.getInputStream()));
             if (!process.waitFor(properties.commandTimeout().toMillis(), TimeUnit.MILLISECONDS)) {
-                process.destroyForcibly();
+                terminate(process, output);
                 throw new GitException("GIT_TIMEOUT", "Git 命令执行超时");
             }
             CapturedOutput captured = output.get(5, TimeUnit.SECONDS);
@@ -79,8 +93,18 @@ public final class GitCommandRunner {
                     process.exitValue(), new String(captured.bytes(), StandardCharsets.UTF_8));
         } catch (GitException exception) {
             throw exception;
-        } catch (Exception exception) {
+        } catch (InterruptedException exception) {
+            terminate(process, output);
             Thread.currentThread().interrupt();
+            throw new GitException("GIT_INTERRUPTED", "Git 命令被中断", exception);
+        } catch (ExecutionException exception) {
+            terminate(process, output);
+            if (exception.getCause() instanceof GitException gitException) {
+                throw gitException;
+            }
+            throw new GitException("GIT_COMMAND_FAILED", "无法读取 Git 命令结果", exception);
+        } catch (Exception exception) {
+            terminate(process, output);
             throw new GitException("GIT_COMMAND_FAILED", "无法执行 Git 命令", exception);
         }
     }
@@ -111,6 +135,44 @@ public final class GitCommandRunner {
 
     private static boolean isWindows() {
         return System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win");
+    }
+
+    private static void removeGitOverrides(Map<String, String> environment) {
+        environment
+                .keySet()
+                .removeIf(
+                        key ->
+                                key.equals("GIT_DIR")
+                                        || key.equals("GIT_WORK_TREE")
+                                        || key.equals("GIT_INDEX_FILE")
+                                        || key.equals("GIT_OBJECT_DIRECTORY")
+                                        || key.equals("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+                                        || key.equals("GIT_SSH")
+                                        || key.equals("GIT_SSH_COMMAND")
+                                        || key.equals("GIT_PROXY_COMMAND")
+                                        || key.equals("GIT_EXTERNAL_DIFF")
+                                        || key.equals("GIT_DIFF_OPTS")
+                                        || key.equals("GIT_ALLOW_PROTOCOL")
+                                        || key.equals("GIT_PROTOCOL_FROM_USER")
+                                        || key.equals("GIT_CONFIG_COUNT")
+                                        || key.startsWith("GIT_CONFIG_KEY_")
+                                        || key.startsWith("GIT_CONFIG_VALUE_"));
+    }
+
+    /** 中断和超时必须终止整个子进程树，否则延迟执行的 hook/helper 仍可能继续写入。 */
+    private static void terminate(Process process, CompletableFuture<CapturedOutput> outputFuture) {
+        if (process != null) {
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
+            try {
+                process.waitFor(2, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        if (outputFuture != null) {
+            outputFuture.cancel(true);
+        }
     }
 
     public record Result(int exitCode, String output) {}
