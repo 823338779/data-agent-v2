@@ -30,3 +30,20 @@ describe('UiBlockRenderer', () => {
     expect(document.querySelector('script')).toBeNull();
   });
 });
+
+it('rejects Git payloads with missing, empty or extra fields', () => {
+  for (const payload of [
+    { changeId: 'gc1' },
+    { changeId: '', sessionId: 's1' },
+    { changeId: 'gc1', sessionId: 's1', summary: 'untrusted' },
+  ]) {
+    const view = render(
+      <UiBlockRenderer
+        block={{ blockId: 'g1', type: 'git-change-card', schemaVersion: 1, variant: '', payload }}
+        artifacts={[]}
+      />,
+    );
+    expect(screen.getByText('Git 卡片数据无效')).toBeInTheDocument();
+    view.unmount();
+  }
+});

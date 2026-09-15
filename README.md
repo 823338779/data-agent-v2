@@ -160,3 +160,10 @@ npm.cmd run dev
 cd .\frontend
 npm.cmd run build
 ```
+
+## Git 仓库维护
+
+Git 能力默认关闭。启用后可通过会话工具准备草稿与冻结候选，并在 Git 卡片查看完整文件差异、确认或取消；已确认失败可按状态重试或核实。“已推送”表示远端 `main` 已接受提交。
+
+- [Agent Git 运行配置与接口](docs/agent-git-runtime.md)
+- [独立 Git 仓库接入与运维](docs/git-repository-setup.md)

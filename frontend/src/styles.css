@@ -1395,3 +1395,84 @@ textarea:focus-visible {
   outline: 2px solid #7b776e;
   outline-offset: 1px;
 }
+
+/* Git 审阅内容保持文本语义；长路径换行，完整差异在卡片内部滚动。 */
+.git-change-card {
+  margin: 14px 0;
+  padding: 16px;
+  min-width: 0;
+  border: 1px solid #dedbd5;
+  border-radius: 10px;
+  background: #faf9f6;
+  color: #292724;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.git-change-card header,
+.git-change-card footer,
+.git-change-card li > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.git-change-card header {
+  justify-content: space-between;
+}
+.git-change-card [role='status'] {
+  font-weight: 600;
+}
+.git-change-card h4 {
+  margin: 14px 0;
+}
+.git-change-card dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+}
+.git-change-card dt {
+  color: #6f6b64;
+}
+.git-change-card dd {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.git-change-card ul {
+  list-style: none;
+  margin: 14px 0;
+  padding: 0;
+}
+.git-change-card li {
+  margin: 8px 0;
+}
+.git-change-card button {
+  border: 1px solid #d3cfc6;
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.git-change-card button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.git-change-card button:focus-visible {
+  outline: 2px solid #7b776e;
+  outline-offset: 2px;
+}
+.git-change-card [role='alert'] {
+  color: #a23926;
+}
+.git-change-card .git-change-card__diff {
+  max-height: 360px;
+  padding: 12px;
+  overflow: auto;
+  white-space: pre;
+  background: #f1efe9;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+}
