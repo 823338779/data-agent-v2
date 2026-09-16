@@ -16,11 +16,13 @@ import com.datagent.agentv2.conversation.tool.runtime.*;
 import com.datagent.agentv2.conversation.tool.supply.ToolSupplyRegistry;
 import com.datagent.agentv2.memory.config.MemoryProperties;
 import com.datagent.agentv2.memory.context.MemoryContextRenderer;
+import com.datagent.agentv2.memory.observability.MemoryMetrics;
 import com.datagent.agentv2.memory.tool.*;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.platform.context.OperatorContext;
 import com.datagent.agentv2.skill.runtime.*;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
 import java.util.*;
 import org.junit.jupiter.api.*;
@@ -28,6 +30,7 @@ import org.mapstruct.factory.Mappers;
 import tools.jackson.databind.json.JsonMapper;
 
 class MemoryContextRequestFactoryTest {
+    private final SimpleMeterRegistry metrics = new SimpleMeterRegistry();
     private final JsonMapper json = JsonMapper.builder().build();
     private final MemoryService memories = mock(MemoryService.class);
     private final WebMemoryEvidenceAdapter evidence = mock(WebMemoryEvidenceAdapter.class);
@@ -50,7 +53,21 @@ class MemoryContextRequestFactoryTest {
                     memories,
                     evidence,
                     registry,
-                    new MemoryContextRenderer(new MemoryProperties()));
+                    new MemoryContextRenderer(new MemoryProperties()),
+                    new MemoryMetrics(metrics));
+
+    @Test
+    void actualReadFailureRecordsOneSafeMetric() {
+        when(memories.snapshot()).thenThrow(new IllegalStateException("个人正文不应成为标签"));
+        var result =
+                factory.create(
+                        run,
+                        new ModelInvocationCoordinator.ModelInvocationBoundary(1, 1),
+                        List.of());
+        assertThat(result.runtimeInput().contributions()).isEmpty();
+        assertThat(metrics.get("memory.read.failures").counter().count()).isEqualTo(1);
+        assertThat(metrics.get("memory.read.failures").counter().getId().getTags()).isEmpty();
+    }
 
     @BeforeEach
     void setup() {
@@ -100,7 +117,8 @@ class MemoryContextRequestFactoryTest {
                         memories,
                         adapter,
                         registry,
-                        new MemoryContextRenderer(new MemoryProperties()));
+                        new MemoryContextRenderer(new MemoryProperties()),
+                        new MemoryMetrics(metrics));
         var execution = new AgentExecution();
         execution.setConversationSessionId("new-session");
         when(executions.findByExecutionId("new-execution")).thenReturn(execution);
@@ -230,7 +248,8 @@ class MemoryContextRequestFactoryTest {
                         definitions,
                         mock(LocalExecutionGuard.class),
                         new ReactLimitsProperties(4, 4),
-                        registry)
+                        registry,
+                        new MemoryMetrics(metrics))
                 .execute(run);
         verify(model).complete(anyList(), anyList(), any());
     }

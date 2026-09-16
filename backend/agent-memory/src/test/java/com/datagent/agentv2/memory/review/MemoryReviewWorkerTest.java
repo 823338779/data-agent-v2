@@ -6,8 +6,10 @@ import static org.mockito.Mockito.*;
 
 import com.datagent.agentv2.memory.*;
 import com.datagent.agentv2.memory.config.MemoryProperties;
+import com.datagent.agentv2.memory.observability.MemoryMetrics;
 import com.datagent.agentv2.memory.tool.MemoryToolDispatcher;
 import com.datagent.agentv2.persistence.service.memory.MemoryOperationService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -25,6 +27,7 @@ class MemoryReviewWorkerTest {
     final MemoryReviewModelPort model = mock(MemoryReviewModelPort.class);
     final MemoryOperationService operations = mock(MemoryOperationService.class);
     final ObjectMapper json = new ObjectMapper();
+    final SimpleMeterRegistry registry = new SimpleMeterRegistry();
     final ScheduledExecutorService guards = Executors.newScheduledThreadPool(2);
     final MemoryReviewClaim claim =
             new MemoryReviewClaim("j", "s", 1, 1, 1, "o", 1, 0, 2, Instant.now().plusSeconds(120));
@@ -54,13 +57,31 @@ class MemoryReviewWorkerTest {
                         operations,
                         new MemoryContentPolicy(properties),
                         json,
-                        guards);
+                        guards,
+                        new MemoryMetrics(registry));
     }
 
     @AfterEach
     void close() {
         guards.shutdownNow();
         Thread.interrupted();
+    }
+
+    @Test
+    void failedSettlementStillReleasesAndRecordsOnlyUnavailable() {
+        when(model.complete(any())).thenThrow(new IllegalStateException("模型失败"));
+        when(coordinator.fail(eq(claim), eq("MODEL_FAILURE"), eq(false), anyString()))
+                .thenThrow(new IllegalStateException("事务未提交"));
+
+        assertThatThrownBy(() -> worker.run(claim))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("事务未提交");
+
+        verify(coordinator).release(claim);
+        verify(coordinator, never()).finish(eq(claim), any());
+        assertThat(registry.get("memory.review").tag("status", "UNAVAILABLE").timer().count())
+                .isEqualTo(1);
+        assertThat(registry.find("memory.review").timers()).hasSize(1);
     }
 
     @Test

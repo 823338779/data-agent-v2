@@ -15,6 +15,7 @@ import com.datagent.agentv2.conversation.runtime.LocalExecutionGuard;
 import com.datagent.agentv2.conversation.tool.PreparedToolInvocation;
 import com.datagent.agentv2.conversation.tool.ToolExecutionCoordinator;
 import com.datagent.agentv2.conversation.tool.runtime.ExecutionToolViews;
+import com.datagent.agentv2.memory.observability.MemoryMetrics;
 import com.datagent.agentv2.memory.tool.MemoryInvocationRegistry;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -65,6 +66,8 @@ public final class ReactExecutionEngine {
     /** 管理每次模型调用可引用的记忆 revision 与真实证据快照。 */
     private final MemoryInvocationRegistry memoryInvocations;
 
+    private final MemoryMetrics metrics;
+
     /**
      * 从新的模型调用边界开始执行任务。
      *
@@ -100,7 +103,13 @@ public final class ReactExecutionEngine {
                 ConversationContextRequest contextRequest =
                         contextRequests.create(run, modelInvocation, modelTools);
                 PreparedConversationContext prepared = contexts.prepare(contextRequest);
-                List<ModelInputMessage> input = contextMessages.toModelMessages(prepared.messages());
+                var statistics = prepared.runtimeStatistics();
+                metrics.recordInjection(
+                        statistics.injected() + statistics.omitted(),
+                        statistics.injected(),
+                        statistics.contributionTokens());
+                List<ModelInputMessage> input =
+                        contextMessages.toModelMessages(prepared.messages());
 
                 // 调用前后都执行 fencing；流式片段在回调中同步形成 checkpoint 和通知。
                 executionGuard.assertRunningAndWithinDeadline(run);

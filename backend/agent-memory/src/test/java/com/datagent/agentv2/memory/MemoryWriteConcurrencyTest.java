@@ -8,7 +8,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -114,11 +113,31 @@ class MemoryWriteConcurrencyTest {
                                                 return result;
                                             }));
             assertThat(written.await(10, TimeUnit.SECONDS)).isTrue();
-            var reader = workers.submit(memory::snapshot);
+            var readerPid = new java.util.concurrent.atomic.AtomicInteger();
+            var reader =
+                    workers.submit(
+                            () ->
+                                    transactions.execute(
+                                            tx -> {
+                                                readerPid.set(
+                                                        jdbc.queryForObject(
+                                                                "select pg_backend_pid()",
+                                                                Integer.class));
+                                                return memory.snapshot();
+                                            }));
             try {
-                org.assertj.core.api.Assertions.assertThatThrownBy(
-                                () -> reader.get(150, TimeUnit.MILLISECONDS))
-                        .isInstanceOf(TimeoutException.class);
+                // 数据库报告该连接正在等锁，排除线程未调度导致超时的假阳性。
+                org.awaitility.Awaitility.await()
+                        .atMost(java.time.Duration.ofSeconds(10))
+                        .untilAsserted(
+                                () ->
+                                        assertThat(
+                                                        jdbc.queryForObject(
+                                                                "select count(*) from pg_stat_activity where pid=? and wait_event_type='Lock'",
+                                                                Integer.class,
+                                                                readerPid.get()))
+                                                .isEqualTo(1));
+                assertThat(reader.isDone()).isFalse();
             } finally {
                 commit.countDown();
             }

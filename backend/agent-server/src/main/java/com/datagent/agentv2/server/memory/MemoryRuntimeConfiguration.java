@@ -4,6 +4,7 @@ import com.datagent.agentv2.memory.MemoryContentPolicy;
 import com.datagent.agentv2.memory.MemoryService;
 import com.datagent.agentv2.memory.config.MemoryProperties;
 import com.datagent.agentv2.memory.context.MemoryContextRenderer;
+import com.datagent.agentv2.memory.observability.MemoryMetrics;
 import com.datagent.agentv2.memory.review.*;
 import com.datagent.agentv2.memory.tool.MemoryToolDispatcher;
 import com.datagent.agentv2.persistence.service.memory.MemoryOperationService;
@@ -65,6 +66,7 @@ public class MemoryRuntimeConfiguration {
             MemoryOperationService operations,
             MemoryContentPolicy content,
             ObjectMapper json,
+            MemoryMetrics metrics,
             @Qualifier("memoryReviewHeartbeatExecutor") ScheduledExecutorService guards) {
         return new MemoryReviewWorker(
                 properties,
@@ -76,7 +78,8 @@ public class MemoryRuntimeConfiguration {
                 operations,
                 content,
                 json,
-                guards);
+                guards,
+                metrics);
     }
 
     @Bean

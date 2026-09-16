@@ -25,7 +25,9 @@ import com.datagent.agentv2.memory.MemoryKind;
 import com.datagent.agentv2.memory.MemoryQuota;
 import com.datagent.agentv2.memory.MemorySnapshot;
 import com.datagent.agentv2.memory.MemoryState;
+import com.datagent.agentv2.memory.observability.MemoryMetrics;
 import com.datagent.agentv2.memory.tool.MemoryInvocationRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -40,8 +42,7 @@ class ReactExecutionEngineMemoryLifecycleTest {
             mock(ConversationContextStrategyResolver.class);
     private final ConversationContextRequestFactory contextRequests =
             mock(ConversationContextRequestFactory.class);
-    private final ContextModelMessageMapper contextMessages =
-            mock(ContextModelMessageMapper.class);
+    private final ContextModelMessageMapper contextMessages = mock(ContextModelMessageMapper.class);
     private final ModelInvocationCoordinator invocations = mock(ModelInvocationCoordinator.class);
     private final ToolExecutionCoordinator tools = mock(ToolExecutionCoordinator.class);
     private final ExecutionToolViews toolViews = mock(ExecutionToolViews.class);
@@ -51,6 +52,7 @@ class ReactExecutionEngineMemoryLifecycleTest {
     private final LocalAgentExecution run =
             new LocalAgentExecution("tenant_local", "conversation-1", "execution-1", 2);
     private final ConversationContextRequest request = mock(ConversationContextRequest.class);
+    private final SimpleMeterRegistry metrics = new SimpleMeterRegistry();
     private final ReactExecutionEngine engine =
             new ReactExecutionEngine(
                     model,
@@ -63,7 +65,8 @@ class ReactExecutionEngineMemoryLifecycleTest {
                     toolDefinitions,
                     guard,
                     new ReactLimitsProperties(4, 4),
-                    memoryInvocations);
+                    memoryInvocations,
+                    new MemoryMetrics(metrics));
 
     @BeforeEach
     void prepareCommonModelInput() {
@@ -110,6 +113,37 @@ class ReactExecutionEngineMemoryLifecycleTest {
         assertClosed(2);
         verify(tools).executeModelInvocationTools(run, 1, List.of());
         verify(invocations).completeFinalAnswer(run, second, "完成");
+    }
+
+    @Test
+    void recordsActualContributionOncePerFinalPreparedModelInput() {
+        when(invocations.beginModelInvocation(run))
+                .thenReturn(new ModelInvocationCoordinator.ModelInvocationBoundary(1, 2));
+        when(contexts.prepare(request))
+                .thenReturn(
+                        new PreparedConversationContext(
+                                "lsm",
+                                List.of(),
+                                99,
+                                false,
+                                0,
+                                new com.datagent.agentv2.conversation.context
+                                        .RuntimeContextStatistics(2, 3, 37)));
+        when(model.complete(anyList(), anyList(), any()))
+                .thenReturn(new ModelInvocationResult.FinalAnswer("完成"));
+        engine.execute(run);
+        org.assertj.core.api.Assertions.assertThat(
+                        metrics.get("memory.injection.tokens").summary().count())
+                .isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(
+                        metrics.get("memory.injection.tokens").summary().totalAmount())
+                .isEqualTo(37);
+        org.assertj.core.api.Assertions.assertThat(
+                        metrics.get("memory.injection.candidates").summary().totalAmount())
+                .isEqualTo(5);
+        org.assertj.core.api.Assertions.assertThat(
+                        metrics.get("memory.injection.entries").summary().totalAmount())
+                .isEqualTo(2);
     }
 
     @Test

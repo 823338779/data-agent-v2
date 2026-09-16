@@ -10,6 +10,7 @@ import com.datagent.agentv2.memory.MemoryReviewScheduler;
 import com.datagent.agentv2.memory.MemoryService;
 import com.datagent.agentv2.memory.config.MemoryProperties;
 import com.datagent.agentv2.memory.context.MemoryContextRenderer;
+import com.datagent.agentv2.memory.observability.MemoryMetrics;
 import com.datagent.agentv2.memory.review.*;
 import com.datagent.agentv2.memory.tool.MemoryToolDispatcher;
 import com.datagent.agentv2.persistence.service.memory.MemoryOperationService;
@@ -67,6 +68,12 @@ class MemoryRuntimeConfigurationTest {
                                 mock(
                                         com.datagent.agentv2.persistence.mapper.memory
                                                 .MemoryOperationMapper.class))
+                .withBean(
+                        MemoryMetrics.class,
+                        () ->
+                                new MemoryMetrics(
+                                        new io.micrometer.core.instrument.simple
+                                                .SimpleMeterRegistry()))
                 .withBean(ObjectMapper.class, ObjectMapper::new)
                 .withPropertyValues("data-agent.memory.person-profile-limit=123")
                 .run(

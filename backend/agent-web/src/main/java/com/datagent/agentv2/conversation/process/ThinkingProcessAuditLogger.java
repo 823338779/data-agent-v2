@@ -8,7 +8,7 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 import tools.jackson.databind.ObjectMapper;
 
-/** 在业务事务提交后输出独立的完整安全 ProcessItem 审计文档。 */
+/** 事务提交后输出安全审计投影；个人记忆只保留关联标识、有限状态和耗时。 */
 @Component
 @RequiredArgsConstructor
 public final class ThinkingProcessAuditLogger {
@@ -24,7 +24,7 @@ public final class ThinkingProcessAuditLogger {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onCommitted(ProcessAuditEvent event) {
         try {
-            // 按主管审计要求记录经安全脱敏后的完整 ProcessItem 详情和工具调用结果，便于后续审计排查；不得根据数据库是否截断跳过该日志。
+            // 普通工具保留既有安全完整审计；memory 使用专属白名单，数据库截断与否均不输出个人正文。
             AUDIT.info("{}", json.writeValueAsString(event.safeFullDocument(json)));
         } catch (RuntimeException failure) {
             LOG.warn(AUDIT_FAILURE_MESSAGE, failure.getClass().getSimpleName());

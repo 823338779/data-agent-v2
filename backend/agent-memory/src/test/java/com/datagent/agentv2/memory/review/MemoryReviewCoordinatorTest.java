@@ -7,8 +7,10 @@ import static org.mockito.Mockito.doAnswer;
 
 import com.datagent.agentv2.memory.*;
 import com.datagent.agentv2.memory.config.MemoryProperties;
+import com.datagent.agentv2.memory.observability.MemoryMetrics;
 import com.datagent.agentv2.memory.tool.MemoryToolDispatcher;
 import com.datagent.agentv2.persistence.service.memory.*;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -64,6 +66,237 @@ class MemoryReviewCoordinatorTest {
     @Autowired MemoryProperties properties;
     @Autowired MemoryContentPolicy content;
     @Autowired ObjectMapper json;
+
+    @Autowired SimpleMeterRegistry metricRegistry;
+
+    @Test
+    void workerMetricsMatchCommittedRetryBlockingCancellationAndLostFence() {
+        metricRegistry.clear();
+        var model = mock(MemoryReviewModelPort.class);
+        when(model.configurationFingerprint()).thenReturn("metric-config");
+        when(model.maxInputTokens()).thenThrow(new IllegalStateException("provider unavailable"));
+        try (var timer = Executors.newScheduledThreadPool(2)) {
+            var worker =
+                    new MemoryReviewWorker(
+                            properties,
+                            coordinator,
+                            memory,
+                            mock(MemoryReviewHistoryPort.class),
+                            model,
+                            new MemoryToolDispatcher(memory, json),
+                            operations,
+                            content,
+                            json,
+                            timer,
+                            new MemoryMetrics(metricRegistry));
+            MemoryReviewClaim old = null;
+            for (int i = 0; i < 3; i++) {
+                old = claim("metric-" + i);
+                worker.run(old);
+                due();
+            }
+            assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.BLOCKED);
+            assertThat(metricRegistry.get("memory.review").tag("status", "FAILED").timer().count())
+                    .isEqualTo(2);
+            assertThat(metricRegistry.get("memory.review").tag("status", "BLOCKED").timer().count())
+                    .isEqualTo(1);
+            assertThat(metricRegistry.get("memory.queue.wait").timer().count()).isEqualTo(3);
+            assertThat(metricRegistry.get("memory.queue.wait").timer().totalTime(TimeUnit.SECONDS))
+                    .isGreaterThanOrEqualTo(3);
+            worker.run(old);
+            assertThat(
+                            metricRegistry
+                                    .get("memory.review")
+                                    .tag("status", "LEASE_LOST")
+                                    .timer()
+                                    .count())
+                    .isEqualTo(1);
+            coordinator.reactivateBlocked("new-config", 4);
+            var cancelled = claim("cancel");
+            memory.updateSettings("disable", new MemorySettingsChange(0, null, null, false));
+            worker.run(cancelled);
+            assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.CANCELLED);
+            assertThat(
+                            metricRegistry
+                                    .get("memory.review")
+                                    .tag("status", "CANCELLED")
+                                    .timer()
+                                    .count())
+                    .isEqualTo(1);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void guardAndFinallyRecordOnlyOneActualOutcome(boolean loseLease) {
+        metricRegistry.clear();
+        var model = mock(MemoryReviewModelPort.class);
+        var history = mock(MemoryReviewHistoryPort.class);
+        when(model.configurationFingerprint()).thenReturn("guard-config");
+        when(model.maxInputTokens()).thenReturn(1000);
+        when(model.estimate(any())).thenReturn(10);
+        var active = claim("guard");
+        var now = states.currentBusinessTime();
+        var evidence =
+                new MemoryEvidence(
+                        "m",
+                        MemoryEvidence.Kind.USER_MESSAGE,
+                        "conversation",
+                        "execution",
+                        11,
+                        "user_admin",
+                        1,
+                        "中文",
+                        now);
+        when(history.read(any(), anyLong(), anyInt()))
+                .thenReturn(
+                        List.of(
+                                new MemoryReviewMessage(
+                                        11, MemoryReviewMessage.State.ELIGIBLE, evidence)));
+        when(model.complete(any()))
+                .thenAnswer(
+                        invocation -> {
+                            if (loseLease) expire();
+                            try {
+                                new CountDownLatch(1).await(5, TimeUnit.SECONDS);
+                            } catch (InterruptedException interrupted) {
+                                Thread.currentThread().interrupt();
+                            }
+                            return new MemoryReviewOutput.Done();
+                        });
+        var configured = new MemoryProperties();
+        configured.setLeaseDuration(java.time.Duration.ofMillis(90));
+        configured.setReviewDeadline(java.time.Duration.ofMillis(300));
+        try (var timer = Executors.newScheduledThreadPool(2)) {
+            var worker =
+                    new MemoryReviewWorker(
+                            configured,
+                            coordinator,
+                            memory,
+                            history,
+                            model,
+                            new MemoryToolDispatcher(memory, json),
+                            operations,
+                            content,
+                            json,
+                            timer,
+                            new MemoryMetrics(metricRegistry));
+            worker.run(active);
+            org.awaitility.Awaitility.await()
+                    .atMost(java.time.Duration.ofSeconds(5))
+                    .untilAsserted(
+                            () ->
+                                    assertThat(
+                                                    metricRegistry
+                                                            .find("memory.review")
+                                                            .timers()
+                                                            .stream()
+                                                            .mapToLong(
+                                                                    io.micrometer.core.instrument
+                                                                                    .Timer
+                                                                            ::count)
+                                                            .sum())
+                                            .isEqualTo(1));
+            assertThat(
+                            metricRegistry
+                                    .get("memory.review")
+                                    .tag("status", loseLease ? "LEASE_LOST" : "FAILED")
+                                    .timer()
+                                    .count())
+                    .isEqualTo(1);
+            assertThat(jobs.find("job").status())
+                    .isEqualTo(
+                            loseLease
+                                    ? MemoryReviewJob.Status.RUNNING
+                                    : MemoryReviewJob.Status.FAILED);
+            assertThat(jobs.find("job").reviewedThroughSequence()).isEqualTo(10);
+        }
+    }
+
+    @Test
+    void committedCompletionCannotBeRelabelledLostByLateDeadlineGuard() throws Exception {
+        metricRegistry.clear();
+        var active = claim("completion-race");
+        var observed =
+                mock(
+                        MemoryReviewCoordinator.class,
+                        org.mockito.AdditionalAnswers.delegatesTo(coordinator));
+        var committed = new CountDownLatch(1);
+        var returnToWorker = new CountDownLatch(1);
+        doAnswer(
+                        invocation -> {
+                            var result =
+                                    coordinator.finish(
+                                            invocation.getArgument(0), invocation.getArgument(1));
+                            committed.countDown();
+                            // 已提交后暂缓返回，精确放大 guard 与 worker finally 的指标竞争窗口。
+                            while (returnToWorker.getCount() > 0) {
+                                try {
+                                    returnToWorker.await();
+                                } catch (InterruptedException ignored) {
+                                }
+                            }
+                            return result;
+                        })
+                .when(observed)
+                .finish(any(), any());
+        var model = mock(MemoryReviewModelPort.class);
+        when(model.configurationFingerprint()).thenReturn("race");
+        when(model.maxInputTokens()).thenReturn(1000);
+        when(model.estimate(any())).thenReturn(10);
+        when(model.complete(any())).thenReturn(new MemoryReviewOutput.Done());
+        var history = mock(MemoryReviewHistoryPort.class);
+        when(history.read(any(), anyLong(), anyInt()))
+                .thenReturn(
+                        java.util.stream.LongStream.rangeClosed(11, 20)
+                                .mapToObj(
+                                        n ->
+                                                new MemoryReviewMessage(
+                                                        n,
+                                                        MemoryReviewMessage.State.EXCLUDED,
+                                                        null))
+                                .toList());
+        var configured = new MemoryProperties();
+        configured.setReviewDeadline(java.time.Duration.ofMillis(300));
+        try (var timer = Executors.newScheduledThreadPool(2);
+                var executor = Executors.newSingleThreadExecutor()) {
+            var worker =
+                    new MemoryReviewWorker(
+                            configured,
+                            observed,
+                            memory,
+                            history,
+                            model,
+                            new MemoryToolDispatcher(memory, json),
+                            operations,
+                            content,
+                            json,
+                            timer,
+                            new MemoryMetrics(metricRegistry));
+            var running = executor.submit(() -> worker.run(active));
+            try {
+                assertThat(committed.await(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.COMPLETED);
+                // 到达 deadline 后 guard 已就绪；修复后它必须等本次短事务的结果完成发布。
+                Thread.sleep(400);
+            } finally {
+                returnToWorker.countDown();
+            }
+            running.get(5, TimeUnit.SECONDS);
+            assertThat(
+                            metricRegistry
+                                    .get("memory.review")
+                                    .tag("status", "COMPLETED")
+                                    .timer()
+                                    .count())
+                    .isEqualTo(1);
+            assertThat(
+                            metricRegistry.find("memory.review").timers().stream()
+                                    .mapToLong(io.micrometer.core.instrument.Timer::count)
+                                    .sum())
+                    .isEqualTo(1);
+        }
+    }
 
     @BeforeEach
     void seed() {
@@ -256,7 +489,10 @@ class MemoryReviewCoordinatorTest {
                             operations,
                             content,
                             json,
-                            timer);
+                            timer,
+                            new MemoryMetrics(
+                                    new io.micrometer.core.instrument.simple
+                                            .SimpleMeterRegistry()));
             worker.run(claim("first"));
             assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.FAILED);
             assertThat(jobs.find("job").reviewedThroughSequence()).isEqualTo(10);
@@ -356,7 +592,10 @@ class MemoryReviewCoordinatorTest {
                             operations,
                             content,
                             json,
-                            timer);
+                            timer,
+                            new MemoryMetrics(
+                                    new io.micrometer.core.instrument.simple
+                                            .SimpleMeterRegistry()));
             worker.run(claim("first"));
             assertThat(
                             jdbc.queryForObject(

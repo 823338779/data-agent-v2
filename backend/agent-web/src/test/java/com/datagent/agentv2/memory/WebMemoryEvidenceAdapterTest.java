@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.memory.config.MemoryProperties;
+import com.datagent.agentv2.memory.observability.MemoryMetrics;
 import com.datagent.agentv2.persistence.AuditMetaObjectHandler;
 import com.datagent.agentv2.persistence.MybatisPlusConfiguration;
 import com.datagent.agentv2.persistence.json.ConversationProcessDocumentCodec;
@@ -78,6 +79,7 @@ class WebMemoryEvidenceAdapterTest {
         MemoryReviewJobService.class,
         MemoryReviewLeaseService.class,
         MemoryService.class,
+        MemoryMetrics.class,
         MemoryWritePolicy.class,
         PrefixedUuidIdGenerator.class
     })

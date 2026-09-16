@@ -9,6 +9,7 @@ import com.datagent.agentv2.memory.MemoryService;
 import com.datagent.agentv2.memory.MemorySnapshot;
 import com.datagent.agentv2.memory.WebMemoryEvidenceAdapter;
 import com.datagent.agentv2.memory.context.MemoryContextRenderer;
+import com.datagent.agentv2.memory.observability.MemoryMetrics;
 import com.datagent.agentv2.memory.tool.MemoryInvocationRegistry;
 import com.datagent.agentv2.memory.tool.MemoryTool;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
@@ -34,6 +35,7 @@ public class ConversationContextRequestFactory {
     private final WebMemoryEvidenceAdapter memoryEvidence;
     private final MemoryInvocationRegistry memoryInvocations;
     private final MemoryContextRenderer memoryRenderer;
+    private final MemoryMetrics metrics;
 
     public ConversationContextRequest create(
             LocalAgentExecution run,
@@ -76,6 +78,7 @@ public class ConversationContextRequestFactory {
                     request.toolDefinitions(),
                     runtime);
         } catch (RuntimeException failure) {
+            metrics.recordReadFailure();
             // 读取失败不猜 revision，也不授予本轮写入资格；异常正文可能含私密数据，日志仅保留执行标识。
             memoryInvocations.close(run.executionId(), boundary.modelInvocationSequence());
             log.warn(

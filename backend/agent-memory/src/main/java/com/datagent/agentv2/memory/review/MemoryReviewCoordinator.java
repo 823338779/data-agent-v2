@@ -8,6 +8,7 @@ import com.datagent.agentv2.memory.MemoryReviewLease;
 import com.datagent.agentv2.memory.MemoryState;
 import com.datagent.agentv2.memory.MemoryStatus;
 import com.datagent.agentv2.memory.config.MemoryProperties;
+import com.datagent.agentv2.memory.observability.MemoryMetrics;
 import com.datagent.agentv2.persistence.service.memory.MemoryReviewJobService;
 import com.datagent.agentv2.persistence.service.memory.MemoryReviewLeaseService;
 import com.datagent.agentv2.persistence.service.memory.MemoryStateService;
@@ -36,6 +37,7 @@ public class MemoryReviewCoordinator {
     private final MemoryReviewJobService jobs;
     private final MemoryReviewLeaseService leases;
     private final MemoryProperties properties;
+    private final MemoryMetrics metrics;
 
     /** 无锁选择候选后在统一锁序下重新判断；固定用户只能同时持有一份审查租约。 */
     public List<MemoryReviewClaim> claimDue(String owner, int limit) {
@@ -103,6 +105,8 @@ public class MemoryReviewCoordinator {
                             job.fencingToken() + 1,
                             until);
             requireChanged(jobs.compareAndSet(running, job.fencingToken()));
+            var wait = java.time.Duration.between(job.availableAt(), now);
+            metrics.afterCommit(() -> metrics.recordQueueWait(wait));
             // 同一固定身份仅允许一个后台模型循环，避免持有一份用户租约却返回多个并行批次。
             return List.of(
                     new MemoryReviewClaim(
@@ -177,29 +181,35 @@ public class MemoryReviewCoordinator {
     }
 
     /** 失败保留连续游标；暂时失败有界重试，输入阻塞立即等待新事件激活。 */
-    public void fail(MemoryReviewClaim claim, String reason, boolean blocked) {
-        fail(claim, reason, blocked, null);
+    public Status fail(MemoryReviewClaim claim, String reason, boolean blocked) {
+        return fail(claim, reason, blocked, null);
     }
 
-    /** 同一短事务记录阻塞配置；只有可比较的新配置才允许重新激活，重启不重置次数。 */
-    public void fail(MemoryReviewClaim claim, String reason, boolean blocked, String fingerprint) {
+    /** 同一 REQUIRES_NEW 短事务记录阻塞配置；代理正常返回时状态已提交。null 表示 fencing 失效，未提交状态变化；重启不重置次数。 */
+    public Status fail(
+            MemoryReviewClaim claim, String reason, boolean blocked, String fingerprint) {
         var locked = lock(claim.jobId());
-        if (!matches(locked, claim)) return;
+        if (!matches(locked, claim)) return null;
         if (!currentEpoch(locked)) {
             cancel(locked);
-            return;
+            return Status.CANCELLED;
         }
-        if (!valid(claim)) return;
+        if (!valid(claim)) return null;
         int failures = locked.job().failureCount() + 1;
-        settle(
-                locked,
-                claim,
-                locked.job().reviewedThroughSequence(),
-                blocked || failures >= properties.getMaxAttempts() ? Status.BLOCKED : Status.FAILED,
-                states.currentBusinessTime().plus(properties.getRetryDelay()),
-                failures,
-                reason,
-                fingerprint);
+        Status status =
+                blocked || failures >= properties.getMaxAttempts() ? Status.BLOCKED : Status.FAILED;
+        // 返回实际已提交状态；fencing 拒绝用 null 表示，不能把一次 fail 尝试记为失败状态已落库。
+        return settle(
+                        locked,
+                        claim,
+                        locked.job().reviewedThroughSequence(),
+                        status,
+                        states.currentBusinessTime().plus(properties.getRetryDelay()),
+                        failures,
+                        reason,
+                        fingerprint)
+                ? status
+                : null;
     }
 
     /** 配置扫描只触及当前代际有界 BLOCKED，不重试旧 epoch、未知配置或仍在重试等待的任务。 */

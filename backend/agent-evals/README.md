@@ -156,3 +156,10 @@ Judge 使用本机 Codex 登录态；运行前应确保 `codex exec` 可用。�
 
 若要比较两套配置，请分别启动对应配置并各运行一次，保留两份 `compact-eval-report/v4` 文档，
 由外部评测系统按文档中的分数、完成度、事件统计及逐题原始回答进行比较。
+
+## 个人长记忆语义评测材料
+
+`src/test/resources/memory-eval/cases.jsonl` 提供10个独立案例及纠正、模糊遗忘、明确恢复的前态。
+运行 `mvn -f backend/pom.xml -pl agent-evals -Dtest=MemoryEvalCorpusTest test` 仅校验JSONL结构与分类，不调用模型，不产生语义准确率。
+真实模型需按[个人长记忆使用与验收](../../docs/个人长记忆使用与验收.md)在隔离测试部署逐案准备前态、对话、核对工具和保存结果，再人工标注。
+同义重复必须记录是否复用既有ID；未执行/未标注不计算准确率。本次真实模型评测未执行。此模块不成为运行时依赖。

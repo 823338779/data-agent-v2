@@ -102,6 +102,23 @@ class RuntimeContextComposerTest {
     }
 
     @Test
+    void fittingWrapperWithoutAnyFittingWholeBlockDoesNotInjectEmptyWrapper() {
+        var contribution = new RuntimeContextContribution("memory", "W", List.of("long block"), 9);
+        var raw = List.of(ContextMessage.user("Q"));
+        var result =
+                composer.compose(
+                        request(new RuntimeContextInput(List.of(), List.of(contribution))),
+                        raw,
+                        1000,
+                        MESSAGE_ESTIMATOR,
+                        MESSAGE_ESTIMATOR);
+        assertThat(result.dynamicMessages()).isEqualTo(raw);
+        assertThat(result.injected()).isZero();
+        assertThat(result.omitted()).isOne();
+        assertThat(result.contributionTokens()).isZero();
+    }
+
+    @Test
     void necessaryMetadataConsumesCompleteInputBudgetBeforeOptionalMemory() {
         ContextMessage metadata = ContextMessage.system("metadata");
         var contribution = new RuntimeContextContribution("memory", "W", List.of("entry"), 100);

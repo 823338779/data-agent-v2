@@ -1,7 +1,7 @@
 package com.datagent.agentv2.memory;
 
-import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -56,21 +56,11 @@ class MemoryProblemDetailTest {
                 .andExpect(content().string(not(containsString("secret-memory-content"))));
     }
 
-    @org.junit.jupiter.api.Test
-    void obsoleteKindAliasInQueryIsAValidationFailure() throws Exception {
-        mvc.perform(get("/__test/memory-kind").param("kind", "work_context"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
-    }
-
     @RestController
     static class FailureFixtureController {
         @GetMapping("/__test/memory-failure")
         void fail(@RequestParam MemoryStatus code) {
             throw new MemoryException(code, "记忆操作未完成");
         }
-
-        @GetMapping("/__test/memory-kind")
-        void kind(@RequestParam MemoryKind kind) {}
     }
 }

@@ -1,5 +1,6 @@
 package com.datagent.agentv2.memory;
 
+import com.datagent.agentv2.memory.observability.MemoryMetrics;
 import com.datagent.agentv2.persistence.service.memory.MemoryEntryService;
 import com.datagent.agentv2.persistence.service.memory.MemoryEvidenceService;
 import com.datagent.agentv2.persistence.service.memory.MemoryOperationService;
@@ -43,6 +44,7 @@ public class MemoryService {
     private final MemoryEvidencePort evidencePort;
     private final IdGenerator ids;
     private final ObjectMapper json;
+    private final MemoryMetrics metrics;
 
     /** 原子初始化仅创建缺失状态行，绝不重置用户已有的能力设置。 */
     @Transactional
@@ -55,7 +57,9 @@ public class MemoryService {
     public MemorySnapshot snapshot() {
         var state = states.lockCurrent();
         var current = entries.listCurrent();
-        return new MemorySnapshot(state, current, quotas(current));
+        var snapshot = new MemorySnapshot(state, current, quotas(current));
+        metrics.afterCommit(() -> metrics.recordQuota(snapshot.quotas()));
+        return snapshot;
     }
 
     /** 状态锁内完成设置 CAS 和历史结果落库；重放始终返回原提交快照，不借用当前设置。 */
@@ -146,6 +150,14 @@ public class MemoryService {
         operations.insert(
                 new MemoryOperation(
                         context.requestId(), payloadHash, result, states.currentBusinessTime()));
+        var committed = result;
+        metrics.afterCommit(
+                () -> {
+                    metrics.recordOperation(
+                            source(context, MemoryWritePolicy.explicit(context, command)),
+                            committed.status());
+                    metrics.recordQuota(committed.quotas());
+                });
         return result;
     }
 

@@ -14,6 +14,7 @@ import com.datagent.agentv2.persistence.service.memory.MemoryReviewJobService;
 import com.datagent.agentv2.persistence.service.memory.MemoryReviewLeaseService;
 import com.datagent.agentv2.persistence.service.memory.MemoryStateService;
 import com.datagent.agentv2.persistence.service.memory.MemorySuppressionService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -62,6 +63,45 @@ class MemoryServiceTest {
     @Autowired MemoryReviewLeaseService leases;
     @Autowired MemorySuppressionService suppressions;
     @Autowired MemoryContentPolicy contentPolicy;
+
+    @Autowired SimpleMeterRegistry metricRegistry;
+    @Autowired org.springframework.transaction.support.TransactionTemplate transactions;
+
+    @Test
+    void metricsCountOnlyCommittedNewOperationsAndPublishInventory() {
+        metricRegistry.clear();
+        transactions.executeWithoutResult(
+                tx -> {
+                    memory.execute(ui("rollback"), add("中文"));
+                    assertThat(metricRegistry.find("memory.operations").counter()).isNull();
+                    tx.setRollbackOnly();
+                });
+        assertThat(metricRegistry.find("memory.operations").counter()).isNull();
+        memory.execute(ui("committed"), add("中文"));
+        memory.execute(ui("committed"), add("中文"));
+        assertThat(
+                        metricRegistry
+                                .get("memory.operations")
+                                .tag("status", "CREATED")
+                                .counter()
+                                .count())
+                .isEqualTo(1);
+        assertThat(
+                        metricRegistry
+                                .get("memory.quota.used")
+                                .tag("kind", "person_profile")
+                                .gauge()
+                                .value())
+                .isEqualTo(2);
+        memory.execute(ui("rejected"), add("x".repeat(801)));
+        assertThat(
+                        metricRegistry
+                                .get("memory.operations")
+                                .tag("status", "QUOTA_EXCEEDED")
+                                .counter()
+                                .count())
+                .isEqualTo(1);
+    }
 
     @BeforeEach
     void seed() {

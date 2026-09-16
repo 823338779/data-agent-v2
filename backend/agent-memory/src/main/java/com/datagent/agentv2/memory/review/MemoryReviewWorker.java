@@ -2,6 +2,7 @@ package com.datagent.agentv2.memory.review;
 
 import com.datagent.agentv2.memory.*;
 import com.datagent.agentv2.memory.config.MemoryProperties;
+import com.datagent.agentv2.memory.observability.MemoryMetrics;
 import com.datagent.agentv2.memory.tool.MemoryToolDispatcher;
 import com.datagent.agentv2.persistence.service.memory.MemoryOperationService;
 import java.nio.charset.StandardCharsets;
@@ -26,6 +27,7 @@ public final class MemoryReviewWorker {
     private final MemoryContentPolicy content;
     private final ObjectMapper json;
     private final ScheduledExecutorService guards;
+    private final MemoryMetrics metrics;
 
     /** 配置只持久化摘要；模型未配置时也可计算，且重启相同配置不会改变摘要。 */
     public String configurationFingerprint() {
@@ -45,13 +47,14 @@ public final class MemoryReviewWorker {
     }
 
     public void run(MemoryReviewClaim claim) {
+        long started = System.nanoTime();
         String fingerprint = configurationFingerprint();
         var stopped = new AtomicBoolean();
         Thread thread = Thread.currentThread();
         long deadline = System.nanoTime() + properties.getReviewDeadline().toNanos();
         var timeout =
                 guards.schedule(
-                        () -> stop(claim, stopped, thread, "DEADLINE", fingerprint),
+                        () -> stop(claim, stopped, thread, "DEADLINE", fingerprint, started),
                         properties.getReviewDeadline().toNanos(),
                         TimeUnit.NANOSECONDS);
         long heartbeatNanos = Math.max(1, properties.getLeaseDuration().toNanos() / 3);
@@ -61,9 +64,21 @@ public final class MemoryReviewWorker {
                             if (stopped.get()) return;
                             try {
                                 if (!coordinator.renew(claim))
-                                    stop(claim, stopped, thread, "LEASE_LOST", fingerprint);
+                                    stop(
+                                            claim,
+                                            stopped,
+                                            thread,
+                                            "LEASE_LOST",
+                                            fingerprint,
+                                            started);
                             } catch (RuntimeException failure) {
-                                stop(claim, stopped, thread, "HEARTBEAT_FAILED", fingerprint);
+                                stop(
+                                        claim,
+                                        stopped,
+                                        thread,
+                                        "HEARTBEAT_FAILED",
+                                        fingerprint,
+                                        started);
                             }
                         },
                         heartbeatNanos,
@@ -103,8 +118,14 @@ public final class MemoryReviewWorker {
                 check(stopped, deadline);
                 if (slice.reviewedThroughSequence() == claim.fromSequence())
                     throw new ReviewFailure("PENDING_MESSAGE", false);
-                coordinator.finish(
-                        claim, new MemoryReviewProgress(slice.reviewedThroughSequence(), 0));
+                settle(
+                        stopped,
+                        started,
+                        () ->
+                                coordinator.finish(
+                                        claim,
+                                        new MemoryReviewProgress(
+                                                slice.reviewedThroughSequence(), 0)));
                 return;
             }
             long revision = snapshot.state().revision();
@@ -120,9 +141,9 @@ public final class MemoryReviewWorker {
                 check(stopped, deadline);
                 if (output instanceof MemoryReviewOutput.Done) {
                     // finish 的返回状态可能为 PENDING/CANCELLED；此处不发布“完成”事件或把取消计为成功。
-                    coordinator.finish(
-                            claim,
-                            new MemoryReviewProgress(slice.reviewedThroughSequence(), rejected));
+                    var progress =
+                            new MemoryReviewProgress(slice.reviewedThroughSequence(), rejected);
+                    settle(stopped, started, () -> coordinator.finish(claim, progress));
                     return;
                 }
                 var calls = ((MemoryReviewOutput.Calls) output).calls();
@@ -190,16 +211,30 @@ public final class MemoryReviewWorker {
             }
             throw new ReviewFailure("MODEL_CALL_LIMIT", false);
         } catch (MemoryReviewConfigurationException failure) {
-            if (!stopped.get()) coordinator.fail(claim, "MODEL_CONFIGURATION", true, fingerprint);
+            settle(
+                    stopped,
+                    started,
+                    () -> coordinator.fail(claim, "MODEL_CONFIGURATION", true, fingerprint));
         } catch (ReviewFailure failure) {
-            if (!stopped.get())
-                coordinator.fail(claim, failure.reason, failure.blocked, fingerprint);
+            settle(
+                    stopped,
+                    started,
+                    () -> coordinator.fail(claim, failure.reason, failure.blocked, fingerprint));
         } catch (MemoryException failure) {
-            if (!stopped.get()) coordinator.fail(claim, failure.code().name(), false, fingerprint);
+            settle(
+                    stopped,
+                    started,
+                    () -> coordinator.fail(claim, failure.code().name(), false, fingerprint));
         } catch (IllegalArgumentException failure) {
-            if (!stopped.get()) coordinator.fail(claim, "INVALID_REQUEST", false, fingerprint);
+            settle(
+                    stopped,
+                    started,
+                    () -> coordinator.fail(claim, "INVALID_REQUEST", false, fingerprint));
         } catch (RuntimeException failure) {
-            if (!stopped.get()) coordinator.fail(claim, "MODEL_FAILURE", false, fingerprint);
+            settle(
+                    stopped,
+                    started,
+                    () -> coordinator.fail(claim, "MODEL_FAILURE", false, fingerprint));
         } finally {
             boolean guardStopped;
             synchronized (stopped) {
@@ -208,9 +243,34 @@ public final class MemoryReviewWorker {
             timeout.cancel(false);
             heartbeat.cancel(false);
             // 守卫已接管失败收敛时不能抢先 release 成 PENDING，否则会吞掉失败计数；数据库故障交给 TTL 接管。
-            if (!guardStopped) coordinator.release(claim);
+            if (!guardStopped) {
+                try {
+                    coordinator.release(claim);
+                } finally {
+                    metrics.recordReview(
+                            "UNAVAILABLE", java.time.Duration.ofNanos(System.nanoTime() - started));
+                }
+            }
             // 本线程由后台池复用，已处理的中断不能泄漏给下一任务。
             Thread.interrupted();
+        }
+    }
+
+    /**
+     * 终态短事务与守卫抢占共用一个发布边界，避免已提交 COMPLETED 被迟到守卫误计为 LEASE_LOST。 仅 finish/fail
+     * 的短数据库事务位于锁内；模型、历史读取、快照和写工具均不进入此锁。 若事务阻塞守卫会短暂等待，数据库更新处的真实时钟双 fencing 仍然拒绝过期提交。
+     * 事务抛错时不置停止标志，finally 仍负责释放；守卫自己的慢 fail 保持在锁外，不拖住模型线程退出。
+     */
+    private void settle(
+            AtomicBoolean stopped,
+            long started,
+            java.util.function.Supplier<MemoryReviewJob.Status> operation) {
+        synchronized (stopped) {
+            if (stopped.get()) return;
+            var result = operation.get();
+            stopped.set(true);
+            metrics.recordReview(
+                    status(result), java.time.Duration.ofNanos(System.nanoTime() - started));
         }
     }
 
@@ -219,13 +279,23 @@ public final class MemoryReviewWorker {
             AtomicBoolean stopped,
             Thread thread,
             String reason,
-            String fingerprint) {
+            String fingerprint,
+            long started) {
         synchronized (stopped) {
             if (!stopped.compareAndSet(false, true)) return;
             // 中断必须在数据库 I/O 前且与 finally 互斥；否则慢 fail 返回时可能误中断该池线程的下一任务。
             thread.interrupt();
         }
-        coordinator.fail(claim, reason, false, fingerprint);
+        String result = "UNAVAILABLE";
+        try {
+            result = status(coordinator.fail(claim, reason, false, fingerprint));
+        } finally {
+            metrics.recordReview(result, java.time.Duration.ofNanos(System.nanoTime() - started));
+        }
+    }
+
+    private static String status(MemoryReviewJob.Status status) {
+        return status == null ? "LEASE_LOST" : status.name();
     }
 
     private static void check(AtomicBoolean stopped, long deadline) {
