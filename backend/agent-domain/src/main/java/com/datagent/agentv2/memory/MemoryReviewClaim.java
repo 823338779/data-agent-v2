@@ -13,7 +13,7 @@ import java.util.Objects;
  * @param userToken 用户级单调 fencing token，阻止同一固定身份的旧租约持有者提交
  * @param owner 当前 worker 的稳定所有者标识
  * @param claimedGeneration 领取时冻结的任务 generation，仅完成该代及此前已领取范围
- * @param fromSequence 本批连续消息范围的起始 sequence，包含该值
+ * @param fromSequence 已处理游标，也是本批连续消息范围的排除下界；读取从严格大于该值的消息开始
  * @param throughSequence 本批连续消息范围的结束 sequence，包含该值
  * @param leaseUntil 以数据库时钟判定的租约到期绝对时刻；使用 {@link Instant} 对应 timestamptz
  */

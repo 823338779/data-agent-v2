@@ -91,7 +91,7 @@ Tests run: 12, Failures: 0, Errors: 0, Skipped: 0
 
 - 在不改变规范化 v1 算法和一般文本指纹的前提下，增加独立内容有效性校验：正文去除允许的中英文标点及 Unicode 空白后必须仍有内容，从而拒绝 `。 ！`、`, \n？` 等仅标点输入。
 - 将原先只调用 `value()`/`parse()` 的伪往返测试替换为 `agent-memory` 中真实 Jackson 3 `JsonMapper` 序列化与反序列化测试，精确断言两个稳定 JSON 字符串。
-- 为 `MemoryState` 补充整体 revision、settingsVersion、learningEpoch 的区别和 `learningEnabledAt` 的时区/生命周期说明；为 `MemoryReviewClaim` 补充两个 fencing token、闭区间 sequence 边界及数据库时钟租约语义。
+- 为 `MemoryState` 补充整体 revision、settingsVersion、learningEpoch 的区别和 `learningEnabledAt` 的时区/生命周期说明；为 `MemoryReviewClaim` 补充两个 fencing token、`(fromSequence, throughSequence]` 消息范围及数据库时钟租约语义。
 
 ### 修复 RED 证据
 
@@ -132,3 +132,8 @@ Reactor Summary: data-agent-v2/agent-domain/agent-persistence/agent-tool/agent-m
 - Jackson 测试使用实际 mapper，删除 `@JsonValue`、`@JsonCreator` 或改变稳定值都会导致测试失败。
 - 字段说明只补充文档，不改变共享 record 的字段、类型、顺序或构造器签名。
 - 本轮仅修改评审指出的生产文件、测试与本报告；并行外部文档仍不进入提交。
+
+### 跨任务语义裁定同步
+
+- `MemoryReviewClaim.fromSequence` 按任务 10 消费契约明确为已处理游标及排除下界，`throughSequence` 为包含上界，即本批范围为 `(fromSequence, throughSequence]`。
+- 差异检查确认本次只修正 JavaDoc 与报告中的边界描述；record 字段、构造器、不变量和运行行为均未变化，因此未重复运行功能测试。
