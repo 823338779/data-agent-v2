@@ -257,12 +257,8 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
         );
         setFeedback('版本已变化，已刷新服务器内容。请确认后重新保存。');
       } else if (refreshed.targetMissing) {
-        // 保留本地草稿卡片，但不再允许 replace；服务端配额与 revision 仍更新为权威值。
-        setView((current) =>
-          current
-            ? { ...current, quotas: refreshed.quotas, revision: refreshed.revision }
-            : current,
-        );
+        // 完整分页已确认目标删除，分类必须立即切到权威库存；草稿脱离条目卡片单独保留。
+        applyKindRefresh(conflicted.kind, refreshed);
         setEdit((current) =>
           current?.memoryId === conflicted.memoryId
             ? { ...current, conflictState: 'missing' }
@@ -584,6 +580,21 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
               <p className="memory-feedback" role="status">
                 {feedback}
               </p>
+            )}
+
+            {edit?.conflictState === 'missing' && (
+              <section className="memory-create-form" aria-label="已删除记忆的保留草稿">
+                <h2>已删除记忆的保留草稿</h2>
+                <label>
+                  已删除记忆草稿
+                  <textarea aria-label="已删除记忆草稿" value={edit.draft} readOnly />
+                </label>
+                <div className="memory-form-actions">
+                  <button type="button" onClick={() => setEdit(null)}>
+                    取消保留草稿
+                  </button>
+                </div>
+              </section>
             )}
 
             {view && (

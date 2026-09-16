@@ -151,3 +151,33 @@ npm --prefix frontend run build
 结果：exit 0；Prettier 检查、TypeScript project build 与 Vite 构建全部通过，1854 个模块转换成功，无告警。
 
 本轮只对 `PersonalMemoryPanel.tsx`、对应测试、`memoryPanelSupport.ts`、`useMemoryModal.ts` 和 `App.tsx` 执行精确路径 Prettier。外部修改 `docs/git-repository-setup.md` 仍未读取、修改、暂存或回滚。本轮自审未发现遗留正确性顾虑。
+
+## Fix round 2/5：已删除编辑目标的权威库存
+
+### 评审核实与修复
+
+- 核实复审新增 Important：完整分页已确认编辑目标不存在后，旧实现只更新配额与 revision，仍把旧条目及编辑表单留在原分类；用户取消编辑后，陈旧条目会重新显示编辑、删除入口。
+- `targetMissing` 现在通过既有 `applyKindRefresh` 应用完整分页返回的权威分类、配额和 revision。已删除目标立即退出活动库存，其余分页条目按服务端结果展示。
+- 本地草稿脱离条目卡片，放入独立只读区域供用户查看；取消保留草稿只清理草稿状态，不会恢复已删除条目。未增加草稿转新增等产品能力，既有模态焦点与其他冲突恢复路径未改动。
+
+### TDD 与验证证据
+
+RED 命令：
+
+```text
+npm --prefix frontend test -- src/components/memory/PersonalMemoryPanel.test.tsx
+```
+
+结果：exit 1；14 个测试中 13 个通过、1 个失败。新增交互用例完成编辑冲突与两页刷新后，能看到删除提示和新配额，但找不到独立“已删除记忆草稿”，DOM 仍显示旧目标的编辑表单及加载更多入口，证明陈旧分类未被权威结果替换。
+
+GREEN 与最终定向验证使用同一命令。结果：exit 0；1 个测试文件、14/14 通过，0 失败。新增用例验证删除提示和本地草稿仍可读、两页权威条目及服务端配额已应用；取消草稿后旧目标不再出现，分类只保留权威条目的编辑、删除入口。
+
+构建：
+
+```text
+npm --prefix frontend run build
+```
+
+结果：exit 0；Prettier 检查、TypeScript project build 与 Vite 构建全部通过，1854 个模块转换成功，无告警。
+
+本轮只对 `PersonalMemoryPanel.tsx` 及其测试执行精确路径 Prettier。外部修改 `docs/git-repository-setup.md` 未修改、暂存或回滚。本轮无新增正确性顾虑。

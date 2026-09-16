@@ -360,6 +360,58 @@ describe('PersonalMemoryPanel', () => {
     );
   });
 
+  it('keeps a deleted conflict draft while replacing the category with authoritative pages', async () => {
+    const authoritativeFirst = {
+      ...secondProfile,
+      memoryId: 'profile-server-1',
+      content: '服务器保留的第一条画像',
+      version: 5,
+    };
+    const authoritativeSecond = {
+      ...secondProfile,
+      memoryId: 'profile-server-2',
+      content: '服务器保留的第二条画像',
+      version: 3,
+    };
+    const client = createMemoryClientStub();
+    client.list
+      .mockResolvedValueOnce(populatedView())
+      .mockResolvedValueOnce(profilePage([authoritativeFirst], 'server-page-1'))
+      .mockResolvedValueOnce({
+        ...profilePage([authoritativeSecond], null),
+        quotas: {
+          ...populatedView().quotas,
+          person_profile: { used: 188, limit: 800 },
+        },
+        revision: 12,
+      });
+    client.replace.mockRejectedValueOnce(new MemoryApiError(409, 'CONFLICT', '版本冲突'));
+    render(<PersonalMemoryPanel client={client} onClose={() => {}} />);
+
+    const profileRegion = await screen.findByRole('region', { name: '个人画像' });
+    fireEvent.click(within(profileRegion).getByRole('button', { name: '编辑' }));
+    fireEvent.change(screen.getByLabelText('编辑记忆内容'), {
+      target: { value: '服务器已删除但仍需查看的本地草稿' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    expect(
+      await screen.findByText('该记忆已在服务器删除，草稿已保留但不能覆盖；可取消后新增。'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('已删除记忆草稿')).toHaveValue('服务器已删除但仍需查看的本地草稿');
+    expect(screen.getByText(authoritativeFirst.content)).toBeInTheDocument();
+    expect(screen.getByText(authoritativeSecond.content)).toBeInTheDocument();
+    expect(within(profileRegion).getByText('已用 188 / 800 字符')).toBeInTheDocument();
+    expect(screen.queryByText(profile.content)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '取消保留草稿' }));
+
+    expect(screen.queryByLabelText('已删除记忆草稿')).not.toBeInTheDocument();
+    expect(screen.queryByText(profile.content)).not.toBeInTheDocument();
+    expect(within(profileRegion).getAllByRole('button', { name: '编辑' })).toHaveLength(2);
+    expect(within(profileRegion).getAllByRole('button', { name: '删除' })).toHaveLength(2);
+  });
+
   it('keeps a second-page delete target after conflict and retries with its refreshed version', async () => {
     vi.stubGlobal('crypto', {
       randomUUID: vi.fn().mockReturnValueOnce('delete-key-1').mockReturnValueOnce('delete-key-2'),
