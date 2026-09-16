@@ -21,6 +21,19 @@ public class ConversationMessageService
 
     private final ConversationPersistenceMapper models;
 
+    /** 审查原始序号页；不预先过滤角色或执行状态，否则会把未终态消息误当成已删除空洞。 */
+    public List<ConversationMessage> findReviewPage(
+            String sessionId, long after, long through, int limit) {
+        return toModels(
+                lambdaQuery()
+                        .eq(ConversationMessageEntity::getConversationSessionId, sessionId)
+                        .gt(ConversationMessageEntity::getConversationMessageSequence, after)
+                        .le(ConversationMessageEntity::getConversationMessageSequence, through)
+                        .orderByAsc(ConversationMessageEntity::getConversationMessageSequence)
+                        .last("LIMIT " + Math.max(1, limit))
+                        .list());
+    }
+
     public boolean save(ConversationMessage message) {
         ConversationMessageEntity entity = models.toEntity(message);
         boolean saved = super.save(entity);

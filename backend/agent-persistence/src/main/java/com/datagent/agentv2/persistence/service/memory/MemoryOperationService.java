@@ -21,6 +21,37 @@ public class MemoryOperationService
         extends ServiceImpl<MemoryOperationMapper, MemoryOperationEntity> {
     private final ObjectMapper json;
 
+    /** 只查后台稳定动作身份下的成功结果；正式 payloadHash 仍保留 expectedVersion 的完整请求语义。 */
+    public MemoryOperation findSuccessfulReviewAction(String prefix) {
+        var rows = successfulReviewQuery(prefix).last("LIMIT 1").list();
+        return rows.isEmpty() ? null : toModel(rows.getFirst());
+    }
+
+    /** 向重试模型提供有界历史观察；不包含正文，精确动作的去重另走上面的稳定身份查询。 */
+    public java.util.List<MemoryOperation> findReviewResults(String prefix, int limit) {
+        return successfulReviewQuery(prefix).last("LIMIT " + Math.max(1, limit)).list().stream()
+                .map(this::toModel)
+                .toList();
+    }
+
+    private com.baomidou.mybatisplus.extension.conditions.query.LambdaQueryChainWrapper<
+                    MemoryOperationEntity>
+            successfulReviewQuery(String prefix) {
+        if (prefix == null || !prefix.matches("mr:[a-f0-9:]+:"))
+            throw new IllegalArgumentException("非法后台动作前缀");
+        return lambdaQuery()
+                .eq(MemoryOperationEntity::getUserId, OperatorContext.requiredUserId())
+                .likeRight(MemoryOperationEntity::getRequestId, prefix)
+                .in(
+                        MemoryOperationEntity::getOutcomeStatus,
+                        "CREATED",
+                        "ALREADY_EXISTS",
+                        "UPDATED",
+                        "REMOVED",
+                        "CONFIRMED")
+                .orderByDesc(MemoryOperationEntity::getCreatedAt);
+    }
+
     public MemoryOperation find(String requestId) {
         var entity =
                 lambdaQuery()

@@ -50,6 +50,9 @@ public final class MemoryReviewJobEntity extends MemoryRow {
     /** 安全原因码，无失败为空，禁止存储用户正文。 */
     private String failureReason;
 
+    /** 阻塞时的模型/预算/限制摘要；为空表示旧任务无可比较配置，不能自动激活。 */
+    private String blockedConfigurationFingerprint;
+
     /** 持有任务的 worker 标识，释放后为空。 */
     private String owner;
 

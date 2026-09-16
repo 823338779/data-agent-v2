@@ -178,6 +178,11 @@ public class MemoryReviewCoordinator {
 
     /** 失败保留连续游标；暂时失败有界重试，输入阻塞立即等待新事件激活。 */
     public void fail(MemoryReviewClaim claim, String reason, boolean blocked) {
+        fail(claim, reason, blocked, null);
+    }
+
+    /** 同一短事务记录阻塞配置；只有可比较的新配置才允许重新激活，重启不重置次数。 */
+    public void fail(MemoryReviewClaim claim, String reason, boolean blocked, String fingerprint) {
         var locked = lock(claim.jobId());
         if (!matches(locked, claim)) return;
         if (!currentEpoch(locked)) {
@@ -193,7 +198,39 @@ public class MemoryReviewCoordinator {
                 blocked || failures >= properties.getMaxAttempts() ? Status.BLOCKED : Status.FAILED,
                 states.currentBusinessTime().plus(properties.getRetryDelay()),
                 failures,
-                reason);
+                reason,
+                fingerprint);
+    }
+
+    /** 配置扫描只触及当前代际有界 BLOCKED，不重试旧 epoch、未知配置或仍在重试等待的任务。 */
+    public void reactivateBlocked(String fingerprint, int limit) {
+        if (fingerprint == null || fingerprint.isBlank() || limit < 1)
+            throw new IllegalArgumentException("配置摘要和数量必须有效");
+        var state = states.lockCurrent();
+        if (!state.autoLearningEnabled()) return;
+        for (String id :
+                jobs.findBlockedWithChangedConfiguration(
+                        state.learningEpoch(), fingerprint, limit)) {
+            var job = jobs.lock(id);
+            if (job == null
+                    || job.learningEpoch() != state.learningEpoch()
+                    || job.status() != Status.BLOCKED
+                    || job.blockedConfigurationFingerprint() == null
+                    || fingerprint.equals(job.blockedConfigurationFingerprint())) continue;
+            requireChanged(
+                    jobs.compareAndSet(
+                            copy(
+                                            job,
+                                            job.reviewedThroughSequence(),
+                                            Status.PENDING,
+                                            states.currentBusinessTime(),
+                                            0,
+                                            null,
+                                            null,
+                                            null)
+                                    .withBlockedConfigurationFingerprint(null),
+                            job.fencingToken()));
+        }
     }
 
     /** worker 提前退出时退回待处理；保留 token 计数，旧 finally 不能释放接管者的租约。 */
@@ -288,9 +325,23 @@ public class MemoryReviewCoordinator {
             LocalDateTime dueAt,
             int failures,
             String reason) {
+        return settle(locked, claim, reviewed, status, dueAt, failures, reason, null);
+    }
+
+    private boolean settle(
+            Locked locked,
+            MemoryReviewClaim claim,
+            long reviewed,
+            Status status,
+            LocalDateTime dueAt,
+            int failures,
+            String reason,
+            String fingerprint) {
         var job = locked.job();
         return atomicActiveUpdate(
-                copy(job, reviewed, status, dueAt, failures, reason, null, null),
+                copy(job, reviewed, status, dueAt, failures, reason, null, null)
+                        .withBlockedConfigurationFingerprint(
+                                status == Status.BLOCKED ? fingerprint : null),
                 new MemoryReviewLease(claim.userToken(), null, null),
                 claim);
     }
@@ -328,7 +379,8 @@ public class MemoryReviewCoordinator {
                 reason,
                 owner,
                 job.fencingToken(),
-                leaseUntil);
+                leaseUntil,
+                job.blockedConfigurationFingerprint());
     }
 
     private static Instant instant(LocalDateTime time) {

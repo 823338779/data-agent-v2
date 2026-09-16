@@ -76,6 +76,7 @@ public interface MemoryPersistenceMapper {
             target = "status",
             expression =
                     "java(com.datagent.agentv2.memory.MemoryReviewJob.Status.valueOf(entity.getStatus()))")
+    @Mapping(target = "withBlockedConfigurationFingerprint", ignore = true)
     MemoryReviewJob toModel(MemoryReviewJobEntity entity);
 
     @Mapping(target = "id", ignore = true)

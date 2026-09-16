@@ -126,6 +126,23 @@ class WebMemoryEvidenceAdapterTest {
     }
 
     @Test
+    void reviewPageUsesExclusiveLowerInclusiveUpperAndKeepsFortyFirstRow() {
+        for (int sequence = 12; sequence <= 51; sequence++)
+            jdbc.update(
+                    "insert into conversation_message(conversation_message_id,tenant_id,conversation_session_id,role,content,conversation_message_sequence,author_user_id,version) values (?,'tenant_local','conversation','user','完整正文',?,'user_admin',1)",
+                    "page-" + sequence,
+                    sequence);
+        var first = messages.findReviewPage("conversation", 10, 51, 40);
+        assertThat(first).hasSize(40);
+        assertThat(first.getFirst().getConversationMessageSequence()).isEqualTo(11);
+        assertThat(first.getLast().getConversationMessageSequence()).isEqualTo(50);
+        assertThat(messages.findReviewPage("conversation", 50, 51, 40))
+                .extracting(ConversationMessage::getConversationMessageSequence)
+                .containsExactly(51L);
+        assertThat(messages.findReviewPage("other", 0, 100, 40)).isEmpty();
+    }
+
+    @Test
     void missingTrustedLegacyTimeCannotAuthorizeAnyMemoryWrite() {
         jdbc.update("update conversation_message set memory_evidence_created_at=null");
         assertThat(adapter.currentUserEvidence("execution")).isEmpty();

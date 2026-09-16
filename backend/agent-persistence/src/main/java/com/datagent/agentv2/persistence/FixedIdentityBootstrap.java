@@ -10,11 +10,13 @@ import com.datagent.agentv2.platform.context.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Component;
 
 /** 为当前固定身份创建业务表外键所需的最小数据库记录。 */
 @Component
+@Order(0)
 @RequiredArgsConstructor
 public final class FixedIdentityBootstrap implements ApplicationRunner {
 

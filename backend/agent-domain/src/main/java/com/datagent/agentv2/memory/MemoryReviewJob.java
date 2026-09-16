@@ -38,7 +38,65 @@ public record MemoryReviewJob(
         String failureReason,
         String owner,
         long fencingToken,
-        Instant leaseUntil) {
+        Instant leaseUntil,
+        /** 进入阻塞时相关模型/预算/限制配置的摘要；旧数据为空，不能因重启无条件重试。 */
+        String blockedConfigurationFingerprint) {
+    public MemoryReviewJob(
+            String jobId,
+            String conversationId,
+            long learningEpoch,
+            long reviewedThroughSequence,
+            long pendingThroughSequence,
+            long claimedThroughSequence,
+            long dirtyGeneration,
+            long claimedGeneration,
+            Status status,
+            LocalDateTime availableAt,
+            int failureCount,
+            String failureReason,
+            String owner,
+            long fencingToken,
+            Instant leaseUntil) {
+        this(
+                jobId,
+                conversationId,
+                learningEpoch,
+                reviewedThroughSequence,
+                pendingThroughSequence,
+                claimedThroughSequence,
+                dirtyGeneration,
+                claimedGeneration,
+                status,
+                availableAt,
+                failureCount,
+                failureReason,
+                owner,
+                fencingToken,
+                leaseUntil,
+                null);
+    }
+
+    /** 保持任务所有权和连续范围，只附加导致本次阻塞的配置身份。 */
+    public MemoryReviewJob withBlockedConfigurationFingerprint(String fingerprint) {
+        return new MemoryReviewJob(
+                jobId,
+                conversationId,
+                learningEpoch,
+                reviewedThroughSequence,
+                pendingThroughSequence,
+                claimedThroughSequence,
+                dirtyGeneration,
+                claimedGeneration,
+                status,
+                availableAt,
+                failureCount,
+                failureReason,
+                owner,
+                fencingToken,
+                leaseUntil,
+                fingerprint);
+    }
+
     public enum Status {
         PENDING,
         RUNNING,

@@ -24,6 +24,23 @@ public class MemoryReviewJobService
         extends ServiceImpl<MemoryReviewJobMapper, MemoryReviewJobEntity> {
     private final MemoryPersistenceMapper models;
 
+    /** 当前代际且已知配置改变的阻塞候选；与领取、旧代际取消分别限量。 */
+    public List<String> findBlockedWithChangedConfiguration(
+            long epoch, String fingerprint, int limit) {
+        return lambdaQuery()
+                .eq(MemoryReviewJobEntity::getUserId, OperatorContext.requiredUserId())
+                .eq(MemoryReviewJobEntity::getLearningEpoch, epoch)
+                .eq(MemoryReviewJobEntity::getStatus, "BLOCKED")
+                .isNotNull(MemoryReviewJobEntity::getBlockedConfigurationFingerprint)
+                .ne(MemoryReviewJobEntity::getBlockedConfigurationFingerprint, fingerprint)
+                .orderByAsc(MemoryReviewJobEntity::getJobId)
+                .last("LIMIT " + Math.max(1, limit))
+                .list()
+                .stream()
+                .map(MemoryReviewJobEntity::getJobId)
+                .toList();
+    }
+
     /** 无锁读取当前代际就绪候选；旧任务及当前 BLOCKED 不占领取名额，锁后仍须重验。 */
     public List<String> findDue(long epoch, LocalDateTime now, Instant instant, int limit) {
         return lambdaQuery()
@@ -197,6 +214,9 @@ public class MemoryReviewJobService
                         .set(MemoryReviewJobEntity::getAvailableAt, job.availableAt())
                         .set(MemoryReviewJobEntity::getFailureCount, job.failureCount())
                         .set(MemoryReviewJobEntity::getFailureReason, job.failureReason())
+                        .set(
+                                MemoryReviewJobEntity::getBlockedConfigurationFingerprint,
+                                job.blockedConfigurationFingerprint())
                         .set(MemoryReviewJobEntity::getOwner, job.owner())
                         .set(MemoryReviewJobEntity::getFencingToken, job.fencingToken())
                         .set(MemoryReviewJobEntity::getLeaseUntil, job.leaseUntil());

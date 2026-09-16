@@ -55,6 +55,11 @@ public final class MemoryToolDispatcher {
     private final ObjectMapper json;
 
     public MemoryOutcome dispatch(MemoryWriteContext context, JsonNode arguments) {
+        return service.execute(context, parse(context, arguments));
+    }
+
+    /** 复用完整参数校验；后台在查历史成功前也必须解析，不能用非法附加字段伪装历史成功。 */
+    public MemoryCommand parse(MemoryWriteContext context, JsonNode arguments) {
         requireObject(arguments);
         String action = requiredText(arguments, "action");
         MemoryCommand command =
@@ -66,7 +71,7 @@ public final class MemoryToolDispatcher {
                     case "list" -> throw invalid("list is a read-only action");
                     default -> throw invalid("Unsupported memory action");
                 };
-        return service.execute(context, command);
+        return command;
     }
 
     /** 读取当前一致快照并分页输出模型需要的字段，禁止泄露规范化摘要等内部存储字段。 */

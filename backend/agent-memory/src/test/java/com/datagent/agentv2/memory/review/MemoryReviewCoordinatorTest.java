@@ -1,14 +1,20 @@
 package com.datagent.agentv2.memory.review;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 import static org.mockito.Mockito.doAnswer;
 
 import com.datagent.agentv2.memory.*;
+import com.datagent.agentv2.memory.config.MemoryProperties;
+import com.datagent.agentv2.memory.tool.MemoryToolDispatcher;
 import com.datagent.agentv2.persistence.service.memory.*;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -22,6 +28,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.postgresql.PostgreSQLContainer;
+import tools.jackson.databind.ObjectMapper;
 
 /** 通过 Spring 事务代理验证真实任务状态机，原子修改租约时间代替等待 TTL。 */
 @SpringBootTest(classes = MemoryIntegrationTestConfiguration.class)
@@ -52,9 +59,15 @@ class MemoryReviewCoordinatorTest {
     @Autowired MemoryService memory;
     @Autowired JdbcTemplate jdbc;
     @Autowired TransactionTemplate transactions;
+    @Autowired MemoryOperationService operations;
+    @Autowired MemoryEvidencePort evidencePort;
+    @Autowired MemoryProperties properties;
+    @Autowired MemoryContentPolicy content;
+    @Autowired ObjectMapper json;
 
     @BeforeEach
     void seed() {
+        reset(evidencePort);
         jdbc.execute("truncate tenant cascade");
         jdbc.update("insert into tenant(tenant_id,name) values ('tenant_local','Local')");
         jdbc.update(
@@ -62,6 +75,305 @@ class MemoryReviewCoordinatorTest {
         memory.initialize();
         mark(1, 10, 20);
         due();
+    }
+
+    @Test
+    void configurationChangeReactivatesOnlyCurrentBlockedAndDoesNotResetOnRestart() {
+        var first = claim("worker");
+        coordinator.fail(first, "MODEL_CONFIGURATION", true, "old-config");
+        assertThat(jobs.find("job").failureCount()).isEqualTo(1);
+        coordinator.reactivateBlocked("old-config", 4);
+        assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.BLOCKED);
+        coordinator.reactivateBlocked("new-config", 4);
+        assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.PENDING);
+        assertThat(jobs.find("job").failureCount()).isZero();
+        assertThat(jobs.find("job").reviewedThroughSequence()).isEqualTo(10);
+        var second = claim("worker-2");
+        coordinator.fail(second, "MODEL_FAILURE", false, "new-config");
+        coordinator.reactivateBlocked("third-config", 4);
+        assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.FAILED);
+        assertThat(jobs.find("job").failureCount()).isEqualTo(1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"replace", "confirm"})
+    void partialSuccessSurvivesFreshTargetVersionAndUnrelatedRevisionConflict(String action) {
+        var now = states.currentBusinessTime();
+        var a =
+                new MemoryEvidence(
+                        "a",
+                        MemoryEvidence.Kind.USER_MESSAGE,
+                        "conversation",
+                        "execution",
+                        11,
+                        "user_admin",
+                        1,
+                        "新的个人事实A",
+                        now);
+        var b =
+                new MemoryEvidence(
+                        "b",
+                        MemoryEvidence.Kind.USER_MESSAGE,
+                        "conversation",
+                        "execution",
+                        12,
+                        "user_admin",
+                        1,
+                        "新的个人事实B",
+                        now);
+        when(evidencePort.resolve(any(), any()))
+                .thenAnswer(
+                        i -> {
+                            List<String> ids = i.getArgument(1);
+                            return ids.stream()
+                                    .map(
+                                            id ->
+                                                    id.startsWith("seed-")
+                                                            ? new MemoryEvidence(
+                                                                    id,
+                                                                    MemoryEvidence.Kind
+                                                                            .USER_MESSAGE,
+                                                                    "conversation",
+                                                                    "execution",
+                                                                    10,
+                                                                    "user_admin",
+                                                                    1,
+                                                                    "原始事实",
+                                                                    now)
+                                                            : id.equals("a") ? a : b)
+                                    .toList();
+                        });
+        var initialA =
+                memory.execute(
+                        new MemoryWriteContext(
+                                MemoryWriteContext.Caller.MAIN,
+                                "seed-a",
+                                "execution",
+                                "conversation",
+                                memory.snapshot().state().revision(),
+                                null),
+                        new MemoryCommand.Add(
+                                MemoryKind.PERSON_PROFILE,
+                                "旧事实A",
+                                MemoryWriteReason.AGENT_INFERRED,
+                                List.of("seed-a"),
+                                false));
+        var initialB =
+                memory.execute(
+                        new MemoryWriteContext(
+                                MemoryWriteContext.Caller.MAIN,
+                                "seed-b",
+                                "execution",
+                                "conversation",
+                                memory.snapshot().state().revision(),
+                                null),
+                        new MemoryCommand.Add(
+                                MemoryKind.PERSON_PROFILE,
+                                "旧事实B",
+                                MemoryWriteReason.AGENT_INFERRED,
+                                List.of("seed-b"),
+                                false));
+        assertThat(initialA.successful()).isTrue();
+        assertThat(initialB.successful()).isTrue();
+        var model = mock(MemoryReviewModelPort.class);
+        when(model.maxInputTokens()).thenReturn(10000);
+        when(model.estimate(any())).thenReturn(100);
+        when(model.configurationFingerprint()).thenReturn("test-config");
+        var firstA = reviewAction(action, initialA.memoryId(), 1, "a");
+        var freshA = reviewAction(action, initialA.memoryId(), 2, "a");
+        var actionB = reviewAction("replace", initialB.memoryId(), 1, "b");
+        when(model.complete(any()))
+                .thenReturn(
+                        new MemoryReviewOutput.Calls(List.of(firstA, actionB)),
+                        new MemoryReviewOutput.Calls(List.of(freshA, actionB)),
+                        new MemoryReviewOutput.Done());
+        var dispatcher = spy(new MemoryToolDispatcher(memory, json));
+        var firstB = new AtomicBoolean(true);
+        doAnswer(
+                        i -> {
+                            tools.jackson.databind.JsonNode arguments = i.getArgument(1);
+                            if (arguments.path("memory_id").asString().equals(initialB.memoryId())
+                                    && firstB.getAndSet(false)) {
+                                // A 已提交后，从另一个短事务写入无关条目；B 的目标版本不变，但冻结 revision 已失效。
+                                var unrelated =
+                                        memory.execute(
+                                                new MemoryWriteContext(
+                                                        MemoryWriteContext.Caller.UI,
+                                                        "unrelated",
+                                                        null,
+                                                        null,
+                                                        null,
+                                                        null),
+                                                new MemoryCommand.Add(
+                                                        MemoryKind.PERSON_PROFILE,
+                                                        "无关人工事实",
+                                                        MemoryWriteReason.USER_REQUESTED,
+                                                        List.of(),
+                                                        false));
+                                assertThat(unrelated.successful()).isTrue();
+                            }
+                            return i.callRealMethod();
+                        })
+                .when(dispatcher)
+                .dispatch(any(), any());
+        MemoryReviewHistoryPort history =
+                (claim, after, limit) ->
+                        List.of(
+                                new MemoryReviewMessage(11, MemoryReviewMessage.State.ELIGIBLE, a),
+                                new MemoryReviewMessage(12, MemoryReviewMessage.State.ELIGIBLE, b));
+        try (var timer = Executors.newScheduledThreadPool(2)) {
+            var worker =
+                    new MemoryReviewWorker(
+                            properties,
+                            coordinator,
+                            memory,
+                            history,
+                            model,
+                            dispatcher,
+                            operations,
+                            content,
+                            json,
+                            timer);
+            worker.run(claim("first"));
+            assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.FAILED);
+            assertThat(jobs.find("job").reviewedThroughSequence()).isEqualTo(10);
+            assertThat(
+                            jdbc.queryForObject(
+                                    "select count(*) from personal_memory_operation where outcome_status='CONFLICT'",
+                                    Integer.class))
+                    .isEqualTo(1);
+            due();
+            worker.run(claim("retry"));
+            var snapshot = memory.snapshot();
+            assertThat(
+                            snapshot.entries().stream()
+                                    .filter(e -> e.memoryId().equals(initialA.memoryId()))
+                                    .findFirst()
+                                    .orElseThrow()
+                                    .version())
+                    .isEqualTo(2);
+            assertThat(
+                            snapshot.entries().stream()
+                                    .filter(e -> e.memoryId().equals(initialB.memoryId()))
+                                    .findFirst()
+                                    .orElseThrow()
+                                    .version())
+                    .isEqualTo(2);
+            assertThat(jobs.find("job").reviewedThroughSequence()).isEqualTo(12);
+            assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.PENDING);
+            assertThat(
+                            jdbc.queryForObject(
+                                    "select count(*) from personal_memory_operation where request_id like 'mr:%' and outcome_status in ('UPDATED','CONFIRMED')",
+                                    Integer.class))
+                    .isEqualTo(2);
+        }
+    }
+
+    private static MemoryReviewOutput.Call reviewAction(
+            String action, String target, long version, String evidence) {
+        var args = new java.util.HashMap<String, Object>();
+        args.put("action", action);
+        args.put("memory_id", target);
+        args.put("expected_version", version);
+        args.put("evidence_message_ids", List.of(evidence));
+        if (action.equals("replace")) args.put("new_content", "新事实" + evidence);
+        return new MemoryReviewOutput.Call("provider-" + evidence, args);
+    }
+
+    @Test
+    void unavailableRollsBackOperationAndSameRevisionRetryKeepsRequestId() {
+        var evidence =
+                new MemoryEvidence(
+                        "new",
+                        MemoryEvidence.Kind.USER_MESSAGE,
+                        "conversation",
+                        "execution",
+                        11,
+                        "user_admin",
+                        1,
+                        "个人事实",
+                        states.currentBusinessTime());
+        when(evidencePort.resolve(any(), any()))
+                .thenThrow(new MemoryException(MemoryStatus.UNAVAILABLE, "暂不可用"))
+                .thenReturn(List.of(evidence));
+        var call =
+                new MemoryReviewOutput.Calls(
+                        List.of(
+                                new MemoryReviewOutput.Call(
+                                        "provider",
+                                        Map.of(
+                                                "action",
+                                                "add",
+                                                "kind",
+                                                "person_profile",
+                                                "content",
+                                                "个人事实",
+                                                "evidence_message_ids",
+                                                List.of("new")))));
+        var model = mock(MemoryReviewModelPort.class);
+        when(model.maxInputTokens()).thenReturn(10000);
+        when(model.estimate(any())).thenReturn(100);
+        when(model.configurationFingerprint()).thenReturn("test-config");
+        when(model.complete(any())).thenReturn(call, call, new MemoryReviewOutput.Done());
+        var dispatcher = spy(new MemoryToolDispatcher(memory, json));
+        MemoryReviewHistoryPort history =
+                (claim, after, limit) ->
+                        List.of(
+                                new MemoryReviewMessage(
+                                        11, MemoryReviewMessage.State.ELIGIBLE, evidence));
+        try (var timer = Executors.newScheduledThreadPool(2)) {
+            var worker =
+                    new MemoryReviewWorker(
+                            properties,
+                            coordinator,
+                            memory,
+                            history,
+                            model,
+                            dispatcher,
+                            operations,
+                            content,
+                            json,
+                            timer);
+            worker.run(claim("first"));
+            assertThat(
+                            jdbc.queryForObject(
+                                    "select count(*) from personal_memory_operation",
+                                    Integer.class))
+                    .isZero();
+            assertThat(memory.snapshot().entries()).isEmpty();
+            due();
+            worker.run(claim("second"));
+            assertThat(memory.snapshot().entries()).hasSize(1);
+            var contexts = org.mockito.ArgumentCaptor.forClass(MemoryWriteContext.class);
+            verify(dispatcher, times(2)).dispatch(contexts.capture(), any());
+            assertThat(contexts.getAllValues().get(0).requestId())
+                    .isEqualTo(contexts.getAllValues().get(1).requestId());
+            assertThat(
+                            jdbc.queryForObject(
+                                    "select count(*) from personal_memory_operation",
+                                    Integer.class))
+                    .isEqualTo(1);
+        }
+    }
+
+    @Test
+    void configurationActivationDoesNotTouchUnknownFingerprintOrOldEpoch() {
+        coordinator.fail(claim("legacy"), "OLD_FAILURE", true);
+        coordinator.reactivateBlocked("new-config", 4);
+        assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.BLOCKED);
+        jdbc.update(
+                "update personal_memory_review_job set blocked_configuration_fingerprint='old-config'");
+        var state = memory.snapshot().state();
+        memory.updateSettings(
+                "off", new MemorySettingsChange(state.settingsVersion(), null, null, false));
+        state = memory.snapshot().state();
+        memory.updateSettings(
+                "on", new MemorySettingsChange(state.settingsVersion(), null, null, true));
+        coordinator.reactivateBlocked("new-config", 4);
+        assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.BLOCKED);
+        assertThat(jobs.find("job").failureCount()).isEqualTo(1);
+        coordinator.claimDue("scan", 4);
+        assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.CANCELLED);
     }
 
     @Test
