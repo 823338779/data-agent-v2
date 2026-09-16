@@ -16,6 +16,14 @@ import org.springframework.stereotype.Service;
 public class MemoryStateService extends ServiceImpl<MemoryStateMapper, MemoryStateEntity> {
     private final MemoryPersistenceMapper models;
 
+    /** 无锁读取仅供审查候选分桶；不得据此授权写入，竞争方仍须 lockCurrent 重新校验。 */
+    public MemoryState findCurrent() {
+        return models.toModel(
+                lambdaQuery()
+                        .eq(MemoryStateEntity::getUserId, OperatorContext.requiredUserId())
+                        .one());
+    }
+
     /** 为启用时间、恢复证据截止时间提供统一的北京时间数据库时钟。 */
     public java.time.LocalDateTime currentBusinessTime() {
         return baseMapper.currentBusinessTime();

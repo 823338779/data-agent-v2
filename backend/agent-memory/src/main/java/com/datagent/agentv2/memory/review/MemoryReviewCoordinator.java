@@ -14,6 +14,7 @@ import com.datagent.agentv2.persistence.service.memory.MemoryStateService;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
@@ -40,13 +41,22 @@ public class MemoryReviewCoordinator {
     public List<MemoryReviewClaim> claimDue(String owner, int limit) {
         if (owner == null || owner.isBlank() || limit < 1)
             throw new IllegalArgumentException("领取所有者与数量必须有效");
+        var observedState = states.findCurrent();
+        if (observedState == null) return List.of();
         LocalDateTime selectedAt = states.currentBusinessTime();
-        var candidates = jobs.findDue(selectedAt, instant(selectedAt), limit);
+        // 两个候选桶各有独立名额：旧代际取消不必等待 due/TTL，也不让取消积压饿死当前就绪任务。
+        var candidates = new ArrayList<>(jobs.findObsolete(observedState.learningEpoch(), limit));
+        candidates.addAll(
+                jobs.findDue(
+                        observedState.learningEpoch(), selectedAt, instant(selectedAt), limit));
         if (candidates.isEmpty()) return List.of();
+        // 无锁 epoch 只是候选提示；若此时已切代，按锁内状态取消，本轮未选到的新工作留给下轮。
         var state = states.lockCurrent();
         for (String id : candidates) {
             var job = jobs.lock(id);
             if (job == null) continue;
+            // 候选快照之后可能已完成；切代取消只收敛未完成工作，不能改写已提交的完成历史。
+            if (job.status() == Status.COMPLETED || job.status() == Status.CANCELLED) continue;
             LocalDateTime now = states.currentBusinessTime();
             if (!state.autoLearningEnabled() || state.learningEpoch() != job.learningEpoch()) {
                 // 扫描没有用户 token 凭证，同 owner 可能已领取另一任务，不能据此释放用户租约。

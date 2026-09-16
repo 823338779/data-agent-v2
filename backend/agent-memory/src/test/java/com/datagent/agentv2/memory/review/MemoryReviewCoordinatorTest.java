@@ -10,6 +10,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -165,6 +168,114 @@ class MemoryReviewCoordinatorTest {
         assertThat(claim.fromSequence()).isEqualTo(10);
         coordinator.fail(claim, "INPUT_TOO_LARGE", true);
         assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.BLOCKED);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void obsoleteBlockedJobIsCancelledWithoutNewConversationEvent(boolean reenable) {
+        var claim = claim("worker");
+        coordinator.fail(claim, "INPUT_TOO_LARGE", true);
+        memory.updateSettings("off", new MemorySettingsChange(0, null, null, false));
+        if (reenable) memory.updateSettings("on", new MemorySettingsChange(1, null, null, true));
+
+        assertThat(coordinator.claimDue("scanner", 1)).isEmpty();
+        assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.CANCELLED);
+        assertThat(jobs.find("job").reviewedThroughSequence()).isEqualTo(10);
+        assertThat(leases.findCurrent().fencingToken()).isEqualTo(claim.userToken());
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = MemoryReviewJob.Status.class,
+            names = {"PENDING", "FAILED", "RUNNING"})
+    void obsoleteUnfinishedJobCancellationDoesNotWaitForDueTimeOrLease(
+            MemoryReviewJob.Status status) {
+        jdbc.update(
+                "update personal_memory_review_job set status=?, available_at=clock_timestamp() at time zone 'Asia/Shanghai'+interval '1 day', owner='old-worker', fencing_token=1, lease_until=clock_timestamp()+interval '1 day'",
+                status.name());
+        memory.updateSettings("off", new MemorySettingsChange(0, null, null, false));
+
+        assertThat(coordinator.claimDue("scanner", 1)).isEmpty();
+        assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.CANCELLED);
+        assertThat(jobs.find("job").owner()).isNull();
+        assertThat(jobs.find("job").leaseUntil()).isNull();
+        assertThat(jobs.find("job").reviewedThroughSequence()).isEqualTo(10);
+    }
+
+    @Test
+    void cancellationBacklogAndCurrentBlockedJobsDoNotConsumeReadyJobLimit() {
+        memory.updateSettings("off", new MemorySettingsChange(0, null, null, false));
+        memory.updateSettings("on", new MemorySettingsChange(1, null, null, true));
+        mark(3, 10, 20);
+        due();
+        for (int index = 0; index < 3; index++) {
+            for (long epoch : List.of(1L, 3L)) {
+                String id = "blocked-" + epoch + "-" + index;
+                jobs.insert(
+                        new MemoryReviewJob(
+                                id,
+                                id,
+                                epoch,
+                                0,
+                                2,
+                                0,
+                                1,
+                                0,
+                                MemoryReviewJob.Status.BLOCKED,
+                                states.currentBusinessTime().minusDays(1),
+                                1,
+                                "INPUT_TOO_LARGE",
+                                null,
+                                0,
+                                null));
+            }
+        }
+
+        var claimed = coordinator.claimDue("worker", 1);
+        assertThat(claimed).hasSize(1);
+        assertThat(claimed.getFirst().jobId()).isEqualTo("job");
+        assertThat(
+                        jdbc.queryForObject(
+                                "select count(*) from personal_memory_review_job where learning_epoch=1 and status='CANCELLED'",
+                                Integer.class))
+                .isEqualTo(1);
+        assertThat(
+                        jdbc.queryForObject(
+                                "select count(*) from personal_memory_review_job where learning_epoch=3 and status='BLOCKED'",
+                                Integer.class))
+                .isEqualTo(3);
+        coordinator.finish(claimed.getFirst(), new MemoryReviewProgress(20, 0));
+        assertThat(coordinator.claimDue("scanner", 1)).isEmpty();
+        assertThat(coordinator.claimDue("scanner", 1)).isEmpty();
+        assertThat(
+                        jdbc.queryForObject(
+                                "select count(*) from personal_memory_review_job where learning_epoch=1 and status='CANCELLED'",
+                                Integer.class))
+                .isEqualTo(3);
+        assertThat(
+                        jdbc.queryForObject(
+                                "select count(*) from personal_memory_review_job where learning_epoch=3 and status='BLOCKED'",
+                                Integer.class))
+                .isEqualTo(3);
+    }
+
+    @Test
+    void candidateCompletedBeforeEpochLockMustKeepCompletedStatus() {
+        doAnswer(
+                        invocation -> {
+                            // 模拟无锁选候选后、拿 state 锁前，任务先完成且学习代际随后关闭。
+                            jdbc.update(
+                                    "update personal_memory_review_job set status='COMPLETED', reviewed_through_sequence=20, claimed_through_sequence=20");
+                            jdbc.update(
+                                    "update personal_memory_state set learning_epoch=2, auto_learning_enabled=false, learning_enabled_at=null");
+                            return invocation.callRealMethod();
+                        })
+                .when(states)
+                .lockCurrent();
+
+        assertThat(coordinator.claimDue("scanner", 1)).isEmpty();
+        assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.COMPLETED);
+        assertThat(jobs.find("job").reviewedThroughSequence()).isEqualTo(20);
     }
 
     @Test

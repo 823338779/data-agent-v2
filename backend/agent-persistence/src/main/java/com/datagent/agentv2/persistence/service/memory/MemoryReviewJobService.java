@@ -24,10 +24,11 @@ public class MemoryReviewJobService
         extends ServiceImpl<MemoryReviewJobMapper, MemoryReviewJobEntity> {
     private final MemoryPersistenceMapper models;
 
-    /** 无锁读取候选；领取方必须先锁 state 再重读任务，不能把此快照当作所有权。 */
-    public List<String> findDue(LocalDateTime now, Instant instant, int limit) {
+    /** 无锁读取当前代际就绪候选；旧任务及当前 BLOCKED 不占领取名额，锁后仍须重验。 */
+    public List<String> findDue(long epoch, LocalDateTime now, Instant instant, int limit) {
         return lambdaQuery()
                 .eq(MemoryReviewJobEntity::getUserId, OperatorContext.requiredUserId())
+                .eq(MemoryReviewJobEntity::getLearningEpoch, epoch)
                 .and(
                         q ->
                                 q.in(MemoryReviewJobEntity::getStatus, "PENDING", "FAILED")
@@ -43,6 +44,20 @@ public class MemoryReviewJobService
                                                                                 ::getLeaseUntil,
                                                                         instant)))
                 .orderByAsc(MemoryReviewJobEntity::getAvailableAt)
+                .orderByAsc(MemoryReviewJobEntity::getJobId)
+                .last("LIMIT " + Math.max(1, limit))
+                .list()
+                .stream()
+                .map(MemoryReviewJobEntity::getJobId)
+                .toList();
+    }
+
+    /** 旧代际的未完成任务独立限量收敛，不受重试时间或未到期租约限制，也不混入当前 BLOCKED。 */
+    public List<String> findObsolete(long currentEpoch, int limit) {
+        return lambdaQuery()
+                .eq(MemoryReviewJobEntity::getUserId, OperatorContext.requiredUserId())
+                .lt(MemoryReviewJobEntity::getLearningEpoch, currentEpoch)
+                .in(MemoryReviewJobEntity::getStatus, "PENDING", "RUNNING", "FAILED", "BLOCKED")
                 .orderByAsc(MemoryReviewJobEntity::getJobId)
                 .last("LIMIT " + Math.max(1, limit))
                 .list()
