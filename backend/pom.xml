@@ -16,6 +16,7 @@
 
     <modules>
         <module>agent-domain</module>
+        <module>agent-memory</module>
         <module>agent-context-common</module>
         <module>agent-persistence</module>
         <module>agent-context-lsm</module>
