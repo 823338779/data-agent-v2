@@ -1,13 +1,14 @@
-import { PanelLeftOpen } from 'lucide-react';
+import { Brain, PanelLeftOpen } from 'lucide-react';
 import { ReactNode } from 'react';
 
 interface AppShellProps {
   historyOpen: boolean;
   onToggleHistory: () => void;
+  onOpenMemory: () => void;
   children: ReactNode;
 }
 
-export function AppShell({ historyOpen, onToggleHistory, children }: AppShellProps) {
+export function AppShell({ historyOpen, onToggleHistory, onOpenMemory, children }: AppShellProps) {
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -25,6 +26,10 @@ export function AppShell({ historyOpen, onToggleHistory, children }: AppShellPro
             </button>
           )}
         </div>
+        <button className="header-memory-button" type="button" onClick={onOpenMemory}>
+          <Brain size={16} />
+          个人记忆
+        </button>
       </header>
       <div className="workspace">{children}</div>
     </main>

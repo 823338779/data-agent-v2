@@ -7,6 +7,7 @@ import {
   ConversationStreamEvent,
   createFetchAgentBackendClient,
 } from './api/backendAgentClient';
+import { createFetchMemoryClient, MemoryClient } from './api/memoryClient';
 import {
   navigateWorkspace,
   parseWorkspaceRoute,
@@ -21,10 +22,12 @@ import { MessageProcessTimeline } from './components/MessageProcessTimeline';
 import { ConversationStatus } from './components/ConversationStatus';
 import { RunStreamPanel } from './components/RunStreamPanel';
 import { WorkflowRunPanel } from './components/WorkflowRunPanel';
+import { PersonalMemoryPanel } from './components/memory/PersonalMemoryPanel';
 import { ConversationSession, formatTimestamp, isProcessingStatus } from './domain/agent';
 
 interface AppProps {
   client?: AgentBackendClient;
+  memoryClient?: MemoryClient;
 }
 
 const narrowScreenQuery = '(max-width: 820px)';
@@ -48,12 +51,14 @@ function isCompletedStreamEvent(event: ConversationStreamEvent): boolean {
   return event.type === 'execution_update' && event.execution.status === 'done';
 }
 
-export default function App({ client }: AppProps) {
+export default function App({ client, memoryClient }: AppProps) {
   const backend = useMemo(() => client ?? createFetchAgentBackendClient(), [client]);
+  const memories = useMemo(() => memoryClient ?? createFetchMemoryClient(), [memoryClient]);
   const sidebar = useConversationSidebar(backend);
   const [route, setRoute] = useState<WorkspaceRoute>(parseWorkspaceRoute);
   const [sessions, setSessions] = useState<ConversationSession[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const loading = sidebar.loading;
   const [sending, setSending] = useState(false);
@@ -310,7 +315,11 @@ export default function App({ client }: AppProps) {
   }
 
   return (
-    <AppShell historyOpen={historyOpen} onToggleHistory={() => setHistoryOpen((open) => !open)}>
+    <AppShell
+      historyOpen={historyOpen}
+      onToggleHistory={() => setHistoryOpen((open) => !open)}
+      onOpenMemory={() => setMemoryOpen(true)}
+    >
       {historyOpen && (
         <aside className="session-sidebar" aria-label="会话列表">
           <div className="session-sidebar-heading">
@@ -512,6 +521,7 @@ export default function App({ client }: AppProps) {
           </button>
         </div>
       )}
+      {memoryOpen && <PersonalMemoryPanel client={memories} onClose={() => setMemoryOpen(false)} />}
     </AppShell>
   );
 }

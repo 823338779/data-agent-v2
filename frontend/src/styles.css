@@ -105,10 +105,248 @@ textarea:focus-visible {
 .header-sidebar-toggle {
   margin-left: 4px;
 }
+.header-memory-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  background: #f2f2f2;
+  color: #343434;
+  font-size: 13px;
+  font-weight: 600;
+}
+.header-memory-button:hover {
+  background: #e8e8e8;
+}
 .workspace {
   display: flex;
   min-height: 0;
   position: relative;
+}
+
+/* 面板覆盖工作区但不替换路由，关闭后原会话和流连接继续保留。 */
+.memory-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: flex-end;
+  background: rgb(0 0 0 / 24%);
+}
+.memory-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(100%, 720px);
+  height: 100%;
+  background: #fff;
+  box-shadow: -18px 0 46px rgb(0 0 0 / 14%);
+}
+.memory-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 28px 20px;
+  border-bottom: 1px solid #e5e5e5;
+}
+.memory-panel-header h1,
+.memory-panel-header p,
+.memory-create-form h2,
+.memory-group h2,
+.memory-group p,
+.memory-settings p {
+  margin: 0;
+}
+.memory-panel-header h1 {
+  font-size: 24px;
+  letter-spacing: -0.025em;
+}
+.memory-panel-header p {
+  margin-top: 6px;
+  color: #737373;
+  font-size: 13px;
+}
+.memory-panel-header button,
+.memory-form-actions button,
+.memory-entry-actions button,
+.memory-edit-form > button,
+.memory-load-more {
+  border: 1px solid #d8d8d8;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+.memory-panel-header button {
+  padding: 7px 11px;
+}
+.memory-panel-body {
+  padding: 22px 28px 40px;
+  overflow-y: auto;
+}
+.memory-panel-loading {
+  padding: 28px;
+  color: #737373;
+}
+.memory-settings {
+  padding: 15px 17px;
+  border: 1px solid #dfdfdf;
+  border-radius: 12px;
+  background: #f8f8f8;
+}
+.memory-settings label {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 650;
+}
+.memory-settings input {
+  width: 17px;
+  height: 17px;
+}
+.memory-settings p {
+  margin-top: 8px;
+  color: #696969;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.memory-create-form {
+  display: grid;
+  gap: 13px;
+  margin-top: 20px;
+  padding: 17px;
+  border: 1px solid #e3e3e3;
+  border-radius: 12px;
+}
+.memory-create-form h2,
+.memory-group h2 {
+  font-size: 16px;
+}
+.memory-create-form label,
+.memory-edit-form label {
+  display: grid;
+  gap: 6px;
+  color: #555;
+  font-size: 12px;
+  font-weight: 600;
+}
+.memory-create-form select,
+.memory-create-form textarea,
+.memory-edit-form textarea {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #d7d7d7;
+  border-radius: 8px;
+  background: #fff;
+  color: #171717;
+}
+.memory-create-form textarea,
+.memory-edit-form textarea {
+  min-height: 88px;
+  resize: vertical;
+  line-height: 1.55;
+}
+.memory-form-actions,
+.memory-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.memory-form-actions button,
+.memory-entry-actions button,
+.memory-edit-form > button,
+.memory-load-more {
+  padding: 7px 11px;
+  font-size: 12px;
+}
+.memory-form-actions button:first-child {
+  border-color: #0d0d0d;
+  background: #0d0d0d;
+  color: #fff;
+}
+.memory-panel button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.memory-feedback {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f4f1eb;
+  color: #5f5140;
+  font-size: 12px;
+}
+.memory-groups {
+  display: grid;
+  gap: 22px;
+  margin-top: 24px;
+}
+.memory-group {
+  min-width: 0;
+}
+.memory-group > header {
+  padding-bottom: 9px;
+  border-bottom: 1px solid #e5e5e5;
+}
+.memory-group > header p {
+  margin-top: 4px;
+  color: #777;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.memory-group ul {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.memory-empty {
+  padding: 18px 2px;
+  color: #7a7a7a;
+  font-size: 13px;
+}
+.memory-entry {
+  padding: 14px;
+  border: 1px solid #e2e2e2;
+  border-radius: 10px;
+}
+.memory-entry-content {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  color: #242424;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.memory-entry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin: 10px 0;
+  color: #777;
+  font-size: 11px;
+}
+.memory-edit-form {
+  display: grid;
+  gap: 10px;
+}
+.memory-load-more {
+  margin-top: 10px;
+}
+
+@media (max-width: 520px) {
+  .header-memory-button {
+    width: 36px;
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+  .memory-panel-header,
+  .memory-panel-body {
+    padding-inline: 18px;
+  }
 }
 
 .session-sidebar {

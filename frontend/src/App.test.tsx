@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentBackendClient, BackendApiError } from './api/backendAgentClient';
+import { MemoryClient } from './api/memoryClient';
 import App from './App';
 import { ConversationSession } from './domain/agent';
 
@@ -77,6 +78,32 @@ function client(overrides: Partial<AgentBackendClient> = {}): AgentBackendClient
     cancelExecution: vi.fn(),
     subscribeSessionEvents: vi.fn().mockReturnValue(() => undefined),
     ...overrides,
+  };
+}
+
+function memoryClient(): MemoryClient {
+  return {
+    list: vi.fn().mockResolvedValue({
+      groups: {
+        person_profile: { entries: [], nextCursor: null },
+        collaboration_preference: { entries: [], nextCursor: null },
+      },
+      quotas: {
+        person_profile: { used: 0, limit: 800 },
+        collaboration_preference: { used: 0, limit: 1500 },
+      },
+      revision: 0,
+    }),
+    create: vi.fn(),
+    replace: vi.fn(),
+    remove: vi.fn(),
+    settings: vi.fn().mockResolvedValue({
+      settingsVersion: 0,
+      readEnabled: true,
+      explicitWriteEnabled: true,
+      autoLearningEnabled: true,
+    }),
+    updateSettings: vi.fn(),
   };
 }
 
@@ -695,5 +722,41 @@ describe('server-backed conversation workspace', () => {
     await act(async () => {
       finish(session);
     });
+  });
+
+  it('opens an independent memory panel without changing the route or interrupting SSE', async () => {
+    const running = {
+      ...session,
+      latestExecutionStatus: 'running' as const,
+      execution: {
+        ...completedExecution('execution_1', ''),
+        status: 'running' as const,
+        progress: 25,
+        streamCheckpoint: null,
+      },
+    };
+    const closeStream = vi.fn();
+    const backend = client({
+      listSessions: vi.fn().mockResolvedValue([running]),
+      getSession: vi.fn().mockResolvedValue(running),
+      subscribeSessionEvents: vi.fn().mockReturnValue(closeStream),
+    });
+    const memories = memoryClient();
+    render(<App client={backend} memoryClient={memories} />);
+    await openSession('订单延迟分析');
+    await waitFor(() => expect(backend.subscribeSessionEvents).toHaveBeenCalledOnce());
+    const pathBeforeOpen = window.location.pathname + window.location.search + window.location.hash;
+
+    fireEvent.click(screen.getByRole('button', { name: '个人记忆' }));
+    expect(await screen.findByRole('dialog', { name: '个人记忆' })).toBeInTheDocument();
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe(
+      pathBeforeOpen,
+    );
+    expect(closeStream).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭个人记忆' }));
+    fireEvent.click(screen.getByRole('button', { name: '个人记忆' }));
+    await waitFor(() => expect(memories.list).toHaveBeenCalledTimes(2));
+    expect(backend.subscribeSessionEvents).toHaveBeenCalledOnce();
   });
 });
