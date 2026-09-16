@@ -1,5 +1,5 @@
 import { ArrowRight, ArrowUp, Bot, PanelLeftClose, RefreshCw, UserRound } from 'lucide-react';
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AgentBackendClient,
   applyConversationStreamEvent,
@@ -66,6 +66,8 @@ export default function App({ client, memoryClient }: AppProps) {
   const [error, setError] = useState<string | null>(null);
   const [loadedDetailSessionId, setLoadedDetailSessionId] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const openMemory = useCallback(() => setMemoryOpen(true), []);
+  const closeMemory = useCallback(() => setMemoryOpen(false), []);
 
   const active =
     route.kind === 'session'
@@ -318,7 +320,7 @@ export default function App({ client, memoryClient }: AppProps) {
     <AppShell
       historyOpen={historyOpen}
       onToggleHistory={() => setHistoryOpen((open) => !open)}
-      onOpenMemory={() => setMemoryOpen(true)}
+      onOpenMemory={openMemory}
     >
       {historyOpen && (
         <aside className="session-sidebar" aria-label="会话列表">
@@ -521,7 +523,7 @@ export default function App({ client, memoryClient }: AppProps) {
           </button>
         </div>
       )}
-      {memoryOpen && <PersonalMemoryPanel client={memories} onClose={() => setMemoryOpen(false)} />}
+      {memoryOpen && <PersonalMemoryPanel client={memories} onClose={closeMemory} />}
     </AppShell>
   );
 }

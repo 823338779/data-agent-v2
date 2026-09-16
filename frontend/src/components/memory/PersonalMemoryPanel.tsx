@@ -8,6 +8,8 @@ import {
   MemoryOutcome,
   MemorySettings,
 } from '../../domain/memory';
+import { MemoryKindRefresh, reloadMemoryKindThroughTarget } from './memoryPanelSupport';
+import { useMemoryModal } from './useMemoryModal';
 
 interface PersonalMemoryPanelProps {
   client: MemoryClient;
@@ -24,7 +26,12 @@ interface EditState {
   kind: MemoryKind;
   draft: string;
   serverVersion: number;
-  reconfirmRequired: boolean;
+  conflictState: 'refreshing' | 'failed' | 'ready' | 'missing' | null;
+}
+
+interface DeleteRecovery {
+  memoryId: string;
+  status: 'refreshing' | 'failed';
 }
 
 const KINDS: MemoryKind[] = ['person_profile', 'collaboration_preference'];
@@ -88,10 +95,15 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
   const [restorePending, setRestorePending] = useState(false);
   const [edit, setEdit] = useState<EditState | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState<string | null>(null);
+  const [deleteRecovery, setDeleteRecovery] = useState<DeleteRecovery | null>(null);
   const createKey = useRef<OperationKey | null>(null);
   const replaceKey = useRef<OperationKey | null>(null);
   const deleteKey = useRef<OperationKey | null>(null);
   const settingsKey = useRef<OperationKey | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useMemoryModal(panelRef, closeButtonRef, onClose);
 
   useEffect(() => {
     let cancelled = false;
@@ -118,18 +130,16 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
     return refreshed;
   }
 
-  /** 分类刷新只替换该分类；kind 查询返回的另一个空组不能清掉已加载数据。 */
-  async function refreshKind(targetKind: MemoryKind) {
-    const refreshed = await client.list(targetKind);
+  /** 分类刷新只替换目标分类；kind 查询返回的另一个空组不能清掉已加载数据。 */
+  function applyKindRefresh(targetKind: MemoryKind, refreshed: MemoryKindRefresh) {
     setView((current) => {
-      if (!current) return refreshed;
+      if (!current) return current;
       return {
-        groups: { ...current.groups, [targetKind]: refreshed.groups[targetKind] },
+        groups: { ...current.groups, [targetKind]: refreshed.group },
         quotas: refreshed.quotas,
         revision: refreshed.revision,
       };
     });
-    return refreshed.groups[targetKind].entries;
   }
 
   function outcomeMessage(result: MemoryOutcome, restored: boolean) {
@@ -214,15 +224,67 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
       kind: entry.kind,
       draft: entry.content,
       serverVersion: entry.version,
-      reconfirmRequired: false,
+      conflictState: null,
     });
     replaceKey.current = null;
     setFeedback(null);
   }
 
+  async function recoverEditConflict(conflicted: EditState) {
+    setBusy(true);
+    setEdit((current) =>
+      current?.memoryId === conflicted.memoryId
+        ? { ...current, conflictState: 'refreshing' }
+        : current,
+    );
+    try {
+      const refreshed = await reloadMemoryKindThroughTarget(
+        client,
+        conflicted.kind,
+        conflicted.memoryId,
+        view?.groups[conflicted.kind].entries.length ?? 0,
+      );
+      if (refreshed.target) {
+        applyKindRefresh(conflicted.kind, refreshed);
+        setEdit((current) =>
+          current?.memoryId === conflicted.memoryId
+            ? {
+                ...current,
+                serverVersion: refreshed.target!.version,
+                conflictState: 'ready',
+              }
+            : current,
+        );
+        setFeedback('版本已变化，已刷新服务器内容。请确认后重新保存。');
+      } else if (refreshed.targetMissing) {
+        // 保留本地草稿卡片，但不再允许 replace；服务端配额与 revision 仍更新为权威值。
+        setView((current) =>
+          current
+            ? { ...current, quotas: refreshed.quotas, revision: refreshed.revision }
+            : current,
+        );
+        setEdit((current) =>
+          current?.memoryId === conflicted.memoryId
+            ? { ...current, conflictState: 'missing' }
+            : current,
+        );
+        setFeedback('该记忆已在服务器删除，草稿已保留但不能覆盖；可取消后新增。');
+      }
+    } catch {
+      setEdit((current) =>
+        current?.memoryId === conflicted.memoryId
+          ? { ...current, conflictState: 'failed' }
+          : current,
+      );
+      setFeedback('版本冲突，但刷新失败。请先重试刷新服务器版本。');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveEdit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!edit || !edit.draft.trim() || edit.reconfirmRequired || busy) return;
+    if (!edit || !edit.draft.trim() || edit.conflictState !== null || busy) return;
     const request = { content: edit.draft.trim(), expectedVersion: edit.serverVersion };
     const key = operationKey(replaceKey, JSON.stringify({ memoryId: edit.memoryId, ...request }));
     setBusy(true);
@@ -235,24 +297,44 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
       setFeedback('记忆已更新。');
     } catch (failure) {
       if (failure instanceof MemoryApiError && failure.code === 'CONFLICT') {
-        // 冲突只刷新权威条目和版本，draft 保持用户输入，等待显式重新确认。
-        const entries = await refreshKind(edit.kind);
-        const latest = entries.find((entry) => entry.memoryId === edit.memoryId);
+        // 服务端已明确拒绝，先结束旧 key 并锁住草稿；刷新成败不能再允许盲目重放旧冲突。
+        replaceKey.current = null;
         setEdit((current) =>
-          current
-            ? {
-                ...current,
-                serverVersion: latest?.version ?? current.serverVersion,
-                reconfirmRequired: true,
-              }
+          current?.memoryId === edit.memoryId
+            ? { ...current, conflictState: 'refreshing' }
             : current,
         );
-        replaceKey.current = null;
-        setFeedback('版本已变化，已刷新服务器内容。请确认后重新保存。');
+        await recoverEditConflict(edit);
       } else {
         if (isDefinitiveRejection(failure)) replaceKey.current = null;
         setFeedback('修改失败，请重试。');
       }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function recoverDeleteConflict(entry: MemoryEntry) {
+    setBusy(true);
+    setDeleteRecovery({ memoryId: entry.memoryId, status: 'refreshing' });
+    try {
+      const refreshed = await reloadMemoryKindThroughTarget(
+        client,
+        entry.kind,
+        entry.memoryId,
+        view?.groups[entry.kind].entries.length ?? 0,
+      );
+      applyKindRefresh(entry.kind, refreshed);
+      setDeleteConfirmation(null);
+      setDeleteRecovery(null);
+      if (refreshed.target) {
+        setFeedback('版本已变化，已刷新服务器内容，请重新删除。');
+      } else {
+        setFeedback('该记忆已在服务器删除。');
+      }
+    } catch {
+      setDeleteRecovery({ memoryId: entry.memoryId, status: 'failed' });
+      setFeedback('删除冲突，但刷新失败。请先重试刷新删除目标。');
     } finally {
       setBusy(false);
     }
@@ -272,10 +354,10 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
       setFeedback('记忆已删除；再次保存需要明确重新记住。');
     } catch (failure) {
       if (failure instanceof MemoryApiError && failure.code === 'CONFLICT') {
-        await refreshKind(entry.kind);
-        setDeleteConfirmation(null);
+        // 明确冲突立即结束旧操作；刷新失败时确认按钮保持锁定，只允许重新读取目标。
         deleteKey.current = null;
-        setFeedback('版本已变化，已刷新服务器内容，请重新删除。');
+        setDeleteRecovery({ memoryId: entry.memoryId, status: 'refreshing' });
+        await recoverDeleteConflict(entry);
       } else {
         if (isDefinitiveRejection(failure)) deleteKey.current = null;
         setFeedback('删除失败，请重试。');
@@ -332,20 +414,31 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
                 }
               />
             </label>
-            {edit.reconfirmRequired && (
+            {edit.conflictState === 'ready' && (
               <button
                 type="button"
                 onClick={() =>
-                  setEdit((current) =>
-                    current ? { ...current, reconfirmRequired: false } : current,
-                  )
+                  setEdit((current) => (current ? { ...current, conflictState: null } : current))
                 }
               >
                 使用保留内容重新编辑
               </button>
             )}
+            {edit.conflictState === 'failed' && (
+              <button type="button" onClick={() => void recoverEditConflict(edit)} disabled={busy}>
+                重试刷新服务器版本
+              </button>
+            )}
+            {edit.conflictState === 'refreshing' && (
+              <button type="button" disabled>
+                正在刷新服务器版本…
+              </button>
+            )}
             <div className="memory-entry-actions">
-              <button type="submit" disabled={busy || edit.reconfirmRequired || !edit.draft.trim()}>
+              <button
+                type="submit"
+                disabled={busy || edit.conflictState !== null || !edit.draft.trim()}
+              >
                 保存修改
               </button>
               <button type="button" onClick={() => setEdit(null)} disabled={busy}>
@@ -367,9 +460,25 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
               </button>
               {deleteConfirmation === entry.memoryId ? (
                 <>
-                  <button type="button" onClick={() => void removeEntry(entry)} disabled={busy}>
-                    确认删除
-                  </button>
+                  {deleteRecovery?.memoryId === entry.memoryId ? (
+                    deleteRecovery.status === 'failed' ? (
+                      <button
+                        type="button"
+                        onClick={() => void recoverDeleteConflict(entry)}
+                        disabled={busy}
+                      >
+                        重试刷新删除目标
+                      </button>
+                    ) : (
+                      <button type="button" disabled>
+                        正在刷新删除目标…
+                      </button>
+                    )
+                  ) : (
+                    <button type="button" onClick={() => void removeEntry(entry)} disabled={busy}>
+                      确认删除
+                    </button>
+                  )}
                   <button type="button" onClick={() => setDeleteConfirmation(null)} disabled={busy}>
                     取消
                   </button>
@@ -377,7 +486,10 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
               ) : (
                 <button
                   type="button"
-                  onClick={() => setDeleteConfirmation(entry.memoryId)}
+                  onClick={() => {
+                    setDeleteRecovery(null);
+                    setDeleteConfirmation(entry.memoryId);
+                  }}
                   disabled={busy}
                 >
                   删除
@@ -392,13 +504,19 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
 
   return (
     <div className="memory-panel-backdrop">
-      <section className="memory-panel" role="dialog" aria-modal="true" aria-label="个人记忆">
+      <section
+        className="memory-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="个人记忆"
+        ref={panelRef}
+      >
         <header className="memory-panel-header">
           <div>
             <h1>个人记忆</h1>
             <p>管理跨会话使用的个人信息与协作方式。</p>
           </div>
-          <button type="button" aria-label="关闭个人记忆" onClick={onClose}>
+          <button type="button" aria-label="关闭个人记忆" onClick={onClose} ref={closeButtonRef}>
             关闭
           </button>
         </header>

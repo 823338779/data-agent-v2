@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryApiError, MemoryClient } from '../../api/memoryClient';
 import { MemoryEntry, MemoryListView, MemoryOutcome } from '../../domain/memory';
@@ -48,6 +49,12 @@ const preference: MemoryEntry = {
   version: 4,
   updatedAt: '2026-09-16T11:00:00+08:00',
 };
+const secondProfile: MemoryEntry = {
+  ...profile,
+  memoryId: 'profile-2',
+  content: '住在杭州',
+  version: 1,
+};
 
 function populatedView(): MemoryListView {
   return {
@@ -73,6 +80,16 @@ function outcome(overrides: Partial<MemoryOutcome> = {}): MemoryOutcome {
     targetExists: false,
     quotas: populatedView().quotas,
     ...overrides,
+  };
+}
+
+function profilePage(entries: MemoryEntry[], nextCursor: string | null): MemoryListView {
+  return {
+    ...populatedView(),
+    groups: {
+      person_profile: { entries, nextCursor },
+      collaboration_preference: { entries: [], nextCursor: null },
+    },
   };
 }
 
@@ -298,6 +315,179 @@ describe('PersonalMemoryPanel', () => {
         expect.any(String),
       ),
     );
+  });
+
+  it('finds a conflicted second-page edit through cursors and uses its refreshed version', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi.fn().mockReturnValueOnce('edit-key-1').mockReturnValueOnce('edit-key-2'),
+    });
+    const latestSecond = { ...secondProfile, content: '服务器杭州资料', version: 2 };
+    const client = createMemoryClientStub();
+    client.list
+      .mockResolvedValueOnce(populatedView())
+      .mockResolvedValueOnce(profilePage([secondProfile], null))
+      .mockResolvedValueOnce(profilePage([profile], 'server-page-1'))
+      .mockResolvedValueOnce(profilePage([latestSecond], null))
+      .mockResolvedValue(populatedView());
+    client.replace
+      .mockRejectedValueOnce(new MemoryApiError(409, 'CONFLICT', '版本冲突'))
+      .mockResolvedValueOnce(outcome({ status: 'UPDATED', memoryId: secondProfile.memoryId }));
+    render(<PersonalMemoryPanel client={client} onClose={() => {}} />);
+
+    const profileRegion = await screen.findByRole('region', { name: '个人画像' });
+    fireEvent.click(within(profileRegion).getByRole('button', { name: '加载更多个人画像' }));
+    await screen.findByText(secondProfile.content);
+    fireEvent.click(within(profileRegion).getAllByRole('button', { name: '编辑' })[1]);
+    fireEvent.change(screen.getByLabelText('编辑记忆内容'), {
+      target: { value: '本地杭州草稿' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    expect(
+      await screen.findByText('版本已变化，已刷新服务器内容。请确认后重新保存。'),
+    ).toBeInTheDocument();
+    expect(client.list).toHaveBeenCalledWith('person_profile', 'server-page-1');
+    expect(screen.getByLabelText('编辑记忆内容')).toHaveValue('本地杭州草稿');
+    fireEvent.click(screen.getByRole('button', { name: '使用保留内容重新编辑' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() =>
+      expect(client.replace).toHaveBeenLastCalledWith(
+        secondProfile.memoryId,
+        { content: '本地杭州草稿', expectedVersion: 2 },
+        'edit-key-2',
+      ),
+    );
+  });
+
+  it('keeps a second-page delete target after conflict and retries with its refreshed version', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi.fn().mockReturnValueOnce('delete-key-1').mockReturnValueOnce('delete-key-2'),
+    });
+    const latestSecond = { ...secondProfile, version: 2 };
+    const client = createMemoryClientStub();
+    client.list
+      .mockResolvedValueOnce(populatedView())
+      .mockResolvedValueOnce(profilePage([secondProfile], null))
+      .mockResolvedValueOnce(profilePage([profile], 'server-page-1'))
+      .mockResolvedValueOnce(profilePage([latestSecond], null))
+      .mockResolvedValue(populatedView());
+    client.remove
+      .mockRejectedValueOnce(new MemoryApiError(409, 'CONFLICT', '版本冲突'))
+      .mockResolvedValueOnce(undefined);
+    render(<PersonalMemoryPanel client={client} onClose={() => {}} />);
+
+    const profileRegion = await screen.findByRole('region', { name: '个人画像' });
+    fireEvent.click(within(profileRegion).getByRole('button', { name: '加载更多个人画像' }));
+    await screen.findByText(secondProfile.content);
+    fireEvent.click(within(profileRegion).getAllByRole('button', { name: '删除' })[1]);
+    fireEvent.click(within(profileRegion).getByRole('button', { name: '确认删除' }));
+
+    expect(
+      await screen.findByText('版本已变化，已刷新服务器内容，请重新删除。'),
+    ).toBeInTheDocument();
+    expect(client.list).toHaveBeenCalledWith('person_profile', 'server-page-1');
+    expect(screen.getByText(secondProfile.content)).toBeInTheDocument();
+    fireEvent.click(within(profileRegion).getAllByRole('button', { name: '删除' })[1]);
+    fireEvent.click(within(profileRegion).getByRole('button', { name: '确认删除' }));
+
+    await waitFor(() =>
+      expect(client.remove).toHaveBeenLastCalledWith(secondProfile.memoryId, 2, 'delete-key-2'),
+    );
+  });
+
+  it('ends the rejected edit key before refresh and recovers a preserved draft after refresh failure', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi.fn().mockReturnValueOnce('conflict-key').mockReturnValueOnce('recovered-key'),
+    });
+    const latest = { ...profile, content: '服务器新内容', version: 3 };
+    const client = createMemoryClientStub();
+    client.list
+      .mockResolvedValueOnce(populatedView())
+      .mockRejectedValueOnce(new TypeError('refresh failed'))
+      .mockResolvedValueOnce(profilePage([latest], null))
+      .mockResolvedValue(populatedView());
+    client.replace
+      .mockRejectedValueOnce(new MemoryApiError(409, 'CONFLICT', '版本冲突'))
+      .mockResolvedValueOnce(outcome({ status: 'UPDATED', memoryId: profile.memoryId }));
+    render(<PersonalMemoryPanel client={client} onClose={() => {}} />);
+
+    const profileRegion = await screen.findByRole('region', { name: '个人画像' });
+    fireEvent.click(within(profileRegion).getByRole('button', { name: '编辑' }));
+    fireEvent.change(screen.getByLabelText('编辑记忆内容'), {
+      target: { value: '刷新失败也保留的草稿' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    expect(
+      await screen.findByText('版本冲突，但刷新失败。请先重试刷新服务器版本。'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('编辑记忆内容')).toHaveValue('刷新失败也保留的草稿');
+    expect(screen.getByRole('button', { name: '保存修改' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '使用保留内容重新编辑' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '重试刷新服务器版本' }));
+    expect(await screen.findByRole('button', { name: '使用保留内容重新编辑' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '使用保留内容重新编辑' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+
+    await waitFor(() =>
+      expect(client.replace).toHaveBeenLastCalledWith(
+        profile.memoryId,
+        { content: '刷新失败也保留的草稿', expectedVersion: 3 },
+        'recovered-key',
+      ),
+    );
+    expect(client.replace.mock.calls[0][2]).toBe('conflict-key');
+  });
+
+  it('keeps keyboard focus inside the modal, closes with Escape, and restores the opener', async () => {
+    const client = createMemoryClientStub();
+
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      const [, setRenderVersion] = useState(0);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            打开记忆
+          </button>
+          <button type="button" onClick={() => setRenderVersion((version) => version + 1)}>
+            刷新父级
+          </button>
+          {open && (
+            <PersonalMemoryPanel
+              client={client}
+              onClose={() => {
+                setOpen(false);
+                setRenderVersion((version) => version + 1);
+              }}
+            />
+          )}
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const opener = screen.getByRole('button', { name: '打开记忆' });
+    opener.focus();
+    fireEvent.click(opener);
+    const close = screen.getByRole('button', { name: '关闭个人记忆' });
+    await waitFor(() => expect(close).toHaveFocus());
+    await screen.findByLabelText('记忆内容');
+
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+    expect(screen.getByLabelText('记忆内容')).toHaveFocus();
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(close).toHaveFocus();
+
+    screen.getByLabelText('记忆内容').focus();
+    fireEvent.change(screen.getByLabelText('记忆内容'), { target: { value: '输入中' } });
+    fireEvent.click(screen.getByRole('button', { name: '刷新父级' }));
+    expect(screen.getByLabelText('记忆内容')).toHaveFocus();
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: '个人记忆' })).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
   });
 
   it('设置保存失败后仍显示服务端的开启状态', async () => {

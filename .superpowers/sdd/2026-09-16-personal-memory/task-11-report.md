@@ -105,4 +105,49 @@ npm --prefix frontend run build
 
 - 逐项核对了任务 8 的 URL、字段、状态码、DELETE 204、entry/settings 版本边界以及 POST/PUT `MemoryOutcome` 语义。
 - 行为测试覆盖空状态、双分类和服务端配额、分类分页、普通文本渲染、增改删、冲突保留 draft、恢复新 key、`ALREADY_EXISTS` 文案、明确业务拒绝后新 key、不确定传输结果复用 key、设置失败回滚、面板重开刷新以及 SSE 不被中断。
-- 自审未发现遗留正确性顾虑。面板当前按规格放在单一组件文件中；若后续继续扩展管理能力，再按独立交互职责拆分，任务 11 不提前引入额外抽象。
+- 首轮自审未发现遗留正确性顾虑；后续独立评审发现的分页、冲突刷新和模态键盘问题已按下述 fix round 修复，并只拆出对应的两个窄职责辅助文件。
+
+## Fix round 1/5：分页冲突恢复与模态键盘边界
+
+### 评审核实与修复
+
+- 核实二页条目问题：原 `refreshKind(kind)` 只读取分类首屏，二页编辑目标找不到时继续保留旧 version，删除冲突则直接用首屏覆盖已加载组。新增 `memoryPanelSupport.ts`，冲突恢复从首屏开始沿 `nextCursor` 查找目标；找到后继续补足冲突前已加载条数，确保二页编辑和删除目标及相邻已加载内容不丢失。游标走到末尾仍找不到目标时才判定为服务端已删除；重复游标或任一页失败按刷新未完成处理，不能误报已删除。
+- 核实冲突 key 与异常问题：原编辑和删除都在 `await refreshKind(...)` 之后才清理已被服务端明确拒绝的 key，刷新失败会产生未处理 Promise，并允许按旧 version/key 再次提交。现在收到 `CONFLICT` 后先立即结束旧 key 并锁住操作，再在独立 `try/catch` 中刷新。编辑刷新失败保留 draft、禁用保存，只暴露“重试刷新服务器版本”；刷新成功后要求用户再次确认，并按新 version 和新 key 提交。删除刷新失败隐藏确认删除，只允许重试读取目标；目标已删除和刷新失败使用不同提示及状态。
+- 核实模态行为：原 `aria-modal=true` 没有初始焦点、Tab 约束、Escape 关闭和关闭后焦点恢复。新增窄职责 `useMemoryModal.ts`，打开时聚焦关闭按钮，Tab/Shift+Tab 在当前面板可用控件内循环，Escape 关闭，卸载时恢复打开按钮焦点。关闭回调通过 ref 读取，主焦点 effect 不依赖回调身份；App 同时使用稳定 `useCallback` 打开/关闭函数，SSE 或父组件更新不会重新执行初始聚焦并抢走正在输入的焦点。
+- 为避免继续扩大原 516 行组件，只拆出两个确定职责：`memoryPanelSupport.ts` 负责分类游标恢复，`useMemoryModal.ts` 负责模态焦点生命周期；未引入通用分页框架或其他产品能力。
+
+### TDD 证据
+
+RED 命令：
+
+```text
+npm --prefix frontend test -- src/components/memory/PersonalMemoryPanel.test.tsx
+```
+
+结果：exit 1；13 个测试中 9 个通过、4 个失败，并捕获 1 个未处理拒绝。二页编辑和删除场景都没有调用 `list('person_profile', 'server-page-1')`；刷新失败场景找不到恢复提示且抛出未处理 `TypeError: refresh failed`；模态场景打开后焦点仍停在触发按钮。四个失败分别证明三个 Important 在原实现中真实存在。
+
+GREEN 面板命令：
+
+```text
+npm --prefix frontend test -- src/components/memory/PersonalMemoryPanel.test.tsx
+```
+
+结果：exit 0；13/13 通过，0 失败、0 未处理错误。
+
+最终聚焦验证：
+
+```text
+npm --prefix frontend test -- src/components/memory/PersonalMemoryPanel.test.tsx src/App.test.tsx
+```
+
+结果：exit 0；2 个测试文件、29 个测试通过，0 失败。面板 13 个场景覆盖二页编辑/删除冲突、刷新失败后恢复新 version/key，以及焦点循环、Escape、恢复焦点和父级回调身份变化；App 16 个场景保持通过。
+
+构建：
+
+```text
+npm --prefix frontend run build
+```
+
+结果：exit 0；Prettier 检查、TypeScript project build 与 Vite 构建全部通过，1854 个模块转换成功，无告警。
+
+本轮只对 `PersonalMemoryPanel.tsx`、对应测试、`memoryPanelSupport.ts`、`useMemoryModal.ts` 和 `App.tsx` 执行精确路径 Prettier。外部修改 `docs/git-repository-setup.md` 仍未读取、修改、暂存或回滚。本轮自审未发现遗留正确性顾虑。
