@@ -30,6 +30,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -70,6 +71,7 @@ class MemoryPersistenceTest {
     @Autowired private MemoryReviewLeaseService leases;
     @Autowired private MemoryOperationService operations;
     @Autowired private MemorySuppressionService suppressions;
+    @Autowired private TransactionTemplate transactions;
 
     @BeforeEach
     void seed() {
@@ -108,6 +110,31 @@ class MemoryPersistenceTest {
         assertThat(entries.replace(replacement, 0)).isFalse();
         assertThat(entries.replace(replacement, 1)).isTrue();
         assertThat(entries.find("m1").content()).isEqualTo("希望回答简短");
+    }
+
+    @Test
+    void entryReplacementCanClearNullableConfirmationFields() {
+        entries.insert(entry("m1", "偏好简洁回答", 1));
+        var previous = entries.find("m1");
+        var replacement =
+                new MemoryEntry(
+                        previous.memoryId(),
+                        previous.kind(),
+                        "希望回答简短",
+                        "hash-2",
+                        previous.normalizationVersion(),
+                        7,
+                        previous.source(),
+                        previous.userProtected(),
+                        2,
+                        previous.createdAt(),
+                        previous.updatedAt(),
+                        null,
+                        null);
+
+        assertThat(entries.replace(replacement, 1)).isTrue();
+        assertThat(entries.find("m1").lastConfirmedAt()).isNull();
+        assertThat(entries.find("m1").promptVersion()).isNull();
     }
 
     @Test
@@ -186,6 +213,58 @@ class MemoryPersistenceTest {
     }
 
     @Test
+    void renewedLeasesKeepOriginalClaimValidButChangedFencingDoesNot() {
+        var fixture = insertClaimFixture(Instant.now().plusSeconds(30));
+        var renewedUntil = fixture.leaseUntil().plusSeconds(30);
+        var job = jobs.find("job-1");
+        assertThat(
+                        jobs.compareAndSet(
+                                new MemoryReviewJob(
+                                        job.jobId(),
+                                        job.conversationId(),
+                                        job.learningEpoch(),
+                                        job.reviewedThroughSequence(),
+                                        job.pendingThroughSequence(),
+                                        job.claimedThroughSequence(),
+                                        job.dirtyGeneration(),
+                                        job.claimedGeneration(),
+                                        job.status(),
+                                        job.availableAt(),
+                                        job.failureCount(),
+                                        job.failureReason(),
+                                        job.owner(),
+                                        job.fencingToken(),
+                                        renewedUntil),
+                                job.fencingToken()))
+                .isTrue();
+        assertThat(leases.compareAndSet(new MemoryReviewLease(7, "worker-1", renewedUntil), 7))
+                .isTrue();
+
+        assertThat(jobs.validateClaim(fixture)).isTrue();
+        assertThat(jobs.validateClaim(claimWith(fixture, 12, 7, "worker-1"))).isFalse();
+        assertThat(jobs.validateClaim(claimWith(fixture, 11, 8, "worker-1"))).isFalse();
+        assertThat(jobs.validateClaim(claimWith(fixture, 11, 7, "worker-2"))).isFalse();
+    }
+
+    @Test
+    void claimExpiresByActualDatabaseClockInsideOneTransaction() {
+        Boolean valid =
+                transactions.execute(
+                        ignored -> {
+                            jdbc.queryForObject("select current_timestamp", Instant.class);
+                            var claim = insertClaimFixture(Instant.now().plusMillis(400));
+                            try {
+                                Thread.sleep(700);
+                            } catch (InterruptedException exception) {
+                                Thread.currentThread().interrupt();
+                                throw new IllegalStateException(exception);
+                            }
+                            return jobs.validateClaim(claim) || leases.validateClaim(claim);
+                        });
+        assertThat(valid).isFalse();
+    }
+
+    @Test
     void operationAndSuppressionRoundTripWithoutCopyingDeletedContent() {
         var now = LocalDateTime.of(2026, 9, 17, 9, 0);
         var outcome =
@@ -225,5 +304,44 @@ class MemoryPersistenceTest {
                 now,
                 now,
                 "prompt-v1");
+    }
+
+    private MemoryReviewClaim insertClaimFixture(Instant leaseUntil) {
+        var now = LocalDateTime.of(2026, 9, 17, 9, 0);
+        leases.insert(new MemoryReviewLease(7, "worker-1", leaseUntil));
+        jobs.insert(
+                new MemoryReviewJob(
+                        "job-1",
+                        "conversation-1",
+                        3,
+                        10,
+                        20,
+                        20,
+                        4,
+                        4,
+                        MemoryReviewJob.Status.RUNNING,
+                        now,
+                        0,
+                        null,
+                        "worker-1",
+                        11,
+                        leaseUntil));
+        return new MemoryReviewClaim(
+                "job-1", "conversation-1", 3, 11, 7, "worker-1", 4, 10, 20, leaseUntil);
+    }
+
+    private static MemoryReviewClaim claimWith(
+            MemoryReviewClaim claim, long jobToken, long userToken, String owner) {
+        return new MemoryReviewClaim(
+                claim.jobId(),
+                claim.conversationId(),
+                claim.epoch(),
+                jobToken,
+                userToken,
+                owner,
+                claim.claimedGeneration(),
+                claim.fromSequence(),
+                claim.throughSequence(),
+                claim.leaseUntil());
     }
 }

@@ -104,3 +104,25 @@ agent-domain：11 tests；agent-persistence：29 tests；Failures: 0, Errors: 0,
 ## 疑虑
 
 无阻塞疑虑。`MemoryReviewLeaseService.validateClaim` 只能验证用户级 token、owner 和数据库租约；完整任务关联、epoch、generation 与冻结边界由同一事务内的 `MemoryReviewJobService.validateClaim` 验证，任务 9 应同时调用两者或以 job 校验为完整门禁。
+
+## 第 1 轮评审修复
+
+评审指出三项 Important，均已按 TDD 修复：
+
+- 两个租约校验 Mapper 从事务固定的 `CURRENT_TIMESTAMP` 改用实际调用时刻的 `clock_timestamp()`。新增测试先在同一事务中读取 `current_timestamp` 固定事务时间，再创建短租约并等待实际到期；修复前 job/lease 校验仍返回有效，修复后均返回无效。
+- Job claim 不再要求数据库任务租约与不可变 claim 的 `leaseUntil` 完全相等，而是要求任务和用户当前租约均不早于 claim 原到期值。新增测试验证两级租约正常延长后原 claim 仍有效，任务 token、用户 token 或 owner 任一变化均无效，且实际数据库时间过期后无效。
+- `MemoryEntryService.replace` 改为使用 MyBatis-Plus Wrapper 显式设置完整可变字段，避免实体非空策略和 Wrapper 重复赋值，并允许 `lastConfirmedAt`、`promptVersion` 从非空清为 `null`。新增持久化往返测试验证两个字段确实清空。
+
+本轮 RED：
+
+```text
+mvn -f backend/pom.xml -pl agent-persistence -am '-Dtest=MemoryPersistenceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+Tests run: 8, Failures: 3；三个失败分别对应可空字段残留、续租使原 claim 失效、同事务中实际过期仍被 CURRENT_TIMESTAMP 放行。
+```
+
+本轮 GREEN：
+
+```text
+mvn -f backend/pom.xml -pl agent-persistence -am '-Dtest=MemoryPersistenceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0；BUILD SUCCESS。
+```

@@ -14,7 +14,7 @@ public interface MemoryReviewLeaseMapper extends BaseMapper<MemoryReviewLeaseEnt
               SELECT 1 FROM personal_memory_review_lease
                WHERE tenant_id=#{tenantId} AND user_id=#{userId}
                  AND fencing_token=#{userToken} AND owner=#{owner}
-                 AND lease_until > CURRENT_TIMESTAMP)
+                 AND lease_until > clock_timestamp())
             """)
     boolean validateLease(String tenantId, String userId, long userToken, String owner);
 }

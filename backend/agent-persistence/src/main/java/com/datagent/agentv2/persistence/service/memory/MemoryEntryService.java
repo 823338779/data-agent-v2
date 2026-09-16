@@ -44,13 +44,29 @@ public class MemoryEntryService extends ServiceImpl<MemoryEntryMapper, MemoryEnt
     }
 
     public boolean replace(MemoryEntry memory, long expectedVersion) {
-        var replacement = models.toEntity(memory);
         return baseMapper.update(
-                        replacement,
+                        MemoryEntryEntity.create(),
                         Wrappers.lambdaUpdate(MemoryEntryEntity.class)
                                 .eq(MemoryEntryEntity::getUserId, OperatorContext.requiredUserId())
                                 .eq(MemoryEntryEntity::getMemoryId, memory.memoryId())
-                                .eq(MemoryEntryEntity::getVersion, expectedVersion))
+                                .eq(MemoryEntryEntity::getVersion, expectedVersion)
+                                // 完整 record 替换全部使用显式 SET，既避免重复列，也允许可空字段写入 NULL。
+                                .set(MemoryEntryEntity::getKind, memory.kind().value())
+                                .set(MemoryEntryEntity::getContent, memory.content())
+                                .set(MemoryEntryEntity::getNormalizedHash, memory.normalizedHash())
+                                .set(
+                                        MemoryEntryEntity::getNormalizationVersion,
+                                        memory.normalizationVersion())
+                                .set(MemoryEntryEntity::getCharCount, memory.charCount())
+                                .set(
+                                        MemoryEntryEntity::getSource,
+                                        memory.source().name().toLowerCase(java.util.Locale.ROOT))
+                                .set(MemoryEntryEntity::getUserProtected, memory.userProtected())
+                                .set(MemoryEntryEntity::getVersion, memory.version())
+                                .set(
+                                        MemoryEntryEntity::getLastConfirmedAt,
+                                        memory.lastConfirmedAt())
+                                .set(MemoryEntryEntity::getPromptVersion, memory.promptVersion()))
                 == 1;
     }
 

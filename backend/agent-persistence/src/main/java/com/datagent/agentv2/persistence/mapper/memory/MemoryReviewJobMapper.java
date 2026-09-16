@@ -22,8 +22,8 @@ public interface MemoryReviewJobMapper extends BaseMapper<MemoryReviewJobEntity>
                AND j.claimed_generation=#{claimedGeneration}
                AND j.reviewed_through_sequence=#{fromSequence}
                AND j.claimed_through_sequence=#{throughSequence}
-               AND j.lease_until=#{leaseUntil} AND l.lease_until >= #{leaseUntil}
-               AND j.lease_until > CURRENT_TIMESTAMP AND l.lease_until > CURRENT_TIMESTAMP)
+               AND j.lease_until >= #{leaseUntil} AND l.lease_until >= #{leaseUntil}
+               AND j.lease_until > clock_timestamp() AND l.lease_until > clock_timestamp())
             """)
     boolean validateClaim(
             String tenantId,
