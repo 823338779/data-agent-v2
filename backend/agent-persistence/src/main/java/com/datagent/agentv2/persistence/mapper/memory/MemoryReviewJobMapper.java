@@ -4,11 +4,14 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.datagent.agentv2.persistence.entity.memory.MemoryReviewJobEntity;
 import java.time.Instant;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface MemoryReviewJobMapper extends BaseMapper<MemoryReviewJobEntity> {
     /** 使用数据库时钟校验任务与用户租约，避免 worker 主机时钟漂移绕过 fencing。 */
+    // 必须清除同事务一级缓存；相同参数的二次检查仍需重新执行时钟表达式。
+    @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
     @Select(
             """
             SELECT EXISTS(

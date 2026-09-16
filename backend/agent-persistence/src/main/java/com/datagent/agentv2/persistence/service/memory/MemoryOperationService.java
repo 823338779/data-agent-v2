@@ -11,7 +11,7 @@ import com.datagent.agentv2.persistence.mapper.memory.MemoryOperationMapper;
 import com.datagent.agentv2.platform.context.OperatorContext;
 import org.springframework.stereotype.Service;
 
-/** 幂等操作结果边界；结果不包含正文，分类配额由重放时从当前快照重新计算。 */
+/** 幂等操作结果边界；配额和版本保留提交时结果，重放仅由上层补充目标当前存在性。 */
 @Service
 public class MemoryOperationService
         extends ServiceImpl<MemoryOperationMapper, MemoryOperationEntity> {

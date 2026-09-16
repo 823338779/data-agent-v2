@@ -32,4 +32,25 @@ public record MemoryOutcome(
     public boolean successful() {
         return SUCCESSFUL.contains(status);
     }
+
+    /** 从已校验的目标与库存组装结果；目标为空时没有可返回的条目版本。 */
+    public static MemoryOutcome composeFromEntry(
+            MemoryStatus status,
+            MemoryEntry entry,
+            long revision,
+            Map<MemoryKind, MemoryQuota> quotas) {
+        return new MemoryOutcome(
+                status,
+                entry == null ? null : entry.memoryId(),
+                entry == null ? null : entry.version(),
+                revision,
+                status == MemoryStatus.CREATED,
+                entry != null,
+                quotas);
+    }
+
+    /** 历史结果的其余字段保持不变，避免重放伪装成新的写入或重新恢复正文。 */
+    public MemoryOutcome withTargetExists(boolean exists) {
+        return new MemoryOutcome(status, memoryId, version, revision, created, exists, quotas);
+    }
 }

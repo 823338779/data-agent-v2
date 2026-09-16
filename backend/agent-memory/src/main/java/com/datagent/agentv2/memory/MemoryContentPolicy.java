@@ -67,6 +67,14 @@ public final class MemoryContentPolicy {
     /** 校验正文安全边界和单条 UTF-16 上限；异常始终只返回安全消息。 */
     public void validate(MemoryKind kind, String content) {
         Objects.requireNonNull(kind, "kind");
+        validateContent(content);
+        if (content.length() > limit(kind)) {
+            throw new MemoryException(MemoryStatus.QUOTA_EXCEEDED, "记忆超过分类容量限制");
+        }
+    }
+
+    /** 独立检查内容有效性和安全性，允许统一写入边界先去重、再检查最终库存容量。 */
+    public void validateContent(String content) {
         normalize(content);
         // 规范化 v1 只移除末尾连续标点；这里单独拒绝散布空白的纯标点，避免改变既有指纹。
         if (ALLOWED_PUNCTUATION_OR_WHITESPACE.matcher(content).replaceAll("").isBlank()) {
@@ -77,9 +85,6 @@ public final class MemoryContentPolicy {
                 || ROLE_MARKER.matcher(content).find()
                 || RUNTIME_MARKER.matcher(content).find()) {
             throw new MemoryException(MemoryStatus.UNSAFE_CONTENT, "记忆包含不安全内容");
-        }
-        if (content.length() > limit(kind)) {
-            throw new MemoryException(MemoryStatus.QUOTA_EXCEEDED, "记忆超过分类容量限制");
         }
     }
 

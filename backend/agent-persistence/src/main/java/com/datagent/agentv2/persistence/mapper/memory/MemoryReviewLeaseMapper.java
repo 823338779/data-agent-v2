@@ -3,11 +3,14 @@ package com.datagent.agentv2.persistence.mapper.memory;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.datagent.agentv2.persistence.entity.memory.MemoryReviewLeaseEntity;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface MemoryReviewLeaseMapper extends BaseMapper<MemoryReviewLeaseEntity> {
     /** 数据库时钟是租约有效性的唯一可信时间源。 */
+    // useCache 仅控制二级缓存，同时 flushCache 才能避免同事务重复校验命中一级缓存。
+    @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
     @Select(
             """
             SELECT EXISTS(

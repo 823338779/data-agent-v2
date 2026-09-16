@@ -17,6 +17,17 @@ public class MemoryEvidenceService extends ServiceImpl<MemoryEvidenceMapper, Mem
     private final MemoryPersistenceMapper models;
 
     public void append(String memoryId, MemoryEvidence evidence) {
+        // 统一写入服务已持有用户状态锁；同一证据可被多个操作再次引用，但关联只保存一次。
+        if (lambdaQuery()
+                .eq(MemoryEvidenceEntity::getUserId, OperatorContext.requiredUserId())
+                .eq(MemoryEvidenceEntity::getMemoryId, memoryId)
+                .eq(
+                        MemoryEvidenceEntity::getKind,
+                        evidence.kind().name().toLowerCase(java.util.Locale.ROOT))
+                .eq(MemoryEvidenceEntity::getEvidenceId, evidence.evidenceId())
+                .exists()) {
+            return;
+        }
         var entity = models.toEntity(evidence);
         entity.setMemoryId(memoryId);
         save(entity);

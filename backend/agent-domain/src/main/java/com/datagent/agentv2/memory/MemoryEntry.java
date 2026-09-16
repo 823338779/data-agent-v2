@@ -30,4 +30,48 @@ public record MemoryEntry(
             throw new IllegalArgumentException("记忆版本和正文长度必须为正数");
         }
     }
+
+    /** 新增统一采用版本 1；来源由可信调用模式推导，正文始终保留输入原文。 */
+    public static MemoryEntry composeFromNewMemory(
+            String id,
+            MemoryKind kind,
+            String content,
+            String hash,
+            MemorySource source,
+            boolean userProtected,
+            LocalDateTime now) {
+        return new MemoryEntry(
+                id,
+                kind,
+                content,
+                hash,
+                1,
+                content.length(),
+                source,
+                userProtected,
+                1,
+                now,
+                now,
+                now,
+                null);
+    }
+
+    /** 修订或人工明确确认均推进条目版本；原始来源、创建时间及提示词版本不会被改写。 */
+    public MemoryEntry revised(
+            String content, String hash, boolean explicitlyRequested, LocalDateTime now) {
+        return new MemoryEntry(
+                memoryId,
+                kind,
+                content,
+                hash,
+                normalizationVersion,
+                content.length(),
+                source,
+                userProtected || explicitlyRequested,
+                version + 1,
+                createdAt,
+                now,
+                now,
+                promptVersion);
+    }
 }
