@@ -54,31 +54,46 @@ class MemoryContextRendererTest {
     }
 
     @Test
-    void keepsAtMostTwentyPerKindAndRetainsOriginalCandidateCount() {
-        List<MemoryEntry> entries = new ArrayList<>();
-        for (int index = 0; index < 22; index++) {
-            entries.add(
-                    entry(
-                            "p-%02d".formatted(index),
-                            MemoryKind.PERSON_PROFILE,
-                            false,
-                            NOW.minusMinutes(index),
-                            "画像-" + index));
-            entries.add(
-                    entry(
-                            "c-%02d".formatted(index),
-                            MemoryKind.COLLABORATION_PREFERENCE,
-                            false,
-                            NOW.minusMinutes(index),
-                            "偏好-" + index));
-        }
+    void usesDefaultTwentyPerKindAnd1024TokenBudget() {
+        List<MemoryEntry> entries = entries(22);
 
         var result = renderer.render(snapshot(true, entries));
 
         assertThat(result.blocks()).hasSize(40);
         assertThat(result.candidateCount()).isEqualTo(44);
+        assertThat(result.maxTokens()).isEqualTo(1024);
         assertThat(result.blocks())
                 .noneMatch(block -> block.contains("画像-20") || block.contains("偏好-20"));
+    }
+
+    @Test
+    void usesHigherConfiguredLimitsWithoutApplyingHiddenDefaultClamp() {
+        properties.setInjectionPerKindLimit(21);
+        properties.setInjectionTokenBudget(1025);
+
+        var result = renderer.render(snapshot(true, entries(22)));
+
+        assertThat(result.blocks()).hasSize(42);
+        assertThat(result.candidateCount()).isEqualTo(44);
+        assertThat(result.maxTokens()).isEqualTo(1025);
+        assertThat(result.blocks())
+                .anyMatch(block -> block.contains("画像-20"))
+                .anyMatch(block -> block.contains("偏好-20"))
+                .noneMatch(block -> block.contains("画像-21") || block.contains("偏好-21"));
+    }
+
+    @Test
+    void usesLowerConfiguredLimitsAsActualRuntimeBoundary() {
+        properties.setInjectionPerKindLimit(2);
+        properties.setInjectionTokenBudget(128);
+
+        var result = renderer.render(snapshot(true, entries(3)));
+
+        assertThat(result.blocks()).hasSize(4);
+        assertThat(result.candidateCount()).isEqualTo(6);
+        assertThat(result.maxTokens()).isEqualTo(128);
+        assertThat(result.blocks())
+                .noneMatch(block -> block.contains("画像-2") || block.contains("偏好-2"));
     }
 
     @Test
@@ -106,6 +121,27 @@ class MemoryContextRendererTest {
 
     private static String contentLine(String block) {
         return block.substring(block.lastIndexOf('\n') + 1);
+    }
+
+    private static List<MemoryEntry> entries(int countPerKind) {
+        List<MemoryEntry> entries = new ArrayList<>();
+        for (int index = 0; index < countPerKind; index++) {
+            entries.add(
+                    entry(
+                            "p-%02d".formatted(index),
+                            MemoryKind.PERSON_PROFILE,
+                            false,
+                            NOW.minusMinutes(index),
+                            "画像-" + index));
+            entries.add(
+                    entry(
+                            "c-%02d".formatted(index),
+                            MemoryKind.COLLABORATION_PREFERENCE,
+                            false,
+                            NOW.minusMinutes(index),
+                            "偏好-" + index));
+        }
+        return List.copyOf(entries);
     }
 
     private static MemorySnapshot snapshot(boolean readEnabled, List<MemoryEntry> entries) {

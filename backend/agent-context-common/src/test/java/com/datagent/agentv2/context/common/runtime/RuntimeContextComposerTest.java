@@ -117,8 +117,8 @@ class RuntimeContextComposerTest {
     }
 
     @Test
-    void hardInputLimitStillBoundsContributionsWhenPreferredLimitIsLarger() {
-        var contribution = new RuntimeContextContribution("memory", "W", List.of("entry"), 100);
+    void configuredContributionBudgetStillCannotExceedCompleteInputHardLimit() {
+        var contribution = new RuntimeContextContribution("memory", "W", List.of("entry"), 1025);
         var request = request(new RuntimeContextInput(List.of(), List.of(contribution)));
         List<ContextMessage> raw = List.of(ContextMessage.user("Q"));
         ToIntFunction<List<ContextMessage>> completeEstimator =

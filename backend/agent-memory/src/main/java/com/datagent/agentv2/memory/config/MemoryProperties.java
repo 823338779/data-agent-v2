@@ -10,8 +10,13 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class MemoryProperties {
     private int personProfileLimit = 800;
     private int collaborationPreferenceLimit = 1500;
+
+    /** 每类注入候选上限，默认 20；可信部署可配置任意正数，renderer 严格使用当前值。 */
     private int injectionPerKindLimit = 20;
+
+    /** 记忆贡献独立 token 预算，默认 1024；可信部署可调整，最终仍受模型完整输入硬限约束。 */
     private int injectionTokenBudget = 1024;
+
     private int reviewMessageLimit = 40;
     private int reviewCharLimit = 50_000;
     private int maxModelCalls = 8;

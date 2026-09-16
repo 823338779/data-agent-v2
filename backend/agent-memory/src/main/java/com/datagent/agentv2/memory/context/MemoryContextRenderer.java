@@ -12,7 +12,7 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 
-/** 把已提交个人记忆快照渲染为稳定排序、可整条省略的 USER 运行时贡献。 */
+/** 把已提交个人记忆快照按当前部署配置渲染为稳定排序、可整条省略的 USER 运行时贡献。 */
 @RequiredArgsConstructor
 public final class MemoryContextRenderer {
 
