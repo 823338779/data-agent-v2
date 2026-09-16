@@ -15,6 +15,7 @@ import com.datagent.agentv2.conversation.runtime.LocalExecutionGuard;
 import com.datagent.agentv2.conversation.tool.PreparedToolInvocation;
 import com.datagent.agentv2.conversation.tool.ToolExecutionCoordinator;
 import com.datagent.agentv2.conversation.tool.runtime.ExecutionToolViews;
+import com.datagent.agentv2.memory.tool.MemoryInvocationRegistry;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -61,6 +62,9 @@ public final class ReactExecutionEngine {
     /** 约束单次 ReAct 执行允许的模型及工具调用数量。 */
     private final ReactLimitsProperties limits;
 
+    /** 管理每次模型调用可引用的记忆 revision 与真实证据快照。 */
+    private final MemoryInvocationRegistry memoryInvocations;
+
     /**
      * 从新的模型调用边界开始执行任务。
      *
@@ -84,57 +88,64 @@ public final class ReactExecutionEngine {
             ModelInvocationCoordinator.ModelInvocationBoundary modelInvocation =
                     modelInvocationCoordinator.beginModelInvocation(run);
 
-            // 每轮固定同一份工具定义，并把持久化消息上界和模型预算交给选中策略。
-            // skill_read 可在前一轮激活新 Tool，因此每轮都必须重新读取可见集合。
-            List<ModelToolDefinition> modelTools =
-                    toolDefinitions.toModelDefinitions(
-                            toolViews.require(run.executionId()).visibleTools().stream()
-                                    .map(binding -> binding.tool())
-                                    .toList());
-            ConversationContextRequest contextRequest =
-                    contextRequests.create(run, modelInvocation, modelTools);
-            PreparedConversationContext prepared = contexts.prepare(contextRequest);
-            List<ModelInputMessage> input = contextMessages.toModelMessages(prepared.messages());
-
-            // 调用前后都执行 fencing；流式片段在回调中同步形成 checkpoint 和通知。
-            executionGuard.assertRunningAndWithinDeadline(run);
-            ModelInvocationResult result;
             try {
-                result =
-                        model.complete(
-                                input,
-                                modelTools,
-                                delta ->
-                                        modelInvocationCoordinator.checkpoint(
-                                                run, modelInvocation, delta));
-            } catch (ModelStreamInterruptedException failure) {
-                // provider 失败也必须把已展示的 thinking 节点收敛为失败终态。
-                modelInvocationCoordinator.failModelOutput(run, modelInvocation);
-                throw failure;
-            }
-            executionGuard.assertRunningAndWithinDeadline(run);
 
-            // 工具结果必须先归档，再执行工具并进入下一轮模型调用。
-            if (result instanceof ModelInvocationResult.ToolCalls toolCalls) {
-                toolCallCount += toolCalls.calls().size();
-                // 在归档任何超限工具之前拒绝本轮结果。
-                if (toolCallCount > limits.getMaxToolCalls()) {
-                    throw new ReactLimitExceededException(ERROR_TOOL_CALL_LIMIT);
+                // 每轮固定同一份工具定义，并把持久化消息上界和模型预算交给选中策略。
+                // skill_read 可在前一轮激活新 Tool，因此每轮都必须重新读取可见集合。
+                List<ModelToolDefinition> modelTools =
+                        toolDefinitions.toModelDefinitions(
+                                toolViews.require(run.executionId()).visibleTools().stream()
+                                        .map(binding -> binding.tool())
+                                        .toList());
+                ConversationContextRequest contextRequest =
+                        contextRequests.create(run, modelInvocation, modelTools);
+                PreparedConversationContext prepared = contexts.prepare(contextRequest);
+                List<ModelInputMessage> input = contextMessages.toModelMessages(prepared.messages());
+
+                // 调用前后都执行 fencing；流式片段在回调中同步形成 checkpoint 和通知。
+                executionGuard.assertRunningAndWithinDeadline(run);
+                ModelInvocationResult result;
+                try {
+                    result =
+                            model.complete(
+                                    input,
+                                    modelTools,
+                                    delta ->
+                                            modelInvocationCoordinator.checkpoint(
+                                                    run, modelInvocation, delta));
+                } catch (ModelStreamInterruptedException failure) {
+                    // provider 失败也必须把已展示的 thinking 节点收敛为失败终态。
+                    modelInvocationCoordinator.failModelOutput(run, modelInvocation);
+                    throw failure;
                 }
-                List<PreparedToolInvocation> preparedTools =
-                        modelInvocationCoordinator.archiveToolCalls(
-                                run, modelInvocation, toolCalls.calls());
-                tools.executeModelInvocationTools(
-                        run, modelInvocation.modelInvocationSequence(), preparedTools);
-                continue;
-            }
+                executionGuard.assertRunningAndWithinDeadline(run);
 
-            // 非工具结果只能是最终回答；完成持久化后结束本次 ReAct 循环。
-            ModelInvocationResult.FinalAnswer finalAnswer =
-                    (ModelInvocationResult.FinalAnswer) result;
-            modelInvocationCoordinator.completeFinalAnswer(
-                    run, modelInvocation, finalAnswer.answer());
-            return;
+                // 工具结果必须先归档，再执行工具并进入下一轮模型调用。
+                if (result instanceof ModelInvocationResult.ToolCalls toolCalls) {
+                    toolCallCount += toolCalls.calls().size();
+                    // 在归档任何超限工具之前拒绝本轮结果。
+                    if (toolCallCount > limits.getMaxToolCalls()) {
+                        throw new ReactLimitExceededException(ERROR_TOOL_CALL_LIMIT);
+                    }
+                    List<PreparedToolInvocation> preparedTools =
+                            modelInvocationCoordinator.archiveToolCalls(
+                                    run, modelInvocation, toolCalls.calls());
+                    tools.executeModelInvocationTools(
+                            run, modelInvocation.modelInvocationSequence(), preparedTools);
+                    continue;
+                }
+
+                // 非工具结果只能是最终回答；完成持久化后结束本次 ReAct 循环。
+                ModelInvocationResult.FinalAnswer finalAnswer =
+                        (ModelInvocationResult.FinalAnswer) result;
+                modelInvocationCoordinator.completeFinalAnswer(
+                        run, modelInvocation, finalAnswer.answer());
+                return;
+            } finally {
+                // continue、正常返回与模型/工具异常都必须关闭本轮冻结快照。
+                memoryInvocations.close(
+                        run.executionId(), modelInvocation.modelInvocationSequence());
+            }
         }
     }
 }

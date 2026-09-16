@@ -18,7 +18,8 @@ public final class ToolFailureSanitizer {
 
     public ToolExecutionResult sanitize(Throwable failure) {
         if (failure instanceof ToolBusinessException business) {
-            return ToolExecutionResult.failed(business.code(), business.safeMessage());
+            return ToolExecutionResult.failed(
+                    business.code(), business.safeMessage(), business.details());
         }
         if (failure instanceof IllegalArgumentException) {
             return ToolExecutionResult.failed(

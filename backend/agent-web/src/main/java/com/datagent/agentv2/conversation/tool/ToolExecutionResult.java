@@ -17,6 +17,11 @@ public record ToolExecutionResult(
         return new ToolExecutionResult(Status.FAILED, null, code, message);
     }
 
+    /** 业务失败可携带已脱敏结构化详情，但执行状态始终保持 FAILED。 */
+    public static ToolExecutionResult failed(String code, String message, JsonNode details) {
+        return new ToolExecutionResult(Status.FAILED, details, code, message);
+    }
+
     public enum Status {
         SUCCEEDED,
         FAILED

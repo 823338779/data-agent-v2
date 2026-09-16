@@ -4,6 +4,7 @@ import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
 import com.datagent.agentv2.conversation.process.AgentExecutionProcessTerminationService;
 import com.datagent.agentv2.conversation.tool.runtime.ExecutionToolViews;
 import com.datagent.agentv2.conversation.workflow.RoutedAgentExecutionEngine;
+import com.datagent.agentv2.memory.tool.MemoryInvocationRegistry;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.skill.runtime.ExecutionSkillViews;
 import java.time.Instant;
@@ -27,6 +28,7 @@ public final class LocalAgentExecutionLauncher {
     private final AgentExecutionProcessTerminationService termination;
     private final ExecutionToolViews toolViews;
     private final ExecutionSkillViews skillViews;
+    private final MemoryInvocationRegistry memoryInvocations;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void start(LocalExecutionStarted event) {
@@ -68,6 +70,8 @@ public final class LocalAgentExecutionLauncher {
                     failure.getMessage(),
                     Instant.now());
         } finally {
+            // ReAct 每轮负责精确关闭；执行边界兜底清理上下文准备阶段等异常遗留。
+            memoryInvocations.closeExecution(execution.executionId());
             toolViews.close(execution.executionId());
         }
     }
