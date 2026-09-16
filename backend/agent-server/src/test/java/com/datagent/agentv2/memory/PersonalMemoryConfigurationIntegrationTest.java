@@ -14,6 +14,93 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 /** 真实应用默认配置与 HTTP 设置边界，包含 raw 缺少纯估算器的安全阻塞。 */
 class PersonalMemoryConfigurationIntegrationTest {
     @Test
+    void reducedQuotaKeepsManagementAndIncrementalDeletionAvailable() throws Exception {
+        try (var postgres = new PostgreSQLContainer("postgres:17-alpine")) {
+            postgres.start();
+            try (var app = new PersonalMemoryTestSupport(postgres, null)) {
+                var ids = new java.util.ArrayList<String>();
+                for (String text : new String[] {"住在杭州", "喜爱阅读", "早起工作"}) {
+                    ids.add(
+                            app.request(
+                                            post("/api/user/memories")
+                                                    .header("Idempotency-Key", text)
+                                                    .contentType(MediaType.APPLICATION_JSON)
+                                                    .content(
+                                                            app.json.writeValueAsString(
+                                                                    java.util.Map.of(
+                                                                            "kind",
+                                                                            "person_profile",
+                                                                            "content",
+                                                                            text))),
+                                            201)
+                                    .path("memoryId")
+                                    .asString());
+                }
+                var properties =
+                        app.context.getBean(
+                                com.datagent.agentv2.memory.config.MemoryProperties.class);
+                properties.setPersonProfileLimit(5);
+                var snapshot = app.context.getBean(MemoryService.class).snapshot();
+                assertThat(snapshot.quotas().get(MemoryKind.PERSON_PROFILE).used()).isEqualTo(12);
+                assertThat(snapshot.quotas().get(MemoryKind.PERSON_PROFILE).limit()).isEqualTo(5);
+                app.mvc
+                        .perform(get("/api/user/memories"))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.quotas.person_profile.used").value(12))
+                        .andExpect(jsonPath("$.quotas.person_profile.limit").value(5));
+                app.mvc.perform(get("/api/user/memories/settings")).andExpect(status().isOk());
+                app.mvc
+                        .perform(
+                                put("/api/user/memories/settings")
+                                        .header("Idempotency-Key", "lowered-settings")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(
+                                                "{\"expectedVersion\":0,\"autoLearningEnabled\":false}"))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.autoLearningEnabled").value(false));
+                app.mvc
+                        .perform(
+                                post("/api/user/memories")
+                                        .header("Idempotency-Key", "over-quota-add")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(
+                                                "{\"kind\":\"person_profile\",\"content\":\"新增\"}"))
+                        .andExpect(status().is(422))
+                        .andExpect(jsonPath("$.code").value("QUOTA_EXCEEDED"));
+                app.mvc
+                        .perform(
+                                put("/api/user/memories/{id}", ids.getFirst())
+                                        .header("Idempotency-Key", "over-quota-replace")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"expectedVersion\":1,\"content\":\"更长的新正文\"}"))
+                        .andExpect(status().is(422))
+                        .andExpect(jsonPath("$.code").value("QUOTA_EXCEEDED"));
+                // 第一次删除后仍然超额，必须已经提交，不能因构造结果配额而回滚。
+                for (int i = 0; i < 2; i++) {
+                    app.mvc
+                            .perform(
+                                    delete("/api/user/memories/{id}", ids.get(i))
+                                            .param("expectedVersion", "1")
+                                            .header("Idempotency-Key", "cleanup-" + i))
+                            .andExpect(status().isNoContent());
+                    app.mvc
+                            .perform(get("/api/user/memories"))
+                            .andExpect(status().isOk())
+                            .andExpect(
+                                    jsonPath("$.quotas.person_profile.used").value(i == 0 ? 8 : 4))
+                            .andExpect(jsonPath("$.quotas.person_profile.limit").value(5));
+                    assertThat(
+                                    app.jdbc.queryForObject(
+                                            "select count(*) from personal_memory where memory_id=?",
+                                            Integer.class,
+                                            ids.get(i)))
+                            .isZero();
+                }
+            }
+        }
+    }
+
+    @Test
     void applicationDefaultsAndManagementContracts() throws Exception {
         try (var postgres = new PostgreSQLContainer("postgres:17-alpine")) {
             postgres.start();

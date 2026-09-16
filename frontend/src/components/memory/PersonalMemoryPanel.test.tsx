@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryApiError, MemoryClient } from '../../api/memoryClient';
@@ -77,7 +77,7 @@ function outcome(overrides: Partial<MemoryOutcome> = {}): MemoryOutcome {
     version: 1,
     revision: 9,
     created: true,
-    targetExists: false,
+    targetExists: true,
     quotas: populatedView().quotas,
     ...overrides,
   };
@@ -99,6 +99,118 @@ afterEach(() => {
 });
 
 describe('PersonalMemoryPanel', () => {
+  it('ignores a late page after deletion and uses only the refreshed cursor and quota', async () => {
+    let finishPage!: (page: MemoryListView) => void;
+    let finishFreshPage!: (page: MemoryListView) => void;
+    const oldPage = new Promise<MemoryListView>((resolve) => {
+      finishPage = resolve;
+    });
+    const freshPage = new Promise<MemoryListView>((resolve) => {
+      finishFreshPage = resolve;
+    });
+    const client = createMemoryClientStub();
+    client.list
+      .mockResolvedValueOnce(populatedView())
+      .mockReturnValueOnce(oldPage)
+      .mockResolvedValueOnce({
+        ...profilePage([secondProfile], 'fresh-cursor'),
+        revision: 10,
+        quotas: { ...populatedView().quotas, person_profile: { used: 4, limit: 800 } },
+      })
+      .mockReturnValueOnce(freshPage);
+    render(<PersonalMemoryPanel client={client} onClose={() => {}} />);
+    const region = await screen.findByRole('region', { name: '个人画像' });
+    fireEvent.click(within(region).getByRole('button', { name: '加载更多个人画像' }));
+    fireEvent.click(within(region).getByRole('button', { name: '删除' }));
+    fireEvent.click(within(region).getByRole('button', { name: '确认删除' }));
+    await screen.findByText('已用 4 / 800 字符');
+    fireEvent.click(within(region).getByRole('button', { name: '加载更多个人画像' }));
+    await waitFor(() =>
+      expect(client.list).toHaveBeenLastCalledWith('person_profile', 'fresh-cursor'),
+    );
+    await act(async () => finishPage(profilePage([secondProfile], 'stale-cursor')));
+    expect(screen.getAllByText(secondProfile.content)).toHaveLength(1);
+    expect(screen.getByText('已用 4 / 800 字符')).toBeInTheDocument();
+    expect(within(region).getByRole('button', { name: '加载更多个人画像' })).toBeDisabled();
+    await act(async () =>
+      finishFreshPage({
+        ...profilePage([], null),
+        revision: 10,
+        quotas: { ...populatedView().quotas, person_profile: { used: 4, limit: 800 } },
+      }),
+    );
+    expect(screen.getAllByText(secondProfile.content)).toHaveLength(1);
+    expect(
+      within(region).queryByRole('button', { name: '加载更多个人画像' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each(['CREATED', 'ALREADY_EXISTS'] as const)(
+    'preserves a missing historical %s draft until explicit restore',
+    async (status) => {
+      const client = createMemoryClientStub();
+      client.create
+        .mockRejectedValueOnce(new TypeError('lost response'))
+        .mockResolvedValueOnce(
+          outcome({ status, created: status === 'CREATED', targetExists: false }),
+        )
+        .mockRejectedValueOnce(new MemoryApiError(503, 'UNAVAILABLE', 'unknown commit'))
+        .mockResolvedValueOnce(outcome());
+      render(<PersonalMemoryPanel client={client} onClose={() => {}} />);
+      await screen.findByRole('heading', { name: '个人记忆' });
+      fireEvent.change(screen.getByLabelText('记忆内容'), { target: { value: '住在杭州' } });
+      fireEvent.click(screen.getByRole('button', { name: '保存记忆' }));
+      await screen.findByText('保存失败，请重试。');
+      fireEvent.click(screen.getByRole('button', { name: '保存记忆' }));
+      await screen.findByText('该操作曾成功，但记忆现已删除。内容已保留，可明确重新记住。');
+      expect(client.create.mock.calls[1][1]).toBe(client.create.mock.calls[0][1]);
+      expect(screen.getByLabelText('记忆内容')).toHaveValue('住在杭州');
+      expect(screen.getByRole('button', { name: '保存记忆' })).toBeDisabled();
+      expect(client.create).toHaveBeenCalledTimes(2);
+      fireEvent.click(screen.getByRole('button', { name: '明确重新记住' }));
+      await screen.findByText('保存失败，请重试。');
+      fireEvent.click(screen.getByRole('button', { name: '明确重新记住' }));
+      await screen.findByText('已重新记住。');
+      expect(client.create.mock.calls[2][1]).not.toBe(client.create.mock.calls[1][1]);
+      expect(client.create.mock.calls[3][1]).toBe(client.create.mock.calls[2][1]);
+      expect(client.create.mock.calls[2][0].restore).toBe(true);
+    },
+  );
+
+  it('preserves an edit whose same-key historical success target was deleted', async () => {
+    const client = createMemoryClientStub();
+    client.list.mockResolvedValueOnce(populatedView());
+    client.replace
+      .mockRejectedValueOnce(new TypeError('lost response'))
+      .mockResolvedValueOnce(outcome({ status: 'UPDATED', created: false, targetExists: false }));
+    render(<PersonalMemoryPanel client={client} onClose={() => {}} />);
+    const region = await screen.findByRole('region', { name: '个人画像' });
+    fireEvent.click(within(region).getByRole('button', { name: '编辑' }));
+    fireEvent.change(screen.getByLabelText('编辑记忆内容'), {
+      target: { value: '保留的修改正文' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await screen.findByText('修改失败，请重试。');
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await screen.findByText('该操作曾成功，但记忆现已删除。修改草稿已保留。');
+    expect(client.replace.mock.calls[1][2]).toBe(client.replace.mock.calls[0][2]);
+    expect(screen.queryByText('记忆已更新。')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('已删除记忆草稿')).toHaveValue('保留的修改正文');
+    expect(client.create).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '使用草稿重新记住' }));
+    expect(screen.getByLabelText('记忆内容')).toHaveValue('保留的修改正文');
+    expect(client.create).not.toHaveBeenCalled();
+    client.create.mockResolvedValueOnce(outcome());
+    fireEvent.click(screen.getByRole('button', { name: '明确重新记住' }));
+    await screen.findByText('已重新记住。');
+    expect(client.create.mock.calls[0][0]).toEqual({
+      kind: 'person_profile',
+      content: '保留的修改正文',
+      restore: true,
+    });
+    expect(client.create.mock.calls[0][1]).not.toBe(client.replace.mock.calls[1][2]);
+  });
+
   it('shows both empty categories, server quotas, settings guidance, and closes explicitly', async () => {
     const client = createMemoryClientStub();
     const onClose = vi.fn();

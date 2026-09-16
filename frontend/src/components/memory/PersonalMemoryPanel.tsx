@@ -93,6 +93,7 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
   const [kind, setKind] = useState<MemoryKind>('person_profile');
   const [content, setContent] = useState('');
   const [restorePending, setRestorePending] = useState(false);
+  const [createTargetMissing, setCreateTargetMissing] = useState(false);
   const [edit, setEdit] = useState<EditState | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState<string | null>(null);
   const [deleteRecovery, setDeleteRecovery] = useState<DeleteRecovery | null>(null);
@@ -100,6 +101,7 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
   const replaceKey = useRef<OperationKey | null>(null);
   const deleteKey = useRef<OperationKey | null>(null);
   const settingsKey = useRef<OperationKey | null>(null);
+  const listGeneration = useRef(0);
   const panelRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -125,9 +127,16 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
   }, [client]);
 
   async function refreshAll() {
+    invalidatePages();
     const refreshed = await client.list();
     setView(refreshed);
     return refreshed;
+  }
+
+  /** 变更和权威刷新使旧页失效，迟到页不能复活条目、旧游标或旧配额。 */
+  function invalidatePages() {
+    listGeneration.current += 1;
+    setLoadingMore(null);
   }
 
   /** 分类刷新只替换目标分类；kind 查询返回的另一个空组不能清掉已加载数据。 */
@@ -151,18 +160,27 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
 
   async function submitCreate(restore: boolean) {
     const normalized = content.trim();
-    if (!normalized || busy) return;
+    if (!normalized || busy || (createTargetMissing && !restore)) return;
     const request = { kind, content: normalized, restore };
     // restore 是新的业务意图，因此纳入签名，绝不会沿用首次被抑制请求的键。
     const key = operationKey(createKey, JSON.stringify(request));
+    invalidatePages();
     setBusy(true);
     setFeedback(null);
     try {
       const result = await client.create(request, key);
       await refreshAll();
+      if (!result.targetExists) {
+        // 历史提交成功不代表目标仍在；只有下一次明确恢复才能产生新的写入意图。
+        setCreateTargetMissing(true);
+        setRestorePending(true);
+        setFeedback('该操作曾成功，但记忆现已删除。内容已保留，可明确重新记住。');
+        return;
+      }
       setFeedback(outcomeMessage(result, restore));
       setContent('');
       setRestorePending(false);
+      setCreateTargetMissing(false);
       createKey.current = null;
     } catch (failure) {
       if (failure instanceof MemoryApiError && failure.code === 'SUPPRESSED' && !restore) {
@@ -191,12 +209,16 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
 
   async function loadMore(targetKind: MemoryKind) {
     const cursor = view?.groups[targetKind].nextCursor;
-    if (!cursor || loadingMore) return;
+    if (!cursor || loadingMore || busy) return;
+    const generation = listGeneration.current;
     setLoadingMore(targetKind);
     setFeedback(null);
     try {
       const page = await client.list(targetKind, cursor);
+      if (generation !== listGeneration.current) return;
       setView((current) => {
+        if (generation !== listGeneration.current || (current && page.revision < current.revision))
+          return current;
         if (!current) return page;
         return {
           groups: {
@@ -212,9 +234,9 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
         };
       });
     } catch {
-      setFeedback('加载更多记忆失败，请重试。');
+      if (generation === listGeneration.current) setFeedback('加载更多记忆失败，请重试。');
     } finally {
-      setLoadingMore(null);
+      if (generation === listGeneration.current) setLoadingMore(null);
     }
   }
 
@@ -231,6 +253,7 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
   }
 
   async function recoverEditConflict(conflicted: EditState) {
+    invalidatePages();
     setBusy(true);
     setEdit((current) =>
       current?.memoryId === conflicted.memoryId
@@ -283,11 +306,17 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
     if (!edit || !edit.draft.trim() || edit.conflictState !== null || busy) return;
     const request = { content: edit.draft.trim(), expectedVersion: edit.serverVersion };
     const key = operationKey(replaceKey, JSON.stringify({ memoryId: edit.memoryId, ...request }));
+    invalidatePages();
     setBusy(true);
     setFeedback(null);
     try {
-      await client.replace(edit.memoryId, request, key);
+      const result = await client.replace(edit.memoryId, request, key);
       await refreshAll();
+      if (!result.targetExists) {
+        setEdit((current) => (current ? { ...current, conflictState: 'missing' } : current));
+        setFeedback('该操作曾成功，但记忆现已删除。修改草稿已保留。');
+        return;
+      }
       setEdit(null);
       replaceKey.current = null;
       setFeedback('记忆已更新。');
@@ -311,6 +340,7 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
   }
 
   async function recoverDeleteConflict(entry: MemoryEntry) {
+    invalidatePages();
     setBusy(true);
     setDeleteRecovery({ memoryId: entry.memoryId, status: 'refreshing' });
     try {
@@ -340,6 +370,7 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
     if (busy) return;
     const signature = JSON.stringify({ memoryId: entry.memoryId, version: entry.version });
     const key = operationKey(deleteKey, signature);
+    invalidatePages();
     setBusy(true);
     setFeedback(null);
     try {
@@ -371,6 +402,7 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
       autoLearningEnabled: enabled,
     };
     const key = operationKey(settingsKey, JSON.stringify(request));
+    invalidatePages();
     setSettings({ ...settings, autoLearningEnabled: enabled });
     setBusy(true);
     setFeedback(null);
@@ -546,6 +578,7 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
                   onChange={(event) => {
                     setKind(event.target.value as MemoryKind);
                     setRestorePending(false);
+                    setCreateTargetMissing(false);
                   }}
                 >
                   <option value="person_profile">个人画像</option>
@@ -560,16 +593,28 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
                   onChange={(event) => {
                     setContent(event.target.value);
                     setRestorePending(false);
+                    setCreateTargetMissing(false);
                   }}
                   placeholder="写下希望长期记住的内容"
                 />
               </label>
               <div className="memory-form-actions">
-                <button type="submit" disabled={busy || !content.trim()}>
+                <button type="submit" disabled={busy || createTargetMissing || !content.trim()}>
                   保存记忆
                 </button>
                 {restorePending && (
-                  <button type="button" onClick={() => void submitCreate(true)} disabled={busy}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // 已明确得知旧目标删除后，用户主动恢复才结束旧操作键；未知传输结果仍重用原键。
+                      if (createTargetMissing) {
+                        createKey.current = null;
+                        setCreateTargetMissing(false);
+                      }
+                      void submitCreate(true);
+                    }}
+                    disabled={busy}
+                  >
                     明确重新记住
                   </button>
                 )}
@@ -590,6 +635,19 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
                   <textarea aria-label="已删除记忆草稿" value={edit.draft} readOnly />
                 </label>
                 <div className="memory-form-actions">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setKind(edit.kind);
+                      setContent(edit.draft);
+                      setRestorePending(true);
+                      setCreateTargetMissing(true);
+                      setEdit(null);
+                    }}
+                  >
+                    使用草稿重新记住
+                  </button>
                   <button type="button" onClick={() => setEdit(null)}>
                     取消保留草稿
                   </button>
@@ -626,7 +684,7 @@ export function PersonalMemoryPanel({ client, onClose }: PersonalMemoryPanelProp
                           className="memory-load-more"
                           type="button"
                           aria-label={`加载更多${KIND_LABELS[targetKind]}`}
-                          disabled={loadingMore !== null}
+                          disabled={busy || loadingMore !== null}
                           onClick={() => void loadMore(targetKind)}
                         >
                           {loadingMore === targetKind ? '正在加载…' : '加载更多'}

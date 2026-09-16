@@ -14,6 +14,16 @@ import org.junit.jupiter.api.Test;
 class MemoryKindTest {
 
     @Test
+    void quotaRepresentsInventoryAboveAValidReducedLimit() {
+        var quota = new MemoryQuota(12, 5);
+        assertThat(quota.used()).isEqualTo(12);
+        assertThat(quota.limit()).isEqualTo(5);
+        assertThatIllegalArgumentException().isThrownBy(() -> new MemoryQuota(-1, 5));
+        assertThatIllegalArgumentException().isThrownBy(() -> new MemoryQuota(0, 0));
+        assertThatIllegalArgumentException().isThrownBy(() -> new MemoryQuota(0, -1));
+    }
+
+    @Test
     void kindsUseOnlyTheTwoStableWireValues() {
         assertThat(MemoryKind.PERSON_PROFILE.value()).isEqualTo("person_profile");
         assertThat(MemoryKind.COLLABORATION_PREFERENCE.value())

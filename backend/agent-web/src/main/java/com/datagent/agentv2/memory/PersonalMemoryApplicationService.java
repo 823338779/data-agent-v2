@@ -1,13 +1,22 @@
 package com.datagent.agentv2.memory;
 
+import java.sql.SQLException;
+import java.sql.SQLNonTransientConnectionException;
+import java.sql.SQLRecoverableException;
+import java.sql.SQLTransientConnectionException;
 import java.util.List;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionSystemException;
 
 /**
  * 个人记忆管理接口的应用编排层。
  *
- * <p>这里只构造可信 UI 调用上下文和领域命令；身份、证据时间、幂等与事务仍由统一 {@link MemoryService} 边界负责。
+ * <p>构造可信 UI 调用上下文和领域命令，并在事务代理外转换依赖故障；身份、证据时间、幂等与事务仍由统一 {@link MemoryService} 边界负责。
  */
 @Service
 @RequiredArgsConstructor
@@ -16,50 +25,58 @@ public class PersonalMemoryApplicationService {
     private final MemoryService memory;
 
     public PersonalMemoryListView list(MemoryKind kind, String cursor, int limit) {
-        return PersonalMemoryListView.composeFromSnapshot(memory.snapshot(), kind, cursor, limit);
+        return PersonalMemoryListView.composeFromSnapshot(
+                withDependencyBoundary(memory::snapshot), kind, cursor, limit);
     }
 
     public MemoryOutcome create(
             String requestId, MemoryKind kind, String content, boolean restore) {
         return requireSuccess(
-                memory.execute(
-                        ui(requestId),
-                        new MemoryCommand.Add(
-                                kind,
-                                content,
-                                MemoryWriteReason.USER_REQUESTED,
-                                List.of(),
-                                restore)));
+                withDependencyBoundary(
+                        () ->
+                                memory.execute(
+                                        ui(requestId),
+                                        new MemoryCommand.Add(
+                                                kind,
+                                                content,
+                                                MemoryWriteReason.USER_REQUESTED,
+                                                List.of(),
+                                                restore))));
     }
 
     public MemoryOutcome replace(
             String requestId, String id, long expectedVersion, String content) {
         return requireSuccess(
-                memory.execute(
-                        ui(requestId),
-                        new MemoryCommand.Replace(
-                                id,
-                                expectedVersion,
-                                content,
-                                MemoryWriteReason.USER_REQUESTED,
-                                List.of())));
+                withDependencyBoundary(
+                        () ->
+                                memory.execute(
+                                        ui(requestId),
+                                        new MemoryCommand.Replace(
+                                                id,
+                                                expectedVersion,
+                                                content,
+                                                MemoryWriteReason.USER_REQUESTED,
+                                                List.of()))));
     }
 
     /** 删除成功不需要再查询条目；REMOVED outcome 的 targetExists 按领域约定为 false。 */
     public void remove(String requestId, String id, long expectedVersion) {
         requireSuccess(
-                memory.execute(
-                        ui(requestId),
-                        new MemoryCommand.Remove(
-                                id,
-                                expectedVersion,
-                                MemoryWriteReason.USER_REQUESTED,
-                                List.of())));
+                withDependencyBoundary(
+                        () ->
+                                memory.execute(
+                                        ui(requestId),
+                                        new MemoryCommand.Remove(
+                                                id,
+                                                expectedVersion,
+                                                MemoryWriteReason.USER_REQUESTED,
+                                                List.of()))));
     }
 
     /** 读取管理设置不受 readEnabled 影响，避免关闭读取后无法查看或恢复设置。 */
     public MemorySettingsView settings() {
-        return MemorySettingsView.composeFromState(memory.snapshot().state());
+        return MemorySettingsView.composeFromState(
+                withDependencyBoundary(memory::snapshot).state());
     }
 
     /** 设置入口独立于 explicitWriteEnabled，允许用户重新开启先前关闭的显式写入。 */
@@ -71,11 +88,35 @@ public class PersonalMemoryApplicationService {
             Boolean autoLearningEnabled) {
         var changed =
                 new MemorySettingsChange(
-                        expectedVersion,
-                        readEnabled,
-                        explicitWriteEnabled,
-                        autoLearningEnabled);
-        return MemorySettingsView.composeFromState(memory.updateSettings(requestId, changed));
+                        expectedVersion, readEnabled, explicitWriteEnabled, autoLearningEnabled);
+        return MemorySettingsView.composeFromState(
+                withDependencyBoundary(() -> memory.updateSettings(requestId, changed)));
+    }
+
+    /**
+     * 边界位于 MemoryService 事务代理之外，覆盖开启事务及提交阶段的连接故障。 提交结果可能未知，因此只报告暂不可用；不重试、不换操作键，也不宣称写入从未发生。
+     * 非连接类提交故障及编程错误仍交给原异常边界，避免把错误伪装成可重试故障。
+     */
+    private static <T> T withDependencyBoundary(Supplier<T> operation) {
+        try {
+            return operation.get();
+        } catch (CannotCreateTransactionException
+                | DataAccessResourceFailureException
+                | TransientDataAccessResourceException failure) {
+            throw new MemoryException(MemoryStatus.UNAVAILABLE, "记忆服务暂不可用，请使用原操作重试");
+        } catch (TransactionSystemException failure) {
+            for (Throwable cause = failure.getCause(); cause != null; cause = cause.getCause()) {
+                if (cause instanceof SQLTransientConnectionException
+                        || cause instanceof SQLNonTransientConnectionException
+                        || cause instanceof SQLRecoverableException
+                        || (cause instanceof SQLException sql
+                                && sql.getSQLState() != null
+                                && sql.getSQLState().startsWith("08"))) {
+                    throw new MemoryException(MemoryStatus.UNAVAILABLE, "记忆服务暂不可用，请使用原操作重试");
+                }
+            }
+            throw failure;
+        }
     }
 
     private static MemoryWriteContext ui(String requestId) {
