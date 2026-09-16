@@ -94,6 +94,16 @@ public class ConversationMessageService
                         .list());
     }
 
+    /** 按证据 ID 读取当前未删除的领域消息，供统一记忆事务重新核验，不锁执行或助手行。 */
+    public List<ConversationMessage> findEvidenceByIds(List<String> ids) {
+        if (ids.isEmpty()) return List.of();
+        return toModels(
+                lambdaQuery()
+                        .in(ConversationMessageEntity::getConversationMessageId, ids)
+                        .orderByAsc(ConversationMessageEntity::getConversationMessageSequence)
+                        .list());
+    }
+
     /** 按业务标识读取单条消息，供 execution 与 assistant call 建立一致性边界。 */
     public ConversationMessage findByConversationMessageId(String conversationMessageId) {
         return toModel(

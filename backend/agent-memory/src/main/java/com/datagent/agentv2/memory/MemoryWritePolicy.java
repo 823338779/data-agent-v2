@@ -14,6 +14,9 @@ public class MemoryWritePolicy {
             MemoryCommand command,
             MemoryEntry target,
             MemoryState state) {
+        if (command instanceof MemoryCommand.Confirm
+                && context.caller() != MemoryWriteContext.Caller.BACKGROUND)
+            reject(MemoryStatus.INVALID_REQUEST);
         boolean explicit = explicit(context, command);
         if (context.requestId().isBlank()
                 || (context.caller() == MemoryWriteContext.Caller.UI
@@ -79,6 +82,23 @@ public class MemoryWritePolicy {
                     reject(MemoryStatus.INVALID_REQUEST);
             }
         }
+    }
+
+    /** 对话恢复必须由删除之后的新用户消息明确授权；UI 本次操作本身是新授权。 */
+    void validateRestore(
+            MemoryWriteContext context,
+            MemoryCommand command,
+            MemorySuppression suppression,
+            List<MemoryEvidence> evidence) {
+        if (!(command instanceof MemoryCommand.Add add)
+                || !add.restore()
+                || !explicit(context, command)) reject(MemoryStatus.SUPPRESSED);
+        if (context.caller() == MemoryWriteContext.Caller.MAIN
+                && (context.expectedRevision() < suppression.deletedRevision()
+                        || evidence.stream()
+                                .noneMatch(
+                                        item -> item.createdAt().isAfter(suppression.deletedAt()))))
+            reject(MemoryStatus.SUPPRESSED);
     }
 
     static boolean explicit(MemoryWriteContext context, MemoryCommand command) {

@@ -14,6 +14,16 @@
   <artifactId>agent-web</artifactId>
 
   <dependencies>
+    <dependency>
+      <groupId>com.datagent</groupId>
+      <artifactId>agent-memory</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency><groupId>com.datagent</groupId><artifactId>agent-git</artifactId><version>${project.version}</version></dependency>
     <dependency>
       <groupId>com.datagent</groupId>

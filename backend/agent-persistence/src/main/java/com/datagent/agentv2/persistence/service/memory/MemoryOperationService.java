@@ -5,16 +5,22 @@ import com.datagent.agentv2.memory.MemoryKind;
 import com.datagent.agentv2.memory.MemoryOperation;
 import com.datagent.agentv2.memory.MemoryOutcome;
 import com.datagent.agentv2.memory.MemoryQuota;
+import com.datagent.agentv2.memory.MemoryState;
 import com.datagent.agentv2.memory.MemoryStatus;
 import com.datagent.agentv2.persistence.entity.memory.MemoryOperationEntity;
 import com.datagent.agentv2.persistence.mapper.memory.MemoryOperationMapper;
 import com.datagent.agentv2.platform.context.OperatorContext;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.ObjectMapper;
 
 /** 幂等操作结果边界；配额和版本保留提交时结果，重放仅由上层补充目标当前存在性。 */
 @Service
+@RequiredArgsConstructor
 public class MemoryOperationService
         extends ServiceImpl<MemoryOperationMapper, MemoryOperationEntity> {
+    private final ObjectMapper json;
+
     public MemoryOperation find(String requestId) {
         var entity =
                 lambdaQuery()
@@ -26,6 +32,10 @@ public class MemoryOperationService
 
     public MemoryOperation insert(MemoryOperation operation) {
         var entity = MemoryOperationEntity.create();
+        entity.setSettingsResult(
+                operation.settingsResult() == null
+                        ? null
+                        : json.writeValueAsString(operation.settingsResult()));
         entity.setRequestId(operation.requestId());
         entity.setPayloadHash(operation.payloadHash());
         entity.setOutcomeStatus(operation.outcome().status().name());
@@ -45,7 +55,7 @@ public class MemoryOperationService
         return toModel(entity);
     }
 
-    private static MemoryOperation toModel(MemoryOperationEntity entity) {
+    private MemoryOperation toModel(MemoryOperationEntity entity) {
         var quotas = new java.util.EnumMap<MemoryKind, MemoryQuota>(MemoryKind.class);
         if (entity.getPersonProfileUsed() != null) {
             quotas.put(
@@ -69,6 +79,12 @@ public class MemoryOperationService
                         entity.getTargetExists(),
                         quotas);
         return new MemoryOperation(
-                entity.getRequestId(), entity.getPayloadHash(), outcome, entity.getCreatedAt());
+                entity.getRequestId(),
+                entity.getPayloadHash(),
+                outcome,
+                entity.getCreatedAt(),
+                entity.getSettingsResult() == null
+                        ? null
+                        : json.readValue(entity.getSettingsResult(), MemoryState.class));
     }
 }

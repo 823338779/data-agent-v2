@@ -32,6 +32,31 @@ public class MemoryStateService extends ServiceImpl<MemoryStateMapper, MemorySta
                 == 1;
     }
 
+    /** 设置与整体 revision 同一 CAS 更新；关闭时显式清空启用时间，避免旧 epoch 被误用。 */
+    public boolean updateSettings(MemoryState changed, long expectedVersion) {
+        return baseMapper.update(
+                        MemoryStateEntity.create(),
+                        Wrappers.lambdaUpdate(MemoryStateEntity.class)
+                                .eq(MemoryStateEntity::getUserId, OperatorContext.requiredUserId())
+                                .eq(MemoryStateEntity::getSettingsVersion, expectedVersion)
+                                .set(MemoryStateEntity::getRevision, changed.revision())
+                                .set(
+                                        MemoryStateEntity::getSettingsVersion,
+                                        changed.settingsVersion())
+                                .set(MemoryStateEntity::getReadEnabled, changed.readEnabled())
+                                .set(
+                                        MemoryStateEntity::getExplicitWriteEnabled,
+                                        changed.explicitWriteEnabled())
+                                .set(
+                                        MemoryStateEntity::getAutoLearningEnabled,
+                                        changed.autoLearningEnabled())
+                                .set(MemoryStateEntity::getLearningEpoch, changed.learningEpoch())
+                                .set(
+                                        MemoryStateEntity::getLearningEnabledAt,
+                                        changed.learningEnabledAt()))
+                == 1;
+    }
+
     public MemoryState lockCurrent() {
         var seed = MemoryStateEntity.create();
         // ON CONFLICT 避免并发初始化的唯一键异常污染当前事务。

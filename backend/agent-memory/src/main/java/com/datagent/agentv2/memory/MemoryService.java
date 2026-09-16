@@ -58,6 +58,42 @@ public class MemoryService {
         return new MemorySnapshot(state, current, quotas(current));
     }
 
+    /** 状态锁内完成设置 CAS 和历史结果落库；重放始终返回原提交快照，不借用当前设置。 */
+    @Transactional
+    public MemoryState updateSettings(String requestId, MemorySettingsChange change) {
+        if (requestId == null || requestId.isBlank() || change == null)
+            throw new MemoryException(MemoryStatus.INVALID_REQUEST, "设置请求无效");
+        var state = states.lockCurrent();
+        String hash = sha256(json.writeValueAsBytes(new SettingsRequest("settings", change)));
+        var previous = operations.find(requestId);
+        if (previous != null) {
+            if (!previous.payloadHash().equals(hash) || previous.settingsResult() == null)
+                throw new MemoryException(MemoryStatus.CONFLICT, "操作键已用于其他请求");
+            return previous.settingsResult();
+        }
+        if (change.expectedVersion() != state.settingsVersion())
+            throw new MemoryException(MemoryStatus.CONFLICT, "设置版本已变化");
+        var now = states.currentBusinessTime();
+        var changed = state.changed(change, now);
+        // 设置入口独立于写入开关，避免用户关闭显式写入后无法重新开启。
+        if (!changed.equals(state) && !states.updateSettings(changed, state.settingsVersion()))
+            throw new IllegalStateException("记忆设置在状态锁内发生意外版本变化");
+        operations.insert(
+                new MemoryOperation(
+                        requestId,
+                        hash,
+                        MemoryOutcome.composeFromEntry(
+                                MemoryStatus.UPDATED,
+                                null,
+                                changed.revision(),
+                                quotas(entries.listCurrent())),
+                        now,
+                        changed));
+        return changed;
+    }
+
+    private record SettingsRequest(String action, MemorySettingsChange change) {}
+
     @Transactional
     public MemoryOutcome execute(MemoryWriteContext context, MemoryCommand command) {
         var state = states.lockCurrent();
@@ -120,6 +156,9 @@ public class MemoryService {
             MemoryState state,
             List<MemoryEntry> current,
             List<MemoryEvidence> evidence) {
+        if (command instanceof MemoryCommand.Remove) return remove(context, target, state, current);
+        if (command instanceof MemoryCommand.Confirm)
+            return confirm(context, target, state, current, evidence);
         MemoryKind kind;
         String content;
         if (command instanceof MemoryCommand.Add add) {
@@ -133,9 +172,9 @@ public class MemoryService {
         }
         contentPolicy.validateContent(content);
         String hash = contentPolicy.hash(content);
-        // 删除抑制跨分类生效；显式恢复由后续完整删除/恢复生命周期统一实现。
-        if (suppressions.find(hash) != null)
-            throw new MemoryException(MemoryStatus.SUPPRESSED, "记忆已被遗忘");
+        // 恢复必须经过全部验证和最终预算后才撤销抑制；旧快照已由 authorize 拒绝。
+        var suppression = suppressions.find(hash);
+        if (suppression != null) policy.validateRestore(context, command, suppression, evidence);
         var duplicate =
                 current.stream()
                         .filter(item -> item.kind() == kind && item.normalizedHash().equals(hash))
@@ -153,6 +192,7 @@ public class MemoryService {
                         MemoryStatus.ALREADY_EXISTS, duplicate, state.revision(), quotas(current));
             }
             // 明确重复属于人工确认：保留原文/来源且提升保护；输入即使超长也不增加库存。
+            // 即使携带 restore，也没有新建已删除条目，不撤销另一分类删除产生的抑制。
             var confirmed =
                     duplicate.revised(
                             duplicate.content(),
@@ -174,6 +214,7 @@ public class MemoryService {
         if (finalUsed > contentPolicy.limit(kind)) {
             throw new MemoryException(MemoryStatus.QUOTA_EXCEEDED, "记忆超过分类容量限制");
         }
+        if (suppression != null) suppressions.deleteByHash(hash);
         var now = states.currentBusinessTime();
         var changed =
                 target == null
@@ -184,7 +225,10 @@ public class MemoryService {
                                 hash,
                                 source(context, explicit),
                                 explicit,
-                                now)
+                                now,
+                                context.caller() == MemoryWriteContext.Caller.UI
+                                        ? null
+                                        : context.promptVersion())
                         : target.revised(content, hash, explicit, now);
         persistRevision(changed, target, state);
         appendEvidence(context, changed, evidence);
@@ -196,6 +240,57 @@ public class MemoryService {
                 changed,
                 state.revision() + 1,
                 quotas(finalEntries));
+    }
+
+    /** 物理删除与跨分类抑制同事务提交；CAS 失败属于边界破坏，必须整体回滚。 */
+    private MemoryOutcome remove(
+            MemoryWriteContext context,
+            MemoryEntry target,
+            MemoryState state,
+            List<MemoryEntry> current) {
+        evidenceStore.deleteByMemoryId(target.memoryId());
+        if (!entries.deletePhysical(target.memoryId(), target.version()))
+            throw new IllegalStateException("记忆删除在状态锁内发生意外版本变化");
+        // 同指纹可能已存在另一分类的删除事件，以最新删除时刻约束此后的恢复证据。
+        suppressions.deleteByHash(target.normalizedHash());
+        suppressions.insert(
+                new MemorySuppression(
+                        target.normalizationVersion(),
+                        target.normalizedHash(),
+                        state.revision() + 1,
+                        states.currentBusinessTime(),
+                        context.requestId()));
+        if (!states.advanceRevision(state.revision()))
+            throw new IllegalStateException("记忆状态在持锁期间发生意外版本变化");
+        var remaining = new ArrayList<>(current);
+        remaining.remove(target);
+        return MemoryOutcome.composeFromEntry(
+                        MemoryStatus.REMOVED, target, state.revision() + 1, quotas(remaining))
+                .withTargetExists(false);
+    }
+
+    /** 同证据的重复确认没有状态变化；只读和自动重复不能延长事实的确认寿命。 */
+    private MemoryOutcome confirm(
+            MemoryWriteContext context,
+            MemoryEntry target,
+            MemoryState state,
+            List<MemoryEntry> current,
+            List<MemoryEvidence> evidence) {
+        boolean fresh = false;
+        for (var item : evidence)
+            fresh |= evidenceStore.append(target.memoryId(), item, context.promptVersion());
+        if (!fresh)
+            return MemoryOutcome.composeFromEntry(
+                    MemoryStatus.CONFIRMED, target, state.revision(), quotas(current));
+        var changed =
+                target.revised(
+                        target.content(),
+                        target.normalizedHash(),
+                        false,
+                        states.currentBusinessTime());
+        persistRevision(changed, target, state);
+        return MemoryOutcome.composeFromEntry(
+                MemoryStatus.CONFIRMED, changed, state.revision() + 1, quotas(current));
     }
 
     private void persistRevision(MemoryEntry changed, MemoryEntry original, MemoryState state) {
@@ -227,7 +322,8 @@ public class MemoryService {
                             states.currentBusinessTime());
             evidenceStore.append(target.memoryId(), event);
         } else {
-            evidence.forEach(item -> evidenceStore.append(target.memoryId(), item));
+            evidence.forEach(
+                    item -> evidenceStore.append(target.memoryId(), item, context.promptVersion()));
         }
     }
 

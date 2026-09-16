@@ -17,6 +17,11 @@ public class MemoryEvidenceService extends ServiceImpl<MemoryEvidenceMapper, Mem
     private final MemoryPersistenceMapper models;
 
     public void append(String memoryId, MemoryEvidence evidence) {
+        append(memoryId, evidence, null);
+    }
+
+    /** 返回是否首次追加；调用方仅在出现新证据时刷新后台确认时间。 */
+    public boolean append(String memoryId, MemoryEvidence evidence, String promptVersion) {
         // 统一写入服务已持有用户状态锁；同一证据可被多个操作再次引用，但关联只保存一次。
         if (lambdaQuery()
                 .eq(MemoryEvidenceEntity::getUserId, OperatorContext.requiredUserId())
@@ -26,11 +31,12 @@ public class MemoryEvidenceService extends ServiceImpl<MemoryEvidenceMapper, Mem
                         evidence.kind().name().toLowerCase(java.util.Locale.ROOT))
                 .eq(MemoryEvidenceEntity::getEvidenceId, evidence.evidenceId())
                 .exists()) {
-            return;
+            return false;
         }
-        var entity = models.toEntity(evidence);
+        var entity = models.toEntity(evidence, promptVersion);
         entity.setMemoryId(memoryId);
         save(entity);
+        return true;
     }
 
     public void deleteByMemoryId(String memoryId) {

@@ -40,6 +40,19 @@ public record MemoryEntry(
             MemorySource source,
             boolean userProtected,
             LocalDateTime now) {
+        return composeFromNewMemory(id, kind, content, hash, source, userProtected, now, null);
+    }
+
+    /** 模型新建记录实际提示词版本；人工路径由调用方传空。 */
+    public static MemoryEntry composeFromNewMemory(
+            String id,
+            MemoryKind kind,
+            String content,
+            String hash,
+            MemorySource source,
+            boolean userProtected,
+            LocalDateTime now,
+            String promptVersion) {
         return new MemoryEntry(
                 id,
                 kind,
@@ -53,7 +66,7 @@ public record MemoryEntry(
                 now,
                 now,
                 now,
-                null);
+                promptVersion);
     }
 
     /** 修订或人工明确确认均推进条目版本；原始来源、创建时间及提示词版本不会被改写。 */

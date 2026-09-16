@@ -56,11 +56,12 @@ public interface MemoryPersistenceMapper {
     @Mapping(target = "memoryId", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
-    @Mapping(target = "evidenceCreatedAt", source = "createdAt")
+    @Mapping(target = "evidenceCreatedAt", source = "model.createdAt")
     @Mapping(
             target = "kind",
             expression = "java(model.kind().name().toLowerCase(java.util.Locale.ROOT))")
-    MemoryEvidenceEntity toEntity(MemoryEvidence model);
+    @Mapping(target = "promptVersion", source = "promptVersion")
+    MemoryEvidenceEntity toEntity(MemoryEvidence model, String promptVersion);
 
     MemorySuppression toModel(MemorySuppressionEntity entity);
 

@@ -21,6 +21,30 @@ public record MemoryState(
         boolean autoLearningEnabled,
         long learningEpoch,
         LocalDateTime learningEnabledAt) {
+    /** 空字段保持原设置；仅实际切换推进版本，学习开关独立推进代次和启用边界。 */
+    public MemoryState changed(MemorySettingsChange change, LocalDateTime now) {
+        boolean read = change.readEnabled() == null ? readEnabled : change.readEnabled();
+        boolean explicit =
+                change.explicitWriteEnabled() == null
+                        ? explicitWriteEnabled
+                        : change.explicitWriteEnabled();
+        boolean auto =
+                change.autoLearningEnabled() == null
+                        ? autoLearningEnabled
+                        : change.autoLearningEnabled();
+        if (read == readEnabled && explicit == explicitWriteEnabled && auto == autoLearningEnabled)
+            return this;
+        boolean learningChanged = auto != autoLearningEnabled;
+        return new MemoryState(
+                revision + 1,
+                settingsVersion + 1,
+                read,
+                explicit,
+                auto,
+                learningEpoch + (learningChanged ? 1 : 0),
+                learningChanged ? (auto ? now : null) : learningEnabledAt);
+    }
+
     public MemoryState {
         if (revision < 0 || settingsVersion < 0 || learningEpoch < 1) {
             throw new IllegalArgumentException("记忆状态版本不得越界");

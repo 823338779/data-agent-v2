@@ -13,6 +13,9 @@ import lombok.Setter;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @TableName("personal_memory_evidence")
 public final class MemoryEvidenceEntity extends MemoryRow {
+    /** 首次关联的实际模型提示词版本；人工操作及未提供版本的旧调用为空。 */
+    private String promptVersion;
+
     private String memoryId;
     private String evidenceId;
     private String kind;

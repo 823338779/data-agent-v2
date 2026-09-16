@@ -12,6 +12,9 @@ import lombok.Setter;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @TableName("personal_memory_operation")
 public final class MemoryOperationEntity extends MemoryRow {
+    /** 设置操作提交时的完整快照 JSON；普通操作为空，不包含个人正文。 */
+    private String settingsResult;
+
     private String requestId;
     private String payloadHash;
     private String outcomeStatus;

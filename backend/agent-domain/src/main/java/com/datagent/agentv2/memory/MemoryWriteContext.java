@@ -9,7 +9,19 @@ public record MemoryWriteContext(
         String executionId,
         String conversationId,
         Long expectedRevision,
-        MemoryReviewClaim reviewClaim) {
+        MemoryReviewClaim reviewClaim,
+        /** 服务端冻结的实际提示词版本，旧调用未提供时为空；不作为模型工具参数。 */
+        String promptVersion) {
+    public MemoryWriteContext(
+            Caller caller,
+            String requestId,
+            String executionId,
+            String conversationId,
+            Long expectedRevision,
+            MemoryReviewClaim reviewClaim) {
+        this(caller, requestId, executionId, conversationId, expectedRevision, reviewClaim, null);
+    }
+
     public enum Caller {
         UI,
         MAIN,
