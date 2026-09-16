@@ -16,6 +16,7 @@ import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
 import com.datagent.agentv2.conversation.stream.ExecutionStreamCheckpointCoordinator;
 import com.datagent.agentv2.conversation.tool.PreparedToolInvocation;
 import com.datagent.agentv2.git.GitFinalAnswerComposer;
+import com.datagent.agentv2.memory.MemoryReviewMarker;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
@@ -50,6 +51,7 @@ public class ModelInvocationCoordinator {
     private final AgentExecutionEventService events;
     private final IdGenerator ids;
     private final ObjectProvider<GitFinalAnswerComposer> gitFinalAnswers;
+    private final MemoryReviewMarker memoryReviewMarker;
     private final ConcurrentMap<ModelThinkingKey, UUID> activeThinkingItems =
             new ConcurrentHashMap<>();
 
@@ -154,6 +156,8 @@ public class ModelInvocationCoordinator {
                         sessions.nextExecutionEventSequence(run.conversationSessionId()),
                         ExecutionEventType.DONE,
                         now));
+        // 可靠标记与最终正文、DONE 同事务；失败必须向外传播，使完成状态一并回滚。
+        memoryReviewMarker.markCompleted(run.executionId());
     }
 
     private AgentExecution lockRunning(LocalAgentExecution run, Instant now) {

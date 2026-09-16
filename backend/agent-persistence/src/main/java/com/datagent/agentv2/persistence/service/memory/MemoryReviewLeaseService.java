@@ -41,18 +41,30 @@ public class MemoryReviewLeaseService
     }
 
     public boolean compareAndSet(MemoryReviewLease lease, long expectedToken) {
+        return compareAndSet(lease, expectedToken, null);
+    }
+
+    /** 与任务更新同事务；这里失败时调用方必须回滚前一条任务更新，不能部分续租或完成。 */
+    public boolean compareAndSetActive(MemoryReviewLease lease, MemoryReviewClaim claim) {
+        return compareAndSet(lease, claim.userToken(), claim);
+    }
+
+    private boolean compareAndSet(
+            MemoryReviewLease lease, long expectedToken, MemoryReviewClaim claim) {
         // 显式 SET 可空列，保证释放租约不会被默认非空更新策略忽略。
-        return baseMapper.update(
-                        MemoryReviewLeaseEntity.create(),
-                        Wrappers.lambdaUpdate(MemoryReviewLeaseEntity.class)
-                                .eq(
-                                        MemoryReviewLeaseEntity::getUserId,
-                                        OperatorContext.requiredUserId())
-                                .eq(MemoryReviewLeaseEntity::getFencingToken, expectedToken)
-                                .set(MemoryReviewLeaseEntity::getFencingToken, lease.fencingToken())
-                                .set(MemoryReviewLeaseEntity::getOwner, lease.owner())
-                                .set(MemoryReviewLeaseEntity::getLeaseUntil, lease.leaseUntil()))
-                == 1;
+        var update =
+                Wrappers.lambdaUpdate(MemoryReviewLeaseEntity.class)
+                        .eq(MemoryReviewLeaseEntity::getUserId, OperatorContext.requiredUserId())
+                        .eq(MemoryReviewLeaseEntity::getFencingToken, expectedToken)
+                        .set(MemoryReviewLeaseEntity::getFencingToken, lease.fencingToken())
+                        .set(MemoryReviewLeaseEntity::getOwner, lease.owner())
+                        .set(MemoryReviewLeaseEntity::getLeaseUntil, lease.leaseUntil());
+        if (claim != null) {
+            update.eq(MemoryReviewLeaseEntity::getOwner, claim.owner())
+                    .ge(MemoryReviewLeaseEntity::getLeaseUntil, claim.leaseUntil())
+                    .apply("lease_until > clock_timestamp()");
+        }
+        return baseMapper.update(MemoryReviewLeaseEntity.create(), update) == 1;
     }
 
     public boolean validateClaim(MemoryReviewClaim claim) {

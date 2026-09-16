@@ -20,7 +20,7 @@ public interface MemoryReviewJobMapper extends BaseMapper<MemoryReviewJobEntity>
                 ON l.tenant_id=j.tenant_id AND l.user_id=j.user_id
              WHERE j.tenant_id=#{tenantId} AND j.user_id=#{userId}
                AND j.job_id=#{jobId} AND j.conversation_id=#{conversationId}
-               AND j.learning_epoch=#{epoch} AND j.fencing_token=#{jobToken}
+               AND j.learning_epoch=#{epoch} AND j.fencing_token=#{jobToken} AND j.status='RUNNING'
                AND l.fencing_token=#{userToken} AND j.owner=#{owner} AND l.owner=#{owner}
                AND j.claimed_generation=#{claimedGeneration}
                AND j.reviewed_through_sequence=#{fromSequence}
