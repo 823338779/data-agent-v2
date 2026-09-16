@@ -11,8 +11,14 @@ import com.datagent.agentv2.memory.review.*;
 import com.datagent.agentv2.memory.tool.*;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.model.ollama.autoconfigure.OllamaApiAutoConfiguration;
+import org.springframework.ai.model.ollama.autoconfigure.OllamaConnectionDetails;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.test.util.ReflectionTestUtils;
 import tools.jackson.databind.ObjectMapper;
 
 class MemoryReviewModelAdapterTest {
@@ -84,7 +90,61 @@ class MemoryReviewModelAdapterTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    void effectiveEndpointChangesFingerprintButSameEndpointAndRawPropertyOverrideRemainStable() {
+        when(estimator.strategyId()).thenReturn("test");
+        String original =
+                configuredFingerprint(
+                        "http://effective-one.invalid:11434", "http://ignored-one.invalid:11434");
+        String restarted =
+                configuredFingerprint(
+                        "http://effective-one.invalid:11434", "http://ignored-two.invalid:11434");
+        assertThat(restarted).isEqualTo(original);
+        String changed =
+                configuredFingerprint(
+                        "http://effective-two.invalid:11434", "http://ignored-two.invalid:11434");
+        assertThat(changed).isNotEqualTo(original);
+        assertThat(changed).matches("[a-f0-9]{64}");
+    }
+
+    @Test
+    void absentConnectionDetailsAreStableAndOtherProviderDoesNotResolveThem() {
+        when(estimator.strategyId()).thenReturn("test");
+        ObjectProvider<OllamaConnectionDetails> connections = mock(ObjectProvider.class);
+        assertThat(adapter(connections).configurationFingerprint())
+                .isEqualTo(adapter(connections).configurationFingerprint());
+        var codexAdapter = adapter(connections);
+        ReflectionTestUtils.setField(codexAdapter, "provider", "codex");
+        clearInvocations(connections);
+        when(connections.getIfAvailable()).thenThrow(new AssertionError("Codex 不应解析 Ollama 地址"));
+        String fingerprint = codexAdapter.configurationFingerprint();
+        assertThat(codexAdapter.configurationFingerprint()).isEqualTo(fingerprint);
+        verifyNoInteractions(connections);
+    }
+
+    private String configuredFingerprint(String effective, String raw) {
+        var result = new AtomicReference<String>();
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(OllamaApiAutoConfiguration.class))
+                .withPropertyValues("spring.ai.ollama.base-url=" + raw)
+                .withBean(OllamaConnectionDetails.class, () -> () -> effective)
+                .run(
+                        context -> {
+                            assertThat(context).hasSingleBean(OllamaConnectionDetails.class);
+                            assertThat(context.getBean(OllamaConnectionDetails.class).getBaseUrl())
+                                    .isEqualTo(effective);
+                            result.set(
+                                    adapter(context.getBeanProvider(OllamaConnectionDetails.class))
+                                            .configurationFingerprint());
+                        });
+        return result.get();
+    }
+
     MemoryReviewModelAdapter adapter() {
+        return adapter(mock(ObjectProvider.class));
+    }
+
+    MemoryReviewModelAdapter adapter(ObjectProvider<OllamaConnectionDetails> connections) {
         ObjectProvider<AgentModelGateway> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(gateway);
         return new MemoryReviewModelAdapter(
@@ -100,7 +160,8 @@ class MemoryReviewModelAdapterTest {
                 strategy,
                 ollama,
                 new CodexModelProperties(),
-                generic);
+                generic,
+                connections);
     }
 
     MemoryReviewInput input() {

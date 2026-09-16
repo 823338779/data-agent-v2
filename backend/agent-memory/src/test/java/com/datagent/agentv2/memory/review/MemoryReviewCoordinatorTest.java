@@ -95,6 +95,29 @@ class MemoryReviewCoordinatorTest {
         assertThat(jobs.find("job").failureCount()).isEqualTo(1);
     }
 
+    @Test
+    void exhaustedRetriesRemainBlockedForSameFingerprintAndRecoverForChangedFingerprint() {
+        String unreachableConfiguration =
+                MemoryReviewWorker.digest("unreachable-model-configuration");
+        String repairedConfiguration = MemoryReviewWorker.digest("repaired-model-configuration");
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            coordinator.fail(
+                    claim("attempt-" + attempt), "MODEL_FAILURE", false, unreachableConfiguration);
+            due();
+        }
+        assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.BLOCKED);
+        assertThat(jobs.find("job").failureCount()).isEqualTo(3);
+        coordinator.reactivateBlocked(unreachableConfiguration, 4);
+        coordinator.reactivateBlocked(unreachableConfiguration, 4);
+        assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.BLOCKED);
+        assertThat(jobs.find("job").failureCount()).isEqualTo(3);
+        coordinator.reactivateBlocked(repairedConfiguration, 4);
+        assertThat(jobs.find("job").status()).isEqualTo(MemoryReviewJob.Status.PENDING);
+        assertThat(jobs.find("job").failureCount()).isZero();
+        assertThat(jobs.find("job").reviewedThroughSequence()).isEqualTo(10);
+        assertThat(claim("repaired").fromSequence()).isEqualTo(10);
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"replace", "confirm"})
     void partialSuccessSurvivesFreshTargetVersionAndUnrelatedRevisionConflict(String action) {

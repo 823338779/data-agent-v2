@@ -11,6 +11,7 @@ import com.datagent.agentv2.memory.tool.MemoryTool;
 import com.datagent.agentv2.platform.context.TenantContext;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
+import org.springframework.ai.model.ollama.autoconfigure.OllamaConnectionDetails;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -35,6 +36,7 @@ public final class MemoryReviewModelAdapter implements MemoryReviewModelPort {
     private final OllamaModelProperties ollama;
     private final CodexModelProperties codex;
     private final ContextModelInputProperties generic;
+    private final ObjectProvider<OllamaConnectionDetails> ollamaConnections;
 
     @Override
     public int maxInputTokens() {
@@ -62,8 +64,13 @@ public final class MemoryReviewModelAdapter implements MemoryReviewModelPort {
         } catch (IllegalStateException absent) {
             settings.put("estimator", "missing");
         }
-        if ("ollama".equals(provider)) settings.put("model", json.valueToTree(ollama));
-        else {
+        if ("ollama".equals(provider)) {
+            settings.put("model", json.valueToTree(ollama));
+            // 与 OllamaApi 自动装配读取同一有效连接详情；raw 属性可能已被服务连接覆盖，不能据其判断恢复。
+            // 地址仅参与最终安全摘要；缺少连接配置时也保持稳定，不阻止非 Ollama 或缺配置场景启动。
+            var connection = ollamaConnections.getIfAvailable();
+            settings.put("endpoint", connection == null ? null : connection.getBaseUrl());
+        } else {
             settings.put("model", json.valueToTree(codex));
             settings.put("budget", json.valueToTree(generic));
         }
