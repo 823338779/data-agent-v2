@@ -10,8 +10,10 @@ import com.datagent.agentv2.context.lsm.domain.ConversationTurn;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
 import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.domain.LsmSummarySegment;
+import com.datagent.agentv2.context.lsm.persistence.entity.LsmContextManifestEntity;
 import com.datagent.agentv2.context.lsm.persistence.entity.LsmSummarySegmentEntity;
 import com.datagent.agentv2.context.lsm.persistence.json.LsmDocumentCodec;
+import com.datagent.agentv2.context.lsm.persistence.repository.LsmContextManifestRepository;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmSummarySegmentRepository;
 import com.datagent.agentv2.context.lsm.planning.ConversationTokenEstimator;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.CandidateInput;
@@ -19,10 +21,19 @@ import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextExecutionControlPort;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
+import com.datagent.agentv2.conversation.context.ContextToolCall;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
+import com.datagent.agentv2.conversation.context.RuntimeContextContribution;
+import com.datagent.agentv2.conversation.context.RuntimeContextInput;
+import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.persistence.service.AgentExecutionService;
+import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import tools.jackson.databind.json.JsonMapper;
 
 class LsmConversationContextAssemblerTest {
@@ -38,6 +49,218 @@ class LsmConversationContextAssemblerTest {
     private static final String CANCELLED_ORPHAN_DOCUMENT = "{\"orphan\":\"cancelled\"}";
     private static final String SUPERSEDED_ORPHAN_DOCUMENT = "{\"orphan\":\"superseded\"}";
     private static final String CAS_LOSER_ORPHAN_DOCUMENT = "{\"orphan\":\"cas-loser\"}";
+
+    @Test
+    void hardBoundaryKeepsNecessaryMessagesAndOmitsOptionalMemory() {
+        var base = request(new ContextBudget(2000, 1, 0, 0));
+        var raw = List.of(ContextMessage.user("latest"));
+        int necessary =
+                new ConversationTokenEstimator().estimateCompleteInput(base, raw)
+                        + new ConversationTokenEstimator()
+                                .estimateMessages(
+                                        List.of(ContextMessage.user("evidence_id=real-user")));
+        var tight = withMemory(request(new ContextBudget(necessary + 1, 1, 0, 0)));
+        var turns =
+                List.of(
+                        new LsmConversationContextAssembler.TurnSource(
+                                new ConversationTurn(1, raw, false), 1, 1));
+        var state =
+                new LsmConversationContextAssembler.ContextState(
+                        tight,
+                        policy(),
+                        turns,
+                        raw,
+                        new LsmContextManifest(null, List.of(), 1L, 1L, 0, 3, 2),
+                        List.of(),
+                        necessary);
+        var prepared = assembler(mock(LsmSummarySegmentRepository.class)).prepareCurrentView(state);
+        assertThat(prepared.estimatedInputTokens())
+                .isEqualTo(tight.budget().hardInputLimitTokens());
+        assertThat(prepared.runtimeStatistics().injected()).isZero();
+        assertThat(prepared.messages()).containsAll(raw);
+    }
+
+    @Test
+    void loadsPersistentMessagesWithoutChangingThemAndBudgetsOnlySelectedRuntimeCost() {
+        var executions = mock(AgentExecutionService.class);
+        var messages = mock(ConversationMessageService.class);
+        var manifests = mock(LsmContextManifestRepository.class);
+        var execution = new AgentExecution();
+        execution.setConversationSessionId("session");
+        when(executions.findByExecutionId("execution")).thenReturn(execution);
+        var rows = new ArrayList<ConversationMessage>();
+        for (int i = 1; i <= 21; i++) {
+            rows.add(
+                    ConversationMessage.user(
+                            "u" + i, "session", "old".repeat(20), i * 2 - 1, "user"));
+            rows.add(
+                    ConversationMessage.assistant(
+                            "a" + i, "session", "execution", "answer", i * 2));
+        }
+        when(messages.findByConversationSessionIdUpTo("session", 42)).thenReturn(rows);
+        var manifest = new LsmContextManifestEntity();
+        manifest.setActiveSegmentIds("[]");
+        manifest.setGeneration(0L);
+        manifest.setEffectivePolicyVersion(1);
+        manifest.setEffectiveFanout(3);
+        manifest.setEffectiveMaxLevel(2);
+        when(manifests.findManifest("session")).thenReturn(java.util.Optional.of(manifest));
+        var assembler =
+                new LsmConversationContextAssembler(
+                        executions,
+                        messages,
+                        manifests,
+                        mock(LsmSummarySegmentRepository.class),
+                        new LsmDocumentCodec(),
+                        new ConversationTokenEstimator(),
+                        mock(ContextExecutionControlPort.class),
+                        null,
+                        JsonMapper.builder().build());
+        var base = request(new ContextBudget(2800, 1, 0, 0));
+        var before = rows.stream().map(ConversationMessage::getContent).toList();
+        var rawState = assembler.loadAndEstimate(base, policy());
+        var enriched = withMemory(base);
+        var state = assembler.loadAndEstimate(enriched, policy());
+        var prepared = assembler.prepareCurrentView(state);
+        assertThat(state.estimatedTokens()).isEqualTo(prepared.estimatedInputTokens());
+        assertThat(prepared.runtimeStatistics().injected()).isEqualTo(1);
+        var planning = assembler.toCompactionRequest(state);
+        int runtimeCost = state.estimatedTokens() - rawState.estimatedTokens();
+        assertThat(planning.planningInput().historyMemoryBudget())
+                .isEqualTo(
+                        assembler
+                                        .toCompactionRequest(rawState)
+                                        .planningInput()
+                                        .historyMemoryBudget()
+                                - runtimeCost);
+        assertThat(planning.candidateInputs())
+                .isNotEmpty()
+                .allSatisfy(
+                        c ->
+                                assertThat(c.generationRequest().sourceDocument())
+                                        .doesNotContain("用户主要使用中文", "evidence_id"));
+        assertThat(rows)
+                .extracting(ConversationMessage::getContent)
+                .containsExactlyElementsOf(before);
+        Mockito.verify(messages, Mockito.times(2)).findByConversationSessionIdUpTo("session", 42);
+        Mockito.verifyNoMoreInteractions(messages);
+    }
+
+    @Test
+    void personalMemoryIsTransientUserContextWithPairedToolsAndFinalStatistics() {
+        var enriched = withMemory(request(new ContextBudget(2000, 100, 100, 0)));
+        var call =
+                new ContextMessage(
+                        ContextMessage.Role.ASSISTANT,
+                        "",
+                        null,
+                        List.of(new ContextToolCall("call", "tool", Map.of())),
+                        null,
+                        null);
+        var result = ContextMessage.tool("result", "call", "tool");
+        var raw = List.of(ContextMessage.user("latest"), call, result);
+        var turns =
+                List.of(
+                        new LsmConversationContextAssembler.TurnSource(
+                                new ConversationTurn(1, raw, false), 1, 2));
+        var state =
+                new LsmConversationContextAssembler.ContextState(
+                        enriched,
+                        policy(),
+                        turns,
+                        raw,
+                        new LsmContextManifest(null, List.of(), 1L, 1L, 0, 3, 2),
+                        List.of(),
+                        0);
+        var prepared = assembler(mock(LsmSummarySegmentRepository.class)).prepareCurrentView(state);
+        assertThat(prepared.messages())
+                .extracting(ContextMessage::content)
+                .containsExactly(
+                        "fixed-system",
+                        "evidence_id=real-user",
+                        "历史数据\n用户主要使用中文",
+                        "latest",
+                        "",
+                        "result");
+        assertThat(prepared.messages().get(2).role()).isEqualTo(ContextMessage.Role.USER);
+        assertThat(prepared.messages()).containsSubsequence(call, result);
+        assertThat(state.rawMessages()).isEqualTo(raw);
+        assertThat(state.turns()).isEqualTo(turns);
+        assertThat(prepared.estimatedInputTokens())
+                .isLessThanOrEqualTo(enriched.budget().hardInputLimitTokens());
+        assertThat(prepared.runtimeStatistics().injected()).isEqualTo(1);
+        assertThat(prepared.runtimeStatistics().omitted()).isZero();
+        assertThat(prepared.runtimeStatistics().contributionTokens())
+                .isEqualTo(
+                        new ConversationTokenEstimator()
+                                .estimateMessages(List.of(prepared.messages().get(2))));
+    }
+
+    @Test
+    void optionalMemoryCannotTriggerCompressionOrPolluteCompactionSources() {
+        var base = request(new ContextBudget(2000, 100, 100, 0));
+        var turns = turns(41);
+        var raw = turns.stream().flatMap(t -> t.turn().messages().stream()).toList();
+        int necessary =
+                new ConversationTokenEstimator().estimateCompleteInput(base, raw)
+                        + new ConversationTokenEstimator()
+                                .estimateMessages(
+                                        List.of(ContextMessage.user("evidence_id=real-user")));
+        var tight =
+                withMemory(request(new ContextBudget((int) Math.ceil(necessary / .75), 1, 0, 0)));
+        var state =
+                new LsmConversationContextAssembler.ContextState(
+                        tight,
+                        policy(),
+                        turns,
+                        raw,
+                        new LsmContextManifest(null, List.of(), 1L, 1L, 0, 3, 2),
+                        List.of(),
+                        necessary);
+        var assembler = assembler(mock(LsmSummarySegmentRepository.class));
+        var prepared = assembler.prepareCurrentView(state);
+        assertThat(prepared.estimatedInputTokens())
+                .isLessThanOrEqualTo(policy().softTriggerTokens(tight.budget()));
+        assertThat(prepared.runtimeStatistics().injected()).isZero();
+        assertThat(prepared.runtimeStatistics().omitted()).isEqualTo(1);
+        assertThat(prepared.messages()).containsAll(raw);
+        var metadataOnly =
+                new ConversationContextRequest(
+                        tight.execution(),
+                        tight.budget(),
+                        tight.fixedSystemMessages(),
+                        tight.toolDefinitions(),
+                        new RuntimeContextInput(tight.runtimeInput().metadata(), List.of()));
+        var withoutOptional =
+                new LsmConversationContextAssembler.ContextState(
+                        metadataOnly, policy(), turns, raw, state.manifest(), List.of(), necessary);
+        assertThat(assembler.toCompactionRequest(state).planningInput().historyMemoryBudget())
+                .isEqualTo(
+                        assembler
+                                .toCompactionRequest(withoutOptional)
+                                .planningInput()
+                                .historyMemoryBudget());
+
+        assertThat(assembler.toCompactionRequest(state).candidateInputs())
+                .isNotEmpty()
+                .allSatisfy(
+                        candidate ->
+                                assertThat(candidate.generationRequest().sourceDocument())
+                                        .doesNotContain("用户主要使用中文", "evidence_id"));
+    }
+
+    private static ConversationContextRequest withMemory(ConversationContextRequest request) {
+        return new ConversationContextRequest(
+                request.execution(),
+                request.budget(),
+                request.fixedSystemMessages(),
+                request.toolDefinitions(),
+                new RuntimeContextInput(
+                        List.of(ContextMessage.user("evidence_id=real-user")),
+                        List.of(
+                                new RuntimeContextContribution(
+                                        "personal-memory", "历史数据", List.of("用户主要使用中文"), 1024))));
+    }
 
     @Test
     void higherLevelCandidateReadsOrderedDirectChildSummariesWithoutRawTurns() {
@@ -78,7 +301,7 @@ class LsmConversationContextAssemblerTest {
     void publishedViewUsesOnlyAuthorizedActiveSegmentsForEveryBudget() {
         LsmSummarySegmentRepository segments = mock(LsmSummarySegmentRepository.class);
         LsmConversationContextAssembler delegate = assembler(segments);
-        LsmConversationContextAssembler assembler = org.mockito.Mockito.spy(delegate);
+        LsmConversationContextAssembler assembler = Mockito.spy(delegate);
         LsmContextManifest manifest =
                 new LsmContextManifest(
                         "root", List.of("root", "cold", "warm-parent"), null, null, 3, 3, 2);
@@ -153,7 +376,7 @@ class LsmConversationContextAssemblerTest {
     void rootAndTailUseOneNonOverlappingAuthorizedFrontier() {
         LsmSummarySegmentRepository segments = mock(LsmSummarySegmentRepository.class);
         LsmConversationContextAssembler delegate = assembler(segments);
-        LsmConversationContextAssembler assembler = org.mockito.Mockito.spy(delegate);
+        LsmConversationContextAssembler assembler = Mockito.spy(delegate);
         ConversationContextRequest request = request(new ContextBudget(2_000, 100, 100, 0));
         LsmContextManifest manifest =
                 new LsmContextManifest("root", List.of("root", "warm-parent"), null, null, 3, 3, 2);
@@ -228,7 +451,7 @@ class LsmConversationContextAssemblerTest {
     void inputFrontierRejectsReadyCancelledSupersededAndCasLoserOrphans() {
         LsmSummarySegmentRepository segments = mock(LsmSummarySegmentRepository.class);
         LsmConversationContextAssembler delegate = assembler(segments);
-        LsmConversationContextAssembler assembler = org.mockito.Mockito.spy(delegate);
+        LsmConversationContextAssembler assembler = Mockito.spy(delegate);
         ConversationContextRequest request = request(new ContextBudget(600, 50, 50, 0));
         LsmContextManifest manifest =
                 new LsmContextManifest(null, List.of("warm-parent"), null, null, 3, 3, 2);
@@ -319,7 +542,7 @@ class LsmConversationContextAssemblerTest {
     void rejectsNonContinuousManifestStorageFrontier() {
         LsmSummarySegmentRepository segments = mock(LsmSummarySegmentRepository.class);
         LsmConversationContextAssembler delegate = assembler(segments);
-        LsmConversationContextAssembler assembler = org.mockito.Mockito.spy(delegate);
+        LsmConversationContextAssembler assembler = Mockito.spy(delegate);
         ConversationContextRequest request = request(new ContextBudget(2_000, 100, 100, 0));
         LsmContextManifest manifest =
                 new LsmContextManifest(null, List.of("one", "three"), null, null, 1, 3, 2);

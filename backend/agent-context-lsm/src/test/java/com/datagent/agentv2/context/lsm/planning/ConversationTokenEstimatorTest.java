@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
+import com.datagent.agentv2.conversation.context.ContextInputEstimator;
 import com.datagent.agentv2.conversation.context.ContextMessage;
 import com.datagent.agentv2.conversation.context.ContextToolCall;
 import com.datagent.agentv2.conversation.context.ContextToolDefinition;
@@ -40,6 +41,22 @@ class ConversationTokenEstimatorTest {
     private static final int FIXED_INPUT_TOKENS = 17;
 
     private final ConversationTokenEstimator estimator = new ConversationTokenEstimator();
+
+    @Test
+    void pureEstimatorPreservesStrategyAndExistingTextUnit() {
+        ContextInputEstimator pure = new ConversationTokenEstimator();
+        assertThat(pure.strategyId()).isEqualTo("lsm");
+        var base =
+                new ConversationContextRequest(
+                        new ContextExecutionRef("tenant", "session", "execution", 1),
+                        new ContextBudget(1000, 1, 0, 0),
+                        List.of(),
+                        List.of());
+        int difference =
+                pure.estimateCompleteInput(base, List.of(ContextMessage.user("中")))
+                        - pure.estimateCompleteInput(base, List.of(ContextMessage.user("")));
+        assertThat(difference).isEqualTo(1);
+    }
 
     @Test
     void estimatesCjkLatinAndJsonConservatively() {

@@ -28,6 +28,7 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -45,12 +46,83 @@ class MemoryToolTest {
     }
 
     @Test
+    void invalidListParametersNeverReadSnapshot() {
+        for (String parameters :
+                List.of(
+                        "{\"action\":\"list\",\"kind\":\"unknown\"}",
+                        "{\"action\":\"list\",\"cursor\":3}",
+                        "{\"action\":\"list\",\"limit\":101}")) {
+            assertThatThrownBy(() -> tool.execute(json.readTree(parameters), invocation()))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        Mockito.verifyNoInteractions(service);
+    }
+
+    @Test
     void exposesConditionalSchemaAndSupportsIdempotency() {
         JsonNode schema = tool.parametersSchema();
 
         assertThat(tool.name()).isEqualTo("memory");
         assertThat(tool.supportsIdempotency()).isTrue();
         assertThat(schema.path("oneOf")).hasSize(4);
+        var required =
+                Map.of(
+                        "add",
+                                List.of(
+                                        "action",
+                                        "kind",
+                                        "content",
+                                        "write_reason",
+                                        "evidence_message_ids"),
+                        "list", List.of("action"),
+                        "replace",
+                                List.of(
+                                        "action",
+                                        "memory_id",
+                                        "expected_version",
+                                        "new_content",
+                                        "write_reason",
+                                        "evidence_message_ids"),
+                        "remove",
+                                List.of(
+                                        "action",
+                                        "memory_id",
+                                        "expected_version",
+                                        "write_reason",
+                                        "evidence_message_ids"));
+        assertThat(schema.path("type").asString()).isEqualTo("object");
+        for (JsonNode branch : schema.path("oneOf")) {
+            var properties = branch.path("properties");
+            String action = properties.path("action").path("const").asString();
+            assertThat(branch.path("additionalProperties").asBoolean()).isFalse();
+            assertThat(branch.path("additionalProperties").isBoolean()).isTrue();
+            assertThat(branch.path("required"))
+                    .extracting(JsonNode::asString)
+                    .containsExactlyInAnyOrderElementsOf(required.get(action));
+            for (String field : properties.propertyNames()) {
+                if (field.equals("action")) {
+                    assertThat(properties.path(field).path("const").isTextual()).isTrue();
+                    continue;
+                }
+                String type =
+                        switch (field) {
+                            case "expected_version", "limit" -> "integer";
+                            case "restore" -> "boolean";
+                            case "evidence_message_ids" -> "array";
+                            default -> "string";
+                        };
+                assertThat(properties.path(field).path("type").asString()).isEqualTo(type);
+            }
+            if (properties.has("evidence_message_ids"))
+                assertThat(
+                                properties
+                                        .path("evidence_message_ids")
+                                        .path("items")
+                                        .path("type")
+                                        .asString())
+                        .isEqualTo("string");
+        }
+
         assertThat(schema.toString()).contains("add", "list", "replace", "remove");
         assertThat(schema.toString()).doesNotContain("confirm", "review_mode", "prompt_version");
     }
@@ -60,13 +132,7 @@ class MemoryToolTest {
         when(service.execute(any(), any()))
                 .thenReturn(
                         new MemoryOutcome(
-                                MemoryStatus.CREATED,
-                                "memory-1",
-                                1L,
-                                5,
-                                true,
-                                true,
-                                quotas()));
+                                MemoryStatus.CREATED, "memory-1", 1L, 5, true, true, quotas()));
         JsonNode arguments =
                 json.readTree(
                         """
@@ -207,8 +273,7 @@ class MemoryToolTest {
 
         assertThat(result.path("revision").asLong()).isEqualTo(9);
         assertThat(result.path("items")).hasSize(1);
-        assertThat(result.path("items").get(0).path("memoryId").asString())
-                .isEqualTo("memory-1");
+        assertThat(result.path("items").get(0).path("memoryId").asString()).isEqualTo("memory-1");
         assertThat(result.path("nextCursor").asString()).isEqualTo("memory-1");
         assertThat(result.toString()).doesNotContain("normalizedHash", "normalizationVersion");
         verify(service).snapshot();
@@ -230,8 +295,7 @@ class MemoryToolTest {
                                 quotas()));
         when(service.snapshot())
                 .thenReturn(
-                        new MemorySnapshot(
-                                snapshot(5, true).state(), List.of(created), quotas()));
+                        new MemorySnapshot(snapshot(5, true).state(), List.of(created), quotas()));
 
         tool.execute(
                 json.readTree(
@@ -240,8 +304,7 @@ class MemoryToolTest {
                         "write_reason":"user_requested","evidence_message_ids":["message-1"]}
                         """),
                 invocation());
-        JsonNode listed =
-                tool.execute(json.readTree("{\"action\":\"list\"}"), invocation());
+        JsonNode listed = tool.execute(json.readTree("{\"action\":\"list\"}"), invocation());
 
         assertThat(listed.path("revision").asLong()).isEqualTo(5);
         assertThat(listed.path("items").get(0).path("content").asString()).isEqualTo("杭州");
@@ -254,8 +317,7 @@ class MemoryToolTest {
         MemoryEntry external = entry("memory-1", MemoryKind.PERSON_PROFILE, "外部新内容");
         when(service.snapshot())
                 .thenReturn(
-                        new MemorySnapshot(
-                                snapshot(9, true).state(), List.of(external), quotas()));
+                        new MemorySnapshot(snapshot(9, true).state(), List.of(external), quotas()));
         when(service.execute(any(), any()))
                 .thenReturn(
                         new MemoryOutcome(
@@ -267,10 +329,8 @@ class MemoryToolTest {
                                 true,
                                 quotas()));
 
-        JsonNode listed =
-                tool.execute(json.readTree("{\"action\":\"list\"}"), invocation());
-        assertThat(listed.path("items").get(0).path("content").asString())
-                .isEqualTo("外部新内容");
+        JsonNode listed = tool.execute(json.readTree("{\"action\":\"list\"}"), invocation());
+        assertThat(listed.path("items").get(0).path("content").asString()).isEqualTo("外部新内容");
         assertThatThrownBy(
                         () ->
                                 tool.execute(
@@ -295,14 +355,10 @@ class MemoryToolTest {
     @Test
     void listCannotBypassDisabledReadSetting() {
         registry.close("execution-1", 1);
-        registry.open(
-                "execution-1", 1, snapshot(4, false), List.of(evidence("message-1")));
+        registry.open("execution-1", 1, snapshot(4, false), List.of(evidence("message-1")));
         when(service.snapshot()).thenReturn(snapshot(4, false));
 
-        assertThatThrownBy(
-                        () ->
-                                tool.execute(
-                                        json.readTree("{\"action\":\"list\"}"), invocation()))
+        assertThatThrownBy(() -> tool.execute(json.readTree("{\"action\":\"list\"}"), invocation()))
                 .isInstanceOfSatisfying(
                         ToolBusinessException.class,
                         failure -> {
@@ -320,8 +376,7 @@ class MemoryToolTest {
 
     private static MemorySnapshot snapshot(long revision, boolean readEnabled) {
         return new MemorySnapshot(
-                new MemoryState(
-                        revision, 0, readEnabled, true, true, 1, LocalDateTime.now()),
+                new MemoryState(revision, 0, readEnabled, true, true, 1, LocalDateTime.now()),
                 List.of(),
                 quotas());
     }

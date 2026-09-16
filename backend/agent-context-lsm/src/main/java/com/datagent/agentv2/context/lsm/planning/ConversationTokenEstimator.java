@@ -1,5 +1,6 @@
 package com.datagent.agentv2.context.lsm.planning;
 
+import com.datagent.agentv2.conversation.context.ContextInputEstimator;
 import com.datagent.agentv2.conversation.context.ContextMessage;
 import com.datagent.agentv2.conversation.context.ContextToolCall;
 import com.datagent.agentv2.conversation.context.ContextToolDefinition;
@@ -11,7 +12,12 @@ import java.util.Objects;
 import java.util.UUID;
 
 /** 在没有稳定 provider tokenizer 时，按协议结构保守估算模型输入 token。 */
-public final class ConversationTokenEstimator {
+public final class ConversationTokenEstimator implements ContextInputEstimator {
+
+    @Override
+    public String strategyId() {
+        return "lsm";
+    }
 
     private static final int MESSAGE_DELIMITER_TOKENS = 2;
     private static final int ROLE_BOUNDARY_TOKENS = 1;

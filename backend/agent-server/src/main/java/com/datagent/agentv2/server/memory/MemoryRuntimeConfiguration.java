@@ -2,6 +2,7 @@ package com.datagent.agentv2.server.memory;
 
 import com.datagent.agentv2.memory.MemoryContentPolicy;
 import com.datagent.agentv2.memory.config.MemoryProperties;
+import com.datagent.agentv2.memory.context.MemoryContextRenderer;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,6 +11,11 @@ import org.springframework.context.annotation.Configuration;
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(MemoryProperties.class)
 public class MemoryRuntimeConfiguration {
+    @Bean
+    MemoryContextRenderer memoryContextRenderer(MemoryProperties properties) {
+        return new MemoryContextRenderer(properties);
+    }
+
     @Bean
     MemoryContentPolicy memoryContentPolicy(MemoryProperties properties) {
         return new MemoryContentPolicy(properties);

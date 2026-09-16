@@ -1,8 +1,8 @@
 data-agent:
   tool:
     # 联网 Tool 默认隐藏；只有读取 web-research Skill 后才在本次 execution 激活。
-    maximum: [system_timezone, current_time, skill_read, web_search, web_fetch]
-    initial: [system_timezone, current_time, skill_read]
+    maximum: [system_timezone, current_time, skill_read, web_search, web_fetch, memory]
+    initial: [system_timezone, current_time, skill_read, memory]
     web-search:
       provider: tavily
       # 凭据仅从服务端环境变量注入，不进入 Tool 参数或日志。

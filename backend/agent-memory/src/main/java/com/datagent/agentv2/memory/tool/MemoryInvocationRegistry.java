@@ -23,7 +23,8 @@ public final class MemoryInvocationRegistry {
 
     private static final String ERROR_CONTEXT_NOT_FOUND = "Memory invocation context is not open";
     private static final String ERROR_CONTEXT_EXISTS = "Memory invocation context is already open";
-    private static final String ERROR_REVISION_CHANGED = "Memory invocation revision changed unexpectedly";
+    private static final String ERROR_REVISION_CHANGED =
+            "Memory invocation revision changed unexpectedly";
 
     private final ConcurrentMap<InvocationKey, FrozenInvocation> invocations =
             new ConcurrentHashMap<>();
@@ -40,6 +41,12 @@ public final class MemoryInvocationRegistry {
         }
     }
 
+    /** 未成功冻结快照的轮次不可执行记忆工具，避免读取失败后猜测写入 revision。 */
+    public boolean isOpen(AgentTool.InvocationContext context) {
+        return invocations.containsKey(
+                key(context.executionId(), context.modelInvocationSequence()));
+    }
+
     public MemoryWriteContext contextFor(AgentTool.InvocationContext context) {
         FrozenInvocation frozen = require(context.executionId(), context.modelInvocationSequence());
         return new MemoryWriteContext(
@@ -52,7 +59,7 @@ public final class MemoryInvocationRegistry {
                 MemoryToolPrompts.MAIN_VERSION);
     }
 
-    /** 返回本轮只读快照；list 不重新读库，避免把外部 revision 偷换为新的写入资格。 */
+    /** 返回本轮冻结快照；list 另读当前一致快照，但不能把外部 revision 偷换为新的写入资格。 */
     public MemorySnapshot snapshotFor(AgentTool.InvocationContext context) {
         return require(context.executionId(), context.modelInvocationSequence()).snapshot();
     }

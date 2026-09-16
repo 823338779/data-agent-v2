@@ -1,5 +1,6 @@
 package com.datagent.agentv2.context.hierarchical.planning;
 
+import com.datagent.agentv2.conversation.context.ContextInputEstimator;
 import com.datagent.agentv2.conversation.context.ContextMessage;
 import com.datagent.agentv2.conversation.context.ContextToolCall;
 import com.datagent.agentv2.conversation.context.ContextToolDefinition;
@@ -12,7 +13,12 @@ import java.util.Objects;
 import java.util.UUID;
 
 /** 在没有稳定 provider tokenizer 时，按字符和协议结构保守估算完整模型输入。 */
-public final class ConversationTokenEstimator {
+public final class ConversationTokenEstimator implements ContextInputEstimator {
+
+    @Override
+    public String strategyId() {
+        return "hierarchical";
+    }
 
     /** 每条消息外层分隔符的保守开销。 */
     private static final int MESSAGE_DELIMITER_TOKENS = 2;
@@ -64,6 +70,12 @@ public final class ConversationTokenEstimator {
 
     /** 估算溢出时使用的饱和值。 */
     private static final int MAX_TOKEN_ESTIMATE = Integer.MAX_VALUE;
+
+    @Override
+    public int estimateCompleteInput(
+            ConversationContextRequest request, List<ContextMessage> messages) {
+        return estimate(request, messages);
+    }
 
     /** 估算固定协议、system、工具定义和本次动态消息组成的完整输入。 */
     public int estimate(ConversationContextRequest request, List<ContextMessage> messages) {

@@ -15,16 +15,34 @@ import com.datagent.agentv2.context.hierarchical.domain.HierarchicalContextState
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCheckpointRepository;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalColdRepository;
 import com.datagent.agentv2.context.hierarchical.planning.ConversationTokenEstimator;
+import com.datagent.agentv2.context.hierarchical.planning.ConversationTurnGrouper;
 import com.datagent.agentv2.context.hierarchical.planning.HierarchicalConversationHistoryLoader;
+import com.datagent.agentv2.context.hierarchical.summary.HierarchicalColdKeyFactory;
+import com.datagent.agentv2.context.hierarchical.summary.RollingColdSummaryGenerator;
 import com.datagent.agentv2.conversation.context.ContextBudget;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
+import com.datagent.agentv2.conversation.context.ContextSummaryModelIdentity;
+import com.datagent.agentv2.conversation.context.ContextSummaryModelPort;
+import com.datagent.agentv2.conversation.context.ContextSummaryRequest;
+import com.datagent.agentv2.conversation.context.ContextSummaryResult;
+import com.datagent.agentv2.conversation.context.ContextToolCall;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import com.datagent.agentv2.conversation.context.PreparedConversationContext;
+import com.datagent.agentv2.conversation.context.RuntimeContextContribution;
+import com.datagent.agentv2.conversation.context.RuntimeContextInput;
+import com.datagent.agentv2.conversation.domain.AgentExecution;
+import com.datagent.agentv2.conversation.domain.ConversationMessage;
+import com.datagent.agentv2.persistence.service.AgentExecutionService;
+import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
+import tools.jackson.databind.json.JsonMapper;
 
 class HierarchicalConversationContextAssemblerTest {
     private final HierarchicalConversationHistoryLoader history =
@@ -47,6 +65,230 @@ class HierarchicalConversationContextAssemblerTest {
     @BeforeEach
     void defineCheckpoint() {
         when(checkpoints.findCheckpoint("session")).thenReturn(checkpoint(null));
+    }
+
+    @Test
+    void realHistoryLoaderLeavesDatabaseMessagesUnchanged() {
+        var executions = mock(AgentExecutionService.class);
+        var messages = mock(ConversationMessageService.class);
+        var execution = new AgentExecution();
+        execution.setConversationSessionId("session");
+        when(executions.findByExecutionId("execution")).thenReturn(execution);
+        var user = ConversationMessage.user("user", "session", "原始消息", 1, "user");
+        var answer = ConversationMessage.assistant("answer", "session", "execution", "原始回答", 2);
+        when(messages.findByConversationSessionId("session")).thenReturn(List.of(user, answer));
+        var loader =
+                new HierarchicalConversationHistoryLoader(
+                        executions,
+                        messages,
+                        JsonMapper.builder().build(),
+                        new ConversationTurnGrouper());
+        var realAssembler =
+                new HierarchicalConversationContextAssembler(
+                        loader,
+                        new ConversationTokenEstimator(),
+                        checkpoints,
+                        colds,
+                        new EventContextSummaryValidator(),
+                        new EventContextSummaryRenderer());
+        var state = realAssembler.loadAndEstimate(withMemory(request), policy);
+        assertThat(realAssembler.prepareCurrentView(state).runtimeStatistics().injected())
+                .isEqualTo(1);
+        assertThat(user.getContent()).isEqualTo("原始消息");
+        assertThat(answer.getContent()).isEqualTo("原始回答");
+        assertThat(state.turns())
+                .flatExtracting(ConversationTurn::messages)
+                .extracting(ContextMessage::content)
+                .containsExactly("原始消息", "原始回答");
+        Mockito.verify(messages).findByConversationSessionId("session");
+        Mockito.verifyNoMoreInteractions(messages);
+    }
+
+    @Test
+    void hardBoundaryKeepsNecessaryMessagesAndOmitsOptionalMemory() {
+        when(history.load(request.execution())).thenReturn(turns("latest"));
+        var raw = turns("latest").getFirst().messages();
+        int necessary =
+                new ConversationTokenEstimator().estimate(request, raw)
+                        + new ConversationTokenEstimator()
+                                .estimateMessages(
+                                        List.of(ContextMessage.user("evidence_id=real-user")));
+        var tight =
+                new ConversationContextRequest(
+                        request.execution(),
+                        new ContextBudget(necessary + 1, 1, 0, 0),
+                        List.of(),
+                        List.of());
+        var prepared =
+                assembler.prepareCurrentView(assembler.loadAndEstimate(withMemory(tight), policy));
+        assertThat(prepared.estimatedInputTokens())
+                .isEqualTo(tight.budget().hardInputLimitTokens());
+        assertThat(prepared.runtimeStatistics().injected()).isZero();
+        assertThat(prepared.messages()).containsAll(raw);
+    }
+
+    @Test
+    void usesActualSelectionForHistoryBudgetAndKeepsSummaryModelSourceClean() {
+        String[] contents =
+                java.util.stream.IntStream.range(0, 21)
+                        .mapToObj(i -> "old".repeat(20))
+                        .toArray(String[]::new);
+        var original = turns(contents);
+        when(history.load(request.execution())).thenReturn(original);
+        var base =
+                new ConversationContextRequest(
+                        request.execution(),
+                        new ContextBudget(2800, 1, 0, 0),
+                        List.of(),
+                        List.of());
+        var plain = assembler.loadAndEstimate(base, policy);
+        var enriched = assembler.loadAndEstimate(withMemory(base), policy);
+        var prepared = assembler.prepareCurrentView(enriched);
+        assertThat(prepared.runtimeStatistics().injected()).isEqualTo(1);
+        int runtimeCost = enriched.estimatedTokens() - plain.estimatedTokens();
+        var input = assembler.compactionInput(enriched, 32768);
+        assertThat(input.historyMemoryBudget())
+                .isEqualTo(
+                        assembler.compactionInput(plain, 32768).historyMemoryBudget()
+                                - runtimeCost);
+        var model = mock(ContextSummaryModelPort.class);
+        when(model.summarize(ArgumentMatchers.any()))
+                .thenAnswer(
+                        call -> {
+                            ContextSummaryRequest source = call.getArgument(0);
+                            assertThat(source.sourceDocument())
+                                    .contains("old")
+                                    .doesNotContain("用户主要使用中文", "evidence_id");
+                            return new ContextSummaryResult(
+                                    cold().summaryDocument(), 100, "provider", "model");
+                        });
+        var generator =
+                new RollingColdSummaryGenerator(
+                        model,
+                        new EventContextSummaryValidator(),
+                        new EventContextSummaryRenderer(),
+                        new ConversationTokenEstimator(),
+                        new HierarchicalColdKeyFactory());
+        var coverage = new EventSummaryCoverage(1, 1, 1, 2);
+        generator.generate(
+                new RollingColdSummaryGenerator.GenerationRequest(
+                        "tenant",
+                        "session",
+                        null,
+                        List.of(
+                                new RollingColdSummaryGenerator.GenerationBatch(
+                                        coverage, input.state().turns().subList(0, 1))),
+                        coverage,
+                        1000,
+                        1024,
+                        32768,
+                        new ContextSummaryModelIdentity("provider", "model")));
+        Mockito.verify(model).summarize(ArgumentMatchers.any());
+        assertThat(enriched.turns()).isEqualTo(original);
+    }
+
+    @Test
+    void historyBudgetDoesNotReselectOptionalMemoryAfterShrinkingToProtectedTurns() {
+        String[] contents =
+                java.util.stream.IntStream.range(0, 21)
+                        .mapToObj(i -> "old".repeat(20))
+                        .toArray(String[]::new);
+        when(history.load(request.execution())).thenReturn(turns(contents));
+        var base =
+                new ConversationContextRequest(
+                        request.execution(),
+                        new ContextBudget(2000, 1, 0, 0),
+                        List.of(),
+                        List.of());
+        var enriched = withMemory(base);
+        var metadataOnly =
+                new ConversationContextRequest(
+                        base.execution(),
+                        base.budget(),
+                        List.of(),
+                        List.of(),
+                        new RuntimeContextInput(enriched.runtimeInput().metadata(), List.of()));
+        var state = assembler.loadAndEstimate(enriched, policy);
+        assertThat(assembler.prepareCurrentView(state).runtimeStatistics().injected()).isZero();
+        assertThat(assembler.compactionInput(state, 32768).historyMemoryBudget())
+                .isEqualTo(
+                        assembler
+                                .compactionInput(
+                                        assembler.loadAndEstimate(metadataOnly, policy), 32768)
+                                .historyMemoryBudget());
+    }
+
+    @Test
+    void personalMemoryIsTransientUserContextWithPairedToolsAndFinalStatistics() {
+        var enriched = withMemory(request);
+        var call =
+                new ContextMessage(
+                        ContextMessage.Role.ASSISTANT,
+                        "",
+                        null,
+                        List.of(new ContextToolCall("call", "tool", Map.of())),
+                        null,
+                        null);
+        var result = ContextMessage.tool("result", "call", "tool");
+        var original =
+                List.of(
+                        new ConversationTurn(
+                                1, 1, 2, List.of(ContextMessage.user("latest"), call, result)));
+        when(history.load(request.execution())).thenReturn(original);
+        var state = assembler.loadAndEstimate(enriched, policy);
+        var prepared = assembler.prepareCurrentView(state);
+        assertThat(prepared.messages())
+                .extracting(ContextMessage::content)
+                .containsExactly("evidence_id=real-user", "历史数据\n用户主要使用中文", "latest", "", "result");
+        assertThat(prepared.messages().get(1).role()).isEqualTo(ContextMessage.Role.USER);
+        assertThat(prepared.messages()).containsSubsequence(call, result);
+        assertThat(state.turns()).isEqualTo(original);
+        assertThat(prepared.estimatedInputTokens())
+                .isEqualTo(state.estimatedTokens())
+                .isLessThanOrEqualTo(request.budget().hardInputLimitTokens());
+        assertThat(prepared.runtimeStatistics().injected()).isEqualTo(1);
+        assertThat(prepared.runtimeStatistics().omitted()).isZero();
+        assertThat(prepared.runtimeStatistics().contributionTokens())
+                .isEqualTo(
+                        new ConversationTokenEstimator()
+                                .estimateMessages(List.of(prepared.messages().get(1))));
+    }
+
+    @Test
+    void optionalMemoryCannotTriggerCompression() {
+        var original = turns("x".repeat(200), "latest");
+        when(history.load(request.execution())).thenReturn(original);
+        var raw = original.stream().flatMap(t -> t.messages().stream()).toList();
+        var metadata = ContextMessage.user("evidence_id=real-user");
+        int necessary =
+                new ConversationTokenEstimator().estimate(request, raw)
+                        + new ConversationTokenEstimator().estimateMessages(List.of(metadata));
+        var tight =
+                new ConversationContextRequest(
+                        request.execution(),
+                        new ContextBudget((int) Math.ceil(necessary / .75), 1, 0, 0),
+                        List.of(),
+                        List.of());
+        var state = assembler.loadAndEstimate(withMemory(tight), policy);
+        var prepared = assembler.prepareCurrentView(state);
+        assertThat(state.estimatedTokens())
+                .isLessThanOrEqualTo(policy.softTriggerTokens(tight.budget()));
+        assertThat(prepared.runtimeStatistics().injected()).isZero();
+        assertThat(prepared.runtimeStatistics().omitted()).isEqualTo(1);
+        assertThat(prepared.messages()).containsAll(raw).contains(metadata);
+    }
+
+    private static ConversationContextRequest withMemory(ConversationContextRequest request) {
+        return new ConversationContextRequest(
+                request.execution(),
+                request.budget(),
+                request.fixedSystemMessages(),
+                request.toolDefinitions(),
+                new RuntimeContextInput(
+                        List.of(ContextMessage.user("evidence_id=real-user")),
+                        List.of(
+                                new RuntimeContextContribution(
+                                        "personal-memory", "历史数据", List.of("用户主要使用中文"), 1024))));
     }
 
     @Test

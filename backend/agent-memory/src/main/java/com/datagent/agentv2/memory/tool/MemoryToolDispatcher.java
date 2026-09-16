@@ -32,13 +32,7 @@ public final class MemoryToolDispatcher {
 
     private static final Set<String> LIST_FIELDS = Set.of("action", "kind", "cursor", "limit");
     private static final Set<String> ADD_FIELDS =
-            Set.of(
-                    "action",
-                    "kind",
-                    "content",
-                    "write_reason",
-                    "evidence_message_ids",
-                    "restore");
+            Set.of("action", "kind", "content", "write_reason", "evidence_message_ids", "restore");
     private static final Set<String> REPLACE_FIELDS =
             Set.of(
                     "action",
@@ -82,6 +76,9 @@ public final class MemoryToolDispatcher {
             throw invalid("Expected list action");
         }
         requireOnly(arguments, LIST_FIELDS);
+        MemoryKind kind = optionalKind(arguments.path("kind"));
+        String cursor = optionalText(arguments.path("cursor"), "cursor");
+        int limit = optionalLimit(arguments.path("limit"));
         MemorySnapshot snapshot = service.snapshot();
         if (!snapshot.state().readEnabled()) {
             throw new ToolBusinessException(
@@ -89,9 +86,6 @@ public final class MemoryToolDispatcher {
                     "个人记忆读取已关闭",
                     json.createObjectNode().put("status", "INVALID_REQUEST"));
         }
-        MemoryKind kind = optionalKind(arguments.path("kind"));
-        String cursor = optionalText(arguments.path("cursor"), "cursor");
-        int limit = optionalLimit(arguments.path("limit"));
         List<MemoryEntry> candidates =
                 snapshot.entries().stream()
                         .filter(item -> kind == null || item.kind() == kind)
@@ -275,7 +269,7 @@ public final class MemoryToolDispatcher {
         }
     }
 
-    /** list 返回冻结 revision、完整分类用量和稳定 ID 游标。 */
+    /** list 返回当前一致快照 revision、完整分类用量和稳定 ID 游标，不改变本轮冻结写入资格。 */
     public record MemoryListResult(
             long revision,
             List<MemoryListItem> items,

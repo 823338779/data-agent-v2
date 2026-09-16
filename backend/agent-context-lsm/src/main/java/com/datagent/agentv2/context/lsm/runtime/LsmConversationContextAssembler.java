@@ -1,10 +1,13 @@
 package com.datagent.agentv2.context.lsm.runtime;
 
+import com.datagent.agentv2.context.common.runtime.RuntimeContextComposer;
+import com.datagent.agentv2.context.common.runtime.RuntimeContextComposer.Composition;
 import com.datagent.agentv2.context.common.summary.EventContextSummaryRenderer;
 import com.datagent.agentv2.context.common.summary.EventContextSummaryValidator;
 import com.datagent.agentv2.context.common.summary.EventSummaryCoverage;
 import com.datagent.agentv2.context.lsm.domain.ConversationTurn;
 import com.datagent.agentv2.context.lsm.domain.FrontierSelection;
+import com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan;
 import com.datagent.agentv2.context.lsm.domain.LsmContextManifest;
 import com.datagent.agentv2.context.lsm.domain.LsmContextPolicySnapshot;
 import com.datagent.agentv2.context.lsm.domain.LsmPlanningInput;
@@ -17,6 +20,7 @@ import com.datagent.agentv2.context.lsm.persistence.mapping.LsmPersistenceStruct
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmContextManifestRepository;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmSummarySegmentRepository;
 import com.datagent.agentv2.context.lsm.planning.ConversationTokenEstimator;
+import com.datagent.agentv2.context.lsm.planning.LsmCompactionPlanner;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.CandidateInput;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.CompactionRequest;
 import com.datagent.agentv2.context.lsm.runtime.LsmCompactionCoordinator.SummarySource;
@@ -27,6 +31,7 @@ import com.datagent.agentv2.conversation.context.ContextMessage;
 import com.datagent.agentv2.conversation.context.ContextToolCall;
 import com.datagent.agentv2.conversation.context.ConversationContextRequest;
 import com.datagent.agentv2.conversation.context.PreparedConversationContext;
+import com.datagent.agentv2.conversation.context.RuntimeContextStatistics;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.BoundedProcessPayload;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
@@ -55,6 +60,8 @@ import tools.jackson.databind.ObjectMapper;
 
 /** 从原始事实源、活动 manifest 和不可变摘要段组装一次有界 LSM 模型输入。 */
 public class LsmConversationContextAssembler {
+
+    private final RuntimeContextComposer runtimeComposer = new RuntimeContextComposer();
 
     private static final String STRATEGY_ID = "lsm";
     private static final String MANIFEST_ID_PREFIX = "context_manifest";
@@ -198,17 +205,23 @@ public class LsmConversationContextAssembler {
                 rawMessages,
                 manifest,
                 persistedSegments,
-                estimator.estimateCompleteInput(request, rawMessages));
+                estimator.estimateCompleteInput(
+                        request,
+                        composeRuntime(
+                                        request,
+                                        rawMessages,
+                                        policy.softTriggerTokens(request.budget()))
+                                .dynamicMessages()));
     }
 
-    /** 未触发压缩时保持 raw 消息顺序，仅在最前加入真实固定 system 消息。 */
+    /** 未触发压缩时保持 raw 消息顺序，并在预算内加入独立运行时上下文。 */
     public PreparedConversationContext prepareCurrentView(ContextState state) {
         return boundedPrepared(
                 state.request(),
                 state.rawMessages(),
                 false,
                 state.manifest().generation(),
-                state.turns());
+                state.policy().softTriggerTokens(state.request().budget()));
     }
 
     /** 使用活动 LSM 摘要、受保护原文与当前轮组装输入。 */
@@ -239,7 +252,11 @@ public class LsmConversationContextAssembler {
             }
         }
         return boundedPrepared(
-                request, dynamic, !active.isEmpty(), manifest.generation(), refreshed.turns());
+                request,
+                dynamic,
+                !active.isEmpty(),
+                manifest.generation(),
+                policy.softTriggerTokens(request.budget()));
     }
 
     /** 读取并校验最终 manifest 的活动段，返回有限层级计数供服务级指标聚合。 */
@@ -255,9 +272,7 @@ public class LsmConversationContextAssembler {
     /** 将状态转换为 coordinator 的完整不可变规划与候选来源。 */
     public CompactionRequest toCompactionRequest(ContextState state) {
         LsmPlanningInput planningInput = planningInput(state);
-        var plan =
-                new com.datagent.agentv2.context.lsm.planning.LsmCompactionPlanner()
-                        .plan(planningInput);
+        var plan = new LsmCompactionPlanner().plan(planningInput);
         Map<String, LsmSummarySegmentEntity> persistedById =
                 state.persistedSegments().stream()
                         .collect(
@@ -288,8 +303,9 @@ public class LsmConversationContextAssembler {
             List<ContextMessage> dynamic,
             boolean compacted,
             long manifestGeneration,
-            List<TurnSource> turnSources) {
-        List<ContextMessage> selected = new ArrayList<>(dynamic);
+            int preferredLimit) {
+        Composition composition = composeRuntime(request, dynamic, preferredLimit);
+        List<ContextMessage> selected = composition.dynamicMessages();
         int estimated = estimator.estimateCompleteInput(request, selected);
         if (estimated > request.budget().hardInputLimitTokens()) {
             metrics.recordWindowExceeded();
@@ -298,7 +314,15 @@ public class LsmConversationContextAssembler {
         List<ContextMessage> complete = new ArrayList<>(request.fixedSystemMessages());
         complete.addAll(selected);
         return new PreparedConversationContext(
-                STRATEGY_ID, complete, estimated, compacted, manifestGeneration);
+                STRATEGY_ID,
+                complete,
+                estimated,
+                compacted,
+                manifestGeneration,
+                new RuntimeContextStatistics(
+                        composition.injected(),
+                        composition.omitted(),
+                        composition.contributionTokens()));
     }
 
     private LsmPlanningInput planningInput(ContextState state) {
@@ -314,6 +338,17 @@ public class LsmConversationContextAssembler {
                         state.request().budget().hardInputLimitTokens()),
                 historyMemoryBudget,
                 state.estimatedTokens() > state.request().budget().hardInputLimitTokens());
+    }
+
+    /** 只接收未注入的动态消息；软水位先省略可选记忆，必要元数据仍由原策略压缩或硬限裁决。 */
+    private Composition composeRuntime(
+            ConversationContextRequest request, List<ContextMessage> dynamic, int preferredLimit) {
+        return runtimeComposer.compose(
+                request,
+                dynamic,
+                preferredLimit,
+                messages -> estimator.estimateCompleteInput(request, messages),
+                estimator::estimateMessages);
     }
 
     private int historyMemoryBudget(ContextState state) {
@@ -334,7 +369,20 @@ public class LsmConversationContextAssembler {
                 .filter(turn -> !turn.completed() || protectedSequences.contains(turn.sequence()))
                 .forEach(turn -> protectedMessages.addAll(turn.messages()));
         int protectedTokens = estimator.estimateCompleteInput(state.request(), protectedMessages);
-        int remaining = state.request().budget().hardInputLimitTokens() - protectedTokens;
+        // 必须沿用完整原文实际能装入的贡献；在 protected 子集上重选会凭空增加记忆，挤掉历史摘要预算。
+        int runtimeTokens =
+                estimator.estimateCompleteInput(
+                                state.request(),
+                                composeRuntime(
+                                                state.request(),
+                                                state.rawMessages(),
+                                                state.policy()
+                                                        .softTriggerTokens(
+                                                                state.request().budget()))
+                                        .dynamicMessages())
+                        - estimator.estimateCompleteInput(state.request(), state.rawMessages());
+        int remaining =
+                state.request().budget().hardInputLimitTokens() - protectedTokens - runtimeTokens;
         if (remaining <= 0) {
             metrics.recordWindowExceeded();
             throw new LsmProtectedContextOverflowException();
@@ -441,7 +489,7 @@ public class LsmConversationContextAssembler {
 
     private CandidateInput candidate(
             ContextState state,
-            com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan.PlannedOperation operation,
+            LsmCompactionPlan.PlannedOperation operation,
             Map<String, LsmSummarySegmentEntity> persistedById,
             Map<String, CandidateInput> plannedById) {
         List<TurnSource> covered =
@@ -501,7 +549,7 @@ public class LsmConversationContextAssembler {
     }
 
     private static GenerationRequest generationRequest(
-            com.datagent.agentv2.context.lsm.domain.LsmCompactionPlan.PlannedOperation operation,
+            LsmCompactionPlan.PlannedOperation operation,
             List<TurnSource> covered,
             List<String> sourceIds,
             String sourceDocument) {

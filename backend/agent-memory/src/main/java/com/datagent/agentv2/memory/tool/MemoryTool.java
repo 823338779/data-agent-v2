@@ -55,6 +55,12 @@ public final class MemoryTool implements AgentTool {
 
     @Override
     public JsonNode execute(JsonNode arguments, InvocationContext context) throws Exception {
+        if (!registry.isOpen(context)) {
+            throw new ToolBusinessException(
+                    "UNAVAILABLE",
+                    "本轮记忆上下文不可用",
+                    json.createObjectNode().put("status", "UNAVAILABLE"));
+        }
         String action = action(arguments);
         if ("list".equals(action)) {
             // 先确认调用属于已打开的可信轮次；list 读取最新快照，但绝不替换冻结写入 revision。
