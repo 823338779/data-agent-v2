@@ -18,6 +18,8 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public final class MemoryContentPolicy {
     private static final Pattern TRAILING_PUNCTUATION = Pattern.compile("[.,!?;:。，！？；：]+$");
+    private static final Pattern ALLOWED_PUNCTUATION_OR_WHITESPACE =
+            Pattern.compile("(?U)[\\s.,!?;:。，！？；：]+");
     private static final Pattern SECRET =
             Pattern.compile(
                     "(?iu)(?:api[_-]?key|secret|access[_-]?token|authorization)\\s*[:=]\\s*\\S+"
@@ -66,6 +68,10 @@ public final class MemoryContentPolicy {
     public void validate(MemoryKind kind, String content) {
         Objects.requireNonNull(kind, "kind");
         normalize(content);
+        // 规范化 v1 只移除末尾连续标点；这里单独拒绝散布空白的纯标点，避免改变既有指纹。
+        if (ALLOWED_PUNCTUATION_OR_WHITESPACE.matcher(content).replaceAll("").isBlank()) {
+            throw invalid();
+        }
         if (hasDangerousControl(content)
                 || SECRET.matcher(content).find()
                 || ROLE_MARKER.matcher(content).find()

@@ -16,7 +16,7 @@
 - `backend/agent-memory/src/main/java/com/datagent/agentv2/memory/MemoryContentPolicy.java`
 - `backend/agent-memory/src/main/java/com/datagent/agentv2/memory/config/MemoryProperties.java`
 - `backend/agent-memory/src/test/java/com/datagent/agentv2/memory/MemoryContentPolicyTest.java`
-- `backend/agent-domain/src/main/java/com/datagent/agentv2/memory/` 下任务共享表列出的全部 14 个领域文件
+- `backend/agent-domain/src/main/java/com/datagent/agentv2/memory/` 下任务共享表列出的全部 15 个领域文件
 - `backend/agent-domain/src/test/java/com/datagent/agentv2/memory/MemoryKindTest.java`
 - 本报告
 
@@ -84,3 +84,51 @@ Tests run: 12, Failures: 0, Errors: 0, Skipped: 0
 ## 疑虑
 
 无阻塞疑虑。安全扫描属于规格要求的有限纵深防御，不能证明任意自然语言不存在提示注入风险；后续上下文格式化仍需按规格转义保留标记。
+
+## 第 1 轮评审修复
+
+### 修复内容
+
+- 在不改变规范化 v1 算法和一般文本指纹的前提下，增加独立内容有效性校验：正文去除允许的中英文标点及 Unicode 空白后必须仍有内容，从而拒绝 `。 ！`、`, \n？` 等仅标点输入。
+- 将原先只调用 `value()`/`parse()` 的伪往返测试替换为 `agent-memory` 中真实 Jackson 3 `JsonMapper` 序列化与反序列化测试，精确断言两个稳定 JSON 字符串。
+- 为 `MemoryState` 补充整体 revision、settingsVersion、learningEpoch 的区别和 `learningEnabledAt` 的时区/生命周期说明；为 `MemoryReviewClaim` 补充两个 fencing token、闭区间 sequence 边界及数据库时钟租约语义。
+
+### 修复 RED 证据
+
+命令：
+
+```powershell
+mvn -f backend/pom.xml -pl agent-memory -am '-Dtest=MemoryContentPolicyTest,MemoryKindJacksonTest,MemoryKindTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+关键失败输出：
+
+```text
+MemoryKindTest: Tests run: 4, Failures: 0, Errors: 0
+MemoryKindJacksonTest: Tests run: 1, Failures: 0, Errors: 0
+MemoryContentPolicyTest.rejectsEmptyAndPunctuationOnlyContentWithoutEchoingInput:
+[非法正文必须被拒绝] Expecting actual not to be null
+Tests run: 7, Failures: 1, Errors: 0
+[INFO] BUILD FAILURE
+```
+
+失败说明带空白的仅标点正文没有产生预期 `MemoryException`；Jackson 用例已经真实执行并通过。
+
+### 修复 GREEN 证据
+
+同一条定向命令通过：
+
+```text
+MemoryKindTest: Tests run: 4, Failures: 0, Errors: 0, Skipped: 0
+MemoryContentPolicyTest: Tests run: 6, Failures: 0, Errors: 0, Skipped: 0
+MemoryKindJacksonTest: Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+Reactor Summary: data-agent-v2/agent-domain/agent-persistence/agent-tool/agent-memory 全部 SUCCESS
+[INFO] BUILD SUCCESS
+```
+
+### 修复自审
+
+- 新校验只位于 `validate`，`normalize` 与 `hash` 未改动，现有固定 SHA-256 断言继续防止指纹算法漂移。
+- Jackson 测试使用实际 mapper，删除 `@JsonValue`、`@JsonCreator` 或改变稳定值都会导致测试失败。
+- 字段说明只补充文档，不改变共享 record 的字段、类型、顺序或构造器签名。
+- 本轮仅修改评审指出的生产文件、测试与本报告；并行外部文档仍不进入提交。

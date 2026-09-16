@@ -23,6 +23,8 @@ class MemoryContentPolicyTest {
     void rejectsEmptyAndPunctuationOnlyContentWithoutEchoingInput() {
         assertInvalid(" \n\t ", MemoryStatus.INVALID_REQUEST);
         assertInvalid("。！？；", MemoryStatus.INVALID_REQUEST);
+        assertInvalid("。 ！", MemoryStatus.INVALID_REQUEST);
+        assertInvalid(", \n？", MemoryStatus.INVALID_REQUEST);
     }
 
     @Test
@@ -80,6 +82,7 @@ class MemoryContentPolicyTest {
                 org.assertj.core.api.Assertions.catchThrowableOfType(
                         MemoryException.class,
                         () -> policy.validate(MemoryKind.PERSON_PROFILE, content));
+        assertThat(failure).as("非法正文必须被拒绝").isNotNull();
         assertThat(failure.code()).isEqualTo(status);
         assertThat(failure.safeMessage()).doesNotContain(content);
     }

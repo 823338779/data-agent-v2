@@ -25,14 +25,6 @@ class MemoryKindTest {
     }
 
     @Test
-    void kindsRoundTripThroughTheirSerializedValues() {
-        assertThat(MemoryKind.parse(MemoryKind.PERSON_PROFILE.value()))
-                .isEqualTo(MemoryKind.PERSON_PROFILE);
-        assertThat(MemoryKind.parse(MemoryKind.COLLABORATION_PREFERENCE.value()))
-                .isEqualTo(MemoryKind.COLLABORATION_PREFERENCE);
-    }
-
-    @Test
     void snapshotsDefensivelyCopyEntriesAndQuotas() {
         var entries = new ArrayList<MemoryEntry>();
         var quotas = new EnumMap<MemoryKind, MemoryQuota>(MemoryKind.class);
