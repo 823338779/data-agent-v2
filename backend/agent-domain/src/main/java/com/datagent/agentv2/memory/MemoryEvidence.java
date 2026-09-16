@@ -13,6 +13,7 @@ public record MemoryEvidence(
         String authorUserId,
         long messageVersion,
         String content,
+        /** 可信数据库北京时间；用户消息取独立证据创建时间，UI 操作取提交事务数据库时间。 */
         LocalDateTime createdAt) {
     public enum Kind {
         USER_MESSAGE,

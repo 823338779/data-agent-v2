@@ -1,9 +1,11 @@
 package com.datagent.agentv2.persistence.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
 import com.datagent.agentv2.persistence.typehandler.JsonbStringTypeHandler;
+import java.time.LocalDateTime;
 import lombok.Getter;
 import lombok.Setter;
 import org.apache.ibatis.type.JdbcType;
@@ -50,6 +52,10 @@ public final class ConversationMessageEntity extends TenantAuditedEntity {
 
     /** 用户消息作者的租户用户业务标识；非用户消息为空。 */
     private String authorUserId;
+
+    /** 数据库时钟生成的记忆证据创建时间，迁移前记录为空；与可展示的应用审计时间无关。 */
+    @TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
+    private LocalDateTime memoryEvidenceCreatedAt;
 
     /** 乐观锁版本，防止补充执行关联时覆盖并发更新。 */
     @Version private Long version;

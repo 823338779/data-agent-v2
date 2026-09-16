@@ -65,6 +65,9 @@ public final class ConversationMessage {
     /** 消息乐观锁版本。 */
     private Long version;
 
+    /** 数据库生成的记忆证据创建时间（北京时间），独立于应用审计时钟；迁移前消息或未重新读取的新增对象为空，不可用于记忆授权。 */
+    private LocalDateTime memoryEvidenceCreatedAt;
+
     /** 用户可见的消息创建时间。 */
     private LocalDateTime createdAt;
 

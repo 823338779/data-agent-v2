@@ -67,7 +67,8 @@ public class WebMemoryEvidenceAdapter implements MemoryEvidencePort {
                 && message.getVersion() != null
                 && message.getVersion() >= 1
                 && message.getConversationMessageSequence() != null
-                && message.getCreatedAt() != null
+                // 历史消息没有可信数据库时间，不能回退到存在主机偏差的展示审计时间来授予恢复权限。
+                && message.getMemoryEvidenceCreatedAt() != null
                 && message.getContent() != null
                 && !message.getContent().isBlank();
     }
