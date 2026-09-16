@@ -5,6 +5,7 @@ import com.datagent.agentv2.conversation.exception.IdempotencyKeyReusedException
 import com.datagent.agentv2.git.GitErrorMessages;
 import com.datagent.agentv2.git.model.GitException;
 import com.datagent.agentv2.http.RequestContext;
+import com.datagent.agentv2.memory.MemoryException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.util.List;
@@ -35,6 +36,35 @@ public final class ApiExceptionHandler {
     private static final String ERROR_REQUEST_VALIDATION_FAILED = "Request validation failed";
     private static final String CLIENT_DISCONNECTED_MESSAGE =
             "Client disconnected from an asynchronous response";
+
+    /** 记忆稳定业务码决定 HTTP 状态；响应仅使用领域层已审定的安全消息。 */
+    @ExceptionHandler(MemoryException.class)
+    ResponseEntity<ProblemDetail> handleMemory(
+            MemoryException exception, HttpServletRequest request) {
+        HttpStatus status =
+                switch (exception.code()) {
+                    case INVALID_REQUEST, UNSAFE_CONTENT -> HttpStatus.BAD_REQUEST;
+                    case NOT_FOUND -> HttpStatus.NOT_FOUND;
+                    case CONFLICT,
+                            DUPLICATE_CONFLICT,
+                            PROTECTED,
+                            SUPPRESSED,
+                            LEARNING_DISABLED,
+                            LEASE_LOST ->
+                            HttpStatus.CONFLICT;
+                    case QUOTA_EXCEEDED -> HttpStatus.UNPROCESSABLE_CONTENT;
+                    case UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+                    case CREATED, ALREADY_EXISTS, UPDATED, REMOVED, CONFIRMED ->
+                            HttpStatus.INTERNAL_SERVER_ERROR;
+                };
+        return problem(
+                status,
+                "urn:data-agent:problem:memory",
+                "Memory operation failed",
+                exception.code().name(),
+                exception.safeMessage(),
+                request);
+    }
 
     /** Git 稳定错误码决定 HTTP 状态，原始命令 stderr 和服务器路径永不进入响应。 */
     @ExceptionHandler(GitException.class)
@@ -159,7 +189,8 @@ public final class ApiExceptionHandler {
         MethodArgumentNotValidException.class,
         org.springframework.http.converter.HttpMessageNotReadableException.class,
         org.springframework.web.bind.MissingServletRequestParameterException.class,
-        org.springframework.web.method.annotation.HandlerMethodValidationException.class
+        org.springframework.web.method.annotation.HandlerMethodValidationException.class,
+        org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class
     })
     ResponseEntity<ProblemDetail> handleMethodArgumentNotValid(
             Exception exception, HttpServletRequest request) {
