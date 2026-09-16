@@ -30,7 +30,7 @@
 
 ## 执行前提、路径与任务依赖
 
-计划编写基线为 `aceb6d5`。执行前检查 Git 状态及迁移序列；当前用户另有暂存的 `docs/长程记忆.md`，不得自动提交它。当前已有迁移 V1～V6，本计划使用 V7；若并行开发占用编号，按最新序列顺延并同时改对应迁移测试。
+规格基线为 `aceb6d5` 中的设计，书面评审状态已更新为通过。执行前重新检查 Git 状态及迁移序列，不提交或撤销无关用户变更。当前已有迁移 V1～V6，本计划使用 V7；若并行开发占用编号，按最新序列顺延并同时改对应迁移测试。
 
 实施时按 using-git-worktrees 流程检查隔离情况；是否创建 worktree 遵从用户选择。本阶段只写计划，不创建执行工作区。先记录相关模块测试基线，环境问题与产品失败分别报告。
 
@@ -69,8 +69,8 @@
 | `D/MemoryWriteReason.java` | USER_REQUESTED、AGENT_INFERRED；后台来源不从此字段获得 |
 | `D/MemoryOutcome.java` | status、memoryId、version、revision、created、targetExists、quotas；`successful()` 判断五种成功态 |
 | `D/MemoryStatus.java` | spec 的成功态与错误码枚举，禁止字符串散落 |
-| `D/MemoryEvidence.java` | evidenceId、kind(USER_MESSAGE/UI_OPERATION)、conversationId、executionId、sequence、authorUserId、messageVersion、content、createdAt；content 只作短期校验输入，不在证据表复制 |
-| `D/MemoryWriteContext.java` | caller(UI/MAIN/BACKGROUND)、requestId、executionId、conversationId、expectedRevision(人工 null)、reviewClaim(非后台 null)；身份从固定上下文取 |
+| `D/MemoryEvidence.java` | evidenceId、kind(USER_MESSAGE/UI_OPERATION/ASSISTANT_CONTEXT)、conversationId、executionId、sequence、authorUserId、messageVersion、content、createdAt；ASSISTANT_CONTEXT 只供 reviewer 理解语境，永不成为持久化新事实证据；content 只作短期输入，不在证据表复制 |
+| `D/MemoryWriteContext.java` | caller（嵌套 enum Caller：UI/MAIN/BACKGROUND）、requestId、executionId、conversationId、expectedRevision（Long，人工 null）、reviewClaim(非后台 null)；身份从固定上下文取 |
 | `D/MemorySettingsChange.java` | `record MemorySettingsChange(long expectedVersion, Boolean readEnabled, Boolean explicitWriteEnabled, Boolean autoLearningEnabled)`；null 表示不修改 |
 | `D/MemoryException.java` | code、safeMessage，不携带个人正文或 SQL；主要用于传输/不可恢复依赖错误，业务判定优先返回 outcome |
 
@@ -95,6 +95,7 @@ record Confirm(String memoryId, long expectedVersion,
 
 ```java
 // M/MemoryService.java
+void initialize();
 MemorySnapshot snapshot();
 MemoryOutcome execute(MemoryWriteContext context, MemoryCommand command);
 MemoryState updateSettings(String requestId, MemorySettingsChange change);
@@ -144,9 +145,9 @@ String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
 
 ## 任务 2：数据库迁移、物理删除与类型安全存储
 
-**文件：** 创建 `backend/agent-persistence/src/main/resources/db/migration/V7__add_personal_memory.sql`；`P/entity/memory/MemoryRow.java` 及 `MemoryEntryEntity.java`、`MemoryStateEntity.java`、`MemoryOperationEntity.java`、`MemoryEvidenceEntity.java`、`MemorySuppressionEntity.java`、`MemoryReviewJobEntity.java`、`MemoryReviewLeaseEntity.java`；在 `P/mapper/memory/` 创建对应七个 Mapper，在 `P/service/memory/` 创建对应七个 Service；创建 `P/mapping/MemoryPersistenceMapper.java`、`PT/migration/PersonalMemorySchemaMigrationTest.java`、`PT/service/memory/MemoryPersistenceTest.java`、`D/MemoryReviewJob.java`、`D/MemoryReviewLease.java`。
+**文件：** 创建 `backend/agent-persistence/src/main/resources/db/migration/V7__add_personal_memory.sql`；`P/entity/memory/MemoryRow.java` 及 `MemoryEntryEntity.java`、`MemoryStateEntity.java`、`MemoryOperationEntity.java`、`MemoryEvidenceEntity.java`、`MemorySuppressionEntity.java`、`MemoryReviewJobEntity.java`、`MemoryReviewLeaseEntity.java`；在 `P/mapper/memory/` 创建对应七个 Mapper，在 `P/service/memory/` 创建对应七个 Service；创建 `P/mapping/MemoryPersistenceMapper.java`、`PT/migration/PersonalMemorySchemaMigrationTest.java`、`PT/service/memory/MemoryPersistenceTest.java`、`D/MemoryReviewJob.java`、`D/MemoryReviewLease.java`、`D/MemoryOperation.java`、`D/MemorySuppression.java`。
 
-**接口：** 各 Service 继承对应 `ServiceImpl`，对外返回领域 record，不暴露 Mapper 或 Wrapper。固定接口为 `MemoryStateService.lockCurrent(): MemoryState`、`MemoryEntryService.find(String): MemoryEntry`、`listCurrent(): List<MemoryEntry>`、`insert(MemoryEntry): MemoryEntry`、`replace(MemoryEntry,long): boolean`、`deletePhysical(String,long): boolean`。操作/证据/抑制 Service 提供按业务键的 find/save/delete，调用方使用固定身份。审查两类 record 覆盖 spec 的任务/租约字段，两个 Service 提供 lock/find/CAS 以及在当前事务内 `validateClaim(MemoryReviewClaim): boolean`；校验读取真实数据库时钟，业务领取流程由任务 9 使用这些原语构成。
+**接口：** 各 Service 继承对应 `ServiceImpl`，对外返回领域 record，不暴露 Mapper 或 Wrapper。固定接口为 `MemoryStateService.lockCurrent(): MemoryState`、`MemoryEntryService.find(String): MemoryEntry`、`listCurrent(): List<MemoryEntry>`、`insert(MemoryEntry): MemoryEntry`、`replace(MemoryEntry,long): boolean`、`deletePhysical(String,long): boolean`。MemoryOperation 保存 requestId/payloadHash/outcome/createdAt，MemorySuppression 保存 normalizationVersion/hash/deletedRevision/deletedAt/deleteOperationId；对应 Service 为 `find(String key)`、`insert(record)`，抑制另有 `deleteByHash(String): boolean`。MemoryEvidenceService 为 `append(String memoryId,MemoryEvidence evidence): void`、`deleteByMemoryId(String): void`，存储映射显式忽略 content。审查两类 record 覆盖 spec 的任务/租约字段，两个 Service 提供 lock/find/CAS 以及在当前事务内 `validateClaim(MemoryReviewClaim): boolean`；校验读取真实数据库时钟，业务领取流程由任务 9 使用这些原语构成。
 
 - [ ] 以现有 ConversationProjectSchemaMigrationTest 为启动方式，在 PostgreSQL 17 上先迁到 V6 再升级；断言所有新表/列注释存在，精确重复受唯一约束限制，删除后 SQL 查不到正文。RED 命令：`mvn -f backend/pom.xml -pl agent-persistence -am '-Dtest=PersonalMemorySchemaMigrationTest,MemoryPersistenceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test`。
 
@@ -178,7 +179,7 @@ create unique index uq_personal_memory_suppression
 
 **文件：** 创建 `M/MemoryService.java`、`M/MemoryEvidencePort.java`、`M/MemoryWritePolicy.java`、`MT/MemoryServiceTest.java`、`MT/MemoryWriteConcurrencyTest.java`、`MT/MemoryIntegrationTestConfiguration.java`；按任务 2 接口补存储方法，不添加新 Mapper 入口给业务层。
 
-**接口：** 实现共享服务签名；`MemoryWritePolicy.authorize(context,command,target,state): void`，target 对 add 可为空。`MemoryIntegrationTestConfiguration` 是模块内测试配置，导入现有 MybatisPlusConfiguration/AuditMetaObjectHandler、七个持久化 Service、生成的 MapStruct Mapper、MemoryService/Policy；提供 Mock MemoryEvidencePort 和真实 PostgreSQL，不依赖 web 测试 jar。BACKGROUND 写入在本事务中依次锁/验证任务与用户租约，只有双方 validateClaim 通过才继续，不依赖工具层先前的租约检查。
+**接口：** 实现共享服务签名；`MemoryWritePolicy.authorize(context,command,target,state): void`，target 对 add 可为空。`MemoryIntegrationTestConfiguration` 是模块内测试配置，导入现有 MybatisPlusConfiguration/AuditMetaObjectHandler、七个持久化 Service、生成的 MapStruct Mapper、MemoryService/Policy/ContentPolicy；提供 MemoryProperties、现有 PrefixedUuidIdGenerator、Mock MemoryEvidencePort 和真实 PostgreSQL，不依赖 web 测试 jar。参考已存在的 ConversationOrganizationPersistenceTest 设置 DynamicPropertySource 与容器生命周期。BACKGROUND 写入在本事务中依次锁/验证任务与用户租约，只有双方 validateClaim 通过才继续，不依赖工具层先前的租约检查。
 
 - [ ] 测试先覆盖规范化重复在满额时成功、替换碰撞不改旧值、同 requestId 不同 payload 冲突、同请求重试、revision/条目版本 CAS、并发抢额度。测试类通过 `@Autowired MemoryService memory` 获得真实事务代理。
 
@@ -197,7 +198,7 @@ void sameRequestCannotCreateTwice() {
 ```
 
 - [ ] RED/GREEN 命令：`mvn -f backend/pom.xml -pl agent-memory -am '-Dtest=MemoryServiceTest,MemoryWriteConcurrencyTest' '-Dsurefire.failIfNoSpecifiedTests=false' test`；并发测试使用两个线程、独立事务及 CountDownLatch 同时开始，测试方法本身不要外包一个未提交事务。
-- [ ] `@Transactional` 服务按以下顺序实现；业务拒绝持久化安全 outcome 后返回，工具/HTTP 适配器在事务外映射失败，不抛异常回滚已记录的确定性拒绝。意外数据库异常整事务回滚。
+- [ ] `@Transactional` 服务按以下顺序实现；内部 policy 的可预期 MemoryException 转成 outcome 后记录并返回，工具/HTTP 适配器在事务外映射失败，不抛异常回滚已记录的确定性拒绝。意外数据库异常整事务回滚。`initialize()` 用同一短事务幂等建立 state，不改已有设置。
 
 ```text
 lockCurrent → 查询幂等操作及比较完整语义 payloadHash
@@ -215,7 +216,7 @@ lockCurrent → 查询幂等操作及比较完整语义 payloadHash
 
 **文件：** 修改 `M/MemoryService.java`、`M/MemoryWritePolicy.java`；创建 `MT/MemoryLifecycleTest.java`、`MT/MemorySettingsTest.java`、`W/memory/WebMemoryEvidenceAdapter.java`、`WT/memory/WebMemoryEvidenceAdapterTest.java`；修改 `backend/agent-web/pom.xml` 引入 agent-memory；补 `P/service/ConversationMessageService.java` 的领域查询方法。
 
-**接口：** MemoryEvidencePort 如共享签名。适配器在 MAIN 验证当前 execution 的 USER 作者；BACKGROUND 验证会话及 claim 区间。只暴露 `findEvidenceByIds(List<String>): List<ConversationMessage>` 等领域查询，不向 agent-memory 泄漏 Entity。
+**接口：** MemoryEvidencePort 如共享签名。WebMemoryEvidenceAdapter 另提供 `currentUserEvidence(String executionId): List<MemoryEvidence>` 给请求工厂冻结可引用 ID；resolve 在 MAIN 验证当前 execution 的 USER 作者，BACKGROUND 验证会话及 claim 区间。ConversationMessageService 增加 `findEvidenceByIds(List<String>): List<ConversationMessage>`，按执行读取复用已存在的 `findByExecutionId(String)`，不向 agent-memory 泄漏 Entity。
 
 - [ ] RED 测试受保护条目自动修改失败、用户显式修改成功、重复显式 add 提升保护、旧快照删除后恢复失败、新用户证据恢复成功、恢复超额仍保留抑制、关闭后重启设置仍为 false。
 
@@ -273,7 +274,9 @@ void structuredBusinessFailureRemainsFailed() {
 - [ ] 扩展 ToolBusinessException 的可选安全 `JsonNode details`，保留现有两参数构造器。新增 `ToolExecutionResult.failed(String,String,JsonNode)` 重载，sanitizer 转交 details；现有流程已经支持 FAILED 节点同时有 output，不改为 SUCCEEDED。details 防御性复制且不包含正文、SQL 或证据。主工具在 MemoryService 事务已返回后映射失败：
 
 ```java
-MemoryOutcome outcome = dispatcher.dispatch(registry.contextFor(context), arguments);
+MemoryWriteContext writeContext = registry.contextFor(context);
+long expectedRevision = writeContext.expectedRevision();
+MemoryOutcome outcome = dispatcher.dispatch(writeContext, arguments);
 if (!outcome.successful()) {
     throw new ToolBusinessException(outcome.status().name(), "记忆操作未完成",
             json.valueToTree(outcome));
@@ -287,7 +290,7 @@ return json.valueToTree(outcome);
 
 ## 任务 6：独立运行时贡献与预算选择
 
-**文件：** 创建 `C/RuntimeContextContribution.java`、`C/RuntimeContextInput.java`、`CC/runtime/RuntimeContextComposer.java`、`backend/agent-context-common/src/test/java/com/datagent/agentv2/context/common/runtime/RuntimeContextComposerTest.java`、`M/context/MemoryContextRenderer.java`、`MT/context/MemoryContextRendererTest.java`；修改 `C/ConversationContextRequest.java`、`backend/agent-context-common/pom.xml` 增加 domain 依赖。
+**文件：** 创建 `C/RuntimeContextContribution.java`、`C/RuntimeContextInput.java`、`C/ContextInputEstimator.java`、`CC/runtime/RuntimeContextComposer.java`、`backend/agent-context-common/src/test/java/com/datagent/agentv2/context/common/runtime/RuntimeContextComposerTest.java`、`M/context/MemoryContextRenderer.java`、`MT/context/MemoryContextRendererTest.java`；修改 `C/ConversationContextRequest.java`、`backend/agent-context-common/pom.xml` 增加 domain 依赖。
 
 **接口：**
 
@@ -295,6 +298,11 @@ return json.valueToTree(outcome);
 record RuntimeContextContribution(String key, String wrapper, List<String> blocks, int maxTokens) {}
 record RuntimeContextInput(List<ContextMessage> metadata, List<RuntimeContextContribution> contributions) {
     public static RuntimeContextInput empty() { return new RuntimeContextInput(List.of(), List.of()); }
+}
+interface ContextInputEstimator {
+    String strategyId();
+    int estimateMessages(List<ContextMessage> messages);
+    int estimateCompleteInput(ConversationContextRequest request, List<ContextMessage> messages);
 }
 // ConversationContextRequest 增加 runtimeInput，保留原四参数构造器/工厂委托 empty()
 // 每条 block 是一个完整记忆条目，renderer 保证稳定排序、分类标题及保留标记转义
@@ -322,7 +330,7 @@ void noRuntimeInputLeavesProtocolUntouched() {
 }
 ```
 
-- [ ] RED/GREEN：`mvn -f backend/pom.xml -pl agent-context-common,agent-memory -am '-Dtest=RuntimeContextComposerTest,MemoryContextRendererTest' '-Dsurefire.failIfNoSpecifiedTests=false' test`。
+- [ ] RED：`mvn -f backend/pom.xml -pl agent-context-common,agent-memory -am '-Dtest=RuntimeContextComposerTest,MemoryContextRendererTest' '-Dsurefire.failIfNoSpecifiedTests=false' test`；确认因贡献类型或组合行为尚未实现而失败，排除环境失败。
 - [ ] 先构造必要 metadata＋原 dynamic，再对每个完整 block 试装；完整输入和贡献自身同时满足预算才接受。estimate 函数必须纯计算，不能调用会持久化压缩结果的 `prepare()`。
 
 ```text
@@ -334,28 +342,42 @@ selected = baseline
 返回 selected 及完整省略统计，输入 raw 和 runtimeInput 均不变
 ```
 
-- [ ] renderer 每类筛前 20 条，明确记录预筛省略数量，与 composer 省略相加；无条目返回空贡献，不单发空 wrapper。内容转义后计量。必要证据元数据与可选记忆分离，读取关闭只禁用记忆正文，不隐式授权写入。GREEN 提交 `feat(context): 增加有预算的运行时记忆贡献`。
+- [ ] renderer 每类筛前 20 条，明确记录预筛省略数量，与 composer 省略相加；无条目返回空贡献，不单发空 wrapper。内容转义后计量。必要证据元数据与可选记忆分离，读取关闭只禁用记忆正文，不隐式授权写入。
+- [ ] GREEN：重跑 `mvn -f backend/pom.xml -pl agent-context-common,agent-memory -am '-Dtest=RuntimeContextComposerTest,MemoryContextRendererTest' '-Dsurefire.failIfNoSpecifiedTests=false' test`，确认完整块边界、预算与原输入不可变的断言通过，再提交 `feat(context): 增加有预算的运行时记忆贡献`。
 
 ## 任务 7：同时接入 LSM 与 hierarchical，启用真实工具可见性
 
-**文件：** 修改 `W/conversation/context/ConversationContextRequestFactory.java`；修改两模块各自的 `runtime/LsmConversationContextAssembler.java`、`runtime/HierarchicalConversationContextAssembler.java`、`planning/ConversationTokenEstimator.java`、`configuration/LsmContextAutoConfiguration.java`、`configuration/HierarchicalContextAutoConfiguration.java`；测试修改同模块的 `runtime/*ConversationContextAssemblerTest.java`、`planning/ConversationTokenEstimatorTest.java`；新增 `WT/memory/MemoryContextRequestFactoryTest.java`；修改 `backend/agent-tool/src/main/java/com/datagent/agentv2/conversation/tool/runtime/ToolPolicyProperties.java` 以及 `backend/agent-server/src/main/resources/application.yml` 中已有工具集合配置。
+**文件：** 修改 `W/conversation/context/ConversationContextRequestFactory.java`；新增 `W/conversation/context/ContextInputEstimatorResolver.java`；修改两模块各自的 `runtime/LsmConversationContextAssembler.java`、`runtime/HierarchicalConversationContextAssembler.java`、`planning/ConversationTokenEstimator.java`、`configuration/LsmContextAutoConfiguration.java`、`configuration/HierarchicalContextAutoConfiguration.java`；测试修改同模块的 `runtime/*ConversationContextAssemblerTest.java`、`planning/ConversationTokenEstimatorTest.java`；新增 `WT/memory/MemoryContextRequestFactoryTest.java`；修改 `backend/agent-tool/src/main/java/com/datagent/agentv2/conversation/tool/runtime/ToolPolicyProperties.java` 以及 `backend/agent-server/src/main/resources/application.yml` 中已有工具集合配置。
 
 两模块根路径分别为 `backend/agent-context-lsm/src/main/java/com/datagent/agentv2/context/lsm/` 和 `backend/agent-context-hierarchical/src/main/java/com/datagent/agentv2/context/hierarchical/`；测试目录只将 src/main 改为 src/test。上述已有文件均已在规划时核实。
 
-**接口：** 两套 assembler 各自增加私有 `composeRuntime(request,dynamic,preferredLimit): Composition`，调用任务 6 composer 并传本策略现有 estimator；不改变现有策略 ID。Factory 读取 MemorySnapshot、当前 execution 用户证据后 open registry，并给 request 附 runtimeInput。
+**接口：** 两套 assembler 各自增加私有 `composeRuntime(request,dynamic,preferredLimit): Composition`，调用任务 6 composer 并传本策略现有 estimator；不改变现有策略 ID。两个 ConversationTokenEstimator 实现 ContextInputEstimator，hierarchical 的 estimateCompleteInput 直接委托已有 estimate。ContextInputEstimatorResolver 的 `current(): ContextInputEstimator` 按现有 ContextStrategyProperties 选择唯一实例；后台只调用此纯估算接口。Factory 读取 MemorySnapshot、currentUserEvidence 后 open registry，并给 request 附 runtimeInput。
 
 - [ ] 为两策略分别写完整成功路径和紧预算用例，断言 USER 角色、当前消息前的位置、准备前后数据库消息不变，摘要模型捕获的源文档不含注入正文。还测开启新会话、删除后下一 invocation 生效。
 
 ```java
-// 放在两个 assembler 测试的对应场景中；prepared/raw 均由原测试已有装配获得。
-assertThat(prepared.messages().stream().filter(m -> m.content().contains("personal-memory")))
-        .allMatch(m -> m.role() == ContextMessage.Role.USER);
-assertThat(prepared.estimatedInputTokens()).isLessThanOrEqualTo(request.budget().hardInputLimitTokens());
-assertThat(raw).noneMatch(m -> m.getContent().contains("personal-memory"));
+// 放入已存在的 HierarchicalConversationContextAssemblerTest，复用其 request/policy/history/turns。
+@Test
+void personalMemoryIsTransientUserContext() {
+    var runtime = new RuntimeContextInput(List.of(), List.of(
+            new RuntimeContextContribution("personal-memory", "运行时历史数据", List.of("用户主要使用中文"), 1024)));
+    var enriched = new ConversationContextRequest(request.execution(), request.budget(),
+            request.fixedSystemMessages(), request.toolDefinitions(), runtime);
+    when(history.load(request.execution())).thenReturn(turns("old", "latest"));
+    var state = assembler.loadAndEstimate(enriched, policy);
+    var prepared = assembler.prepareCurrentView(state);
+    assertThat(prepared.messages()).filteredOn(m -> m.content().contains("用户主要使用中文"))
+            .hasSize(1).allMatch(m -> m.role() == ContextMessage.Role.USER);
+    assertThat(prepared.estimatedInputTokens()).isLessThanOrEqualTo(request.budget().hardInputLimitTokens());
+    assertThat(state.turns().stream().flatMap(turn -> turn.messages().stream()))
+            .noneMatch(m -> m.content().contains("用户主要使用中文"));
+}
 ```
 
+LSM 的相同边界使用已存在的 `assembler(segments)`、`request(budget)`、`turns(int)`、`policy()` 和 `ContextState` 测试工厂；在 `prepareCurrentView(state)` 捕获输出，在 `toCompactionRequest(state).candidateInputs()` 逐项检查 sourceDocument 不含注入正文。两个策略都需独立断言位置、token 硬限及 tool-call/result 配对，不能以仅测 composer 代替策略接入测试。
+
 - [ ] RED/GREEN：`mvn -f backend/pom.xml -pl agent-context-lsm,agent-context-hierarchical,agent-web -am '-Dtest=LsmConversationContextAssemblerTest,HierarchicalConversationContextAssemblerTest,ConversationTokenEstimatorTest,MemoryContextRequestFactoryTest' '-Dsurefire.failIfNoSpecifiedTests=false' test`。
-- [ ] 在 loadAndEstimate、最终组装和 historyMemoryBudget 中统一使用 composition 的实际贡献；不得仅在最终 prepared 之后附加。软阈值先尽可能减少可选记忆；必要输入仍超限才沿原策略压缩/失败。压缩 planning/source 只用原始 turn，不把 runtime messages 放入 rawMessages 或持久化摘要。
+- [ ] 在 loadAndEstimate、最终组装和 historyMemoryBudget 中统一使用 composition 的实际贡献；所有 composer 调用都传未注入的 dynamic，不能重复装入 metadata。不得仅在最终 prepared 之后附加。软阈值先尽可能减少可选记忆；必要输入仍超限才沿原策略压缩/失败。压缩 planning/source 只用原始 turn，不把 runtime messages 放入 rawMessages 或持久化摘要。
 
 ```java
 var composition = composer.compose(request, dynamic, preferredLimit,
@@ -371,7 +393,7 @@ int completeTokens = estimator.estimateCompleteInput(request, composition.dynami
 
 **文件：** 创建 `W/controller/PersonalMemoryController.java`、`W/memory/PersonalMemoryApplicationService.java`、`W/memory/PersonalMemoryView.java`、`W/memory/PersonalMemoryListView.java`、`W/memory/MemorySettingsView.java`；新增 `WT/memory/PersonalMemoryControllerTest.java`、`WT/memory/PersonalMemoryViewTest.java`；修改 `backend/agent-server/src/main/java/com/datagent/agentv2/server/web/ApiExceptionHandler.java`，新增相邻测试 `backend/agent-server/src/test/java/com/datagent/agentv2/memory/MemoryProblemDetailTest.java`。MVC slice 测试依赖 `spring-boot-starter-webmvc-test` 加在 agent-web 的 test scope，符合 HTTP 契约测试边界。
 
-**接口：** 与 spec §6 六个端点一致；ApplicationService 只组装 UI context、调用 MemoryService、处理 outcome，不访问 Entity。View 提供 `composeFromMemory(MemoryEntry)`、`composeFromSnapshot(MemorySnapshot)`，只输出 UI 必需字段，不输出 normalizedHash、删除抑制或证据原文。
+**接口：** 与 spec §6 六个端点一致；ApplicationService 只组装 UI context、调用 MemoryService、处理 outcome，不访问 Entity。View 提供 `composeFromMemory(MemoryEntry)`、`composeFromSnapshot(MemorySnapshot)`，只输出 UI 必需字段，不输出 normalizedHash、删除抑制或证据原文。列表 wire 结构固定为 `{groups: {person_profile: {entries,nextCursor}, collaboration_preference: {entries,nextCursor}}, quotas: {person_profile: {used,limit}, collaboration_preference: {used,limit}}, revision}`；kind 过滤时未请求的组为空。分页从一致快照派生，以 memoryId 稳定升序的游标为界，两个组分别保留 nextCursor。
 
 - [ ] 写成功列表/创建、缺 Idempotency-Key、enum 别名拒绝、DELETE 无 body 且带 expectedVersion、重复键不同 payload、版本冲突、容量/抑制错误、settings partial update 的 HTTP 测试。
 
@@ -442,7 +464,7 @@ where job_id = 'job-1' and owner = 'old-worker' and fencing_token = 1
 
 ## 任务 10：有界后台 reviewer、消息切片与可恢复执行
 
-**文件：** 创建 `M/review/MemoryReviewInput.java`、`M/review/MemoryReviewOutput.java`、`M/review/MemoryReviewModelPort.java`、`M/review/MemoryReviewSliceSelector.java`、`M/review/MemoryReviewWorker.java`、`M/review/MemoryReviewPrompts.java`、`MT/review/MemoryReviewSliceSelectorTest.java`、`MT/review/MemoryReviewWorkerTest.java`；创建 `W/memory/MemoryReviewModelAdapter.java`、`W/memory/MemoryReviewScheduler.java`、`WT/memory/MemoryReviewModelAdapterTest.java`；创建 `backend/agent-server/src/main/java/com/datagent/agentv2/server/memory/MemoryRuntimeConfiguration.java`；补 P/ConversationMessageService 的领域分页查询。
+**文件：** 创建 `M/review/MemoryReviewInput.java`、`M/review/MemoryReviewOutput.java`、`M/review/MemoryReviewModelPort.java`、`M/review/MemoryReviewHistoryPort.java`、`M/review/MemoryReviewMessage.java`、`M/review/MemoryReviewSliceSelector.java`、`M/review/MemoryReviewWorker.java`、`M/review/MemoryReviewPrompts.java`、`MT/review/MemoryReviewSliceSelectorTest.java`、`MT/review/MemoryReviewWorkerTest.java`；创建 `W/memory/MemoryReviewModelAdapter.java`、`W/memory/WebMemoryReviewHistoryAdapter.java`、`W/memory/MemoryReviewScheduler.java`、`WT/memory/MemoryReviewModelAdapterTest.java`；创建 `backend/agent-server/src/main/java/com/datagent/agentv2/server/memory/MemoryRuntimeConfiguration.java`，修改 `P/FixedIdentityBootstrap.java` 的初始化顺序；补 P/ConversationMessageService 的领域分页查询。
 
 **接口：**
 
@@ -456,8 +478,14 @@ sealed interface MemoryReviewOutput {
     record Call(String providerCallId, Map<String,Object> arguments) {}
 }
 interface MemoryReviewModelPort { MemoryReviewOutput complete(MemoryReviewInput input); }
-// selector 接收已按 sequence 排序的候选及真实完整输入估算器
-MemoryReviewSliceSelector.Slice select(List<MemoryEvidence> messages, long fromSequence,
+record MemoryReviewMessage(long sequence, State state, MemoryEvidence evidence) {
+    enum State { ELIGIBLE, EXCLUDED, PENDING }
+}
+interface MemoryReviewHistoryPort {
+    List<MemoryReviewMessage> read(MemoryReviewClaim claim, long afterSequence, int limit);
+}
+// selector 接收按 sequence 排序的原始扫描结果及真实完整输入估算器
+MemoryReviewSliceSelector.Slice select(List<MemoryReviewMessage> messages, long fromSequence,
         long throughSequence, ToIntFunction<List<MemoryEvidence>> estimate, int maxInputTokens);
 record Slice(List<MemoryEvidence> messages, long reviewedThroughSequence, boolean blocked) {}
 void MemoryReviewWorker.run(MemoryReviewClaim claim);
@@ -470,16 +498,18 @@ void MemoryReviewWorker.run(MemoryReviewClaim claim);
 void anOversizedFirstMessageCannotAdvanceTheCursor() {
     var evidence = new MemoryEvidence("u1", MemoryEvidence.Kind.USER_MESSAGE, "s", "e", 7,
             "user_admin", 0, "内容".repeat(100), LocalDateTime.of(2026, 9, 16, 12, 0));
+    var row = new MemoryReviewMessage(7, MemoryReviewMessage.State.ELIGIBLE, evidence);
     var slice = new MemoryReviewSliceSelector(new MemoryProperties())
-            .select(List.of(evidence), 6, 7,
-                    rows -> rows.stream().mapToInt(row -> row.content().length()).sum() + 20, 100);
+            .select(List.of(row), 6, 7,
+                    rows -> rows.stream().mapToInt(message -> message.content().length()).sum() + 20, 100);
     assertThat(slice.blocked()).isTrue();
     assertThat(slice.reviewedThroughSequence()).isEqualTo(6);
 }
 ```
 
 - [ ] RED/GREEN：`mvn -f backend/pom.xml -pl agent-web -am '-Dtest=MemoryReviewSliceSelectorTest,MemoryReviewWorkerTest,MemoryReviewModelAdapterTest' '-Dsurefire.failIfNoSpecifiedTests=false' test`。
-- [ ] 分页从持久化 sequence 正序读，批次上界固定；通过 execution 状态明确排除失败/取消，未终态停止。assistant 内容只进入标注为辅助语境的输入，不能传作新增事实证据。对后台输入同样转义运行时标记；提示词、完整小库、schema 和正文全部计预算，无容量装首条时 BLOCKED_INPUT_TOO_LARGE。
+- [ ] WebMemoryReviewHistoryAdapter 使用 ConversationMessageService 的 `findReviewPage(String sessionId,long after,long through,int limit): List<ConversationMessage>` 和现有 `AgentExecutionService.findByExecutionIds(Collection<String>)` 批量查询，映射为 ELIGIBLE/EXCLUDED/PENDING；执行状态不做每条 N+1 查询。明确删除或不存在的范围可以标 EXCLUDED，仍在运行的必须 PENDING，不能过滤掉后假装连续完成。selector 在 PENDING 或首个放不下的完整消息前停止，EXCLUDED 不提炼但可推进已判断边界。
+- [ ] 分页从持久化 sequence 正序读，批次上界固定。assistant 只以 ASSISTANT_CONTEXT 辅助输入，MemoryEvidencePort 拒绝其用作事实证据。对后台输入同样转义运行时标记；提示词、完整小库、schema 和正文全部通过 ContextInputEstimatorResolver.current() 计预算，硬限取 ContextModelBudgetProvider.currentBudget()，不调用主会话 prepare()。无容量装首条时 BLOCKED/INPUT_TOO_LARGE。
 - [ ] reviewer 适配现有 AgentModelGateway，只传 memory 定义，输出 delta 丢弃，不用主会话 tools/SSE/process checkpoint。后台 prompt 要求保守提炼、对照已有快照、只引用用户证据、保护人工条目、无合格信息时不调用工具。模型端口返回 Calls 或 Done，异常传给 worker，不能异常转 Done。
 - [ ] worker 每次创建 BACKGROUND context，将 command payload 规范化后用 task/epoch/证据批次/动作摘要作 requestId。每次 submit 在 MemoryService 同事务再次 fence；成功后读取返回 revision 只推进自己的预期值。明确业务拒绝记录但可判断完成；无效参数/证据、冲突和基础设施失败停止当前批次并保留游标。
 
@@ -492,13 +522,13 @@ void anOversizedFirstMessageCannotAdvanceTheCursor() {
 → 失败：fail，不推进未完成范围；finally 取消心跳/释放合法租约
 ```
 
-- [ ] server 只装配最多 4 个后台工作线程、单独心跳 scheduler 和销毁钩子；调度编排在 web。provider 不响应 interrupt 时停止提交权仍由数据库租约保证，未退出任务占用受限槽位，不继续无限创建线程。GREEN 提交 `feat(memory): 实现后台提炼与失败恢复`。
+- [ ] server 只装配最多 4 个后台工作线程、单独心跳 scheduler 和销毁钩子；调度编排在 web。FixedIdentityBootstrap 标记 `@Order(0)`，MemoryRuntimeConfiguration 提供 `@Order(1)` ApplicationRunner 调用 `memory.initialize()`（短事务执行 state 幂等初始化）；scheduler 等应用 ready 后开始，保证 learningEnabledAt 在第一轮请求之前固定，不能每次读取重置。provider 不响应 interrupt 时停止提交权仍由数据库租约保证，未退出任务占用受限槽位，不继续无限创建线程。GREEN 提交 `feat(memory): 实现后台提炼与失败恢复`。
 
 ## 任务 11：前端管理面板和稳定的用户操作
 
 **文件：** 创建 `frontend/src/domain/memory.ts`、`frontend/src/api/memoryClient.ts`、`frontend/src/api/memoryClient.test.ts`、`frontend/src/components/memory/PersonalMemoryPanel.tsx`、`frontend/src/components/memory/PersonalMemoryPanel.test.tsx`；修改 `frontend/src/components/shell/AppShell.tsx`、`frontend/src/App.tsx`、`frontend/src/App.test.tsx`、`frontend/src/styles.css`。
 
-**接口：** MemoryClient 的 `list(kind?:MemoryKind,cursor?:string):Promise<MemoryListView>`、`create(request,key)`、`replace(id,request,key)`、`remove(id,version,key)`、`settings()`、`updateSettings(request,key)`。请求与响应类型逐项对应任务 8；MemoryKind 是两个小写 wire 值的 union，列表包含 entries、quotas、每类 nextCursor；面板 props 为 `{ client: MemoryClient; onClose(): void }`。
+**接口：** MemoryClient 的 `list(kind?:MemoryKind,cursor?:string):Promise<MemoryListView>`、`create(request,key)`、`replace(id,request,key)`、`remove(id,version,key)`、`settings()`、`updateSettings(request,key)`。请求与响应类型逐项对应任务 8；MemoryKind 是两个小写 wire 值的 union，列表使用任务 8 的 groups/quotas/revision 结构，groups 内有 entries/nextCursor；面板 props 为 `{ client: MemoryClient; onClose(): void }`。
 
 - [ ] 写网络层所有方法/Idempotency-Key/DELETE query 断言，UI 测试空状态、两类列表与容量、增改删、版本冲突保留 draft、抑制后明确恢复使用新 key、关闭保存失败回滚。用真实用户交互驱动测试，不只 snapshot DOM。
 
@@ -514,7 +544,24 @@ it('设置保存失败后仍显示服务端的开启状态', async () => {
 });
 ```
 
-- [ ] 在该测试文件定义 `createMemoryClientStub()`：所有六个方法为 vi.fn；settings 初值三个 true/settingsVersion=0，list 返回两个空组和 800/1500 配额，写方法回传符合任务 8 的响应。不得引用其他任务中不存在的全局 fixture。
+- [ ] 在该测试文件定义以下 fixture，mutation 场景按任务 8 响应替换对应 mock，不能从其他任务引用不存在的全局 fixture：
+
+```tsx
+function createMemoryClientStub() {
+  return {
+    list: vi.fn().mockResolvedValue({
+      groups: { person_profile: { entries: [], nextCursor: null },
+        collaboration_preference: { entries: [], nextCursor: null } },
+      quotas: { person_profile: { used: 0, limit: 800 },
+        collaboration_preference: { used: 0, limit: 1500 } }, revision: 0,
+    }),
+    create: vi.fn(), replace: vi.fn(), remove: vi.fn().mockResolvedValue(undefined),
+    settings: vi.fn().mockResolvedValue({ readEnabled: true, explicitWriteEnabled: true,
+      autoLearningEnabled: true, settingsVersion: 0 }),
+    updateSettings: vi.fn(),
+  };
+}
+```
 - [ ] RED/GREEN：`npm --prefix frontend test -- src/api/memoryClient.test.ts src/components/memory/PersonalMemoryPanel.test.tsx src/App.test.tsx`。
 - [ ] 复用 `createIdempotencyKey()`，同操作的传输重试复用 key；正文/版本/restore 改变即新操作。每类分页持续加载或明确“加载更多”，used 从服务端用量取值，不能用当前页累加冒充全部。内容用普通 React 文本输出，不用 dangerouslySetInnerHTML。
 
