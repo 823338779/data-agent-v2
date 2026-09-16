@@ -44,6 +44,23 @@ data-agent:
       working-directory: ${DATA_AGENT_MODEL_CODEX_WORKING_DIRECTORY:}
   execution:
     deadline: ${DATA_AGENT_EXECUTION_DEADLINE:10m}
+  git:
+    # 关闭时不装配 Git Tool、Skill、应用服务和工作目录；开启时 maximum 自动加入七个草稿工具。
+    # initial 不允许包含 Git 工具，读取 git-repository-maintenance Skill 才激活。
+    enabled: ${DATA_AGENT_GIT_ENABLED:false}
+    remote-uri: ${DATA_AGENT_GIT_REMOTE_URI:}
+    repository-id: ${DATA_AGENT_GIT_REPOSITORY_ID:metrics}
+    workspace-root: ${DATA_AGENT_GIT_WORKSPACE_ROOT:./data/git}
+    executable: ${DATA_AGENT_GIT_EXECUTABLE:git}
+    author-name: ${DATA_AGENT_GIT_AUTHOR_NAME:Data Agent}
+    author-email: ${DATA_AGENT_GIT_AUTHOR_EMAIL:data-agent@localhost}
+    command-timeout: ${DATA_AGENT_GIT_COMMAND_TIMEOUT:30s}
+    max-command-output-bytes: ${DATA_AGENT_GIT_MAX_COMMAND_OUTPUT_BYTES:4194304}
+    max-file-bytes: ${DATA_AGENT_GIT_MAX_FILE_BYTES:524288}
+    max-files-per-operation: ${DATA_AGENT_GIT_MAX_FILES_PER_OPERATION:20}
+    max-candidate-files: ${DATA_AGENT_GIT_MAX_CANDIDATE_FILES:100}
+    max-candidate-bytes: ${DATA_AGENT_GIT_MAX_CANDIDATE_BYTES:5242880}
+    max-diff-bytes: ${DATA_AGENT_GIT_MAX_DIFF_BYTES:2097152}
   artifact:
     # 首个基础设施切片默认关闭；启用后必须存在当前系统对应的唯一健康沙箱 Runner。
     enabled: ${DATA_AGENT_ARTIFACT_ENABLED:false}

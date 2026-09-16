@@ -2,6 +2,8 @@ package com.datagent.agentv2.server.web;
 
 import com.datagent.agentv2.conversation.exception.ActiveExecutionConflictException;
 import com.datagent.agentv2.conversation.exception.IdempotencyKeyReusedException;
+import com.datagent.agentv2.git.GitErrorMessages;
+import com.datagent.agentv2.git.model.GitException;
 import com.datagent.agentv2.http.RequestContext;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
@@ -33,6 +35,48 @@ public final class ApiExceptionHandler {
     private static final String ERROR_REQUEST_VALIDATION_FAILED = "Request validation failed";
     private static final String CLIENT_DISCONNECTED_MESSAGE =
             "Client disconnected from an asynchronous response";
+
+    /** Git 稳定错误码决定 HTTP 状态，原始命令 stderr 和服务器路径永不进入响应。 */
+    @ExceptionHandler(GitException.class)
+    ResponseEntity<ProblemDetail> handleGit(GitException exception, HttpServletRequest request) {
+        HttpStatus status =
+                switch (exception.code()) {
+                    case "GIT_CONFLICT",
+                            "GIT_CONTENT_CONFLICT",
+                            "GIT_BASE_CHANGED",
+                            "GIT_NON_FAST_FORWARD",
+                            "GIT_WORKSPACE_CORRUPT",
+                            "GIT_SNAPSHOT_CORRUPT",
+                            "GIT_COMMIT_CORRUPT" ->
+                            HttpStatus.CONFLICT;
+                    case "GIT_CHANGE_NOT_FOUND",
+                            "GIT_WORKSPACE_NOT_FOUND",
+                            "GIT_FILE_NOT_FOUND",
+                            "GIT_EXECUTION_NOT_FOUND" ->
+                            HttpStatus.NOT_FOUND;
+                    case "GIT_NOT_CONFIGURED",
+                            "GIT_COMMAND_FAILED",
+                            "GIT_RESULT_UNKNOWN",
+                            "GIT_TASK_REJECTED" ->
+                            HttpStatus.SERVICE_UNAVAILABLE;
+                    case "GIT_TIMEOUT" -> HttpStatus.GATEWAY_TIMEOUT;
+                    case "GIT_LIMIT_EXCEEDED", "GIT_FILE_TOO_LARGE", "GIT_OUTPUT_TOO_LARGE" ->
+                            HttpStatus.PAYLOAD_TOO_LARGE;
+                    case "GIT_INVALID_REQUEST",
+                            "GIT_PATH_REJECTED",
+                            "GIT_BINARY_FILE",
+                            "GIT_EMPTY_CHANGE" ->
+                            HttpStatus.BAD_REQUEST;
+                    default -> HttpStatus.INTERNAL_SERVER_ERROR;
+                };
+        return problem(
+                status,
+                "urn:data-agent:problem:git",
+                "Git operation failed",
+                exception.code(),
+                GitErrorMessages.summary(exception.code()),
+                request);
+    }
 
     /** 客户端关闭 SSE 等异步响应后无需再写错误响应。 */
     @ExceptionHandler(AsyncRequestNotUsableException.class)

@@ -282,3 +282,10 @@ push 超时、连接中断或进程在 push 附近退出时，先进入 `VERIFYI
 - 确认前允许准备对象但不创建 commit；确认后 commit 元信息固定，重试复用相同提交。
 - 已覆盖主分支竞争、响应丢失、服务重启、继续编辑使旧卡片失效。
 - 用户已确认按最小侵入边界实施；后续以实现计划记录执行和验证进度。
+
+
+### Task 3 实施补充：终答保持卡片可见
+
+正常模型终答会替换 assistant 正文，因此在 `ModelInvocationCoordinator.completeFinalAnswer` 原终答落库点增加一次可选 Git 组装调用：根据当前消息已登记的 `git-change-card@1` 补回占位符，并将同一正文写入最终流检查点。该变更是卡片在 execution 结束后仍可见、可确认的必要接入，不重构 ReAct 循环、Tool SPI 或状态机；artifact 投影与行为保持原样。关闭 Git 时不装配组装服务。
+
+卡片 payload 明确为 `{changeId, sessionId}`，两个 ID 均由服务端从候选和可信执行关联生成。部署配置、资源限制和精确 HTTP 契约见 `docs/agent-git-runtime.md`。

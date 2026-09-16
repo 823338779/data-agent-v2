@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
 import type { MessageArtifact, MessageUiBlock } from '../../domain/agent';
 import { ArtifactCardBlock } from './ArtifactCardBlock';
+import { GitChangeCardBlock } from './GitChangeCardBlock';
 
 interface UiBlockRendererProps {
   block: MessageUiBlock | undefined;
@@ -14,6 +15,7 @@ interface RegisteredBlockProps {
 
 const renderers: Record<string, ComponentType<RegisteredBlockProps>> = {
   'artifact-card@1': ArtifactCardRenderer,
+  'git-change-card@1': GitChangeCardRenderer,
 };
 
 /** type@schemaVersion 白名单注册表；未知或无效数据只显示安全回退。 */
@@ -41,5 +43,30 @@ function ArtifactCardRenderer({ block, artifacts }: RegisteredBlockProps) {
     <ArtifactCardBlock artifact={artifact} />
   ) : (
     <div className="ui-block-fallback">文件不可用</div>
+  );
+}
+
+function GitChangeCardRenderer({ block }: RegisteredBlockProps) {
+  const payload = block.payload;
+  if (
+    typeof payload !== 'object' ||
+    payload === null ||
+    Array.isArray(payload) ||
+    Object.keys(payload).length !== 2 ||
+    !('changeId' in payload) ||
+    !('sessionId' in payload) ||
+    typeof payload.changeId !== 'string' ||
+    !payload.changeId.trim() ||
+    typeof payload.sessionId !== 'string' ||
+    !payload.sessionId.trim()
+  ) {
+    return <div className="ui-block-fallback">Git 卡片数据无效</div>;
+  }
+  return (
+    <GitChangeCardBlock
+      key={`${payload.sessionId}/${payload.changeId}`}
+      sessionId={payload.sessionId}
+      changeId={payload.changeId}
+    />
   );
 }

@@ -15,6 +15,7 @@ import com.datagent.agentv2.conversation.runtime.ExecutionStoppedException;
 import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
 import com.datagent.agentv2.conversation.stream.ExecutionStreamCheckpointCoordinator;
 import com.datagent.agentv2.conversation.tool.PreparedToolInvocation;
+import com.datagent.agentv2.git.GitFinalAnswerComposer;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventService;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
@@ -27,6 +28,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,6 +49,7 @@ public class ModelInvocationCoordinator {
     private final ApplicationEventPublisher applicationEvents;
     private final AgentExecutionEventService events;
     private final IdGenerator ids;
+    private final ObjectProvider<GitFinalAnswerComposer> gitFinalAnswers;
     private final ConcurrentMap<ModelThinkingKey, UUID> activeThinkingItems =
             new ConcurrentHashMap<>();
 
@@ -126,6 +129,10 @@ public class ModelInvocationCoordinator {
         finishThinking(run, boundary, ThinkingProcessStatus.SUCCEEDED, now);
         checkpoints.flushAndRelease(run, boundary.modelInvocationSequence(), now);
 
+        ConversationMessage assistant = messages.lockAssistantByExecutionId(run.executionId());
+        // 工具已持久化的 Git 卡片不能被最终模型文字覆盖；同一正文同时写入消息与最终流快照。
+        GitFinalAnswerComposer composer = gitFinalAnswers.getIfAvailable();
+        if (composer != null) answer = composer.appendRegisteredCards(assistant, answer);
         AgentExecutionStreamCheckpoint stream = requireCheckpoint(run.executionId());
         if (!persistedCheckpoints.complete(
                 run.executionId(),
@@ -134,7 +141,6 @@ public class ModelInvocationCoordinator {
                 answer)) {
             throw new ExecutionStoppedException(run.executionId());
         }
-        ConversationMessage assistant = messages.lockAssistantByExecutionId(run.executionId());
         assistant.completeAssistantContent(answer);
         if (!messages.updateById(assistant)
                 || !executions.completeRunning(run.executionId(), execution.getVersion())) {
