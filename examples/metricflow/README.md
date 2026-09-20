@@ -85,7 +85,16 @@ New-Item -ItemType Directory -Path .local -Force | Out-Null
 | `models/fct_orders.sql` | 保留订单明细及状态，转换日期和金额类型 |
 | `models/dim_customers.sql` | 保留客户地区与客群 |
 | `models/time_spine.sql` | 连续日历，用于累计与时间偏移 |
-| `models/semantic.yml` | 定义实体、维度、8 个指标及其业务口径 |
+| `models/fct_orders.yml` | 订单实体、维度、测试及收入、订单数、成本三个基础指标 |
+| `models/dim_customers.yml` | 客户实体、地区和客群维度及测试 |
+| `models/time_spine.yml` | 时间骨架配置及测试 |
+| `models/metrics/average_order_value.yml` | 客单价指标 |
+| `models/metrics/gross_profit.yml` | 毛利润指标 |
+| `models/metrics/gross_margin.yml` | 毛利率指标 |
+| `models/metrics/cumulative_revenue.yml` | 累计收入指标 |
+| `models/metrics/revenue_growth_mom.yml` | 收入月环比指标 |
+
+每个模型的 YAML 集中定义其实体、维度、基础指标和测试，避免在不同文件重复声明同一模型。其余五个顶层指标按“一指标一文件”存放在 `models/metrics/`，通过名称相互引用，不需要导入其他 YAML。dbt 会扫描整个 `models/` 目录，统一生成语义清单。
 
 数据中 10 笔订单为 `paid`，1 笔 `cancelled` 金额 500 元，1 笔 `pending` 金额 600 元。所有订单金额合计 3,370 元，但已支付收入只有 2,270 元。
 
@@ -126,7 +135,7 @@ dbt 负责建表；MetricFlow 读取语义定义，根据查询动态生成 SQL�
 | ---: | ---: | ---: | ---: | ---: |
 | 2270 | 10 | 227 | 908 | 0.4 |
 
-这条查询没有写 `status = 'paid'`，过滤条件来自指标定义。例如：
+这条查询没有写 `status = 'paid'`，过滤条件来自 `fct_orders.yml` 中的基础指标：
 
 ```yaml
 - name: revenue
@@ -253,7 +262,7 @@ group by c.region
 
 ## 11. 修改、导出与已完成的验证
 
-只修改 `models/semantic.yml` 中的指标口径时，刷新清单后重新查询：
+只修改模型 YAML 或 `models/metrics/` 中的指标口径、拆分文件组织时，刷新清单后重新查询：
 
 ```powershell
 .\.venv\Scripts\dbt.exe parse --profiles-dir .
@@ -267,7 +276,7 @@ group by c.region
 .\.venv\Scripts\mf.exe query --metrics revenue,paid_orders --group-by customer__region --order=-revenue --csv .local/regions.csv
 ```
 
-重置前曾完成以下验证，供你重新执行时对照；本次重置后未自动重建或运行查询：
+重置前曾完成以下验证，供你重新执行时对照；重置后没有为用户自动重建示例数据库。文件组织调整后的检查在仓库 `tmp/` 内的临时项目执行：
 
 - `pip check`：依赖无冲突。
 - `dbt build`：2 个 seed、3 个模型、10 项数据测试全部成功。

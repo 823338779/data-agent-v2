@@ -1,0 +1,10 @@
+version: 2
+
+# 独立指标通过名称引用其他文件中的指标，由 dbt 统一解析依赖。
+metrics:
+  - name: gross_margin
+    label: 毛利率
+    description: 毛利润除以收入；返回小数，0.4 表示百分之四十。
+    type: ratio
+    numerator: gross_profit
+    denominator: revenue

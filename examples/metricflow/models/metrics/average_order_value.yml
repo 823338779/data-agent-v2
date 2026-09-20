@@ -1,0 +1,10 @@
+version: 2
+
+# 独立指标通过名称引用其他文件中的指标，由 dbt 统一解析依赖。
+metrics:
+  - name: average_order_value
+    label: 客单价
+    description: 已支付收入除以已支付订单数，人民币元每单；按当前分组重新计算。
+    type: ratio
+    numerator: revenue
+    denominator: paid_orders

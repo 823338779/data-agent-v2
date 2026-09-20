@@ -1,0 +1,21 @@
+version: 2
+
+# 模型的实体、维度、基础指标和测试集中定义，避免重复声明同一模型。
+models:
+  - name: dim_customers
+    description: 四名虚构客户；地区和客群通过客户实体提供给订单指标查询。
+    semantic_model:
+      enabled: true
+    columns:
+      - name: customer_id
+        description: 客户唯一标识，必须唯一以避免关联后重复计算订单金额。
+        entity: {name: customer, type: primary}
+        data_tests: [unique, not_null]
+      - name: customer_name
+        description: 虚构客户英文姓名。
+      - name: region
+        description: east 华东、south 华南、north 华北。
+        dimension: {type: categorical}
+      - name: segment
+        description: enterprise 企业客户、individual 个人客户。
+        dimension: {type: categorical}

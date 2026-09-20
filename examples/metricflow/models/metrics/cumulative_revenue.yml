@@ -1,0 +1,10 @@
+version: 2
+
+# 独立指标通过名称引用其他文件中的指标，由 dbt 统一解析依赖。
+metrics:
+  - name: cumulative_revenue
+    label: 累计收入
+    description: 从样例数据起点累计至当前时间粒度期末的已支付收入，人民币元。
+    type: cumulative
+    input_metric: revenue
+    period_agg: last

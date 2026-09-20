@@ -1,0 +1,58 @@
+version: 2
+
+# 模型的实体、维度、基础指标和测试集中定义，避免重复声明同一模型。
+models:
+  - name: fct_orders
+    description: 模拟订单事实表，一行一笔订单；金额和成本单位均为人民币元。
+    semantic_model:
+      enabled: true
+    agg_time_dimension: ordered_at
+    columns:
+      - name: order_id
+        description: 唯一订单标识，也是订单维度的命名空间。
+        entity: {name: order, type: primary}
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: 关联客户维度的外键；与 dim_customers 中的 customer 实体对应。
+        entity: {name: customer, type: foreign}
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: "ref('dim_customers')", field: customer_id}
+      - name: ordered_at
+        description: 订单日期，所有演示指标按该日期归属，不代表支付到账日期。
+        granularity: day
+        dimension: {type: time}
+        data_tests: [not_null]
+      - name: status
+        description: paid 已支付、pending 待支付、cancelled 已取消；只有 paid 计入收入。
+        dimension: {type: categorical}
+        data_tests:
+          - accepted_values:
+              arguments: {values: [paid, pending, cancelled]}
+      - name: amount
+        description: 订单金额，人民币元；未支付和取消订单仍保留其原始金额。
+      - name: cost
+        description: 订单对应成本，人民币元；示例统一设为订单金额的百分之六十。
+    metrics:
+      - name: revenue
+        label: 已支付收入
+        description: 仅累计 paid 订单金额，人民币元；排除待支付和取消订单。
+        type: simple
+        agg: sum
+        expr: amount
+        filter: "{{ Dimension('order__status') }} = 'paid'"
+      - name: paid_orders
+        label: 已支付订单数
+        description: paid 状态的订单去重数。
+        type: simple
+        agg: count_distinct
+        expr: order_id
+        filter: "{{ Dimension('order__status') }} = 'paid'"
+      - name: total_cost
+        label: 已支付订单成本
+        description: 与收入使用相同订单集合的成本合计，人民币元。
+        type: simple
+        agg: sum
+        expr: cost
+        filter: "{{ Dimension('order__status') }} = 'paid'"

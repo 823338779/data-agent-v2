@@ -1,0 +1,13 @@
+version: 2
+
+# 模型的实体、维度、基础指标和测试集中定义，避免重复声明同一模型。
+models:
+  - name: time_spine
+    description: 2025年12月1日至2026年2月28日的连续日历，用于累计和环比。
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        description: 唯一自然日，时间骨架的最小粒度为一天。
+        granularity: day
+        data_tests: [unique, not_null]

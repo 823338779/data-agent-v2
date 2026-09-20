@@ -1,0 +1,14 @@
+version: 2
+
+# 独立指标通过名称引用其他文件中的指标，由 dbt 统一解析依赖。
+metrics:
+  - name: revenue_growth_mom
+    label: 收入月环比
+    description: 当前月收入相对上月的增长比例；没有上月收入时为空，0.27 表示增长百分之二十七。
+    type: derived
+    expr: (revenue - previous_revenue) / nullif(previous_revenue, 0)
+    input_metrics:
+      - name: revenue
+      - name: revenue
+        alias: previous_revenue
+        offset_window: 1 month

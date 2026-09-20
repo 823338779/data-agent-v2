@@ -1,0 +1,12 @@
+version: 2
+
+# 独立指标通过名称引用其他文件中的指标，由 dbt 统一解析依赖。
+metrics:
+  - name: gross_profit
+    label: 毛利润
+    description: 已支付收入减去对应成本，人民币元。
+    type: derived
+    expr: revenue - total_cost
+    input_metrics:
+      - name: revenue
+      - name: total_cost
