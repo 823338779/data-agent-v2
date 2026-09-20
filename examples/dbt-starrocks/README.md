@@ -1,252 +1,623 @@
-# 亲手体验 dbt 如何维护表、视图和血缘
+# dbt + StarRocks 手动实验指南
 
-这是逐步实验手册。每次只执行一个步骤，停下来查看数据库与 SQL，再执行下一步。脚本不会自动串起全部流程。
+本文包含每一步需要的终端命令、观察 SQL、预期结果和原理说明。直接复制对应代码块执行，不依赖任何 PowerShell 脚本文件，也不需要先打开其他 SQL 文件。
 
-**当前起点：**助手在前一轮已经安装本目录 `.venv`，并在本地 StarRocks 的 `dbt_learning_demo` 库中生成了 2 张 seed 表、2 个视图和 3 张模型表，保留的是第二批结果（6 笔订单、495 元）。本轮仅改写文件，没有再次执行 dbt 或改动数据库。要观察从无到有的过程，先由你执行第 0 步的可选重置。
+**操作原则：每次完成一小步，观察结果，再继续。** `powershell` 代码块在终端执行；`sql` 代码块在连接 StarRocks 的数据库控制台执行；标注为“修改文件”的内容写入对应文件，不直接提交给数据库。
 
-## 文件与操作约定
+之前助手已安装本目录的虚拟环境，并生成过 demo 对象，最后保留的是第二批结果（6 笔订单、495 元）。本次仅整理文档，没有运行下面任何实验指令。数据库当前状态以你在第 1 步查询到的结果为准。
 
-| 文件 | 用途 |
-| --- | --- |
-| `lab.ps1` | 每次执行一个指定步骤，先打印实际 dbt 命令；加 `-Preview` 只打印 |
-| `observe.sql` | 在 SQL 客户端分段执行的观察查询 |
-| `reset_demo.sql` | 可选的手动清理，仅删除本教程的 7 个对象 |
-| `dbt_project.yml` | 模型目录、物化方式、seed 字段类型、演示批次 |
-| `profiles.yml` | 本地 StarRocks 连接模板，密码读取环境变量 |
-| `models/`、`seeds/`、`tests/` | 你维护的 SQL、模拟数据和数据质量规则 |
+## 0. 准备终端和数据库控制台
 
-PowerShell 命令在本目录执行；SQL 在连接本地 StarRocks 的客户端执行，例如 IDE 数据库控制台。库名固定为 `dbt_learning_demo`，连接 FE MySQL 端口 `9030`。
+### 0.1 进入项目目录
+
+打开 PowerShell，执行：
 
 ```powershell
 cd E:\IdeaProjects\agent-root\data-agent-v2\examples\dbt-starrocks
-$dbt = '.\.venv\Scripts\dbt.exe'
-
-# 只看用法或完整命令，不执行数据库操作。
-.\lab.ps1
-.\lab.ps1 -Step seed -Preview
 ```
 
-本机已有虚拟环境，可以跳过安装。换机器或环境缺失时，再自行执行：
+后续所有终端命令都在这个目录执行。使用虚拟环境中的可执行文件完整相对路径，无需激活环境或设置命令别名。
+
+### 0.2 检查 Python 和 dbt
+
+```powershell
+python --version
+Test-Path .\.venv\Scripts\dbt.exe
+```
+
+如果第二条返回 `True`，跳过安装，直接查看 dbt 版本：
+
+```powershell
+.\.venv\Scripts\dbt.exe --version
+```
+
+**仅当虚拟环境不存在时**执行安装：
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\dbt.exe --version
 ```
 
-依赖固定为 dbt-core 1.12.5、dbt-starrocks 1.12.2；上一轮使用 Python 3.14、StarRocks 3.5.19。默认连接 `127.0.0.1:9030`，root、空密码。有密码时在当前终端设置 `DBT_ENV_SECRET_STARROCKS_PASSWORD`，不要写进文件。主机、端口、账号可用 `DBT_STARROCKS_HOST`、`DBT_STARROCKS_PORT`、`DBT_STARROCKS_USER` 覆盖。
+项目固定使用 `dbt-core==1.12.5`、`dbt-starrocks==1.12.2`；此前环境为 Python 3.14、StarRocks 3.5.19。
 
-## 0. 选择是否从空白对象开始
+### 0.3 连接 StarRocks
 
-先执行 `observe.sql` 的 **A 段**，查看前一轮留下的对象。如果需要从头体验，在 SQL 客户端打开并手动执行 `reset_demo.sql`。它会删除本教程的 7 个对象及其数据，不删除数据库或其他对象。
+在 IDE 或其他 SQL 客户端新建 MySQL 协议连接，参数如下：
 
-再次执行 A 段，应该看不到这些对象。不要用 `dbt clean` 代替数据库清理：它清理配置指定的本地生成目录，不删除 StarRocks 中的表。
+| 参数 | 本地默认值 |
+| --- | --- |
+| 主机 | `127.0.0.1` |
+| 端口 | `9030` |
+| 用户 | `root` |
+| 密码 | 空 |
+| 数据库 | 初次连接可不选，下面 SQL 均显式写库名 |
+
+`9030` 是数据库协议端口，`8030` 是 HTTP 端口，不能互换。若你已修改账号或密码，同时在运行 dbt 的终端设置对应环境变量；默认配置可跳过：
 
 ```powershell
-.\lab.ps1 -Step debug
+$env:DBT_STARROCKS_HOST = '127.0.0.1'
+$env:DBT_STARROCKS_PORT = '9030'
+$env:DBT_STARROCKS_USER = 'root'
+# 仅当实际配置了密码时填写，不要将真实密码写入仓库文件。
+# $env:DBT_ENV_SECRET_STARROCKS_PASSWORD = '你的本地密码'
 ```
 
-**观察：**连接检查成功不会创建模型表。环境检查与模型执行是两件事。
-
-## 1. 表还没建，dbt 已经知道依赖关系
-
-打开 `models/marts/mart_customer_sales.sql`，找出两处 `ref()`。再逐层打开被引用的模型，追溯到 CSV。
+检查 dbt 连接：
 
 ```powershell
-.\lab.ps1 -Step lineage
+.\.venv\Scripts\dbt.exe debug --profiles-dir .
 ```
 
-这一步执行 `dbt ls --select +mart_customer_sales --resource-type model seed`。前缀 `+` 选择祖先依赖，列表应包含两个 seed、两个 staging、事实表和客户汇总表；日汇总表不在客户汇总的上游。
+**观察：**连接成功不代表模型已创建。`debug` 检查配置和连接，本身不构建模型。
 
-**观察：**只列出节点，不创建表。dbt 根据项目中的 `ref()` 建立模型级血缘，不需要等表建好再靠数据库外键推测依赖。
+## 1. 查看已有对象，选择是否从空白开始
+
+在 SQL 控制台执行：
+
+```sql
+SELECT TABLE_NAME, TABLE_TYPE
+FROM information_schema.tables
+WHERE TABLE_SCHEMA = 'dbt_learning_demo'
+ORDER BY TABLE_NAME;
+```
+
+前一次执行可能留下 7 个对象。为了按下面的预期观察“表逐个出现”，可以手动执行以下重置。
+
+**以下 SQL 会删除列出的 7 个 demo 对象及其数据；不会删除数据库和其他对象。确认其中没有你另行保存的数据后再执行。**
+
+```sql
+DROP TABLE IF EXISTS dbt_learning_demo.mart_customer_sales;
+DROP TABLE IF EXISTS dbt_learning_demo.mart_daily_sales;
+DROP TABLE IF EXISTS dbt_learning_demo.fct_orders;
+DROP VIEW IF EXISTS dbt_learning_demo.stg_orders;
+DROP VIEW IF EXISTS dbt_learning_demo.stg_customers;
+DROP TABLE IF EXISTS dbt_learning_demo.raw_order_events;
+DROP TABLE IF EXISTS dbt_learning_demo.raw_customers;
+```
+
+重新执行本节第一条查询，确认这些对象不再出现。下文按已完成重置或首次执行的情况描述。
+
+`dbt clean` 只清理配置指定的本地生成目录，不会删除数据库对象，因此不能代替这里的重置。
+
+## 2. 尚未建表，先查看 dbt 的血缘
+
+在终端执行：
+
+```powershell
+.\.venv\Scripts\dbt.exe ls --profiles-dir . --select '+mart_customer_sales' --resource-type model seed --vars 'demo_batch: 1'
+```
+
+**预期列出 6 个节点，顺序不重要：**
+
+- `raw_customers`
+- `raw_order_events`
+- `stg_customers`
+- `stg_orders`
+- `fct_orders`
+- `mart_customer_sales`
+
+`mart_daily_sales` 不在客户汇总的上游，所以不在这个列表里。再执行第 1 节的对象查询，数据库应仍无这些对象。
+
+打开 `models/marts/mart_customer_sales.sql`，看到类似：
+
+```jinja
+from {{ ref('stg_customers') }} c
+left join {{ ref('fct_orders') }} o on c.customer_id = o.customer_id
+```
+
+这是模型文件的片段，不能直接粘到 SQL 控制台。`ref()` 既解析实际库表名，又声明节点依赖，dbt 在建表之前就能建立下面的模型级血缘：
 
 ```mermaid
 graph LR
-    C[raw_customers seed 表] --> SC[stg_customers 视图]
-    E[raw_order_events seed 表] --> SO[stg_orders 视图]
-    SO --> F[fct_orders 增量主键表]
-    F --> D[mart_daily_sales 表]
-    F --> M[mart_customer_sales 表]
+    C[raw_customers] --> SC[stg_customers]
+    E[raw_order_events] --> SO[stg_orders]
+    SO --> F[fct_orders]
+    F --> D[mart_daily_sales]
+    F --> M[mart_customer_sales]
     SC --> M
 ```
 
-`ref()` 同时负责对象引用和依赖声明。外部工具已经加载的表通常使用 `source()` 声明；本例数据由 seed 管理，所以使用 `ref()`。直接在 SQL 中写死库表名，不会自动形成对应的 dbt 模型依赖边。
+`+模型` 选择上游，`模型+` 选择下游。只选择单个模型不会自动运行所有祖先。直接写死数据库表名也不会自动形成对应的 dbt 依赖边。外部工具已加载的表通常使用 `source()` 声明；本例原始数据由 seed 管理，所以使用 `ref()`。
 
-## 2. seed：第一次看到真实表出现
+## 3. seed：将 CSV 写成两张真实表
 
-```powershell
-.\lab.ps1 -Step seed
-```
-
-执行 `observe.sql` 的 **A、B 段**。
-
-**预期：**只有 `raw_customers`、`raw_order_events` 两张表。客户 3 行，订单事件 7 行；1003 有两个版本。seed 把 CSV 数据写进引擎，后续 SQL 的计算由 StarRocks 执行。
-
-打开 `dbt_project.yml`，观察 seed 的 `column_types`，尤其是金额的 `decimal(18,2)`。seed 提供可复现的小数据，不承担生产环境的 CDC 或大规模数据同步。
-
-## 3. staging：同样写 SELECT，却得到视图
+在终端执行：
 
 ```powershell
-.\lab.ps1 -Step staging
+.\.venv\Scripts\dbt.exe seed --profiles-dir .
 ```
 
-执行 **A、C 段**，特别看 `SHOW CREATE VIEW`。
+随后在 SQL 控制台执行：
 
-**预期：**新增两个 VIEW，`stg_orders` 返回第一批的 5 笔最新订单。原始表依然有 7 条事件，1003 在视图中还是 `pending / 50`。
+```sql
+SELECT TABLE_NAME, TABLE_TYPE
+FROM information_schema.tables
+WHERE TABLE_SCHEMA = 'dbt_learning_demo'
+ORDER BY TABLE_NAME;
 
-打开 `stg_orders.sql`，它只有 CTE 和 SELECT，没有手写 `CREATE VIEW`。打开 `dbt_project.yml`，找到 `staging: +materialized: view`：**模型定义查询逻辑，物化配置和适配器决定如何维护数据库对象。**
+SELECT * FROM dbt_learning_demo.raw_customers ORDER BY customer_id;
+SELECT * FROM dbt_learning_demo.raw_order_events ORDER BY event_id;
+```
 
-视图定义中能看到 `batch_id <= 1`：Jinja 的批次变量已经变成 SQL 常量。它不会因为下次运行另一个模型时传入了新变量就自行改变。
+**预期：**出现两张表，客户 3 行，订单事件 7 行。1003 有两个版本，第二个版本属于 `batch_id=2`。这时没有 staging 视图和销售汇总表。
 
-## 4. fact：第一次创建增量表
+打开 `dbt_project.yml`，观察 seed 的 `column_types`，尤其是金额 `decimal(18,2)`。CSV 数据在 `seeds/` 目录；dbt 将它们加载到 StarRocks，之后的 SQL 计算由 StarRocks 完成。seed 适合小数据和字典，不承担生产 CDC。
+
+## 4. staging：用 SELECT 定义两个视图
+
+在终端执行：
 
 ```powershell
-.\lab.ps1 -Step fact
+.\.venv\Scripts\dbt.exe run --profiles-dir . --select stg_customers stg_orders --vars 'demo_batch: 1'
 ```
 
-执行 **D 段**。
+观察 SQL：
 
-**预期：**真实表 `fct_orders` 出现，5 笔订单，已支付金额 400 元。DDL 中可见 `PRIMARY KEY(order_id)`；它不是视图。
+```sql
+SELECT TABLE_NAME, TABLE_TYPE
+FROM information_schema.tables
+WHERE TABLE_SCHEMA = 'dbt_learning_demo'
+ORDER BY TABLE_NAME;
 
-打开 `fct_orders.sql` 的 `config()`：`materialized='incremental'` 控制 dbt 的执行方式，`table_type='PRIMARY'` 与 `keys` 控制 StarRocks 的物理主键表。只声明 `unique_key` 不能代替物理主键配置。
+SHOW CREATE VIEW dbt_learning_demo.stg_orders;
+SELECT order_id, status, amount, updated_at
+FROM dbt_learning_demo.stg_orders
+ORDER BY order_id;
+```
 
-第一次目标表不存在时，`is_incremental()` 为假，读取全部可见订单。以后目标表存在且未指定 `--full-refresh` 时，才应用更新时间过滤。
+**预期：**现在共 4 个对象，两张原始表、两个视图。订单视图只有 5 行，1003 还是 `pending / 50.00`，原始表仍有 7 条事件。
 
-## 5. marts：汇总表保存本次计算的结果
+查看 `models/staging/stg_orders.sql`：你只写了查询、批次过滤和取最新版本的窗口函数，没有手写 `CREATE VIEW`。实际维护视图由 `dbt_project.yml` 中的配置驱动：
+
+```yaml
+models:
+  starrocks_learning:
+    staging:
+      +materialized: view
+```
+
+这里是现有配置片段，不需要覆盖文件。`SHOW CREATE VIEW` 中应能看到 `batch_id <= 1`：Jinja 变量在运行时编译为 SQL 常量。以后只给另一个模型传入第二批变量，不会自动修改这个已保存的视图定义。
+
+## 5. fact：第一次创建增量主键表
+
+在终端执行：
 
 ```powershell
-.\lab.ps1 -Step marts
+.\.venv\Scripts\dbt.exe run --profiles-dir . --select fct_orders --vars 'demo_batch: 1'
 ```
 
-执行 **A、E 段**。
+观察 SQL：
 
-**预期：**共 7 个对象，其中 2 个视图、5 张表。每日已支付额为 9 月 1 日 200 元、9 月 2 日 200 元；客户收入为 Alice 120、Bob 280、Carol 0。
+```sql
+SHOW CREATE TABLE dbt_learning_demo.fct_orders;
 
-汇总模型默认 `materialized: table`。后续重新运行时，由当前适配器重建表并重新计算；它不是 StarRocks 的自动刷新物化视图。单纯上游数据发生变化，不会触发 dbt 在后台运行。
+SELECT order_id, status, amount, paid_amount, updated_at
+FROM dbt_learning_demo.fct_orders
+ORDER BY order_id;
 
-## 6. 对照模型 SQL、编译 SQL 和执行 SQL
+SELECT COUNT(*) AS order_count, SUM(paid_amount) AS paid_amount
+FROM dbt_learning_demo.fct_orders;
+```
+
+**预期：**5 笔订单，已支付金额 `400.00`。待支付和取消订单仍保留，但 `paid_amount=0`。DDL 中能看到物理 `PRIMARY KEY(order_id)`。
+
+打开 `models/marts/fct_orders.sql`，对照配置：
+
+- `materialized='incremental'`：决定 dbt 使用增量模型维护流程。
+- `table_type='PRIMARY'`、`keys=['order_id']`：决定 StarRocks 的物理主键表。
+- `unique_key='order_id'`：不能代替上述物理主键配置。
+
+首次目标表不存在时，`is_incremental()` 为假，读取全部可见数据。目标表已存在且未指定 `--full-refresh` 时，才启用模型里写的增量过滤。
+
+## 6. marts：创建两张汇总表
+
+在终端执行：
 
 ```powershell
-.\lab.ps1 -Step compile
+.\.venv\Scripts\dbt.exe run --profiles-dir . --select mart_daily_sales mart_customer_sales --vars 'demo_batch: 1'
 ```
 
-依次打开：
+观察 SQL：
 
-1. `models/marts/fct_orders.sql`：你维护的 Jinja + SQL。
-2. `target/compiled/starrocks_learning/models/marts/fct_orders.sql`：`ref()`、`this` 和条件分支展开后的 SQL。
-3. `target/run/starrocks_learning/models/marts/fct_orders.sql`：前面实际 run 产生的执行 SQL；更多 DDL 和元数据查询见 `logs/dbt.log`。
+```sql
+SELECT TABLE_NAME, TABLE_TYPE
+FROM information_schema.tables
+WHERE TABLE_SCHEMA = 'dbt_learning_demo'
+ORDER BY TABLE_NAME;
 
-**观察：**此时目标表已存在，所以 compile 中会出现增量过滤，而前面首次 run 可能是建表 SQL。编译结果取决于变量与当前目标状态；`compile` 不会应用模型变更，但可以连接引擎读取元数据，不等于完全离线。
+SHOW CREATE TABLE dbt_learning_demo.mart_daily_sales;
+SELECT * FROM dbt_learning_demo.mart_daily_sales ORDER BY order_date;
+SELECT * FROM dbt_learning_demo.mart_customer_sales ORDER BY customer_id;
+```
 
-## 7. 数据测试：检查，不会替你修复数据
+**预期：**共 7 个对象，5 张表、2 个视图。每日收入如下：
+
+| order_date | order_count | paid_order_count | paid_amount |
+| --- | --- | --- | --- |
+| 2026-09-01 | 2 | 2 | 200.00 |
+| 2026-09-02 | 3 | 1 | 200.00 |
+
+客户收入为 Alice 120、Bob 280、Carol 0。客户汇总用 LEFT JOIN 保留没有已支付收入的客户。
+
+汇总模型默认 `materialized: table`，保存本次查询的结果；当前适配器在重新运行时重建并重新计算。它不是自动刷新的 StarRocks 物化视图，上游发生变化不会触发 dbt 在后台运行。
+
+## 7. 对照模型、编译 SQL 和执行 SQL
+
+在终端执行：
 
 ```powershell
-.\lab.ps1 -Step test
+.\.venv\Scripts\dbt.exe compile --profiles-dir . --select fct_orders --vars 'demo_batch: 1'
 ```
 
-打开 `models/schema.yml` 和 `tests/assert_demo_totals.sql`。这些查询检查唯一性、非空、状态枚举、客户关联以及学习数据的固定总量。正常首批预期通过 26 项测试。
-
-下面刻意使用第二批预期检查首批数据，应报告失败，但不会把订单改成第二批：
+继续在终端查看三个文件：
 
 ```powershell
-& $dbt test --profiles-dir . --select assert_demo_totals --vars 'demo_batch: 2'
+Get-Content .\models\marts\fct_orders.sql -Encoding UTF8
+Get-Content .\target\compiled\starrocks_learning\models\marts\fct_orders.sql -Encoding UTF8
+Get-Content .\target\run\starrocks_learning\models\marts\fct_orders.sql -Encoding UTF8
 ```
 
-执行 **D 段**确认表还是 5 笔、400 元。再执行 `lab.ps1 -Step test` 可用正确批次检查。`test` 验证现存数据；`run` 构建模型；`build` 可以按依赖顺序组合 seed、模型和测试。本教程先拆开，以观察每种命令的职责。
+依次观察：
 
-## 8. 核心实验：分三次推进，对比上游与下游
+1. 源模型含 `ref()`、`this`、`is_incremental()` 等模板语法。
+2. 编译 SQL 已替换为实际对象名；由于目标表已存在，当前会包含增量过滤条件。
+3. `target/run` 保留前面实际 run 生成的执行 SQL；第一次 run 是建表流程，可能与此时编译出的增量查询不同。更多执行语句可查看 `logs/dbt.log`。
 
-先执行 **F 段**，三个层次都应为 5 笔、400 元。每执行以下一条命令，就回 SQL 客户端重跑 F 段，不要一次粘贴整个流程。
+`compile` 不应用模型变更，但可能连接数据库读取元数据，不等于完全离线。编辑 SQL 文件也不会立即改变数据库，必须运行模型才会生效。
 
-**第一步：只改变视图定义。**
+## 8. 数据测试：观察成功和一次刻意失败
+
+正常检查第一批：
 
 ```powershell
-.\lab.ps1 -Step batch2-view
+.\.venv\Scripts\dbt.exe test --profiles-dir . --vars 'demo_batch: 1'
 ```
 
-视图现在能看到第二批：1003 更新为 `paid / 55`，新增 1006 `paid / 40`。C 段的视图定义应变为 `batch_id <= 2`。
+预期 26 项测试通过。规则在 `models/schema.yml` 和 `tests/`：包含非空、唯一性、状态枚举、关联关系和收入口径检查。
 
-**第二步：只更新事实表。**
+刻意拿第二批的“6 笔 / 495 元”预期检查当前第一批数据：
 
 ```powershell
-.\lab.ps1 -Step batch2-fact
+.\.venv\Scripts\dbt.exe test --profiles-dir . --select assert_demo_totals --vars 'demo_batch: 2'
 ```
 
-事实表新增一单、覆盖旧单，汇总表仍保持旧结果。打开刚生成的 `target/run` SQL 和日志观察 INSERT；同主键的覆盖由 StarRocks PRIMARY KEY 表完成。
+**预期此条失败。**然后查询，确认测试没有替你修改表：
 
-**第三步：重新计算汇总表。**
+```sql
+SELECT COUNT(*) AS order_count, SUM(paid_amount) AS paid_amount
+FROM dbt_learning_demo.fct_orders;
+```
+
+结果仍为 5 笔、400 元。恢复正确预期：
 
 ```powershell
-.\lab.ps1 -Step batch2-marts
+.\.venv\Scripts\dbt.exe test --profiles-dir . --select assert_demo_totals --vars 'demo_batch: 1'
 ```
+
+这条应通过。数据测试用查询识别问题，不会代替数据修复或数据库约束。固定总量测试仅适用于本教程的模拟数据。
+
+## 9. 核心实验：分三次推进第二批
+
+本节每执行一次 dbt 命令，都要查询数据库。不要连续执行完三个阶段才看结果。
+
+### 9.1 先记录三层初始结果
+
+在 SQL 控制台保存并执行这段查询。后续每一步都重新执行它：
+
+```sql
+SELECT 'stg_orders' AS layer, COUNT(*) AS order_count,
+       SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) AS paid_amount
+FROM dbt_learning_demo.stg_orders
+UNION ALL
+SELECT 'fct_orders', COUNT(*), SUM(paid_amount)
+FROM dbt_learning_demo.fct_orders
+UNION ALL
+SELECT 'mart_daily_sales', SUM(order_count), SUM(paid_amount)
+FROM dbt_learning_demo.mart_daily_sales;
+```
+
+**预期：**三层都是 5 笔、400 元。
+
+### 9.2 只切换视图到第二批
+
+终端执行：
+
+```powershell
+.\.venv\Scripts\dbt.exe run --profiles-dir . --select stg_orders --vars 'demo_batch: 2'
+```
+
+SQL 控制台执行：
+
+```sql
+SHOW CREATE VIEW dbt_learning_demo.stg_orders;
+SELECT order_id, status, amount, updated_at
+FROM dbt_learning_demo.stg_orders ORDER BY order_id;
+```
+
+然后重新执行 **9.1 的三层对比 SQL**。
+
+**预期：**视图定义变成 `batch_id <= 2`，视图为 6 笔、495 元；事实表和汇总表仍为 5 笔、400 元。1003 已变为 `paid / 55`，1006 新增为 `paid / 40`，但暂时只在视图中可见。
+
+### 9.3 只更新事实表
+
+终端执行：
+
+```powershell
+.\.venv\Scripts\dbt.exe run --profiles-dir . --select fct_orders --vars 'demo_batch: 2'
+```
+
+SQL 控制台执行：
+
+```sql
+SELECT order_id, status, amount, paid_amount, updated_at
+FROM dbt_learning_demo.fct_orders
+WHERE order_id IN (1003, 1006)
+ORDER BY order_id;
+```
+
+重新执行 **9.1 的三层对比 SQL**。
+
+**预期：**视图和事实表为 6 笔、495 元，汇总表还停在 5 笔、400 元。
+
+终端查看实际 SQL，注意增量过滤与 INSERT：
+
+```powershell
+Get-Content .\target\run\starrocks_learning\models\marts\fct_orders.sql -Encoding UTF8
+```
+
+相同订单被覆盖依赖 StarRocks PRIMARY KEY 表的写入语义。模型里的 `>=` 会包含水位边界：1006 的更新时间刻意等于首批最大更新时间，使用 `>` 就会漏掉它。
+
+### 9.4 最后重算汇总表
+
+终端执行：
+
+```powershell
+.\.venv\Scripts\dbt.exe run --profiles-dir . --select mart_daily_sales mart_customer_sales --vars 'demo_batch: 2'
+```
+
+重新执行 **9.1 的三层对比 SQL**，三层现在都为 6 笔、495 元。
+
+```sql
+SELECT * FROM dbt_learning_demo.mart_daily_sales ORDER BY order_date;
+SELECT * FROM dbt_learning_demo.mart_customer_sales ORDER BY customer_id;
+```
+
+每日已支付额应为 200、255、40；客户已支付额应为 Alice 175、Bob 280、Carol 40。1003 的变更回算到了原订单日期 9 月 2 日。
 
 | 时点 | stg_orders | fct_orders | mart_daily_sales 合计 |
 | --- | --- | --- | --- |
-| 第一批完成 | 5 笔 / 400 元 | 5 笔 / 400 元 | 5 笔 / 400 元 |
-| 只切换视图 | 6 笔 / 495 元 | 5 笔 / 400 元 | 5 笔 / 400 元 |
-| 再更新事实表 | 6 笔 / 495 元 | 6 笔 / 495 元 | 5 笔 / 400 元 |
-| 再运行汇总表 | 6 笔 / 495 元 | 6 笔 / 495 元 | 6 笔 / 495 元 |
+| 第一批完成 | 5 / 400 | 5 / 400 | 5 / 400 |
+| 只切换视图 | 6 / 495 | 5 / 400 | 5 / 400 |
+| 再更新事实表 | 6 / 495 | 6 / 495 | 5 / 400 |
+| 再重算汇总 | 6 / 495 | 6 / 495 | 6 / 495 |
 
-再次手动执行 `batch2-fact`，查询 D 段，应该仍为 6 笔、495 元。这是主键覆盖带来的幂等。
+**你刚观察到：血缘决定依赖和执行顺序，但不会持续自动刷新下游。**
 
-1006 的更新时间被刻意设置为首批最大更新时间，演示 `>=` 边界；写成 `>` 会漏单。这一简单算法不处理早于水位的迟到变更或源端物理删除。切回批次 1 也不会撤销已写入的第二批，需要全量重建。
+### 9.5 重复增量，观察幂等
+
+再次执行同一个事实模型：
 
 ```powershell
-.\lab.ps1 -Step test -Batch 2
+.\.venv\Scripts\dbt.exe run --profiles-dir . --select fct_orders --vars 'demo_batch: 2'
 ```
 
-现在可以理解 `dbt run --select 'fct_orders+'`：按依赖顺序运行事实表和下游。血缘决定选择范围与顺序，**并不意味着下游被持续自动刷新**。前缀 `+` 选上游，后缀 `+` 选下游；选择单个模型不会默认补齐全部上游。
+观察 SQL：
 
-## 9. 在浏览器看血缘，再直接看 manifest
+```sql
+SELECT COUNT(*) AS order_count, SUM(paid_amount) AS paid_amount
+FROM dbt_learning_demo.fct_orders;
 
-```powershell
-.\lab.ps1 -Step docs -Batch 2
-.\lab.ps1 -Step serve
+SELECT order_id, COUNT(*) AS row_count
+FROM dbt_learning_demo.fct_orders
+GROUP BY order_id
+HAVING COUNT(*) > 1;
 ```
 
-浏览器打开 [本地 dbt 文档](http://localhost:8088)。文档服务占用当前终端，按 Ctrl+C 关闭。
-
-选择 `mart_customer_sales`，查看 SQL、字段、测试和依赖图，沿上游走回两份 seed。再选 `mart_daily_sales`，它不依赖客户维度视图。这里展示模型级关系，不是逐字段血缘。
-
-在另一个 PowerShell 终端进入本目录，直接读取生成文件：
+预期仍是 6 笔、495 元，重复主键查询返回 0 行。最后检查所有测试：
 
 ```powershell
-$manifest = Get-Content .\target\manifest.json -Raw | ConvertFrom-Json
+.\.venv\Scripts\dbt.exe test --profiles-dir . --vars 'demo_batch: 2'
+```
+
+这一简单水位算法不处理早于水位的迟到更新或源端物理删除。只把变量改回 1 也不会撤销已写入的第二批，需要全量重建。
+
+## 10. 亲手使用血缘选择器
+
+先只查看选择范围，不运行模型：
+
+```powershell
+.\.venv\Scripts\dbt.exe ls --profiles-dir . --select 'fct_orders+' --resource-type model --vars 'demo_batch: 2'
+.\.venv\Scripts\dbt.exe ls --profiles-dir . --select '+fct_orders' --resource-type model seed --vars 'demo_batch: 2'
+```
+
+第一条列出事实表和两张下游汇总表；第二条列出事实表、订单视图及订单 seed。
+
+再执行：
+
+```powershell
+.\.venv\Scripts\dbt.exe run --profiles-dir . --select 'fct_orders+' --vars 'demo_batch: 2'
+```
+
+观察控制台执行顺序：事实表完成后，下游汇总才能运行。这里你主动用 `+` 指定了下游，dbt 才一起运行；没有 `+` 时只运行被选中的模型。
+
+`run` 只构建模型，不导入 seed，也不运行数据测试；`build` 可以按依赖组合 seed、模型和测试。第一次体验先分开操作，更容易看清职责。
+
+## 11. 生成文档，在页面和 manifest 中查看血缘
+
+先生成文档：
+
+```powershell
+.\.venv\Scripts\dbt.exe docs generate --profiles-dir . --vars 'demo_batch: 2'
+```
+
+再启动文档服务：
+
+```powershell
+.\.venv\Scripts\dbt.exe docs serve --profiles-dir . --port 8088
+```
+
+浏览器打开 [本地 dbt 文档](http://localhost:8088)。这条命令占用当前终端，按 Ctrl+C 停止服务。
+
+在页面中：
+
+1. 找到 `mart_customer_sales`，查看 SQL、字段和测试。
+2. 打开依赖图，沿 `stg_customers`、`fct_orders` 追溯到两个 seed。
+3. 再看 `mart_daily_sales`，它不依赖客户维度视图。
+
+这是模型级血缘，不是逐字段血缘。
+
+新开一个 PowerShell 终端，直接读取 manifest：
+
+```powershell
+cd E:\IdeaProjects\agent-root\data-agent-v2\examples\dbt-starrocks
+$manifest = Get-Content .\target\manifest.json -Raw -Encoding UTF8 | ConvertFrom-Json
 $manifest.nodes.'model.starrocks_learning.mart_customer_sales'.depends_on.nodes
 ```
 
-预期直接依赖为 `stg_customers`、`fct_orders`（顺序不重要）。`manifest.json` 记录项目节点、配置和依赖；`catalog.json` 记录引擎实际对象的元数据。文档是生成时的快照，改模型后需要重新生成，正在浏览的页面也需要刷新。
+预期直接依赖为：
 
-## 10. 自己改一次模型，观察表结构维护
+```text
+model.starrocks_learning.stg_customers
+model.starrocks_learning.fct_orders
+```
 
-完成基线实验后，打开 `models/marts/mart_daily_sales.sql`，在 SELECT 中 `sum(paid_amount) as paid_amount` 后面加逗号和一列：
+顺序不重要。`manifest.json` 记录项目节点、配置和依赖，`catalog.json` 记录真实引擎对象的元数据。文档是生成时的快照，修改模型后需要重新生成并刷新页面。
+
+## 12. 改一次模型，观察数据库表结构何时变化
+
+### 12.1 修改文件，先不要运行 dbt
+
+在编辑器中打开 `models/marts/mart_daily_sales.sql`，将内容改为下面完整模型。**这是模型文件内容，不是在 SQL 控制台执行的语句。**
+
+```jinja
+{{ config(distributed_by=['order_date']) }}
+
+-- 聚合表每次全量重建，使旧订单变化回算到原订单日期。
+-- 平均金额包含全部状态的订单，不等同于已支付订单平均金额。
+select
+    order_date,
+    count(*) as order_count,
+    sum(case when status = 'paid' then 1 else 0 end) as paid_order_count,
+    sum(paid_amount) as paid_amount,
+    avg(amount) as avg_order_amount
+from {{ ref('fct_orders') }}
+group by order_date
+```
+
+保存后，在 SQL 控制台执行：
 
 ```sql
-    avg(amount) as avg_order_amount
+SHOW CREATE TABLE dbt_learning_demo.mart_daily_sales;
+SELECT * FROM dbt_learning_demo.mart_daily_sales ORDER BY order_date;
 ```
 
-它表示所有订单（包括待支付、取消订单）的平均金额。先只保存文件，再执行 E 段：**数据库表还没有这列。**
+**预期：**数据库中还没有 `avg_order_amount`。保存本地 SQL 文件不等于执行数据库变更。
+
+### 12.2 运行模型，再观察新列
+
+终端执行：
 
 ```powershell
-& $dbt run --profiles-dir . --select mart_daily_sales --vars 'demo_batch: 2'
+.\.venv\Scripts\dbt.exe run --profiles-dir . --select mart_daily_sales --vars 'demo_batch: 2'
 ```
 
-再次执行 E 段，查看 DDL 和结果中的新列。然后在 `models/schema.yml` 为该字段补充中文描述，重新执行 `docs -Batch 2`，查看文档更新。新增一列但 `ref()` 没变，所以模型依赖边不变。
+再次执行上述两条观察 SQL，新列应出现。这是 `table` 物化重建后的结构和数据；不是后台自动同步文件变更。
 
-该实验针对 `table` 物化。增量模型增删改字段需要另行考虑 `on_schema_change` 和历史数据回填，不能把这里的重建行为套到所有模型上。
+### 12.3 添加字段说明，更新文档
 
-完成后自行移除新增列和字段描述，再运行该模型即可恢复。如果重命名模型 SQL 文件，dbt 通常按新名字构建新对象，不会自动迁移或清理旧表；模型代码维护与历史对象清理需要分别处理。
+编辑 `models/schema.yml`，在现有 `name: mart_daily_sales` 的 `columns` 列表末尾添加下面一项，保持与同级字段相同缩进。不要覆盖整个 YAML 文件：
 
-## 需要重来时
+```yaml
+      - name: avg_order_amount
+        description: 全部订单的平均金额，包含待支付和取消订单，单位为元。
+```
 
-由你选择一种方式：
-
-- 重新观察对象从无到有：手动执行 `reset_demo.sql`，再从 seed 分步运行。
-- 只恢复第一批完整数据：执行下面的全量构建，一次重建本项目 seed 和模型；不作为第一次体验入口。
+终端重新生成文档：
 
 ```powershell
-& $dbt build --profiles-dir . --full-refresh --vars 'demo_batch: 1'
+.\.venv\Scripts\dbt.exe docs generate --profiles-dir . --vars 'demo_batch: 2'
 ```
 
-`target/`、`logs/`、`.venv/` 已忽略，无需提交。你维护模型 SQL、配置、测试和文档描述，dbt 负责将这些定义编译并交给 StarRocks 执行。
+若文档服务仍在运行，刷新页面；如果已关闭，重新执行：
 
-官方参考：[StarRocks 适配器](https://github.com/StarRocks/dbt-starrocks)、[连接配置](https://docs.getdbt.com/docs/local/connect-data-platform/starrocks-setup)。
+```powershell
+.\.venv\Scripts\dbt.exe docs serve --profiles-dir . --port 8088
+```
+
+**观察：**新列和说明出现，但 `ref()` 没变，模型之间的依赖边不变。字段描述来自你维护的 YAML，文档中的真实列信息来自引擎元数据。
+
+### 12.4 恢复实验前的模型
+
+自行移除模型中的 `avg(amount) as avg_order_amount`，同时去掉上一列末尾多出的逗号；从 YAML 移除刚新增的字段说明。然后执行：
+
+```powershell
+.\.venv\Scripts\dbt.exe run --profiles-dir . --select mart_daily_sales --vars 'demo_batch: 2'
+.\.venv\Scripts\dbt.exe docs generate --profiles-dir . --vars 'demo_batch: 2'
+```
+
+再次查询 DDL，新列应消失。
+
+本实验针对 `table` 物化。增量模型增删改字段需要另外考虑 `on_schema_change` 和历史数据回填，不能套用相同重建预期。重命名 SQL 模型文件也不等于数据库表迁移，旧表通常需要另行清理。
+
+## 13. 需要重来时
+
+若想重新观察从无到有，手动执行第 1 节的清理 SQL，再从 seed 开始逐步操作。
+
+若只想一次恢复第一批全部数据，在完成上述模型代码恢复后执行：
+
+```powershell
+.\.venv\Scripts\dbt.exe build --profiles-dir . --full-refresh --vars 'demo_batch: 1'
+```
+
+这会重建当前 demo 的 seed 和模型，并执行测试，不保留刚才第二批的表数据。完成后可再次查询：
+
+```sql
+SELECT COUNT(*) AS order_count, SUM(paid_amount) AS paid_amount
+FROM dbt_learning_demo.fct_orders;
+```
+
+预期回到 5 笔、400 元。如果继续生成文档，也将批次同步改回 1：
+
+```powershell
+.\.venv\Scripts\dbt.exe docs generate --profiles-dir . --vars 'demo_batch: 1'
+```
+
+## 命令与职责对照
+
+| 命令 | 你会观察到什么 |
+| --- | --- |
+| `debug` | 配置、依赖和数据库连接检查 |
+| `ls` | 从代码解析出的节点与依赖选择结果，不创建模型 |
+| `seed` | CSV 被加载成数据库表 |
+| `compile` | 模板展开成 SQL，不应用模型变更，可能读取引擎元数据 |
+| `run` | 按所选模型的物化方式创建或维护表、视图 |
+| `test` | 查询现存数据，报告通过或失败 |
+| `build` | 按依赖组合 seed、模型和测试等资源 |
+| `docs generate` | 生成项目文档、manifest 和引擎 catalog |
+| `docs serve` | 启动本地文档网站，不执行数据构建 |
+| `clean` | 清理配置指定的本地生成目录，不清理数据库表 |
+
+你维护的是 `models/`、`seeds/`、`tests/` 和 YAML 配置。`target/`、`logs/`、`.venv/` 是本地生成内容，已忽略，无需提交。
+
+官方参考：[StarRocks 适配器](https://github.com/StarRocks/dbt-starrocks)、[dbt 连接配置](https://docs.getdbt.com/docs/local/connect-data-platform/starrocks-setup)。
