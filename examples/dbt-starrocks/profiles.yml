@@ -1,0 +1,16 @@
+# 只保存模板；密码从环境读取，dbt 会对 DBT_ENV_SECRET_* 做日志脱敏。
+starrocks_learning:
+  target: local
+  outputs:
+    local:
+      type: starrocks
+      host: "{{ env_var('DBT_STARROCKS_HOST', '127.0.0.1') }}"
+      port: "{{ env_var('DBT_STARROCKS_PORT', '9030') | int }}"
+      username: "{{ env_var('DBT_STARROCKS_USER', 'root') }}"
+      password: "{{ env_var('DBT_ENV_SECRET_STARROCKS_PASSWORD', '') }}"
+      catalog: default_catalog
+      # 固定专用学习数据库，避免误覆盖已有业务模型。
+      schema: dbt_learning_demo
+      threads: 1
+      # 适配器声明此字段为字符串，不能使用 YAML 布尔值。
+      use_pure: 'true'

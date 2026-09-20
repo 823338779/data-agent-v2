@@ -1,0 +1,99 @@
+version: 2
+
+seeds:
+  - name: raw_customers
+    description: 模拟客户；仅用于学习，不含真实个人信息。
+    columns:
+      - name: customer_id
+        description: 客户标识。
+        data_tests: [unique, not_null]
+      - name: customer_name
+        description: 演示用英文姓名。
+      - name: city
+        description: 所属城市。
+  - name: raw_order_events
+    description: 订单变更日志；同一订单允许多条事件，金额单位为元。
+    columns:
+      - name: event_id
+        description: 事件唯一序号，也是同更新时间下的版本决胜字段。
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: 业务订单标识，可随更新重复出现。
+        data_tests: [not_null]
+      - name: customer_id
+        description: 下单客户标识。
+      - name: order_date
+        description: 订单的业务归属日期，与变更时间独立。
+      - name: status
+        description: paid 已支付、pending 待支付、cancelled 已取消。
+      - name: amount
+        description: 当前版本订单金额，人民币元，保留两位小数。
+      - name: updated_at
+        description: 来源版本更新时间，作为增量水位；非实际摄取时间。事件 7 故意等于首批水位。
+        data_tests: [not_null]
+      - name: batch_id
+        description: 演示可见批次，1 为初始批，2 为追加变更批。
+
+models:
+  - name: stg_customers
+    description: 清洗后的客户视图。
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+  - name: stg_orders
+    description: 当前批次范围内，每个订单的最新版本视图。
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [paid, pending, cancelled]
+  - name: fct_orders
+    description: 按订单主键增量覆盖的事实表；每个订单仅一行。
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [paid, pending, cancelled]
+      - name: updated_at
+        description: 来源更新时间；增量读取上一轮最大值及之后的记录。
+        data_tests: [not_null]
+      - name: amount
+        description: 订单金额，元；不代表已确认收入。
+        data_tests: [not_null]
+      - name: paid_amount
+        description: 已支付订单计入金额，待支付和取消订单固定为零，单位为元。
+        data_tests: [not_null]
+  - name: mart_daily_sales
+    description: 按订单日期聚合；旧订单更新会回算历史日期。
+    columns:
+      - name: order_date
+        data_tests: [unique, not_null]
+      - name: order_count
+        description: 当日全部订单数，包括未支付订单。
+      - name: paid_order_count
+        description: 当日状态为 paid 的订单数。
+      - name: paid_amount
+        description: 当日已支付金额合计，单位为元。
+  - name: mart_customer_sales
+    description: 每个客户的订单数和已支付金额，保留未消费客户。
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+      - name: order_count
+        description: 客户全部订单数，包括未支付订单。
+      - name: paid_amount
+        description: 客户已支付金额合计，无消费为零，单位为元。

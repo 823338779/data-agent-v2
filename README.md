@@ -14,6 +14,7 @@ Data Agent V2 是面向单实例部署的对话 Agent 工程，包含后端 Mave
 - `backend/agent-evals`：独立评测模块
 - `contracts`：当前 REST、SSE 契约与示例
 - `docs`：仓库内设计和验证说明
+- `examples/dbt-starrocks`：[本地 StarRocks 的 dbt 学习示例](examples/dbt-starrocks/README.md)，涵盖 seed、分层建模、数据测试和增量更新
 - `frontend`：阶段 1 迁移的前端快照
 
 ## 验证

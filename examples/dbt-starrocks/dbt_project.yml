@@ -1,0 +1,48 @@
+name: starrocks_learning
+version: '1.0.0'
+config-version: 2
+profile: starrocks_learning
+require-dbt-version: [">=1.12.0", "<1.13.0"]
+flags:
+  send_anonymous_usage_stats: false
+
+model-paths: [models]
+seed-paths: [seeds]
+test-paths: [tests]
+clean-targets: [target, dbt_packages]
+
+vars:
+  # 1 为初始数据；2 为初始数据加新增订单和订单状态变更。
+  demo_batch: 1
+
+models:
+  starrocks_learning:
+    +properties: {replication_num: '1'}
+    +buckets: 1
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table
+
+seeds:
+  starrocks_learning:
+    +properties: {replication_num: '1'}
+    +buckets: 1
+    +quote_columns: false
+    raw_customers:
+      +distributed_by: [customer_id]
+      +column_types:
+        customer_id: bigint
+        customer_name: varchar(64)
+        city: varchar(64)
+    raw_order_events:
+      +distributed_by: [event_id]
+      +column_types:
+        event_id: bigint
+        order_id: bigint
+        customer_id: bigint
+        order_date: date
+        status: varchar(16)
+        amount: decimal(18,2)
+        updated_at: datetime
+        batch_id: int
