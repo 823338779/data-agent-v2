@@ -1,0 +1,8 @@
+metricflow_demo:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: .local/metricflow_demo.duckdb
+      schema: demo
+      threads: 1

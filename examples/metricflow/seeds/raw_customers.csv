@@ -1,0 +1,5 @@
+customer_id,customer_name,region,segment
+1,Alice,east,enterprise
+2,Bob,east,individual
+3,Carol,south,individual
+4,David,north,enterprise

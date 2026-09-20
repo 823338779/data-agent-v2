@@ -1,0 +1,6 @@
+.venv/
+.local/
+logs/
+target/
+.user.yml
+__pycache__/

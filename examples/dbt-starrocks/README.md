@@ -18,6 +18,15 @@ cd E:\IdeaProjects\agent-root\data-agent-v2\examples\dbt-starrocks
 
 后续所有终端命令都在这个目录执行。使用虚拟环境中的可执行文件完整相对路径，无需激活环境或设置命令别名。
 
+**Windows 必做：在当前终端启用 Python UTF-8 模式，再执行任何 dbt 命令。**
+
+```powershell
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
+```
+
+项目 SQL 和 YAML 含中文，采用 UTF-8 保存。当前 dbt 版本有一处读取 `dbt_project.yml` 时未指定编码，Windows 上可能使用 GBK 并报解码错误。`PYTHONUTF8` 控制 Python 默认文件编码，`PYTHONIOENCODING` 控制标准输入输出编码。设置在随后启动的 Python/dbt 进程中生效；每次新开终端执行 dbt 前都重新设置，不需要修改系统编码或把项目文件转为 GBK。
+
 ### 0.2 检查 Python 和 dbt
 
 ```powershell
@@ -602,6 +611,28 @@ FROM dbt_learning_demo.fct_orders;
 ```powershell
 .\.venv\Scripts\dbt.exe docs generate --profiles-dir . --vars 'demo_batch: 1'
 ```
+
+## 常见问题：`'gbk' codec can't decode byte`
+
+如果错误栈停在 `build_manifest_state_check` 中的 `fp.read()`，说明 dbt 在读取本地 `dbt_project.yml` 时使用了错误编码，尚未进入模型构建。无需清空数据库或重新安装环境。
+
+在报错的同一个 PowerShell 终端执行，然后重新运行刚才的命令：
+
+```powershell
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
+.\.venv\Scripts\dbt.exe ls --profiles-dir . --select '+mart_customer_sales' --resource-type model seed --vars 'demo_batch: 1'
+```
+
+若要先确认设置，在同一个终端执行下面的只读检查：
+
+```powershell
+.\.venv\Scripts\python.exe -c "import sys; print('UTF-8 mode:', sys.flags.utf8_mode); f = open('dbt_project.yml'); print('File encoding:', f.encoding); f.read(); f.close(); print('Read OK')"
+```
+
+预期输出包含 `UTF-8 mode: 1`、UTF-8 文件编码和 `Read OK`。
+
+请直接复制代码块：路径是 `.\.venv\Scripts\dbt.exe`；模型名 `mart_customer_sales` 和变量名 `demo_batch` 的下划线前没有反斜杠。仅设置 `PYTHONIOENCODING` 或只切换终端代码页不能代替 `PYTHONUTF8` 对默认文件编码的设置。
 
 ## 命令与职责对照
 
