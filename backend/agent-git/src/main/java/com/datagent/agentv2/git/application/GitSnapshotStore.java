@@ -114,25 +114,30 @@ public final class GitSnapshotStore {
 
     private String metadata(GitChangeEntity c) {
         // 长度编码防止提交说明中的换行与字段分隔符产生歧义。审计、状态和确认时间是可变字段，不参与冻结摘要。
-        return List.of(
-                        c.getChangeId(),
-                        c.getWorkspaceId(),
-                        c.getConversationSessionId(),
-                        c.getRepositoryId(),
-                        c.getBranch(),
-                        c.getBaseCommit(),
-                        c.getTreeId(),
-                        c.getCandidateDigest(),
-                        c.getSummary(),
-                        c.getCommitMessage(),
-                        c.getDraftRevision().toString(),
-                        c.getAuthorName(),
-                        c.getAuthorEmail(),
-                        c.getPrepareRequestKey(),
-                        c.getRequestDigest())
-                .stream()
-                .map(v -> v.length() + ":" + v)
-                .collect(java.util.stream.Collectors.joining());
+        String base =
+                List.of(
+                                c.getChangeId(),
+                                c.getWorkspaceId(),
+                                c.getConversationSessionId(),
+                                c.getRepositoryId(),
+                                c.getBranch(),
+                                c.getBaseCommit(),
+                                c.getTreeId(),
+                                c.getCandidateDigest(),
+                                c.getSummary(),
+                                c.getCommitMessage(),
+                                c.getDraftRevision().toString(),
+                                c.getAuthorName(),
+                                c.getAuthorEmail(),
+                                c.getPrepareRequestKey(),
+                                c.getRequestDigest())
+                        .stream()
+                        .map(v -> v.length() + ":" + v)
+                        .collect(java.util.stream.Collectors.joining());
+        // 旧无凭证快照保持原格式；新凭证参与摘要，删除或替换凭证都会使快照核对失败。
+        return c.getValidationEvidence() == null
+                ? base
+                : base + c.getValidationEvidence().length() + ":" + c.getValidationEvidence();
     }
 
     private Path path(String key) {

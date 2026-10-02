@@ -11,6 +11,9 @@ import lombok.Setter;
 @Setter
 @TableName("git_change")
 public final class GitChangeEntity extends TenantAuditedEntity {
+    /** 与候选快照共同封存的校验证据 JSON；历史或非 dbt 候选为空。 */
+    private String validationEvidence;
+
     /** 首次确认请求版本；状态进展后仍能识别同一按钮请求。 */
     private Long confirmationVersion;
 

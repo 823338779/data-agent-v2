@@ -671,6 +671,18 @@ components:
           items: { $ref: '#/components/schemas/GitChangeFile' }
         errorCode: { type: [string, 'null'] }
         errorSummary: { type: [string, 'null'], description: 稳定错误码的安全说明，不返回 Git stderr }
+        validation:
+          description: 已冻结候选绑定的 dbt 定义验证证据；历史或非 dbt 候选可为空，不代表构建或发布成功
+          type: [object, 'null']
+          additionalProperties: false
+          required: [status, baseCommitSha, validatedAt, checkedLevels]
+          properties:
+            status: { type: string, const: SUCCEEDED }
+            baseCommitSha: { type: string, description: 验证使用的 Git 基线提交 }
+            validatedAt: { type: string, description: 服务记录的验证完成时间，ISO 8601 }
+            checkedLevels:
+              type: array
+              items: { type: string, enum: [YAML, TEMPLATE, DBT_PARSE, SEMANTIC] }
     AgentExecution:
       type: object
       required: [executionId, status, progress, objective, events]

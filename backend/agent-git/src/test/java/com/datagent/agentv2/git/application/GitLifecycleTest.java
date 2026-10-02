@@ -108,6 +108,7 @@ class GitLifecycleTest {
                         snapshots,
                         git,
                         application,
+                        (session, snapshot) -> null,
                         (execution, candidate) -> {
                             candidate.setConversationMessageId("message");
                             changeRecords.register(candidate);
@@ -390,6 +391,7 @@ class GitLifecycleTest {
                         new GitSnapshotStore(properties),
                         git,
                         application,
+                        (session, snapshot) -> null,
                         (execution, record) ->
                                 tx.executeWithoutResult(
                                         status -> {

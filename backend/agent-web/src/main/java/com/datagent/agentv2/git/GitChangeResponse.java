@@ -12,6 +12,7 @@ import java.util.List;
  * @param reviewAvailable 本次读取的冻结审阅材料是否完整可用；false 时必须禁用确认和重试
  * @param files 审阅材料不可用时为 null，不表示空变更；可用时提供完整文件摘要
  * @param errorSummary 由稳定错误码解释的安全提示，绝不使用 Git stderr
+ * @param validation 已冻结的 dbt 定义验证摘要；历史或非 dbt 候选为空，不代表构建或发布状态
  */
 public record GitChangeResponse(
         String changeId,
@@ -25,7 +26,8 @@ public record GitChangeResponse(
         boolean reviewAvailable,
         List<FileSummary> files,
         String errorCode,
-        String errorSummary) {
+        String errorSummary,
+        ValidationSummary validation) {
     public static GitChangeResponse composeFromChange(
             GitChangeView change, List<GitSnapshotStore.SnapshotFile> files) {
         return compose(
@@ -53,9 +55,24 @@ public record GitChangeResponse(
                 files != null,
                 files,
                 change.errorCode(),
-                GitErrorMessages.summary(change.errorCode()));
+                GitErrorMessages.summary(change.errorCode()),
+                ValidationSummary.composeFromEvidence(change.validation()));
     }
 
     /** fileId 只在当前候选内有意义，供 diff 查询使用，不能解释为文件系统路径。 */
     public record FileSummary(String fileId, String status, String path) {}
+
+    /** 只展示已封存校验范围，不能把此状态当成构建或发布状态。 */
+    public record ValidationSummary(
+            String status, String baseCommitSha, String validatedAt, List<String> checkedLevels) {
+        static ValidationSummary composeFromEvidence(GitValidationEvidence evidence) {
+            return evidence == null
+                    ? null
+                    : new ValidationSummary(
+                            "SUCCEEDED",
+                            evidence.baseCommitSha(),
+                            evidence.validatedAt(),
+                            evidence.checkedLevels());
+        }
+    }
 }

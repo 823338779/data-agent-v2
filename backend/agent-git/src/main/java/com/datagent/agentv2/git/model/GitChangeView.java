@@ -32,7 +32,8 @@ public record GitChangeView(
         GitChangeStatus status,
         long version,
         String commitId,
-        String errorCode) {
+        String errorCode,
+        GitValidationEvidence validation) {
     public static GitChangeView composeFromChange(GitChangeEntity c) {
         return new GitChangeView(
                 c.getChangeId(),
@@ -47,6 +48,7 @@ public record GitChangeView(
                 GitChangeStatus.valueOf(c.getStatus()),
                 c.getVersion(),
                 c.getCommitId(),
-                c.getErrorCode());
+                c.getErrorCode(),
+                GitValidationEvidence.decode(c.getValidationEvidence()));
     }
 }

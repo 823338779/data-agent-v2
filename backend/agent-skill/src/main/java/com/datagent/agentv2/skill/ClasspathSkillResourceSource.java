@@ -13,6 +13,10 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public final class ClasspathSkillResourceSource implements SkillResourceSource {
+    private static final String DBT_ANALYSIS = "skills/dbt-data-analysis/SKILL.md";
+    private static final String DBT_MAINTENANCE = "skills/dbt-yaml-maintenance/SKILL.md";
+    private static final String DBT_ENABLED = "data-agent.dbt.enabled";
+    private static final String GIT_ENABLED = "data-agent.git.enabled";
     private final Environment environment;
 
     @Override
@@ -26,10 +30,16 @@ public final class ClasspathSkillResourceSource implements SkillResourceSource {
                 String uri = resource.getURI().toString();
                 int start = uri.lastIndexOf("skills/");
                 String path = uri.substring(start);
-                // 仅过滤这一项已知的可选资源，其他未知资源仍由目录严格拒绝。
+                // 可选资源与对应定义的开关保持一致，其他未知资源仍由目录严格拒绝。
                 if (path.equals("skills/git-repository-maintenance/SKILL.md")
                         && !environment.getProperty(
                                 "data-agent.git.enabled", Boolean.class, false)) {
+                    continue;
+                }
+                boolean dbtEnabled = environment.getProperty(DBT_ENABLED, Boolean.class, false);
+                boolean gitEnabled = environment.getProperty(GIT_ENABLED, Boolean.class, false);
+                if (path.equals(DBT_ANALYSIS) && !dbtEnabled
+                        || path.equals(DBT_MAINTENANCE) && !(dbtEnabled && gitEnabled)) {
                     continue;
                 }
                 try (var input = resource.getInputStream()) {

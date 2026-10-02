@@ -31,6 +31,17 @@ class GitCardContractTest {
                  "reviewAvailable":false,"files":null,"errorCode":null,"errorSummary":null}
                 """);
         assertThat(schema.validate(response)).isEmpty();
+        var validated = (tools.jackson.databind.node.ObjectNode) response.deepCopy();
+        validated.set(
+                "validation",
+                json.readTree(
+                        """
+            {"status":"SUCCEEDED","baseCommitSha":"base","validatedAt":"2026-10-02T00:00:00Z",
+             "checkedLevels":["YAML","TEMPLATE","DBT_PARSE","SEMANTIC"]}
+            """));
+        assertThat(schema.validate(validated)).isEmpty();
+        validated.putNull("validation");
+        assertThat(schema.validate(validated)).isEmpty();
         var missingAvailability = response.deepCopy();
         ((tools.jackson.databind.node.ObjectNode) missingAvailability).remove("reviewAvailable");
         assertThat(schema.validate(missingAvailability)).isNotEmpty();

@@ -29,6 +29,13 @@ export interface GitChange {
   files: GitFileSummary[] | null;
   errorCode: string | null;
   errorSummary: string | null;
+  /** 固定候选的定义检查凭证；旧候选为空，不代表已构建或发布。 */
+  validation?: {
+    status: 'SUCCEEDED';
+    baseCommitSha: string;
+    validatedAt: string;
+    checkedLevels: string[];
+  } | null;
 }
 export class GitChangeError extends Error {
   constructor(

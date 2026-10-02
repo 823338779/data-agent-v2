@@ -90,6 +90,53 @@ public final class GitWorkspaceService {
         return locked(sessionId, () -> git.freeze(path(require(sessionId))));
     }
 
+    /** 工作区锁内冻结并复制完整旧/新正文，网络校验必须在返回后执行。 */
+    public GitDraftSnapshot freezeDraft(String sessionId, long expectedRevision) {
+        return locked(
+                sessionId,
+                () -> {
+                    var w = require(sessionId);
+                    assertEditable(w);
+                    if (w.getDraftRevision() != expectedRevision)
+                        throw new GitException("GIT_CONFLICT", "草稿修订号已变化");
+                    var snapshot = git.freeze(path(w));
+                    git.retainSnapshot(
+                            path(w), "validation_" + UUID.randomUUID(), snapshot.treeId());
+                    return draftSnapshot(w, snapshot);
+                });
+    }
+
+    /** 调用方已持有工作区锁；候选验证复用刚冻结的 tree，不重复从当前文件推断正文。 */
+    GitDraftSnapshot draftSnapshot(GitWorkspaceEntity w, GitSnapshot snapshot) {
+        var entries =
+                snapshot.changes().stream()
+                        .map(
+                                change ->
+                                        new GitDraftSnapshot.File(
+                                                change.status(),
+                                                change.path(),
+                                                change.status().equals("A")
+                                                        ? null
+                                                        : git.readTreeFile(
+                                                                path(w),
+                                                                w.getBaseCommit(),
+                                                                change.path()),
+                                                change.status().equals("D")
+                                                        ? null
+                                                        : git.readTreeFile(
+                                                                path(w),
+                                                                snapshot.treeId(),
+                                                                change.path())))
+                        .toList();
+        return new GitDraftSnapshot(
+                w.getConversationSessionId(),
+                w.getWorkspaceId(),
+                w.getBaseCommit(),
+                snapshot.treeId(),
+                w.getDraftRevision(),
+                entries);
+    }
+
     public GitWorkspaceView apply(String sessionId, List<FileOperation> operations) {
         return locked(
                 sessionId,

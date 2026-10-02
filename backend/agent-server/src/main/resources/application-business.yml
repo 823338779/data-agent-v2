@@ -61,3 +61,11 @@ data-agent:
     max-candidate-files: ${DATA_AGENT_GIT_MAX_CANDIDATE_FILES:100}
     max-candidate-bytes: ${DATA_AGENT_GIT_MAX_CANDIDATE_BYTES:5242880}
     max-diff-bytes: ${DATA_AGENT_GIT_MAX_DIFF_BYTES:2097152}
+  dbt:
+    # 分析独立于 Git；两个开关同时开启才装配 YAML 维护及候选验证。
+    enabled: ${DATA_AGENT_DBT_ENABLED:false}
+    base-url: ${DATA_AGENT_DBT_BASE_URL:}
+    project-id: ${DATA_AGENT_DBT_PROJECT_ID:}
+    project-directory: ${DATA_AGENT_DBT_PROJECT_DIRECTORY:.}
+    connect-timeout: ${DATA_AGENT_DBT_CONNECT_TIMEOUT:5s}
+    request-timeout: ${DATA_AGENT_DBT_REQUEST_TIMEOUT:20s}

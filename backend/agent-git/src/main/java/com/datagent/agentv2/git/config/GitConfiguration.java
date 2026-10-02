@@ -3,8 +3,10 @@ package com.datagent.agentv2.git.config;
 import com.datagent.agentv2.git.application.*;
 import com.datagent.agentv2.git.local.*;
 import com.datagent.agentv2.git.model.GitException;
+import com.datagent.agentv2.git.port.GitCandidateValidation;
 import com.datagent.agentv2.git.port.GitChangeCardPublisher;
 import com.datagent.agentv2.persistence.service.git.*;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.*;
@@ -76,7 +78,15 @@ public class GitConfiguration {
             GitSnapshotStore snapshots,
             GitRepositoryClient git,
             GitApplicationProperties a,
+            ObjectProvider<GitCandidateValidation> validations,
             GitChangeCardPublisher publisher) {
-        return new GitChangeService(w, c, snapshots, git, a, publisher);
+        return new GitChangeService(
+                w,
+                c,
+                snapshots,
+                git,
+                a,
+                validations.getIfAvailable(() -> (session, snapshot) -> null),
+                publisher);
     }
 }

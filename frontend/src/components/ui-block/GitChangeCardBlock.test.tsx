@@ -44,6 +44,22 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe('GitChangeCardBlock', () => {
+  it('shows definition proof only when supplied by server', async () => {
+    fetchMock.mockResolvedValueOnce(
+      response({
+        ...pending,
+        validation: {
+          status: 'SUCCEEDED',
+          baseCommitSha: 'base123',
+          validatedAt: '2026-10-02T00:00:00Z',
+          checkedLevels: ['YAML', 'TEMPLATE', 'DBT_PARSE', 'SEMANTIC'],
+        },
+      }),
+    );
+    mount();
+    expect(await screen.findByText('定义已验证')).toBeInTheDocument();
+    expect(screen.getByText(/不代表已构建或发布/)).toBeInTheDocument();
+  });
   it('keeps review actions out of the conversation until opened and restores focus on close', async () => {
     render(<UiBlockRenderer block={block} />);
     await screen.findByText('metrics.yml');

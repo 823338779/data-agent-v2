@@ -270,6 +270,12 @@ export function GitChangeCardBlock({
           {change && (
             <>
               <h4>{change.summary}</h4>
+              {change.validation?.status === 'SUCCEEDED' && (
+                <p>
+                  <strong>定义已验证</strong>：不代表已构建或发布。验证基线{' '}
+                  <code>{change.validation.baseCommitSha}</code>
+                </p>
+              )}
               <dl>
                 <dt>目标分支</dt>
                 <dd>{change.branch}</dd>
@@ -289,8 +295,9 @@ export function GitChangeCardBlock({
                 )}
               </dl>
               <p>
-                冻结时基础检查已通过：变更文件 UTF-8、文件与 Git
-                变更完整性及大小限制；未进行指标业务口径校验。
+                {change.validation?.status === 'SUCCEEDED'
+                  ? '已通过 YAML、模板、dbt parse 与语义定义检查；不代表物理查询可执行。'
+                  : '冻结时基础检查已通过：变更文件 UTF-8、文件与 Git 变更完整性及大小限制；未进行指标业务口径校验。'}
               </p>
               {!change.reviewAvailable && (
                 <p role="alert">

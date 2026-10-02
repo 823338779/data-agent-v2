@@ -58,6 +58,25 @@ class GitAssemblyTest {
     }
 
     @Test
+    void gitAndDbtAllowancesComposeWithoutChangingInitialTools() {
+        runner(true)
+                .withUserConfiguration(
+                        com.datagent.agentv2.server.dbt.DbtRuntimeConfiguration.class)
+                .withPropertyValues("data-agent.dbt.enabled=true")
+                .run(
+                        ctx -> {
+                            assertThat(ctx).hasNotFailed();
+                            var policy = ctx.getBean(ToolPolicyProperties.class);
+                            assertThat(policy.maximum())
+                                    .contains(
+                                            "git_change_prepare",
+                                            "dbt_query_submit",
+                                            "dbt_validation_submit");
+                            assertThat(policy.initial()).containsExactly("current_time");
+                        });
+    }
+
+    @Test
     @ExtendWith(OutputCaptureExtension.class)
     void backgroundRecoveryFailureIsObservableWithoutExceptionDetails(CapturedOutput output) {
         var records = mock(GitChangePersistenceService.class);

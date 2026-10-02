@@ -3,6 +3,7 @@ package com.datagent.agentv2.git.application;
 import com.datagent.agentv2.git.config.GitApplicationProperties;
 import com.datagent.agentv2.git.local.GitRepositoryClient;
 import com.datagent.agentv2.git.model.*;
+import com.datagent.agentv2.git.port.GitCandidateValidation;
 import com.datagent.agentv2.git.port.GitChangeCardPublisher;
 import com.datagent.agentv2.persistence.entity.git.*;
 import com.datagent.agentv2.persistence.service.git.GitChangePersistenceService;
@@ -18,6 +19,7 @@ public final class GitChangeService {
     private final GitSnapshotStore snapshots;
     private final GitRepositoryClient git;
     private final GitApplicationProperties application;
+    private final GitCandidateValidation validation;
     private final GitChangeCardPublisher publisher;
 
     public GitChangeView prepare(
@@ -60,6 +62,7 @@ public final class GitChangeService {
                         if (!requestDigest.equals(existing.getRequestDigest())) {
                             throw new GitException("GIT_CONFLICT", "准备请求幂等键已用于不同内容");
                         }
+                        verifyValidation(existing);
                         return GitChangeView.composeFromChange(existing);
                     }
                     workspaces.assertEditable(w);
@@ -67,7 +70,10 @@ public final class GitChangeService {
                         throw new GitException("GIT_CONFLICT", "草稿修订号已变化");
                     }
                     GitSnapshot snapshot = git.freeze(workspaces.path(w), message);
+                    var evidence =
+                            validation.validate(sessionId, workspaces.draftSnapshot(w, snapshot));
                     var c = new GitChangeEntity();
+                    c.setValidationEvidence(evidence == null ? null : evidence.encode());
                     c.setChangeId("gc_" + UUID.randomUUID());
                     c.setWorkspaceId(w.getWorkspaceId());
                     c.setConversationSessionId(sessionId);
@@ -128,6 +134,7 @@ public final class GitChangeService {
 
     void verify(GitChangeEntity c, GitWorkspaceEntity w, boolean matchDraft) {
         snapshots.load(c);
+        verifyValidation(c);
         git.verifyTree(workspaces.path(w), c.getTreeId());
         if (matchDraft) {
             if (!c.getWorkspaceId().equals(w.getWorkspaceId())
@@ -141,6 +148,44 @@ public final class GitChangeService {
                     || !current.candidateDigest().equals(c.getCandidateDigest())) {
                 throw new GitException("GIT_SNAPSHOT_CORRUPT", "冻结候选与草稿不一致");
             }
+        }
+    }
+
+    /** 读取冻结快照范围和原基线；重启、重试及确认均不信任模型提供的验证身份。 */
+    private void verifyValidation(GitChangeEntity c) {
+        var stored = snapshots.load(c);
+        var w = workspaces.require(c.getConversationSessionId());
+        var files =
+                stored.files().stream()
+                        .map(
+                                file ->
+                                        new GitDraftSnapshot.File(
+                                                file.status(),
+                                                file.path(),
+                                                file.status().equals("A")
+                                                        ? null
+                                                        : git.readTreeFile(
+                                                                workspaces.path(w),
+                                                                c.getBaseCommit(),
+                                                                file.path()),
+                                                file.status().equals("D")
+                                                        ? null
+                                                        : git.readTreeFile(
+                                                                workspaces.path(w),
+                                                                c.getTreeId(),
+                                                                file.path())))
+                        .toList();
+        var draft =
+                new GitDraftSnapshot(
+                        c.getConversationSessionId(),
+                        c.getWorkspaceId(),
+                        c.getBaseCommit(),
+                        c.getTreeId(),
+                        c.getDraftRevision(),
+                        files);
+        var expected = validation.validate(c.getConversationSessionId(), draft);
+        if (!Objects.equals(expected, GitValidationEvidence.decode(c.getValidationEvidence()))) {
+            throw new GitException("DBT_VALIDATION_MISMATCH", "候选校验证据与固定快照不一致");
         }
     }
 }

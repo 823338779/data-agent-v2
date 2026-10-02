@@ -49,6 +49,7 @@ class GitChangeControllerTest {
                 GitChangeStatus.SUBMITTING,
                 2,
                 null,
+                null,
                 null);
     }
 

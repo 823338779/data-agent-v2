@@ -140,3 +140,30 @@ Git 能力默认关闭。启用后可通过会话工具准备草稿与冻结候�
 
 - [Agent Git 运行配置与接口](docs/agent-git-runtime.md)
 - [独立 Git 仓库接入与运维](docs/git-repository-setup.md)
+
+## dbt-service 接入
+
+agent 通过独立 `agent-dbt` 模块直接访问 dbt-service 的 `/v2/projects`，不经过 Metric Platform。默认关闭；仅开启 dbt 即可查询已发布数据，不需要 Git。
+
+```powershell
+$env:DATA_AGENT_DBT_ENABLED='true'
+$env:DATA_AGENT_DBT_BASE_URL='http://127.0.0.1:8000'
+$env:DATA_AGENT_DBT_PROJECT_ID='sample'
+$env:DATA_AGENT_DBT_PROJECT_DIRECTORY='.'
+```
+
+地址和项目只能由服务配置，不能由模型覆盖。子目录必须与 dbt-service 的 `projectSubdir` 一致。建连默认 5 秒、请求默认 20 秒（最大 20 秒，覆盖正文读取）；应用启动不访问远端，首次使用核对 `agent-dbt-v1` 能力声明。数据分析 Skill 提供目录、资源、异步查询选项、查询提交和结果分页。
+
+维护 YAML 时还需按上面的 Git 文档开启 Git，并指向与服务绑定一致的仓库。流程为：会话草稿 → 冻结修订 → dbt 定义验证 → 确认卡片 → 用户点击确认 → 原 Git 推送流程。通用 Git 候选入口同样校验凭证，受管项目内不能混入 SQL、宏或项目配置改动。当前维护范围是 `models/` 内的 YAML；自定义 model-paths 暂不通过 agent 编辑。
+
+验证只运行 YAML/重复键、模板、dbt parse 和语义引用检查；`SUCCEEDED` 且 `valid=true` 才可准备候选，不证明物理字段、SQL 执行或发布成功。再次编辑使旧证据失效。推送成功后仍由既有流程发布，agent 只能查询活动发布，不能直接查询草稿。
+
+升级先部署支持本协议的 dbt-service，再部署 agent（Flyway 自动增加 V11/V12），最后启用开关。超时保留原受理键或任务 ID 重试；发布过期重新取目录及选项；校验 FAILED 可对同一草稿重新发起尝试，valid=false 则先修正定义。
+
+时间使用带 offset 的 ISO 输入，服务按发布固定业务时区解释；历史无 offset 平台调用保持原行为。查询结果最多每页 200 行，agent 按完整行裁剪到 20000 字符。始终用实际 `nextOffset` 继续；`availableRows` 仅表示已保存行数，`resultTruncated=true` 时不能宣称结果完整。
+
+接入验证（临时 Git 裸仓库及 Testcontainers PostgreSQL，需要 Docker）：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am '-Dtest=Dbt*Test,GitLifecycleTest,GitChangeControllerTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+```

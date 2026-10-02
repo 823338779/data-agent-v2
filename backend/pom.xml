@@ -24,6 +24,7 @@
         <module>agent-tool</module>
         <module>agent-skill</module>
         <module>agent-git</module>
+        <module>agent-dbt</module>
         <module>agent-web</module>
         <module>agent-server</module>
         <module>agent-evals</module>
