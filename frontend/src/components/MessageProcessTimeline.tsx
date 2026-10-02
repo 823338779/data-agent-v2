@@ -33,11 +33,14 @@ function ProcessPayload({ label, payload }: { label: string; payload: BoundedPro
 /** 按持久化顺序展示一条 assistant 消息自己的思考及工具执行过程。 */
 export function MessageProcessTimeline({ items }: MessageProcessTimelineProps) {
   if (items.length === 0) return null;
-  const running = items.some((item) => item.status === 'RUNNING');
+  const running = items.some((item) => item.status === 'RUNNING' || item.status === 'PREPARED');
+  const failed = items.some((item) => item.status === 'FAILED');
 
   return (
-    <details className="message-process-timeline" open={running}>
-      <summary>思考与工具过程（{items.length}）</summary>
+    <details className="message-process-timeline">
+      <summary>
+        {running ? '执行中' : failed ? '存在失败步骤' : '已完成'} · 查看执行过程（{items.length}）
+      </summary>
       <ol>
         {items.map((item) => (
           <li data-testid="process-item" data-id={item.processItemId} key={item.processItemId}>

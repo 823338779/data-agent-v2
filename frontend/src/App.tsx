@@ -1,5 +1,5 @@
-import { ArrowRight, ArrowUp, Bot, PanelLeftClose, RefreshCw, UserRound } from 'lucide-react';
-import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDown, Brain, PanelLeftClose } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AgentBackendClient,
   applyConversationStreamEvent,
@@ -22,6 +22,11 @@ import { MessageProcessTimeline } from './components/MessageProcessTimeline';
 import { ConversationStatus } from './components/ConversationStatus';
 import { RunStreamPanel } from './components/RunStreamPanel';
 import { PersonalMemoryPanel } from './components/memory/PersonalMemoryPanel';
+import { MessageComposer } from './components/MessageComposer';
+import { CopyButton } from './components/CopyButton';
+import { parseAgentUiPlaceholders } from './components/ui-block/parseAgentUiPlaceholders';
+import { useConversationScroll } from './app/useConversationScroll';
+import { useMemoryModal } from './components/memory/useMemoryModal';
 import { ConversationSession, formatTimestamp, isProcessingStatus } from './domain/agent';
 
 interface AppProps {
@@ -33,7 +38,6 @@ const narrowScreenQuery = '(max-width: 820px)';
 const TITLE_CONFLICT_MESSAGE = '标题已在其他位置更新，已加载最新标题。';
 const TITLE_SAVE_ERROR_MESSAGE = '标题保存失败，请稍后重试。';
 const STREAM_INTERRUPTED_MESSAGE = '实时状态连接已中断；会话内容仍可继续查看。';
-const FIXED_SUBJECT = 'admin';
 
 /** 会话更新时间为权威顺序；业务标识只用于相同时间戳下保持稳定。 */
 function sortSessionsByUpdatedAt(sessions: ConversationSession[]): ConversationSession[] {
@@ -56,15 +60,35 @@ export default function App({ client, memoryClient }: AppProps) {
   const sidebar = useConversationSidebar(backend);
   const [route, setRoute] = useState<WorkspaceRoute>(parseWorkspaceRoute);
   const [sessions, setSessions] = useState<ConversationSession[]>([]);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(
+    () => !window.matchMedia?.(narrowScreenQuery).matches,
+  );
+  const [narrowScreen, setNarrowScreen] = useState(
+    () => window.matchMedia?.(narrowScreenQuery).matches ?? false,
+  );
+  const sidebarRef = useRef<HTMLElement>(null);
+  const sidebarCloseRef = useRef<HTMLButtonElement>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
-  const [prompt, setPrompt] = useState('');
+  useMemoryModal(
+    sidebarRef,
+    sidebarCloseRef,
+    () => setHistoryOpen(false),
+    narrowScreen && historyOpen && !memoryOpen,
+  );
+  // 草稿仅存于当前页面，按会话隔离；异步发送只能清理它自己的草稿。
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const draftKey = route.kind === 'session' ? route.conversationSessionId : 'home';
+  const prompt = drafts[draftKey] ?? '';
+  const setPrompt = (value: string) => setDrafts((current) => ({ ...current, [draftKey]: value }));
+  const sendLocked = useRef(false);
   const loading = sidebar.loading;
   const [sending, setSending] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadedDetailSessionId, setLoadedDetailSessionId] = useState<string | null>(null);
-  const messagesRef = useRef<HTMLDivElement>(null);
+  const [detailReload, setDetailReload] = useState(0);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const detailSequence = useRef(0);
   const openMemory = useCallback(() => setMemoryOpen(true), []);
   const closeMemory = useCallback(() => setMemoryOpen(false), []);
 
@@ -97,6 +121,11 @@ export default function App({ client, memoryClient }: AppProps) {
   const activeStatus = active?.execution?.status ?? active?.latestExecutionStatus ?? 'idle';
   // SSE effect 只依赖“是否仍在处理”，避免同一处理阶段内的状态细化触发先关闭再重连。
   const activeIsProcessing = isProcessingStatus(activeStatus);
+  const { messagesRef, onScroll, showLatest, jumpToLatest } = useConversationScroll(
+    active?.conversationSessionId,
+    active?.messages,
+    activeExecutionAnswer,
+  );
   // 仅当前详情的运行状态参与显示；旧详情和 SSE 不得恢复侧栏的旧归属、置顶或标题。
   const sidebarSnapshot = useMemo(
     () => ({
@@ -131,9 +160,18 @@ export default function App({ client, memoryClient }: AppProps) {
 
   /** 摘要只能更新列表字段，不能覆盖当前页已经流式收敛的消息和执行详情。 */
   function mergeSessionSummaries(loaded: ConversationSession[]) {
-    setSessions((current) =>
-      sortSessionsByUpdatedAt(
-        loaded.map((summary) => {
+    setSessions((current) => {
+      const currentRoute = parseWorkspaceRoute();
+      // 创建后的摘要可能暂未包含新会话，不能据此丢弃当前详情或关闭其 SSE。
+      const retained = current.filter(
+        (item) =>
+          currentRoute.kind === 'session' &&
+          item.conversationSessionId === currentRoute.conversationSessionId &&
+          !loaded.some((summary) => summary.conversationSessionId === item.conversationSessionId),
+      );
+      return sortSessionsByUpdatedAt([
+        ...retained,
+        ...loaded.map((summary) => {
           const detail = current.find(
             (item) => item.conversationSessionId === summary.conversationSessionId,
           );
@@ -146,8 +184,8 @@ export default function App({ client, memoryClient }: AppProps) {
               }
             : summary;
         }),
-      ),
-    );
+      ]);
+    });
   }
 
   useEffect(() => subscribeWorkspaceRoute(setRoute), []);
@@ -155,6 +193,7 @@ export default function App({ client, memoryClient }: AppProps) {
     if (!window.matchMedia) return;
     const media = window.matchMedia(narrowScreenQuery);
     const collapseOnNarrowScreen = (event: MediaQueryListEvent) => {
+      setNarrowScreen(event.matches);
       if (event.matches) setHistoryOpen(false);
     };
     media.addEventListener('change', collapseOnNarrowScreen);
@@ -173,24 +212,35 @@ export default function App({ client, memoryClient }: AppProps) {
       return;
     }
     const conversationSessionId = route.conversationSessionId;
+    const sequence = ++detailSequence.current;
     let cancelled = false;
+    setDetailLoading(true);
     setLoadedDetailSessionId(null);
     void backend
       .getSession(conversationSessionId)
       .then((detail) => {
-        if (cancelled) return;
+        if (cancelled || sequence !== detailSequence.current) return;
         replaceSession(detail);
         setLoadedDetailSessionId(conversationSessionId);
       })
       .catch((failure) => {
-        if (!cancelled) handleFailure(failure, '无法读取会话详情。');
+        if (!cancelled && sequence === detailSequence.current)
+          handleFailure(failure, '无法读取会话详情。');
+      })
+      .finally(() => {
+        if (!cancelled && sequence === detailSequence.current) setDetailLoading(false);
       });
     return () => {
       cancelled = true;
     };
     // 会话标识变化时重新加载，状态更新不应重复发起详情请求。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend, route.kind, route.kind === 'session' ? route.conversationSessionId : null]);
+  }, [
+    backend,
+    route.kind,
+    route.kind === 'session' ? route.conversationSessionId : null,
+    detailReload,
+  ]);
 
   // 页面最多持有当前打开且正在处理的会话的一条 SSE，终态或切换页面会触发清理。
   useEffect(() => {
@@ -225,11 +275,6 @@ export default function App({ client, memoryClient }: AppProps) {
     return close;
   }, [active?.conversationSessionId, activeIsProcessing, backend, loadedDetailSessionId]);
 
-  useEffect(() => {
-    const element = messagesRef.current;
-    if (element) element.scrollTop = element.scrollHeight;
-  }, [active?.messages.length, active?.execution?.streamCheckpoint?.answer]);
-
   async function createSession(projectId: string | null = null): Promise<SidebarMutationResult> {
     if (creating) return { outcome: 'rejected', refreshed: false };
     setCreating(true);
@@ -242,39 +287,72 @@ export default function App({ client, memoryClient }: AppProps) {
           kind: 'session',
           conversationSessionId: session.conversationSessionId,
         });
-        setHistoryOpen(false);
+        if (narrowScreen) setHistoryOpen(false);
       });
     } finally {
       setCreating(false);
     }
   }
 
-  async function sendPrompt(event?: FormEvent<HTMLFormElement>) {
-    event?.preventDefault();
-    if (!active || sending || !prompt.trim()) return;
+  async function sendPrompt() {
+    if (
+      sendLocked.current ||
+      creating ||
+      activeIsProcessing ||
+      !prompt.trim() ||
+      (route.kind === 'session' && !active)
+    )
+      return;
     const content = prompt.trim();
+    let target = active;
+    let targetKey = draftKey;
+    sendLocked.current = true;
     setSending(true);
     setError(null);
     try {
-      const session = await backend.submitMessage(active.conversationSessionId, content);
+      if (!target) {
+        const created: { session?: ConversationSession } = {};
+        // 复用侧栏写入代次，使创建之前的摘要请求失效。
+        await sidebar.mutate(async () => {
+          const session = await backend.createSession('新会话', '', null);
+          created.session = session;
+          targetKey = session.conversationSessionId;
+          replaceSession(session);
+          // 请求期间仍允许编辑，迁移最新草稿；提交成功只清理实际发送的内容。
+          setDrafts((current) => ({ ...current, home: '', [targetKey]: current.home ?? content }));
+          if (parseWorkspaceRoute().kind === 'home') {
+            navigateWorkspace({ kind: 'session', conversationSessionId: targetKey });
+          }
+        });
+        if (!created.session) throw new Error('会话未创建');
+        target = created.session;
+      }
+      const session = await backend.submitMessage(target.conversationSessionId, content);
+      // 先前启动的详情读取不能覆盖本次提交的最新快照。
+      if (
+        parseWorkspaceRoute().kind === 'session' &&
+        window.location.pathname === `/sessions/${encodeURIComponent(targetKey)}`
+      ) {
+        detailSequence.current++;
+        setLoadedDetailSessionId(targetKey);
+        setDetailLoading(false);
+      }
       replaceSession(session);
-      setPrompt('');
+      setDrafts((current) =>
+        current[targetKey]?.trim() === content ? { ...current, [targetKey]: '' } : current,
+      );
       void sidebar.refresh();
     } catch (failure) {
       handleFailure(failure, '消息发送失败，输入内容已保留。');
     } finally {
+      sendLocked.current = false;
       setSending(false);
     }
   }
 
-  function submitOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
-    event.preventDefault();
-    void sendPrompt();
-  }
-
   function openSession(conversationSessionId: string) {
     navigateWorkspace({ kind: 'session', conversationSessionId });
+    if (window.matchMedia?.(narrowScreenQuery).matches) setHistoryOpen(false);
   }
 
   // 标题保存使用会话版本做乐观锁；冲突时刷新服务端最新会话，普通失败则保留编辑态。
@@ -320,15 +398,27 @@ export default function App({ client, memoryClient }: AppProps) {
       onToggleHistory={() => setHistoryOpen((open) => !open)}
       onOpenMemory={openMemory}
     >
+      {historyOpen && narrowScreen && (
+        <button
+          className="sidebar-backdrop"
+          type="button"
+          aria-label="关闭会话列表"
+          onClick={() => setHistoryOpen(false)}
+        />
+      )}
       {historyOpen && (
-        <aside className="session-sidebar" aria-label="会话列表">
+        <aside className="session-sidebar" aria-label="会话列表" ref={sidebarRef}>
           <div className="session-sidebar-heading">
-            <span className="session-sidebar-title">
-              <strong>会话</strong>
-              <small>{sessions.length}</small>
-            </span>
+            <button
+              className="brand"
+              type="button"
+              onClick={() => navigateWorkspace({ kind: 'home' })}
+            >
+              Data Agent
+            </button>
             <button
               className="icon-button"
+              ref={sidebarCloseRef}
               type="button"
               aria-label="收起会话列表"
               onClick={() => setHistoryOpen(false)}
@@ -359,23 +449,24 @@ export default function App({ client, memoryClient }: AppProps) {
             }
             onRefresh={sidebar.refresh}
           />
+          <button className="sidebar-memory-button" type="button" onClick={openMemory}>
+            <Brain size={17} />
+            个人记忆
+          </button>
         </aside>
       )}
       {route.kind === 'home' && (
         <section className="home-view">
           <div className="home-copy">
-            <p className="eyebrow">DATA AGENT</p>
-            <h1>从一个清晰的问题开始。</h1>
-            <p>创建会话，提交分析目标，并在同一处查看服务端返回的消息与运行状态。</p>
-            <button
-              type="button"
-              onClick={() => void createSession()}
-              disabled={creating || sidebar.busy || loading}
-            >
-              {creating ? '正在创建…' : '开始新会话'}
-              <ArrowRight size={17} />
-            </button>
+            <h1>今天想完成什么？</h1>
+            <p>从一个问题开始，让任务在对话中推进。</p>
           </div>
+          <MessageComposer
+            value={prompt}
+            onChange={setPrompt}
+            onSend={() => void sendPrompt()}
+            busy={sending || creating}
+          />
           {!loading && sessions.length > 0 && (
             <div className="recent-sessions">
               <span>最近会话</span>
@@ -398,8 +489,17 @@ export default function App({ client, memoryClient }: AppProps) {
         <section className="conversation-view">
           <header className="conversation-header">
             <div>
+              {active.projectId && (
+                <span className="project-breadcrumb">
+                  {
+                    sidebar.snapshot.projects.find(
+                      (project) => project.projectId === active.projectId,
+                    )?.name
+                  }
+                  <span aria-hidden="true"> / </span>
+                </span>
+              )}
               <h1>{active.title}</h1>
-              {active.tag && <span>{active.tag}</span>}
             </div>
             <ConversationStatus
               status={active.execution?.status ?? 'idle'}
@@ -407,13 +507,12 @@ export default function App({ client, memoryClient }: AppProps) {
             />
           </header>
 
-          <div className="message-list" aria-label="消息列表" ref={messagesRef}>
+          <div className="message-list" aria-label="消息列表" ref={messagesRef} onScroll={onScroll}>
             <div className="message-list-content">
               {active.messages.length === 0 && (
                 <div className="empty-conversation">
-                  <Bot size={24} />
-                  <h2>描述你要解决的数据问题</h2>
-                  <p>当前服务端支持保存会话、提交消息并返回运行状态。</p>
+                  <h2>从这里开始</h2>
+                  <p>描述你的目标、背景和希望得到的结果。</p>
                 </div>
               )}
               {active.messages.map((message) => {
@@ -430,14 +529,10 @@ export default function App({ client, memoryClient }: AppProps) {
                     className={`message ${message.role}`}
                     key={message.conversationMessageId}
                   >
-                    <div className="message-avatar">
-                      {message.role === 'user' ? <UserRound size={16} /> : <Bot size={16} />}
-                    </div>
                     <div className="message-content">
-                      <header>
-                        <strong>{message.role === 'user' ? FIXED_SUBJECT : message.author}</strong>
-                        <time>{formatTimestamp(message.timestamp)}</time>
-                      </header>
+                      {message.role === 'assistant' && (
+                        <MessageProcessTimeline items={message.thinkingProcess} />
+                      )}
                       {message.role === 'assistant' ? (
                         visibleAssistantContent ? (
                           <MarkdownContent
@@ -450,9 +545,18 @@ export default function App({ client, memoryClient }: AppProps) {
                       ) : (
                         <p className="plain-message-content">{message.content}</p>
                       )}
-                      {message.role === 'assistant' && (
-                        <MessageProcessTimeline items={message.thinkingProcess} />
-                      )}
+                      {message.role === 'assistant' &&
+                        visibleAssistantContent &&
+                        !(isActiveAssistant && activeIsProcessing) && (
+                          <CopyButton
+                            label="复制回答"
+                            text={parseAgentUiPlaceholders(visibleAssistantContent)
+                              .map((segment) =>
+                                segment.kind === 'markdown' ? segment.content : '',
+                              )
+                              .join('\n')}
+                          />
+                        )}
                     </div>
                   </article>
                 );
@@ -465,30 +569,26 @@ export default function App({ client, memoryClient }: AppProps) {
                 )}
             </div>
           </div>
-
-          <form className="composer" onSubmit={(event) => void sendPrompt(event)}>
-            <label htmlFor="prompt" className="sr-only">
-              输入消息
-            </label>
-            <textarea
-              id="prompt"
-              rows={2}
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              onKeyDown={submitOnEnter}
-              placeholder="输入你的数据分析目标…"
-            />
-            <button type="submit" aria-label="发送消息" disabled={sending || !prompt.trim()}>
-              {sending ? <RefreshCw className="spin" size={17} /> : <ArrowUp size={18} />}
+          {showLatest && (
+            <button className="jump-latest" type="button" onClick={jumpToLatest}>
+              <ArrowDown size={14} />
+              回到最新
             </button>
-            <small>Enter 发送 · Shift + Enter 换行</small>
-          </form>
+          )}
+          <MessageComposer
+            value={prompt}
+            onChange={setPrompt}
+            onSend={() => void sendPrompt()}
+            busy={sending}
+            running={activeIsProcessing}
+            disabled={detailLoading}
+          />
         </section>
       )}
 
       {!loading && route.kind === 'session' && !active && (
         <section className="not-found">
-          <h1>会话不存在</h1>
+          <h1>{detailLoading ? '正在读取会话…' : '无法打开会话'}</h1>
           <button type="button" onClick={() => navigateWorkspace({ kind: 'home' })}>
             返回首页
           </button>
@@ -503,6 +603,7 @@ export default function App({ client, memoryClient }: AppProps) {
             type="button"
             onClick={() => {
               setError(null);
+              setDetailReload((current) => current + 1);
               void sidebar.refresh();
             }}
           >

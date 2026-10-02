@@ -1,4 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { ArrowRight, FileText, X } from 'lucide-react';
+import { useMemoryModal } from '../memory/useMemoryModal';
 import {
   createGitChangeClient,
   type GitChange,
@@ -25,6 +28,44 @@ const retryableErrors = new Set([
   'GIT_INTERRUPTED',
 ]);
 
+/** 审阅层只管理展示与焦点；候选状态仍由外层维护，关闭不会重置确认或轮询。 */
+function GitReviewPanel({ children, onClose }: { children: ReactNode; onClose(): void }) {
+  const panel = useRef<HTMLElement>(null);
+  const close = useRef<HTMLButtonElement>(null);
+  useMemoryModal(panel, close, onClose);
+  return createPortal(
+    <div
+      className="review-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="review-panel"
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Git 变更审阅"
+      >
+        <div className="review-panel-heading">
+          <h2>变更审阅</h2>
+          <button
+            className="icon-button"
+            ref={close}
+            type="button"
+            aria-label="关闭变更审阅"
+            onClick={onClose}
+          >
+            <X size={19} />
+          </button>
+        </div>
+        <div className="git-change-details">{children}</div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
 /** 只按服务器登记的两个 ID 加载候选；按钮是唯一提交入口，远端推送为成功终点。 */
 export function GitChangeCardBlock({
   sessionId,
@@ -34,6 +75,7 @@ export function GitChangeCardBlock({
   changeId: string;
 }) {
   const [change, setChange] = useState<GitChange | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [expired, setExpired] = useState(false);
@@ -186,105 +228,157 @@ export function GitChangeCardBlock({
     retryableErrors.has(change.errorCode ?? '');
   return (
     <section className="git-change-card" aria-label="Git 变更确认">
-      <header>
-        <strong>Git 变更</strong>
-        <span role="status">{change ? labels[change.status] : error ? '加载失败' : '加载中'}</span>
-      </header>
-      {error && <p role="alert">{error}</p>}
-      {!change && error && (
-        <button type="button" disabled={busy} onClick={() => void reload()}>
-          重新加载
+      <div className="git-change-summary">
+        <FileText size={19} />
+        <span className="git-summary-file" title={change?.summary}>
+          {change?.files?.length === 1
+            ? change.files[0].path
+            : change?.files
+              ? `${change.files.length} 个文件`
+              : 'Git 变更'}
+        </span>
+        {!reviewOpen && (
+          <span className="git-summary-status" role="status">
+            {change ? labels[change.status] : error ? '加载失败' : '加载中'}
+          </span>
+        )}
+        <button
+          type="button"
+          className="text-button"
+          aria-label="查看变更"
+          aria-expanded={reviewOpen}
+          onClick={() => setReviewOpen(true)}
+        >
+          查看变更
+          <ArrowRight size={14} />
         </button>
-      )}
-      {change && (
-        <>
-          <h4>{change.summary}</h4>
-          <dl>
-            <dt>目标分支</dt>
-            <dd>{change.branch}</dd>
-            <dt>基线</dt>
-            <dd>
-              <code>{change.baseCommit}</code>
-            </dd>
-            <dt>提交说明</dt>
-            <dd>{change.commitMessage}</dd>
-            {change.commitId && (
-              <>
-                <dt>提交</dt>
-                <dd>
-                  <code>{change.commitId}</code>
-                </dd>
-              </>
-            )}
-          </dl>
-          <p>
-            冻结时基础检查已通过：变更文件 UTF-8、文件与 Git
-            变更完整性及大小限制；未进行指标业务口径校验。
-          </p>
-          {!change.reviewAvailable && (
-            <p role="alert">
-              审阅材料不可用：冻结快照缺失或完整性校验失败，无法查看差异或批准提交。已保存的提交状态仍可查询。
-            </p>
-          )}
-          {change.reviewAvailable && change.files && (
-            <ul>
-              {change.files.map((file) => (
-                <li key={file.fileId}>
-                  <div>
-                    <code>{file.status}</code> <span>{file.path}</span>
-                    <button
-                      type="button"
-                      aria-expanded={opened === file.fileId}
-                      disabled={loadingDiff !== null}
-                      onClick={() => void openDiff(file.fileId)}
-                    >
-                      {opened === file.fileId ? '收起差异' : '查看差异'} {file.path}
-                    </button>
-                  </div>
-                  {opened === file.fileId && (
-                    <pre className="git-change-card__diff">
-                      {diffs[file.fileId] ??
-                        (loadingDiff === file.fileId
-                          ? '加载差异中…'
-                          : '差异加载失败，请收起后重试')}
-                    </pre>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-          {change.errorSummary && <p>{change.errorSummary}</p>}
-          {(change.status === 'RECONFIRM_REQUIRED' ||
-            change.status === 'INVALIDATED' ||
-            (change.status === 'FAILED' && !retryable)) && (
-            <p>请重新准备草稿，生成新卡片后确认。</p>
-          )}
-          {active && expired && <p>自动查询已暂停，可手动核实结果。</p>}
-          <footer>
-            <button
-              type="button"
-              disabled={busy || !change.reviewAvailable || change.status !== 'PENDING_CONFIRMATION'}
-              onClick={() => void act('confirm')}
-            >
-              确认提交
+      </div>
+      {reviewOpen && (
+        <GitReviewPanel onClose={() => setReviewOpen(false)}>
+          <header>
+            <strong>Git 变更</strong>
+            <span role="status">
+              {change ? labels[change.status] : error ? '加载失败' : '加载中'}
+            </span>
+          </header>
+          {error && <p role="alert">{error}</p>}
+          {!change && error && (
+            <button type="button" disabled={busy} onClick={() => void reload()}>
+              重新加载
             </button>
-            {change.status === 'PENDING_CONFIRMATION' && (
-              <button type="button" disabled={busy} onClick={() => void act('cancel')}>
-                取消
-              </button>
-            )}
-            {retryable && (
-              <button type="button" disabled={busy} onClick={() => void act('retry')}>
-                重试原确认
-              </button>
-            )}
-            {active && (
-              <button type="button" disabled={busy} onClick={() => void act('reconcile')}>
-                核实结果
-              </button>
-            )}
-          </footer>
-        </>
+          )}
+          {change && (
+            <>
+              <h4>{change.summary}</h4>
+              <dl>
+                <dt>目标分支</dt>
+                <dd>{change.branch}</dd>
+                <dt>基线</dt>
+                <dd>
+                  <code>{change.baseCommit}</code>
+                </dd>
+                <dt>提交说明</dt>
+                <dd>{change.commitMessage}</dd>
+                {change.commitId && (
+                  <>
+                    <dt>提交</dt>
+                    <dd>
+                      <code>{change.commitId}</code>
+                    </dd>
+                  </>
+                )}
+              </dl>
+              <p>
+                冻结时基础检查已通过：变更文件 UTF-8、文件与 Git
+                变更完整性及大小限制；未进行指标业务口径校验。
+              </p>
+              {!change.reviewAvailable && (
+                <p role="alert">
+                  审阅材料不可用：冻结快照缺失或完整性校验失败，无法查看差异或批准提交。已保存的提交状态仍可查询。
+                </p>
+              )}
+              {change.reviewAvailable && change.files && (
+                <ul>
+                  {change.files.map((file) => (
+                    <li key={file.fileId}>
+                      <div>
+                        <code>{file.status}</code> <span>{file.path}</span>
+                        <button
+                          type="button"
+                          aria-expanded={opened === file.fileId}
+                          aria-label={`${opened === file.fileId ? '收起差异' : '查看差异'} ${file.path}`}
+                          disabled={loadingDiff !== null}
+                          onClick={() => void openDiff(file.fileId)}
+                        >
+                          {opened === file.fileId ? '收起差异' : '查看差异'}
+                        </button>
+                      </div>
+                      {opened === file.fileId && (
+                        <pre className="git-change-card__diff">
+                          {diffs[file.fileId]?.split('\n').map((line, index) => (
+                            <span
+                              className={
+                                line.startsWith('+') && !line.startsWith('+++')
+                                  ? 'diff-added'
+                                  : line.startsWith('-') && !line.startsWith('---')
+                                    ? 'diff-removed'
+                                    : ''
+                              }
+                              key={index}
+                            >
+                              {line}
+                              {'\n'}
+                            </span>
+                          )) ??
+                            (loadingDiff === file.fileId
+                              ? '加载差异中…'
+                              : '差异加载失败，请收起后重试')}
+                        </pre>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {change.errorSummary && <p>{change.errorSummary}</p>}
+              {(change.status === 'RECONFIRM_REQUIRED' ||
+                change.status === 'INVALIDATED' ||
+                (change.status === 'FAILED' && !retryable)) && (
+                <p>请重新准备草稿，生成新卡片后确认。</p>
+              )}
+              {active && expired && <p>自动查询已暂停，可手动核实结果。</p>}
+              <footer>
+                <p>
+                  确认后将提交并推送到 <code>{change.branch}</code>。
+                </p>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={
+                    busy || !change.reviewAvailable || change.status !== 'PENDING_CONFIRMATION'
+                  }
+                  onClick={() => void act('confirm')}
+                >
+                  确认并推送
+                </button>
+                {change.status === 'PENDING_CONFIRMATION' && (
+                  <button type="button" disabled={busy} onClick={() => void act('cancel')}>
+                    取消
+                  </button>
+                )}
+                {retryable && (
+                  <button type="button" disabled={busy} onClick={() => void act('retry')}>
+                    重试原确认
+                  </button>
+                )}
+                {active && (
+                  <button type="button" disabled={busy} onClick={() => void act('reconcile')}>
+                    核实结果
+                  </button>
+                )}
+              </footer>
+            </>
+          )}
+        </GitReviewPanel>
       )}
     </section>
   );

@@ -24,7 +24,11 @@ const block = {
 };
 const response = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 let fetchMock: ReturnType<typeof vi.fn>;
-const mount = () => render(<UiBlockRenderer block={block} />);
+const mount = () => {
+  const view = render(<UiBlockRenderer block={block} />);
+  fireEvent.click(screen.getByRole('button', { name: '查看变更' }));
+  return view;
+};
 const flush = async () => {
   await act(async () => {
     await Promise.resolve();
@@ -40,6 +44,21 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe('GitChangeCardBlock', () => {
+  it('keeps review actions out of the conversation until opened and restores focus on close', async () => {
+    render(<UiBlockRenderer block={block} />);
+    await screen.findByText('metrics.yml');
+    expect(screen.queryByRole('button', { name: '确认并推送' })).not.toBeInTheDocument();
+    const trigger = screen.getByRole('button', { name: '查看变更' });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(screen.getByRole('dialog', { name: 'Git 变更审阅' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '确认并推送' })).toBeEnabled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it('loads trusted detail and fetches complete diff only on demand as text', async () => {
     fetchMock
       .mockResolvedValueOnce(response(pending))
@@ -52,7 +71,9 @@ describe('GitChangeCardBlock', () => {
     expect(screen.getByText('update metrics')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: '查看差异 metrics.yml' }));
-    expect(await screen.findByText(/完整末行/)).toHaveTextContent('<img src=x onerror=alert(1)>');
+    expect((await screen.findByText(/完整末行/)).closest('pre')).toHaveTextContent(
+      '<img src=x onerror=alert(1)>',
+    );
     expect(document.querySelector('img')).toBeNull();
     expect(fetchMock.mock.calls[1][0]).toBe(
       '/api/v1/agent-sessions/s1/git-changes/gc1/diff?fileId=0',
@@ -67,7 +88,7 @@ describe('GitChangeCardBlock', () => {
         }),
     );
     mount();
-    const confirm = await screen.findByRole('button', { name: '确认提交' });
+    const confirm = await screen.findByRole('button', { name: '确认并推送' });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -85,7 +106,7 @@ describe('GitChangeCardBlock', () => {
     async (status) => {
       fetchMock.mockResolvedValueOnce(response({ ...pending, status }));
       mount();
-      expect(await screen.findByRole('button', { name: '确认提交' })).toBeDisabled();
+      expect(await screen.findByRole('button', { name: '确认并推送' })).toBeDisabled();
     },
   );
   it('cancels using the latest detail version', async () => {
@@ -129,9 +150,9 @@ describe('GitChangeCardBlock', () => {
       )
       .mockResolvedValueOnce(response({ ...pending, version: 3, status: 'INVALIDATED' }));
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: '确认提交' }));
+    fireEvent.click(await screen.findByRole('button', { name: '确认并推送' }));
     expect(await screen.findByText('已失效')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '确认提交' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '确认并推送' })).toBeDisabled();
   });
   it('bounds polling across rerenders and manually reconciles latest version', async () => {
     vi.useFakeTimers();
@@ -224,7 +245,7 @@ it('can reload detail after a network failure without resending any mutation', a
   mount();
   expect(await screen.findByRole('alert')).toHaveTextContent('网络不可用');
   fireEvent.click(screen.getByRole('button', { name: '重新加载' }));
-  expect(await screen.findByRole('button', { name: '确认提交' })).toBeEnabled();
+  expect(await screen.findByRole('button', { name: '确认并推送' })).toBeEnabled();
   expect(fetchMock.mock.calls.every((call) => call[1].method === 'GET')).toBe(true);
 });
 it.each(['GIT_TIMEOUT', 'GIT_INTERRUPTED'])(
@@ -254,7 +275,7 @@ it('disables approval when pending review material is unavailable', async () => 
   fetchMock.mockResolvedValueOnce(response({ ...pending, reviewAvailable: false, files: null }));
   mount();
   expect(await screen.findByText(/审阅材料不可用/)).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '确认提交' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '确认并推送' })).toBeDisabled();
   expect(screen.getByRole('button', { name: '取消' })).toBeEnabled();
   expect(screen.queryByRole('button', { name: /查看差异/ })).not.toBeInTheDocument();
 });
@@ -279,13 +300,13 @@ it.each(['FAILED', 'PUSHED'])(
         }),
       );
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: '确认提交' }));
+    fireEvent.click(await screen.findByRole('button', { name: '确认并推送' }));
     expect(
       await screen.findByText(status === 'FAILED' ? '提交失败' : '已推送'),
     ).toBeInTheDocument();
     expect(screen.getByText('saved-commit')).toBeInTheDocument();
     expect(screen.getByText(/审阅材料不可用/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '确认提交' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '确认并推送' })).toBeDisabled();
     expect(screen.queryByText('加载失败')).not.toBeInTheDocument();
   },
 );

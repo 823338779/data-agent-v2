@@ -110,7 +110,8 @@ function memoryClient(): MemoryClient {
 async function openSession(title: string) {
   const expandButton = screen.queryByRole('button', { name: '展开会话列表' });
   if (expandButton) fireEvent.click(expandButton);
-  fireEvent.click((await screen.findAllByRole('button', { name: new RegExp(title) }))[0]);
+  const button = (await screen.findAllByRole('button', { name: new RegExp(title) }))[0];
+  await act(async () => fireEvent.click(button));
 }
 
 afterEach(() => {
@@ -121,6 +122,125 @@ afterEach(() => {
 });
 
 describe('server-backed conversation workspace', () => {
+  it('discards a sidebar response started before home creation and keeps the new stream', async () => {
+    let resolveOld!: (value: { projects: []; sessions: ConversationSession[] }) => void;
+    const created = { ...session, conversationSessionId: 'created', title: '新会话' };
+    const running = {
+      ...created,
+      execution: { ...completedExecution('new_run', ''), status: 'running' as const },
+    };
+    const backend = client({
+      getSidebar: vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveOld = resolve;
+            }),
+        )
+        .mockResolvedValue({ projects: [], sessions: [created] }),
+      createSession: vi.fn().mockResolvedValue(created),
+      getSession: vi.fn().mockResolvedValue(created),
+      submitMessage: vi.fn().mockResolvedValue(running),
+    });
+    render(<App client={backend} />);
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '开始工作' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    await waitFor(() => expect(backend.subscribeSessionEvents).toHaveBeenCalled());
+    await act(async () => resolveOld({ projects: [], sessions: [session] }));
+    expect(screen.getByLabelText('输入消息')).toBeInTheDocument();
+    expect(screen.queryByText('无法打开会话')).not.toBeInTheDocument();
+    expect(backend.getSidebar).toHaveBeenCalledTimes(3);
+  });
+
+  it('preserves edits made while the home session is being created', async () => {
+    let resolveCreate!: (value: ConversationSession) => void;
+    const created = { ...session, conversationSessionId: 'created', title: '新会话' };
+    const backend = client({
+      createSession: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveCreate = resolve;
+          }),
+      ),
+      getSession: vi.fn().mockResolvedValue(created),
+      submitMessage: vi.fn().mockResolvedValue(created),
+    });
+    render(<App client={backend} />);
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '发送这条' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '后来写的草稿' } });
+    await act(async () => resolveCreate(created));
+    expect(backend.submitMessage).toHaveBeenCalledWith('created', '发送这条');
+    expect(screen.getByLabelText('输入消息')).toHaveValue('后来写的草稿');
+  });
+
+  it('lets the memory panel own keyboard focus when opened from a narrow sidebar', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
+    );
+    render(<App client={client()} memoryClient={memoryClient()} />);
+    fireEvent.click(screen.getByRole('button', { name: '展开会话列表' }));
+    fireEvent.click(screen.getByRole('button', { name: '个人记忆' }));
+    const panel = await screen.findByRole('dialog', { name: '个人记忆' });
+    const field = await within(panel).findByRole('textbox', { name: '记忆内容' });
+    fireEvent.change(field, { target: { value: '使用中文回复' } });
+    field.focus();
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(field).toHaveFocus();
+  });
+  it('sends from home and preserves the created session and draft after a submission failure', async () => {
+    const created = { ...session, conversationSessionId: 'session_new', title: '新会话' };
+    const backend = client({
+      createSession: vi.fn().mockResolvedValue(created),
+      getSession: vi.fn().mockResolvedValue(created),
+      submitMessage: vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(created),
+    });
+    render(<App client={backend} />);
+    fireEvent.change(await screen.findByLabelText('输入消息'), {
+      target: { value: '整理启动说明' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    expect(await screen.findByText('消息发送失败，输入内容已保留。')).toBeInTheDocument();
+    expect(screen.getByLabelText('输入消息')).toHaveValue('整理启动说明');
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    await waitFor(() => expect(backend.submitMessage).toHaveBeenCalledTimes(2));
+    expect(backend.createSession).toHaveBeenCalledTimes(1);
+    expect(backend.submitMessage).toHaveBeenLastCalledWith('session_new', '整理启动说明');
+  });
+
+  it('keeps drafts separate when switching conversations', async () => {
+    const other = { ...session, conversationSessionId: 'other', title: '另一项任务' };
+    const backend = client({
+      listSessions: vi.fn().mockResolvedValue([session, other]),
+      getSession: vi.fn(async (id) => (id === 'other' ? other : session)),
+    });
+    render(<App client={backend} />);
+    await openSession(session.title);
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '第一份草稿' } });
+    await openSession(other.title);
+    expect(screen.getByLabelText('输入消息')).toHaveValue('');
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '第二份草稿' } });
+    await openSession(session.title);
+    expect(screen.getByLabelText('输入消息')).toHaveValue('第一份草稿');
+  });
+
+  it('keeps a draft while running and prevents an accidental parallel submission', async () => {
+    const running = {
+      ...session,
+      execution: { ...completedExecution('e1', ''), status: 'running' as const },
+    };
+    const backend = client({ getSession: vi.fn().mockResolvedValue(running) });
+    render(<App client={backend} />);
+    await openSession(session.title);
+    await screen.findByRole('button', { name: '取消运行' });
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '下一条问题' } });
+    fireEvent.keyDown(screen.getByLabelText('输入消息'), { key: 'Enter' });
+    expect(backend.submitMessage).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('输入消息')).toHaveValue('下一条问题');
+  });
+
   it('shows persisted sessions and submits a message through the backend', async () => {
     const backend = client();
     render(<App client={backend} />);
@@ -179,7 +299,14 @@ describe('server-backed conversation workspace', () => {
       execution: secondExecution,
     };
 
-    render(<App client={client({ listSessions: vi.fn().mockResolvedValue([history]) })} />);
+    render(
+      <App
+        client={client({
+          listSessions: vi.fn().mockResolvedValue([history]),
+          getSession: vi.fn().mockResolvedValue(history),
+        })}
+      />,
+    );
     await openSession('订单延迟分析');
 
     expect(screen.queryByText('推理过程')).not.toBeInTheDocument();
@@ -215,7 +342,14 @@ describe('server-backed conversation workspace', () => {
       ],
     };
 
-    render(<App client={client({ listSessions: vi.fn().mockResolvedValue([history]) })} />);
+    render(
+      <App
+        client={client({
+          listSessions: vi.fn().mockResolvedValue([history]),
+          getSession: vi.fn().mockResolvedValue(history),
+        })}
+      />,
+    );
     await openSession('订单延迟分析');
 
     expect(screen.getByRole('heading', { name: '期末试卷' })).toBeInTheDocument();
@@ -669,7 +803,8 @@ describe('server-backed conversation workspace', () => {
         .mockResolvedValue({ projects: [], sessions: [latest] }),
     });
     render(<App client={backend} />);
-    fireEvent.click(await screen.findByRole('button', { name: '展开会话列表' }));
+    const expand = screen.queryByRole('button', { name: '展开会话列表' });
+    if (expand) fireEvent.click(expand);
     const sidebar = await screen.findByRole('complementary', { name: '会话列表' });
 
     fireEvent.doubleClick(

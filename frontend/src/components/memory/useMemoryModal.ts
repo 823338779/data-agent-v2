@@ -14,11 +14,13 @@ export function useMemoryModal(
   panelRef: RefObject<HTMLElement | null>,
   initialFocusRef: RefObject<HTMLElement | null>,
   onClose: () => void,
+  enabled = true,
 ) {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
   useEffect(() => {
+    if (!enabled) return;
     const previouslyFocused =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     initialFocusRef.current?.focus();
@@ -57,5 +59,5 @@ export function useMemoryModal(
       document.removeEventListener('keydown', handleKeyDown, true);
       previouslyFocused?.focus();
     };
-  }, [initialFocusRef, panelRef]);
+  }, [initialFocusRef, panelRef, enabled]);
 }
