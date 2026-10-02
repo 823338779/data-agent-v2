@@ -22,20 +22,27 @@ public final class MemoryReviewSliceSelector {
         long cursor = fromSequence;
         long chars = 0;
         for (var row : messages) {
-            if (row.sequence() <= cursor) continue;
+            if (row.sequence() <= cursor) {
+                continue;
+            }
             if (row.sequence() > throughSequence
                     || row.sequence() != cursor + 1
-                    || row.state() == MemoryReviewMessage.State.PENDING) break;
+                    || row.state() == MemoryReviewMessage.State.PENDING) {
+                break;
+            }
             if (row.state() == MemoryReviewMessage.State.EXCLUDED) {
                 cursor = row.sequence();
                 continue;
             }
-            if (selected.size() >= properties.getReviewMessageLimit()) break;
+            if (selected.size() >= properties.getReviewMessageLimit()) {
+                break;
+            }
             var candidate = new ArrayList<>(selected);
             candidate.add(row.evidence());
             if (chars + row.evidence().content().length() > properties.getReviewCharLimit()
-                    || estimate.applyAsInt(List.copyOf(candidate)) > maxInputTokens)
+                    || estimate.applyAsInt(List.copyOf(candidate)) > maxInputTokens) {
                 return new Slice(selected, cursor, selected.isEmpty());
+            }
             selected.add(row.evidence());
             chars += row.evidence().content().length();
             cursor = row.sequence();

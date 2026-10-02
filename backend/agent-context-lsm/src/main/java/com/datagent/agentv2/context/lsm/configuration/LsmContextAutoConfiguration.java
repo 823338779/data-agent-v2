@@ -4,6 +4,7 @@ import com.datagent.agentv2.context.common.summary.EventContextSummaryRenderer;
 import com.datagent.agentv2.context.common.summary.EventContextSummaryValidator;
 import com.datagent.agentv2.context.lsm.observability.LsmContextMetrics;
 import com.datagent.agentv2.context.lsm.persistence.json.LsmDocumentCodec;
+import com.datagent.agentv2.context.lsm.persistence.mapping.LsmPersistenceStructMapper;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmContextManifestRepository;
 import com.datagent.agentv2.context.lsm.persistence.repository.LsmSummarySegmentRepository;
 import com.datagent.agentv2.context.lsm.planning.ConversationTokenEstimator;
@@ -82,8 +83,9 @@ public class LsmContextAutoConfiguration {
             ContextSummaryGenerator generator,
             LsmSummarySegmentRepository segments,
             LsmDocumentCodec documents,
-            IdGenerator ids) {
-        return new LsmCandidateGenerator(generator, segments, documents, ids);
+            IdGenerator ids,
+            LsmPersistenceStructMapper models) {
+        return new LsmCandidateGenerator(generator, segments, documents, ids, models);
     }
 
     @Bean
@@ -119,6 +121,7 @@ public class LsmContextAutoConfiguration {
             ContextExecutionControlPort executionControl,
             IdGenerator ids,
             tools.jackson.databind.ObjectMapper json,
+            LsmPersistenceStructMapper models,
             LsmContextMetrics metrics,
             EventContextSummaryValidator summaryValidator,
             EventContextSummaryRenderer summaryRenderer) {
@@ -132,6 +135,7 @@ public class LsmContextAutoConfiguration {
                 executionControl,
                 ids,
                 json,
+                models,
                 metrics,
                 summaryValidator,
                 summaryRenderer);

@@ -24,6 +24,7 @@ import org.testcontainers.utility.DockerImageName;
 @SpringBootTest(classes = AgentPersistenceTestApplication.class)
 @Import({
     AuditFixtureService.class,
+    com.datagent.agentv2.persistence.service.git.GitWorkspacePersistenceService.class,
     MybatisPlusAuditIntegrationTest.FixtureMapperConfiguration.class
 })
 class MybatisPlusAuditIntegrationTest {
@@ -59,6 +60,9 @@ class MybatisPlusAuditIntegrationTest {
     @Autowired private AuditFixtureService auditFixtureService;
     @Autowired private JdbcTemplate jdbc;
 
+    @Autowired
+    private com.datagent.agentv2.persistence.service.git.GitWorkspacePersistenceService workspaces;
+
     @BeforeEach
     void seedTenants() {
         jdbc.execute("truncate table tenant cascade");
@@ -89,6 +93,44 @@ class MybatisPlusAuditIntegrationTest {
                     assertThat(reloaded.getCreatedAt()).isBetween(beforeSave, afterSave);
                     assertThat(reloaded.getUpdatedAt()).isBetween(beforeSave, afterSave);
                 });
+    }
+
+    @Test
+    void workspaceCasRefreshesAuditTimeWithoutChangingCreatedAt() {
+        var old = LocalDateTime.of(2000, 1, 1, 0, 0);
+        jdbc.update(
+                "insert into git_workspace(workspace_id,conversation_session_id,repository_id,status,created_at,updated_at) values (?,?,?,?,?,?)",
+                "audit_workspace",
+                "session",
+                "repo",
+                "READY",
+                old,
+                old);
+        var workspace = workspaces.findByWorkspaceId("audit_workspace");
+        workspace.setStatus("MUTATING");
+        assertThat(workspaces.replace(workspace)).isTrue();
+        var reloaded = workspaces.findByWorkspaceId("audit_workspace");
+        assertThat(reloaded.getUpdatedAt()).isAfter(old);
+        assertThat(reloaded.getCreatedAt()).isEqualTo(old);
+    }
+
+    @Test
+    void updatingReloadedEntityRefreshesItsExistingAuditTimestamp() {
+        var old = LocalDateTime.of(2000, 1, 1, 0, 0);
+        var entity = AuditFixtureEntity.session("session_update_audit", "Before");
+        auditFixtureService.save(entity);
+        jdbc.update(
+                "update conversation_session set updated_at = ? where conversation_session_id = ?",
+                old,
+                "session_update_audit");
+        var loaded = auditFixtureService.findByConversationSessionId("session_update_audit");
+        loaded.setTitle("After");
+        assertThat(auditFixtureService.updateById(loaded)).isTrue();
+        assertThat(
+                        auditFixtureService
+                                .findByConversationSessionId("session_update_audit")
+                                .getUpdatedAt())
+                .isAfter(old);
     }
 
     @Test

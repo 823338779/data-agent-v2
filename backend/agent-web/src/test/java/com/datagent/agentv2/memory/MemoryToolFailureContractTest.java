@@ -15,8 +15,7 @@ class MemoryToolFailureContractTest {
     @Test
     void structuredBusinessFailureRemainsFailedAndDefensivelyCopiesDetails() {
         ObjectMapper json = JsonMapper.builder().build();
-        var details =
-                json.createObjectNode().put("status", "QUOTA_EXCEEDED").put("used", 800);
+        var details = json.createObjectNode().put("status", "QUOTA_EXCEEDED").put("used", 800);
         var failure = new ToolBusinessException("QUOTA_EXCEEDED", "个人画像容量已满", details);
         details.put("status", "CREATED");
         ((ObjectNode) failure.details()).put("status", "UPDATED");

@@ -242,7 +242,7 @@ public final class ApiExceptionHandler {
                 request.getMethod(),
                 request.getRequestURI(),
                 requestId,
-                exception);
+                com.datagent.agentv2.diagnostics.SafeFailures.sanitized(exception));
         ProblemDetail problem =
                 ProblemDetail.forStatusAndDetail(
                         HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred");

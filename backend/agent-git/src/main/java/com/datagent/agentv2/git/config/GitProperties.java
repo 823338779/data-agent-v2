@@ -6,6 +6,10 @@ import java.time.Duration;
 /**
  * Git 本地能力的固定服务端配置；这些值不得由模型输入覆盖。
  *
+ * @param executable 部署指定的 Git 可执行文件，不接受模型参数替换
+ * @param remoteUri 所有会话共用的固定仓库地址，可能包含部署凭据，不得原样记录
+ * @param workspaceRoot 私有工作区和不可变快照根目录，构造时归一化为绝对路径
+ * @param commandTimeout 单条 Git 子进程时间上限，必须为正
  * @param maxCommandOutputBytes 单条 Git 命令允许捕获的 stdout/stderr 字节数
  * @param maxFileBytes 单个工作区文本文件的 UTF-8 字节上限
  * @param maxFilesPerOperation 单次结构化文件操作的文件数上限

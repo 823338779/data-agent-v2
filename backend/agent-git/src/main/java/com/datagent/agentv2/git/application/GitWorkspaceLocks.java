@@ -1,5 +1,6 @@
 package com.datagent.agentv2.git.application;
 
+import com.datagent.agentv2.git.model.GitException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
@@ -18,8 +19,17 @@ public final class GitWorkspaceLocks {
 
     private <T> T locked(String key, Supplier<T> action) {
         var lock = locks.computeIfAbsent(key, ignored -> new ReentrantLock(true));
-        lock.lock();
         try {
+            // 工具取消通过线程中断传递；排队期间取消必须在业务回调前退出，不能延迟修改草稿。
+            lock.lockInterruptibly();
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            throw new GitException("GIT_INTERRUPTED", "等待 Git 工作区锁时被中断", failure);
+        }
+        try {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new GitException("GIT_INTERRUPTED", "Git 操作已被中断");
+            }
             return action.get();
         } finally {
             lock.unlock();

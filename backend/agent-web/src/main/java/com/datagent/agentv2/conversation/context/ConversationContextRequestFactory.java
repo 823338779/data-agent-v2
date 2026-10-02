@@ -91,7 +91,9 @@ public class ConversationContextRequestFactory {
 
     /** 只公开本轮真实证据 ID；正文仍保留在原用户消息，元数据不冒充用户授权。 */
     private static List<ContextMessage> evidenceMetadata(List<MemoryEvidence> evidence) {
-        if (evidence.isEmpty()) return List.of();
+        if (evidence.isEmpty()) {
+            return List.of();
+        }
         return List.of(
                 ContextMessage.user(
                         "[memory_evidence]\n服务端确认本轮可引用的用户消息 ID："

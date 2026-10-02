@@ -77,6 +77,22 @@ class ContextSummaryGeneratorTest {
     }
 
     @Test
+    void providerFailureKeepsSafeDiagnosticCauseAfterRetries() {
+        var failure = new IllegalStateException("secret-provider-body");
+        when(model.summarize(any())).thenThrow(failure);
+        assertThatThrownBy(() -> generator.generate(requestForLevel(1), POLICY))
+                .isInstanceOf(IllegalStateException.class)
+                .satisfies(
+                        thrown -> {
+                            assertThat(thrown.getCause()).isNotNull();
+                            assertThat(thrown.getCause().getStackTrace())
+                                    .containsExactly(failure.getStackTrace());
+                            assertThat(thrown.getCause().toString())
+                                    .doesNotContain("secret-provider-body");
+                        });
+    }
+
+    @Test
     void retriesOneInvalidDocumentThenReturnsValidatedSummary() {
         when(model.summarize(any()))
                 .thenReturn(result("{}", 1), result(validSummaryJson(1, 2, 10, 20), 200));

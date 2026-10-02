@@ -4,31 +4,23 @@ import java.net.URI;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 /** 手动处理重定向，并在每一跳重新验证目标地址和响应类型。 */
 @Service
+@RequiredArgsConstructor
 public final class SafeWebPageFetcher implements WebPageFetcher {
 
     private final WebFetchTransport transport;
     private final PublicWebAddressPolicy addresses;
     private final WebFetchProperties properties;
 
-    SafeWebPageFetcher(
-            WebFetchTransport transport,
-            PublicWebAddressPolicy addresses,
-            WebFetchProperties properties) {
-        this.transport = transport;
-        this.addresses = addresses;
-        this.properties = properties;
-    }
-
     @Override
     public WebFetchPage fetch(URI requested) throws WebFetchException, InterruptedException {
         URI current = requested;
         for (int redirect = 0; redirect <= properties.maxRedirects(); redirect++) {
-            addresses.validate(current);
-            WebFetchHttpResponse response = transport.get(current);
+            WebFetchHttpResponse response = transport.get(addresses.validate(current));
             if (isRedirect(response.statusCode())) {
                 if (redirect == properties.maxRedirects()) {
                     throw new WebFetchException(

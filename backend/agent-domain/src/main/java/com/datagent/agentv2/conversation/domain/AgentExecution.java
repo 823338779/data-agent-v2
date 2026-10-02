@@ -4,14 +4,14 @@ import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import java.time.Instant;
 import java.util.Objects;
+import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.Setter;
 
 /** 一次用户请求触发的本机 Agent 执行。 */
 @Getter
-@Setter
-@NoArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class AgentExecution {
 
     /** 执行业务唯一标识，也是当前进程内任务注册键。 */
@@ -44,6 +44,35 @@ public final class AgentExecution {
     /** 执行状态迁移使用的乐观锁版本。 */
     private Long version;
 
+    /** 从完整存储快照恢复领域状态；Builder 只负责组装，构造时统一校验不变量。 */
+    @Builder
+    private AgentExecution(
+            String executionId,
+            String conversationSessionId,
+            String triggeringConversationMessageId,
+            ExecutionStatus status,
+            String requestIdempotencyKey,
+            String requestPayloadHash,
+            ExecutionFailureCode failureCode,
+            String failureDetail,
+            Instant hardDeadlineAt,
+            Long version) {
+        this.executionId = DomainInvariants.text(executionId, "executionId");
+        this.conversationSessionId =
+                DomainInvariants.text(conversationSessionId, "conversationSessionId");
+        this.triggeringConversationMessageId =
+                DomainInvariants.text(
+                        triggeringConversationMessageId, "triggeringConversationMessageId");
+        this.status = java.util.Objects.requireNonNull(status, "status");
+        this.requestIdempotencyKey =
+                DomainInvariants.text(requestIdempotencyKey, "requestIdempotencyKey");
+        this.requestPayloadHash = DomainInvariants.text(requestPayloadHash, "requestPayloadHash");
+        this.failureCode = failureCode;
+        this.failureDetail = failureDetail;
+        this.hardDeadlineAt = java.util.Objects.requireNonNull(hardDeadlineAt, "hardDeadlineAt");
+        this.version = DomainInvariants.nonnegative(version, "version");
+    }
+
     /** 创建事务提交后将立即在本机启动的执行。 */
     public static AgentExecution running(
             String executionId,
@@ -64,6 +93,19 @@ public final class AgentExecution {
         execution.hardDeadlineAt = Objects.requireNonNull(hardDeadlineAt, "hardDeadlineAt");
         execution.version = 0L;
         return execution;
+    }
+
+    /** 仅允许从运行态取消；终态快照不得重新迁移。 */
+    public void cancel() {
+        if (status != ExecutionStatus.RUNNING) {
+            throw new IllegalStateException("Only a running execution can be cancelled");
+        }
+        status = ExecutionStatus.CANCELLED;
+    }
+
+    /** 保存成功后接收数据库 CAS 版本，拒绝回退。 */
+    public void acknowledgePersistence(long persistedVersion) {
+        version = DomainInvariants.advancedVersion(version, persistedVersion);
     }
 
     private static String requireText(String value, String name) {

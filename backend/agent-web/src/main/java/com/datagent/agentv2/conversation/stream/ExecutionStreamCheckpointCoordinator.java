@@ -58,6 +58,11 @@ public final class ExecutionStreamCheckpointCoordinator {
         flush(run, sequence, now, true);
     }
 
+    /** 与数据库终态收敛分离；失败或取消同样必须释放完整回答缓冲。 */
+    public void releaseExecution(String executionId) {
+        accumulators.keySet().removeIf(key -> key.executionId().equals(executionId));
+    }
+
     private void flush(LocalAgentExecution run, long sequence, Instant now, boolean release) {
         ExecutionStreamAccumulator accumulator = accumulator(run, sequence, now);
         synchronized (accumulator) {

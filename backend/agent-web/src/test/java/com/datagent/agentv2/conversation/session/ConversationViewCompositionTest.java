@@ -8,7 +8,6 @@ import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.domain.ConversationSession;
 import com.datagent.agentv2.conversation.domain.MessageRole;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
-import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.enums.SessionExecutionStatus;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -17,26 +16,38 @@ class ConversationViewCompositionTest {
 
     @Test
     void targetTypesOwnDefaultsAndMultiSourceComposition() {
-        ConversationSession session = new ConversationSession();
-        session.setConversationSessionId("session-1");
-        session.setTitle("title");
-        session.setTag(null);
-        session.setVersion(2L);
-        AgentExecution execution = new AgentExecution();
-        execution.setExecutionId("execution-1");
-        execution.setConversationSessionId("session-1");
-        execution.setStatus(ExecutionStatus.RUNNING);
-        ConversationMessage message = new ConversationMessage();
-        message.setConversationMessageId("message-1");
-        message.setRole(MessageRole.USER);
-        message.setContent("question");
-        message.setVersion(null);
-        message.setThinkingProcess(List.of());
-        AgentExecutionStreamCheckpoint checkpoint = new AgentExecutionStreamCheckpoint();
-        checkpoint.setModelInvocationSequence(2L);
-        checkpoint.setPhase(ExecutionPhase.ANSWERING);
-        checkpoint.setOutputDeltaSequence(3L);
-        checkpoint.setAnswer("answer");
+        ConversationSession session =
+                ConversationSession.builder()
+                        .conversationSessionId("session-1")
+                        .title("title")
+                        .lastActivityAt(java.time.Instant.now())
+                        .version(2L)
+                        .build();
+        AgentExecution execution =
+                AgentExecution.running(
+                        "execution-1",
+                        "session-1",
+                        "message-1",
+                        "key",
+                        "hash",
+                        java.time.Instant.now().plusSeconds(60));
+        ConversationMessage message =
+                ConversationMessage.builder()
+                        .conversationMessageId("message-1")
+                        .conversationSessionId("session-1")
+                        .role(MessageRole.USER)
+                        .content("question")
+                        .version(null)
+                        .thinkingProcess(List.of())
+                        .build();
+        AgentExecutionStreamCheckpoint checkpoint =
+                AgentExecutionStreamCheckpoint.builder()
+                        .executionId("execution-1")
+                        .modelInvocationSequence(2L)
+                        .phase(ExecutionPhase.ANSWERING)
+                        .outputDeltaSequence(3L)
+                        .answer("answer")
+                        .build();
 
         ConversationSummaryView summary =
                 ConversationSummaryView.composeFromSession(session, execution);

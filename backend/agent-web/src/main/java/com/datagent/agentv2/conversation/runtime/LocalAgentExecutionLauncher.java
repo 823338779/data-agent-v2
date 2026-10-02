@@ -2,13 +2,18 @@ package com.datagent.agentv2.conversation.runtime;
 
 import com.datagent.agentv2.conversation.enums.ExecutionFailureCode;
 import com.datagent.agentv2.conversation.process.AgentExecutionProcessTerminationService;
+import com.datagent.agentv2.conversation.process.ConversationProcessCoordinator;
+import com.datagent.agentv2.conversation.react.ModelInvocationCoordinator;
 import com.datagent.agentv2.conversation.react.ReactExecutionEngine;
+import com.datagent.agentv2.conversation.stream.ExecutionStreamCheckpointCoordinator;
 import com.datagent.agentv2.conversation.tool.runtime.ExecutionToolViews;
+import com.datagent.agentv2.diagnostics.SafeFailures;
 import com.datagent.agentv2.memory.tool.MemoryInvocationRegistry;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.skill.runtime.ExecutionSkillViews;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -21,6 +26,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
  */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public final class LocalAgentExecutionLauncher {
 
     private final LocalAgentExecutionRegistry registry;
@@ -29,6 +35,9 @@ public final class LocalAgentExecutionLauncher {
     private final ExecutionToolViews toolViews;
     private final ExecutionSkillViews skillViews;
     private final MemoryInvocationRegistry memoryInvocations;
+    private final ExecutionStreamCheckpointCoordinator checkpoints;
+    private final ModelInvocationCoordinator modelInvocations;
+    private final ConversationProcessCoordinator processes;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void start(LocalExecutionStarted event) {
@@ -47,8 +56,8 @@ public final class LocalAgentExecutionLauncher {
     }
 
     private void executeInTenant(LocalAgentExecution execution) {
-        toolViews.open(execution.executionId());
         try {
+            toolViews.open(execution.executionId());
             skillViews.open(execution.executionId());
             try {
                 engine.execute(execution);
@@ -64,12 +73,20 @@ public final class LocalAgentExecutionLauncher {
                     Instant.now());
         } catch (RuntimeException failure) {
             // 未分类异常在进程边界统一收敛，防止数据库永久残留 running 状态。
+            log.error(
+                    "本机执行失败 executionId={}",
+                    execution.executionId(),
+                    SafeFailures.sanitized(failure));
             termination.failRunning(
                     execution,
                     ExecutionFailureCode.INTERNAL_ERROR,
-                    failure.getMessage(),
+                    "Agent execution failed",
                     Instant.now());
         } finally {
+            // 内存清理不依赖终态事务成功；特别是原始 thinking 缓冲不得跨执行遗留。
+            checkpoints.releaseExecution(execution.executionId());
+            modelInvocations.releaseExecution(execution.executionId());
+            processes.releaseExecution(execution.executionId());
             // ReAct 每轮负责精确关闭；执行边界兜底清理上下文准备阶段等异常遗留。
             memoryInvocations.closeExecution(execution.executionId());
             toolViews.close(execution.executionId());

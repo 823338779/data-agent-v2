@@ -21,7 +21,9 @@ public class WebMemoryEvidenceAdapter implements MemoryEvidencePort {
     /** 请求工厂在模型调用前冻结可引用 ID；提交时仍须再次 resolve，不信任旧正文副本。 */
     @Transactional(readOnly = true)
     public List<MemoryEvidence> currentUserEvidence(String executionId) {
-        if (executionId == null || executionId.isBlank()) return List.of();
+        if (executionId == null || executionId.isBlank()) {
+            return List.of();
+        }
         return messages.findByExecutionId(executionId).stream()
                 .filter(WebMemoryEvidenceAdapter::validUser)
                 .filter(message -> executionId.equals(message.getExecutionId()))
@@ -36,8 +38,9 @@ public class WebMemoryEvidenceAdapter implements MemoryEvidencePort {
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
     public List<MemoryEvidence> resolve(MemoryWriteContext context, List<String> ids) {
-        if (ids == null || ids.isEmpty() || context.caller() == MemoryWriteContext.Caller.UI)
+        if (ids == null || ids.isEmpty() || context.caller() == MemoryWriteContext.Caller.UI) {
             return List.of();
+        }
         return messages.findEvidenceByIds(ids).stream()
                 .filter(WebMemoryEvidenceAdapter::validUser)
                 .filter(
@@ -51,8 +54,9 @@ public class WebMemoryEvidenceAdapter implements MemoryEvidencePort {
     }
 
     private static boolean inBoundary(MemoryWriteContext context, ConversationMessage message) {
-        if (context.caller() == MemoryWriteContext.Caller.MAIN)
+        if (context.caller() == MemoryWriteContext.Caller.MAIN) {
             return Objects.equals(context.executionId(), message.getExecutionId());
+        }
         var claim = context.reviewClaim();
         return Objects.equals(claim.conversationId(), message.getConversationSessionId())
                 && message.getConversationMessageSequence() > claim.fromSequence()

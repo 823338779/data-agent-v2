@@ -10,8 +10,11 @@ public record PersonalMemoryView(
         MemoryKind kind,
         String content,
         MemorySource source,
+        /** 人工维护的保护标志；后台学习不得覆盖或删除受保护条目。 */
         boolean userProtected,
+        /** 条目 CAS 版本，从 1 开始；编辑和删除必须提交最新值。 */
         long version,
+        /** 已提交更新时刻，采用 Asia/Shanghai 的 ISO_OFFSET_DATE_TIME 格式。 */
         String updatedAt) {
 
     private static final ZoneId BUSINESS_TIME_ZONE = ZoneId.of("Asia/Shanghai");

@@ -86,7 +86,9 @@ public final class OllamaContextSummaryModelAdapter implements ContextSummaryMod
             return new ContextSummaryResult(
                     content, estimatedTokens, MODEL_PROVIDER, properties.getModel());
         } catch (RuntimeException failure) {
-            throw new IllegalStateException(SUMMARY_FAILED);
+            throw new IllegalStateException(
+                    SUMMARY_FAILED,
+                    com.datagent.agentv2.diagnostics.SafeFailures.sanitized(failure));
         }
     }
 
@@ -94,7 +96,9 @@ public final class OllamaContextSummaryModelAdapter implements ContextSummaryMod
         try {
             return JSON.readTree(outputSchema);
         } catch (RuntimeException failure) {
-            throw new IllegalStateException(SUMMARY_FAILED);
+            throw new IllegalStateException(
+                    SUMMARY_FAILED,
+                    com.datagent.agentv2.diagnostics.SafeFailures.sanitized(failure));
         }
     }
 }

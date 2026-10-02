@@ -38,7 +38,12 @@ class MemoryContextRequestFactoryTest {
     private final AgentExecutionService executions = mock(AgentExecutionService.class);
     private final ContextModelBudgetProvider budgets = mock(ContextModelBudgetProvider.class);
     private final ExecutionSkillViews skills = mock(ExecutionSkillViews.class);
-    private final ContextModelMessageMapper mappings = new ContextModelMessageMapper(json);
+    private final ContextModelMessageMapper mappings =
+            new ContextModelMessageMapper(
+                    org.mapstruct.factory.Mappers.getMapper(
+                            com.datagent.agentv2.conversation.context
+                                    .ContextModelMessageStructMapper.class),
+                    json);
     private final MemoryTool tool =
             new MemoryTool(new MemoryToolDispatcher(memories, json), registry, json);
     private final ToolModelDefinitionMapper definitions = new ToolModelDefinitionMapper(json);
@@ -71,8 +76,14 @@ class MemoryContextRequestFactoryTest {
 
     @BeforeEach
     void setup() {
-        var execution = new AgentExecution();
-        execution.setConversationSessionId("session");
+        var execution =
+                AgentExecution.running(
+                        "execution",
+                        "session",
+                        "message",
+                        "key",
+                        "hash",
+                        java.time.Instant.now().plusSeconds(60));
         when(executions.findByExecutionId(anyString())).thenReturn(execution);
         when(budgets.currentBudget()).thenReturn(new ContextBudget(10000, 100, 100, 0));
         var view = mock(ExecutionSkillView.class);
@@ -101,9 +112,8 @@ class MemoryContextRequestFactoryTest {
                 ConversationMessage.user(
                         "db-user", "new-session", "中文", 1, OperatorContext.requiredUserId());
         user.associateExecution("new-execution");
-        user.setVersion(1L);
         var databaseTime = LocalDateTime.of(2026, 9, 17, 1, 0);
-        user.setMemoryEvidenceCreatedAt(databaseTime);
+        user.acknowledgePersistence(1L, databaseTime, databaseTime);
         when(messages.findByExecutionId("new-execution")).thenReturn(List.of(user));
         var adapter =
                 new WebMemoryEvidenceAdapter(
@@ -119,8 +129,14 @@ class MemoryContextRequestFactoryTest {
                         registry,
                         new MemoryContextRenderer(new MemoryProperties()),
                         new MemoryMetrics(metrics));
-        var execution = new AgentExecution();
-        execution.setConversationSessionId("new-session");
+        var execution =
+                AgentExecution.running(
+                        "new-execution",
+                        "new-session",
+                        "db-user",
+                        "key",
+                        "hash",
+                        java.time.Instant.now().plusSeconds(60));
         when(executions.findByExecutionId("new-execution")).thenReturn(execution);
         var newRun = new LocalAgentExecution("tenant", "new-session", "new-execution", 1);
         var request =

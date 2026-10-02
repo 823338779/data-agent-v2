@@ -93,7 +93,20 @@ public final class CompactEvalCorpusLoader {
     /** resources 中的大型官方语料使用 Git LFS 管理的 gzip 文件，评测时直接流式解压。 */
     private static InputStream open(Path path) throws IOException {
         InputStream input = Files.newInputStream(path);
-        return path.getFileName().toString().endsWith(".gz") ? new GZIPInputStream(input) : input;
+        if (!path.getFileName().toString().endsWith(".gz")) {
+            return input;
+        }
+        try {
+            return new GZIPInputStream(input);
+        } catch (IOException | RuntimeException failure) {
+            // gzip 头解析发生在构造期，此时外层 try-with-resources 尚未接管原始流。
+            try {
+                input.close();
+            } catch (IOException closeFailure) {
+                failure.addSuppressed(closeFailure);
+            }
+            throw failure;
+        }
     }
 
     /** 标准格式保持用户给出的历史顺序，并拒绝不完整的场景。 */

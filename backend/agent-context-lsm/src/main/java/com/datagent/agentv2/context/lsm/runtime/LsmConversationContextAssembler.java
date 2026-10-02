@@ -99,6 +99,7 @@ public class LsmConversationContextAssembler {
     private final ContextExecutionControlPort executionControl;
     private final IdGenerator ids;
     private final ObjectMapper json;
+    private final LsmPersistenceStructMapper models;
     private final LsmContextMetrics metrics;
     private final EventContextSummaryValidator summaryValidator;
     private final EventContextSummaryRenderer summaryRenderer;
@@ -112,7 +113,8 @@ public class LsmConversationContextAssembler {
             ConversationTokenEstimator estimator,
             ContextExecutionControlPort executionControl,
             IdGenerator ids,
-            ObjectMapper json) {
+            ObjectMapper json,
+            LsmPersistenceStructMapper models) {
         this(
                 executions,
                 messages,
@@ -123,6 +125,7 @@ public class LsmConversationContextAssembler {
                 executionControl,
                 ids,
                 json,
+                models,
                 LsmContextMetrics.isolated(),
                 new EventContextSummaryValidator(),
                 new EventContextSummaryRenderer());
@@ -138,6 +141,7 @@ public class LsmConversationContextAssembler {
             ContextExecutionControlPort executionControl,
             IdGenerator ids,
             ObjectMapper json,
+            LsmPersistenceStructMapper models,
             LsmContextMetrics metrics) {
         this(
                 executions,
@@ -149,6 +153,7 @@ public class LsmConversationContextAssembler {
                 executionControl,
                 ids,
                 json,
+                models,
                 metrics,
                 new EventContextSummaryValidator(),
                 new EventContextSummaryRenderer());
@@ -164,6 +169,7 @@ public class LsmConversationContextAssembler {
             ContextExecutionControlPort executionControl,
             IdGenerator ids,
             ObjectMapper json,
+            LsmPersistenceStructMapper models,
             LsmContextMetrics metrics,
             EventContextSummaryValidator summaryValidator,
             EventContextSummaryRenderer summaryRenderer) {
@@ -176,6 +182,7 @@ public class LsmConversationContextAssembler {
         this.executionControl = executionControl;
         this.ids = ids;
         this.json = json;
+        this.models = Objects.requireNonNull(models, "models");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.summaryValidator = Objects.requireNonNull(summaryValidator, "summaryValidator");
         this.summaryRenderer = Objects.requireNonNull(summaryRenderer, "summaryRenderer");
@@ -599,11 +606,11 @@ public class LsmConversationContextAssembler {
     }
 
     private LsmContextManifest toManifest(LsmContextManifestEntity entity) {
-        return LsmPersistenceStructMapper.INSTANCE.toDomain(entity, documents);
+        return models.toDomain(entity, documents);
     }
 
     private LsmSummarySegment toDomainSegment(LsmSummarySegmentEntity entity) {
-        return LsmPersistenceStructMapper.INSTANCE.toDomain(entity, documents);
+        return models.toDomain(entity, documents);
     }
 
     private List<TurnSource> toTurns(List<ConversationMessage> rows) {

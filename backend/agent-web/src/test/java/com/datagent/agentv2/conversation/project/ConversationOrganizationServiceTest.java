@@ -21,8 +21,13 @@ class ConversationOrganizationServiceTest {
     @Test
     void movingPinnedSessionLocksDestinationFirstAndPreservesPinTime() {
         var at = Instant.parse("2026-09-15T01:00:00Z");
-        var session = ConversationSession.create("s1", "test", null, at);
-        session.setPinnedAt(at);
+        var session =
+                ConversationSession.builder()
+                        .conversationSessionId("s1")
+                        .title("test")
+                        .lastActivityAt(at)
+                        .pinnedAt(at)
+                        .build();
         when(projects.lockByProjectId("p1"))
                 .thenReturn(ConversationProject.create("p1", "Project"));
         when(sessions.lockById("s1")).thenReturn(session);

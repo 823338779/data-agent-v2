@@ -1,8 +1,12 @@
 package com.datagent.agentv2.conversation.tool.web;
 
 import java.util.Objects;
+import lombok.Getter;
+import lombok.experimental.Accessors;
 
 /** 经过分类且不携带上游响应正文的搜索失败。 */
+@Accessors(fluent = true)
+@Getter
 public final class WebSearchException extends Exception {
 
     public enum Kind {
@@ -23,9 +27,5 @@ public final class WebSearchException extends Exception {
     public WebSearchException(Kind kind, String message, Throwable cause) {
         super(message, cause);
         this.kind = Objects.requireNonNull(kind, "kind");
-    }
-
-    public Kind kind() {
-        return kind;
     }
 }

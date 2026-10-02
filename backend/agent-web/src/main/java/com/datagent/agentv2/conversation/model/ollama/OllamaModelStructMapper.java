@@ -10,16 +10,16 @@ import org.mapstruct.Context;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.ReportingPolicy;
-import org.mapstruct.factory.Mappers;
 import org.springframework.ai.ollama.api.OllamaApi;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /** 内部模型协议与 Ollama 请求协议之间的结构映射。 */
-@Mapper(unmappedTargetPolicy = ReportingPolicy.ERROR, builder = @Builder(disableBuilder = true))
+@Mapper(
+        componentModel = "spring",
+        unmappedTargetPolicy = ReportingPolicy.ERROR,
+        builder = @Builder(disableBuilder = true))
 public interface OllamaModelStructMapper {
-
-    OllamaModelStructMapper INSTANCE = Mappers.getMapper(OllamaModelStructMapper.class);
 
     @Mapping(target = "images", ignore = true)
     @Mapping(

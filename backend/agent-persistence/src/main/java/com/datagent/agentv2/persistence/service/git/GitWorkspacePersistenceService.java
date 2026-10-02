@@ -31,6 +31,6 @@ public class GitWorkspacePersistenceService
                 .set(GitWorkspaceEntity::getActiveChangeId, w.getActiveChangeId())
                 .set(GitWorkspaceEntity::getStatus, w.getStatus())
                 .set(GitWorkspaceEntity::getVersion, w.getVersion() + 1)
-                .update();
+                .update(new GitWorkspaceEntity());
     }
 }

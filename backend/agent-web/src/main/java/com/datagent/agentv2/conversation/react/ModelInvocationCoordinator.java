@@ -126,6 +126,8 @@ public class ModelInvocationCoordinator {
     @Transactional
     public void completeFinalAnswer(
             LocalAgentExecution run, ModelInvocationBoundary boundary, String answer) {
+        // 完成会更新会话事件序号，必须在 execution 行锁之前锁定会话，与提交/取消保持同序。
+        sessions.lockById(run.conversationSessionId());
         Instant now = Instant.now();
         AgentExecution execution = lockRunning(run, now);
         finishThinking(run, boundary, ThinkingProcessStatus.SUCCEEDED, now);
@@ -134,7 +136,9 @@ public class ModelInvocationCoordinator {
         ConversationMessage assistant = messages.lockAssistantByExecutionId(run.executionId());
         // 工具已持久化的 Git 卡片不能被最终模型文字覆盖；同一正文同时写入消息与最终流快照。
         GitFinalAnswerComposer composer = gitFinalAnswers.getIfAvailable();
-        if (composer != null) answer = composer.appendRegisteredCards(assistant, answer);
+        if (composer != null) {
+            answer = composer.appendRegisteredCards(assistant, answer);
+        }
         AgentExecutionStreamCheckpoint stream = requireCheckpoint(run.executionId());
         if (!persistedCheckpoints.complete(
                 run.executionId(),
@@ -199,6 +203,11 @@ public class ModelInvocationCoordinator {
     private static ModelThinkingKey thinkingKey(
             LocalAgentExecution run, ModelInvocationBoundary boundary) {
         return new ModelThinkingKey(run.executionId(), boundary.modelInvocationSequence());
+    }
+
+    /** worker 退出时释放索引；数据库失败也不能让进程内执行标识永久残留。 */
+    public void releaseExecution(String executionId) {
+        activeThinkingItems.keySet().removeIf(key -> key.executionId().equals(executionId));
     }
 
     private static void afterCommit(Runnable action) {

@@ -14,12 +14,16 @@ public final class ExecutionStreamAccumulator {
     public static final int MAX_UNCHECKPOINTED_CHARACTERS = 512;
 
     /** 当前本地累计所属的模型调用序号。 */
+    @lombok.Getter
+    @lombok.experimental.Accessors(fluent = true)
     private final long modelInvocationSequence;
 
     /** 从数据库投影恢复并持续追加的完整回答正文。 */
     private final StringBuilder answer;
 
     /** 当前模型调用内最后分配给回答增量的发布序号。 */
+    @lombok.Getter
+    @lombok.experimental.Accessors(fluent = true)
     private long outputDeltaSequence;
 
     /** 自上次成功 checkpoint 后累计但尚未落库的字符数。 */
@@ -29,6 +33,8 @@ public final class ExecutionStreamAccumulator {
     private Instant checkpointedAt;
 
     /** 当前回答投影对应的执行阶段。 */
+    @lombok.Getter
+    @lombok.experimental.Accessors(fluent = true)
     private ExecutionPhase phase;
 
     /**
@@ -81,23 +87,8 @@ public final class ExecutionStreamAccumulator {
         return uncheckpointedCharacters > 0;
     }
 
-    /** 返回累计器所属的模型调用序号。 */
-    public long modelInvocationSequence() {
-        return modelInvocationSequence;
-    }
-
-    /** 返回当前模型调用内最后发布的回答增量序号。 */
-    public long outputDeltaSequence() {
-        return outputDeltaSequence;
-    }
-
     /** 返回包含已 checkpoint 和待 checkpoint 内容的完整回答。 */
     public String answer() {
         return answer.toString();
-    }
-
-    /** 返回完整回答投影当前对应的执行阶段。 */
-    public ExecutionPhase phase() {
-        return phase;
     }
 }

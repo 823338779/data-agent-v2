@@ -68,11 +68,27 @@ class HierarchicalConversationContextAssemblerTest {
     }
 
     @Test
+    void lowerTargetRatioReducesTheSummaryBudget() {
+        when(history.load(request.execution())).thenReturn(turns("old", "latest"));
+        var lower = new HierarchicalContextPolicySnapshot(1, .75, .50);
+        int defaultBudget =
+                assembler
+                        .compactionInput(assembler.loadAndEstimate(request, policy), 32768)
+                        .historyMemoryBudget();
+        int lowerBudget =
+                assembler
+                        .compactionInput(assembler.loadAndEstimate(request, lower), 32768)
+                        .historyMemoryBudget();
+        assertThat(defaultBudget - lowerBudget).isEqualTo(13107);
+    }
+
+    @Test
     void realHistoryLoaderLeavesDatabaseMessagesUnchanged() {
         var executions = mock(AgentExecutionService.class);
         var messages = mock(ConversationMessageService.class);
-        var execution = new AgentExecution();
-        execution.setConversationSessionId("session");
+        var execution =
+                AgentExecution.running(
+                        "execution", "session", "user", "key", "hash", java.time.Instant.MAX);
         when(executions.findByExecutionId("execution")).thenReturn(execution);
         var user = ConversationMessage.user("user", "session", "原始消息", 1, "user");
         var answer = ConversationMessage.assistant("answer", "session", "execution", "原始回答", 2);

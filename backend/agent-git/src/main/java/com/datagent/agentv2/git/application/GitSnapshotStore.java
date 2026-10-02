@@ -16,8 +16,15 @@ import lombok.RequiredArgsConstructor;
 public final class GitSnapshotStore {
     private final GitProperties properties;
 
+    /**
+     * @param fileId 当前快照内从零开始的稳定文件序号，不是全局文件 ID
+     * @param status Git name-status 变更码，如 A/M/D
+     * @param path 工作区相对路径，属于该候选冻结 tree 的审阅范围
+     * @param diff 单文件完整补丁；仅列表投影时为 null，落盘快照必须保留完整内容
+     */
     public record SnapshotFile(String fileId, String status, String path, String diff) {}
 
+    /** 完整快照补丁与同一候选的有序单文件审阅材料，二者共同参与快照完整性摘要。 */
     public record StoredSnapshot(String diff, List<SnapshotFile> files) {}
 
     void save(GitChangeEntity c, GitSnapshot snapshot, GitRepositoryClient git, Path workspace) {
@@ -49,7 +56,7 @@ public final class GitSnapshotStore {
                 Files.deleteIfExists(temporary);
             }
         } catch (Exception failure) {
-            throw new GitException("GIT_SNAPSHOT_FAILED", "无法保存完整候选快照");
+            throw new GitException("GIT_SNAPSHOT_FAILED", "无法保存完整候选快照", failure);
         }
     }
 
@@ -57,25 +64,35 @@ public final class GitSnapshotStore {
         try {
             Path path = path(c.getSnapshotStorageKey());
             if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
-                    || Files.size(path) > properties.maxDiffBytes() * 3L + 1024 * 1024)
+                    || Files.size(path) > properties.maxDiffBytes() * 3L + 1024 * 1024) {
                 throw new IOException();
+            }
             byte[] bytes = Files.readAllBytes(path);
-            if (!sha256(bytes).equals(c.getSnapshotDigest())) throw new IOException();
+            if (!sha256(bytes).equals(c.getSnapshotDigest())) {
+                throw new IOException();
+            }
             try (var input = new DataInputStream(new ByteArrayInputStream(bytes))) {
-                if (!read(input).equals(metadata(c))) throw new IOException();
+                if (!read(input).equals(metadata(c))) {
+                    throw new IOException();
+                }
                 String diff = read(input);
                 int count = input.readInt();
                 if (count < 1
                         || count > properties.maxCandidateFiles()
-                        || count != c.getFileCount()) throw new IOException();
+                        || count != c.getFileCount()) {
+                    throw new IOException();
+                }
                 List<SnapshotFile> files = new ArrayList<>();
-                for (int i = 0; i < count; i++)
+                for (int i = 0; i < count; i++) {
                     files.add(new SnapshotFile(read(input), read(input), read(input), read(input)));
-                if (input.available() != 0) throw new IOException();
+                }
+                if (input.available() != 0) {
+                    throw new IOException();
+                }
                 return new StoredSnapshot(diff, List.copyOf(files));
             }
         } catch (Exception failure) {
-            throw new GitException("GIT_SNAPSHOT_CORRUPT", "候选快照缺失或完整性校验失败");
+            throw new GitException("GIT_SNAPSHOT_CORRUPT", "候选快照缺失或完整性校验失败", failure);
         }
     }
 
@@ -121,10 +138,14 @@ public final class GitSnapshotStore {
     private Path path(String key) {
         Path root = properties.workspaceRoot().toAbsolutePath().normalize();
         Path value = root.resolve(key).normalize();
-        if (!value.startsWith(root) || value.equals(root))
+        if (!value.startsWith(root) || value.equals(root)) {
             throw new GitException("GIT_SNAPSHOT_CORRUPT", "候选存储键无效");
-        for (Path p = value; p != null && p.startsWith(root); p = p.getParent())
-            if (Files.isSymbolicLink(p)) throw new GitException("GIT_SNAPSHOT_CORRUPT", "候选存储路径无效");
+        }
+        for (Path p = value; p != null && p.startsWith(root); p = p.getParent()) {
+            if (Files.isSymbolicLink(p)) {
+                throw new GitException("GIT_SNAPSHOT_CORRUPT", "候选存储路径无效");
+            }
+        }
         return value;
     }
 
@@ -136,9 +157,13 @@ public final class GitSnapshotStore {
 
     private String read(DataInputStream in) throws IOException {
         int count = in.readInt();
-        if (count < 0 || count > properties.maxDiffBytes() + 1024 * 1024) throw new IOException();
+        if (count < 0 || count > properties.maxDiffBytes() + 1024 * 1024) {
+            throw new IOException();
+        }
         byte[] bytes = in.readNBytes(count);
-        if (bytes.length != count) throw new IOException();
+        if (bytes.length != count) {
+            throw new IOException();
+        }
         return new String(bytes, StandardCharsets.UTF_8);
     }
 

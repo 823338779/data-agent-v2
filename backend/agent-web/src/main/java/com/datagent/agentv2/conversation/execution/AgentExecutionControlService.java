@@ -38,13 +38,15 @@ public class AgentExecutionControlService {
 
     @Transactional
     public AgentExecution cancel(String sessionId, String executionId) {
+        // 与提交和完成统一为 session → execution → assistant，防止事件序号更新形成锁循环。
+        sessions.lockById(sessionId);
         AgentExecution execution = requiredLockedExecution(sessionId, executionId);
         if (TERMINAL.contains(execution.getStatus())) {
             return execution;
         }
         Instant now = Instant.now();
         termination.cancelLocked(execution, now);
-        execution.setStatus(ExecutionStatus.CANCELLED);
+        execution.cancel();
         events.save(
                 AgentExecutionEvent.occurred(
                         ids.next(ID_PREFIX_EXECUTION_EVENT),

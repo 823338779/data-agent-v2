@@ -1,8 +1,12 @@
 package com.datagent.agentv2.conversation.tool.web.fetch;
 
 import java.util.Objects;
+import lombok.Getter;
+import lombok.experimental.Accessors;
 
 /** 经过分类且不携带页面正文的网页获取失败。 */
+@Accessors(fluent = true)
+@Getter
 public final class WebFetchException extends Exception {
 
     public enum Kind {
@@ -25,9 +29,5 @@ public final class WebFetchException extends Exception {
     public WebFetchException(Kind kind, String message, Throwable cause) {
         super(message, cause);
         this.kind = Objects.requireNonNull(kind, "kind");
-    }
-
-    public Kind kind() {
-        return kind;
     }
 }

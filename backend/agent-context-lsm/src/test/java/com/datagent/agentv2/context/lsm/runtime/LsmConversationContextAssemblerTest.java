@@ -85,8 +85,9 @@ class LsmConversationContextAssemblerTest {
         var executions = mock(AgentExecutionService.class);
         var messages = mock(ConversationMessageService.class);
         var manifests = mock(LsmContextManifestRepository.class);
-        var execution = new AgentExecution();
-        execution.setConversationSessionId("session");
+        var execution =
+                AgentExecution.running(
+                        "execution", "session", "user", "key", "hash", java.time.Instant.MAX);
         when(executions.findByExecutionId("execution")).thenReturn(execution);
         var rows = new ArrayList<ConversationMessage>();
         for (int i = 1; i <= 21; i++) {
@@ -115,7 +116,9 @@ class LsmConversationContextAssemblerTest {
                         new ConversationTokenEstimator(),
                         mock(ContextExecutionControlPort.class),
                         null,
-                        JsonMapper.builder().build());
+                        JsonMapper.builder().build(),
+                        new com.datagent.agentv2.context.lsm.persistence.mapping
+                                .LsmPersistenceStructMapperImpl());
         var base = request(new ContextBudget(2800, 1, 0, 0));
         var before = rows.stream().map(ConversationMessage::getContent).toList();
         var rawState = assembler.loadAndEstimate(base, policy());
@@ -643,6 +646,8 @@ class LsmConversationContextAssemblerTest {
                 new ConversationTokenEstimator(),
                 mock(ContextExecutionControlPort.class),
                 null,
-                JsonMapper.builder().build());
+                JsonMapper.builder().build(),
+                new com.datagent.agentv2.context.lsm.persistence.mapping
+                        .LsmPersistenceStructMapperImpl());
     }
 }

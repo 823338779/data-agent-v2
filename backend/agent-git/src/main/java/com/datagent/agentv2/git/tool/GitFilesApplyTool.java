@@ -50,25 +50,29 @@ public final class GitFilesApplyTool implements AgentTool {
                 SCHEMA,
                 context,
                 session -> {
-                    if (args.path("operations").size() > support.maxOperations())
+                    if (args.path("operations").size() > support.maxOperations()) {
                         throw new IllegalArgumentException("文件操作数量超过配置上限");
+                    }
                     List<FileOperation> operations = new ArrayList<>();
                     for (JsonNode op : args.path("operations")) {
                         var type = FileOperation.Type.valueOf(text(op, "type", null));
                         String digest = text(op, "expectedSha256", null);
                         String content = text(op, "content", null);
                         if (type != FileOperation.Type.CREATE
-                                && (digest == null || !digest.matches("[a-fA-F0-9]{64}")))
+                                && (digest == null || !digest.matches("[a-fA-F0-9]{64}"))) {
                             throw new IllegalArgumentException("更新和删除必须提供完整 SHA-256");
+                        }
                         if (type == FileOperation.Type.CREATE && digest != null
-                                || type == FileOperation.Type.DELETE && content != null)
+                                || type == FileOperation.Type.DELETE && content != null) {
                             throw new IllegalArgumentException("文件操作字段不匹配");
+                        }
                         if (type != FileOperation.Type.DELETE
                                 && (content == null
                                         || content.getBytes(java.nio.charset.StandardCharsets.UTF_8)
                                                         .length
-                                                > support.maxFileBytes()))
+                                                > support.maxFileBytes())) {
                             throw new IllegalArgumentException("文件内容缺失或超限");
+                        }
                         operations.add(new FileOperation(type, path(op, "path"), digest, content));
                     }
                     return support.getWorkspaces().apply(session, operations);

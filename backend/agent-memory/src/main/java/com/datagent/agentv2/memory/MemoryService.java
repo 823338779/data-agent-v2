@@ -65,23 +65,27 @@ public class MemoryService {
     /** 状态锁内完成设置 CAS 和历史结果落库；重放始终返回原提交快照，不借用当前设置。 */
     @Transactional
     public MemoryState updateSettings(String requestId, MemorySettingsChange change) {
-        if (requestId == null || requestId.isBlank() || change == null)
+        if (requestId == null || requestId.isBlank() || change == null) {
             throw new MemoryException(MemoryStatus.INVALID_REQUEST, "设置请求无效");
+        }
         var state = states.lockCurrent();
         String hash = sha256(json.writeValueAsBytes(new SettingsRequest("settings", change)));
         var previous = operations.find(requestId);
         if (previous != null) {
-            if (!previous.payloadHash().equals(hash) || previous.settingsResult() == null)
+            if (!previous.payloadHash().equals(hash) || previous.settingsResult() == null) {
                 throw new MemoryException(MemoryStatus.CONFLICT, "操作键已用于其他请求");
+            }
             return previous.settingsResult();
         }
-        if (change.expectedVersion() != state.settingsVersion())
+        if (change.expectedVersion() != state.settingsVersion()) {
             throw new MemoryException(MemoryStatus.CONFLICT, "设置版本已变化");
+        }
         var now = states.currentBusinessTime();
         var changed = state.changed(change, now);
         // 设置入口独立于写入开关，避免用户关闭显式写入后无法重新开启。
-        if (!changed.equals(state) && !states.updateSettings(changed, state.settingsVersion()))
+        if (!changed.equals(state) && !states.updateSettings(changed, state.settingsVersion())) {
             throw new IllegalStateException("记忆设置在状态锁内发生意外版本变化");
+        }
         operations.insert(
                 new MemoryOperation(
                         requestId,
@@ -142,7 +146,9 @@ public class MemoryService {
             result = write(context, command, target, state, current, evidence);
         } catch (MemoryException exception) {
             // 可预期拒绝与请求一并提交，避免适配器抛异常导致幂等记录回滚。依赖故障仍整体回滚以便重试。
-            if (exception.code() == MemoryStatus.UNAVAILABLE) throw exception;
+            if (exception.code() == MemoryStatus.UNAVAILABLE) {
+                throw exception;
+            }
             result =
                     MemoryOutcome.composeFromEntry(
                             exception.code(), target, state.revision(), quotas(current));
@@ -168,9 +174,12 @@ public class MemoryService {
             MemoryState state,
             List<MemoryEntry> current,
             List<MemoryEvidence> evidence) {
-        if (command instanceof MemoryCommand.Remove) return remove(context, target, state, current);
-        if (command instanceof MemoryCommand.Confirm)
+        if (command instanceof MemoryCommand.Remove) {
+            return remove(context, target, state, current);
+        }
+        if (command instanceof MemoryCommand.Confirm) {
             return confirm(context, target, state, current, evidence);
+        }
         MemoryKind kind;
         String content;
         if (command instanceof MemoryCommand.Add add) {
@@ -186,7 +195,9 @@ public class MemoryService {
         String hash = contentPolicy.hash(content);
         // 恢复必须经过全部验证和最终预算后才撤销抑制；旧快照已由 authorize 拒绝。
         var suppression = suppressions.find(hash);
-        if (suppression != null) policy.validateRestore(context, command, suppression, evidence);
+        if (suppression != null) {
+            policy.validateRestore(context, command, suppression, evidence);
+        }
         var duplicate =
                 current.stream()
                         .filter(item -> item.kind() == kind && item.normalizedHash().equals(hash))
@@ -226,7 +237,9 @@ public class MemoryService {
         if (finalUsed > contentPolicy.limit(kind)) {
             throw new MemoryException(MemoryStatus.QUOTA_EXCEEDED, "记忆超过分类容量限制");
         }
-        if (suppression != null) suppressions.deleteByHash(hash);
+        if (suppression != null) {
+            suppressions.deleteByHash(hash);
+        }
         var now = states.currentBusinessTime();
         var changed =
                 target == null
@@ -245,7 +258,9 @@ public class MemoryService {
         persistRevision(changed, target, state);
         appendEvidence(context, changed, evidence);
         var finalEntries = new ArrayList<>(current);
-        if (target != null) finalEntries.remove(target);
+        if (target != null) {
+            finalEntries.remove(target);
+        }
         finalEntries.add(changed);
         return MemoryOutcome.composeFromEntry(
                 target == null ? MemoryStatus.CREATED : MemoryStatus.UPDATED,
@@ -261,8 +276,9 @@ public class MemoryService {
             MemoryState state,
             List<MemoryEntry> current) {
         evidenceStore.deleteByMemoryId(target.memoryId());
-        if (!entries.deletePhysical(target.memoryId(), target.version()))
+        if (!entries.deletePhysical(target.memoryId(), target.version())) {
             throw new IllegalStateException("记忆删除在状态锁内发生意外版本变化");
+        }
         // 同指纹可能已存在另一分类的删除事件，以最新删除时刻约束此后的恢复证据。
         suppressions.deleteByHash(target.normalizedHash());
         suppressions.insert(
@@ -272,8 +288,9 @@ public class MemoryService {
                         state.revision() + 1,
                         states.currentBusinessTime(),
                         context.requestId()));
-        if (!states.advanceRevision(state.revision()))
+        if (!states.advanceRevision(state.revision())) {
             throw new IllegalStateException("记忆状态在持锁期间发生意外版本变化");
+        }
         var remaining = new ArrayList<>(current);
         remaining.remove(target);
         return MemoryOutcome.composeFromEntry(
@@ -289,11 +306,13 @@ public class MemoryService {
             List<MemoryEntry> current,
             List<MemoryEvidence> evidence) {
         boolean fresh = false;
-        for (var item : evidence)
+        for (var item : evidence) {
             fresh |= evidenceStore.append(target.memoryId(), item, context.promptVersion());
-        if (!fresh)
+        }
+        if (!fresh) {
             return MemoryOutcome.composeFromEntry(
                     MemoryStatus.CONFIRMED, target, state.revision(), quotas(current));
+        }
         var changed =
                 target.revised(
                         target.content(),
@@ -340,7 +359,9 @@ public class MemoryService {
     }
 
     private void validateBackground(MemoryWriteContext context, MemoryState state) {
-        if (context.caller() != MemoryWriteContext.Caller.BACKGROUND) return;
+        if (context.caller() != MemoryWriteContext.Caller.BACKGROUND) {
+            return;
+        }
         var claim = context.reviewClaim();
         var job = jobs.lock(claim.jobId());
         var lease = leases.lockCurrent();
@@ -355,7 +376,9 @@ public class MemoryService {
     }
 
     private void validateClaim(MemoryWriteContext context) {
-        if (context.caller() != MemoryWriteContext.Caller.BACKGROUND) return;
+        if (context.caller() != MemoryWriteContext.Caller.BACKGROUND) {
+            return;
+        }
         boolean validJob = jobs.validateClaim(context.reviewClaim());
         boolean validLease = leases.validateClaim(context.reviewClaim());
         if (!validJob || !validLease) {

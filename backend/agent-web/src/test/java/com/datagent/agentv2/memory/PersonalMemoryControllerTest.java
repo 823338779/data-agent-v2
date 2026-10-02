@@ -53,7 +53,8 @@ class PersonalMemoryControllerTest {
 
         mvc.perform(get(BASE).param("limit", "1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.groups.person_profile.entries[0].memoryId").value("profile-1"))
+                .andExpect(
+                        jsonPath("$.groups.person_profile.entries[0].memoryId").value("profile-1"))
                 .andExpect(jsonPath("$.groups.person_profile.nextCursor").value("profile-1"))
                 .andExpect(
                         jsonPath("$.groups.collaboration_preference.entries[0].memoryId")
@@ -74,8 +75,7 @@ class PersonalMemoryControllerTest {
         mvc.perform(get(BASE).param("kind", "person_profile"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.groups.person_profile.entries.length()").value(2))
-                .andExpect(
-                        jsonPath("$.groups.collaboration_preference.entries.length()").value(0));
+                .andExpect(jsonPath("$.groups.collaboration_preference.entries.length()").value(0));
     }
 
     @Test
@@ -98,8 +98,7 @@ class PersonalMemoryControllerTest {
 
     @Test
     void duplicateCreateKeepsAlreadyExistsInsteadOfClaimingRestore() throws Exception {
-        when(memory.execute(any(), any()))
-                .thenReturn(outcome(MemoryStatus.ALREADY_EXISTS, false));
+        when(memory.execute(any(), any())).thenReturn(outcome(MemoryStatus.ALREADY_EXISTS, false));
 
         mvc.perform(
                         post(BASE)
@@ -240,13 +239,7 @@ class PersonalMemoryControllerTest {
 
     private static MemoryOutcome outcome(MemoryStatus status, boolean created) {
         return new MemoryOutcome(
-                status,
-                "memory-1",
-                1L,
-                7,
-                created,
-                status != MemoryStatus.REMOVED,
-                quotas());
+                status, "memory-1", 1L, 7, created, status != MemoryStatus.REMOVED, quotas());
     }
 
     private static MemorySnapshot snapshot() {
@@ -255,14 +248,8 @@ class PersonalMemoryControllerTest {
                 List.of(
                         memory("profile-2", MemoryKind.PERSON_PROFILE, "后续条目"),
                         memory("profile-1", MemoryKind.PERSON_PROFILE, "中文偏好"),
-                        memory(
-                                "preference-2",
-                                MemoryKind.COLLABORATION_PREFERENCE,
-                                "先列证据再判断"),
-                        memory(
-                                "preference-1",
-                                MemoryKind.COLLABORATION_PREFERENCE,
-                                "先讨论设计")),
+                        memory("preference-2", MemoryKind.COLLABORATION_PREFERENCE, "先列证据再判断"),
+                        memory("preference-1", MemoryKind.COLLABORATION_PREFERENCE, "先讨论设计")),
                 quotas());
     }
 

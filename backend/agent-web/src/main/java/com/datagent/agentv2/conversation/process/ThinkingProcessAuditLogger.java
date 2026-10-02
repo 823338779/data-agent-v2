@@ -27,7 +27,10 @@ public final class ThinkingProcessAuditLogger {
             // 普通工具保留既有安全完整审计；memory 使用专属白名单，数据库截断与否均不输出个人正文。
             AUDIT.info("{}", json.writeValueAsString(event.safeFullDocument(json)));
         } catch (RuntimeException failure) {
-            LOG.warn(AUDIT_FAILURE_MESSAGE, failure.getClass().getSimpleName());
+            LOG.warn(
+                    AUDIT_FAILURE_MESSAGE,
+                    failure.getClass().getSimpleName(),
+                    com.datagent.agentv2.diagnostics.SafeFailures.sanitized(failure));
         }
     }
 }

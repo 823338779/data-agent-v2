@@ -32,8 +32,11 @@ public record MemoryState(
                 change.autoLearningEnabled() == null
                         ? autoLearningEnabled
                         : change.autoLearningEnabled();
-        if (read == readEnabled && explicit == explicitWriteEnabled && auto == autoLearningEnabled)
+        if (read == readEnabled
+                && explicit == explicitWriteEnabled
+                && auto == autoLearningEnabled) {
             return this;
+        }
         boolean learningChanged = auto != autoLearningEnabled;
         return new MemoryState(
                 revision + 1,

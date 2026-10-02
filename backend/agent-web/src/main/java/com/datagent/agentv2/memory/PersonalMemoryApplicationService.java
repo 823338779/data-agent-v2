@@ -20,6 +20,7 @@ import org.springframework.transaction.TransactionSystemException;
  */
 @Service
 @RequiredArgsConstructor
+@lombok.extern.slf4j.Slf4j
 public class PersonalMemoryApplicationService {
 
     private final MemoryService memory;
@@ -103,6 +104,8 @@ public class PersonalMemoryApplicationService {
         } catch (CannotCreateTransactionException
                 | DataAccessResourceFailureException
                 | TransientDataAccessResourceException failure) {
+            log.warn(
+                    "记忆存储依赖暂不可用", com.datagent.agentv2.diagnostics.SafeFailures.sanitized(failure));
             throw new MemoryException(MemoryStatus.UNAVAILABLE, "记忆服务暂不可用，请使用原操作重试");
         } catch (TransactionSystemException failure) {
             for (Throwable cause = failure.getCause(); cause != null; cause = cause.getCause()) {
@@ -112,6 +115,9 @@ public class PersonalMemoryApplicationService {
                         || (cause instanceof SQLException sql
                                 && sql.getSQLState() != null
                                 && sql.getSQLState().startsWith("08"))) {
+                    log.warn(
+                            "记忆事务提交连接失败",
+                            com.datagent.agentv2.diagnostics.SafeFailures.sanitized(failure));
                     throw new MemoryException(MemoryStatus.UNAVAILABLE, "记忆服务暂不可用，请使用原操作重试");
                 }
             }

@@ -15,15 +15,17 @@ public final class ExecutionSkillViews {
 
     public ExecutionSkillView open(String executionId) {
         ExecutionSkillView created = new ExecutionSkillView(catalog);
-        if (views.putIfAbsent(executionId, created) != null)
+        if (views.putIfAbsent(executionId, created) != null) {
             throw new IllegalStateException("Execution skill view already exists: " + executionId);
+        }
         return created;
     }
 
     public ExecutionSkillView require(String executionId) {
         ExecutionSkillView view = views.get(executionId);
-        if (view == null)
+        if (view == null) {
             throw new IllegalStateException("Execution skill view does not exist: " + executionId);
+        }
         return view;
     }
 

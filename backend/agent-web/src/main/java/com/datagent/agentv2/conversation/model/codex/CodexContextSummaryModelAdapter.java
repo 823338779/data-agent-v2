@@ -73,7 +73,9 @@ public final class CodexContextSummaryModelAdapter implements ContextSummaryMode
                     MODEL_PROVIDER,
                     properties.getModel());
         } catch (RuntimeException failure) {
-            throw new IllegalStateException(SUMMARY_FAILED);
+            throw new IllegalStateException(
+                    SUMMARY_FAILED,
+                    com.datagent.agentv2.diagnostics.SafeFailures.sanitized(failure));
         }
     }
 

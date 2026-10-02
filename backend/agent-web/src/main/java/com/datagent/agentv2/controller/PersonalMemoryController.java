@@ -1,7 +1,7 @@
 package com.datagent.agentv2.controller;
 
-import com.datagent.agentv2.memory.MemoryKind;
 import com.datagent.agentv2.memory.MemoryException;
+import com.datagent.agentv2.memory.MemoryKind;
 import com.datagent.agentv2.memory.MemoryOutcome;
 import com.datagent.agentv2.memory.MemorySettingsView;
 import com.datagent.agentv2.memory.MemoryStatus;
@@ -36,8 +36,7 @@ public class PersonalMemoryController {
 
     @GetMapping
     public PersonalMemoryListView list(
-            @RequestParam(name = "kind", required = false) @Size(min = 1, max = 64)
-                    String kind,
+            @RequestParam(name = "kind", required = false) @Size(min = 1, max = 64) String kind,
             @RequestParam(required = false) @Size(min = 1, max = 128) String cursor,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int limit) {
         return application.list(parseKind(kind), cursor, limit);
@@ -63,8 +62,7 @@ public class PersonalMemoryController {
             @PathVariable @NotBlank @Size(max = 128) String id,
             @RequestHeader("Idempotency-Key") @NotBlank @Size(max = 256) String requestId,
             @Valid @RequestBody ReplaceRequest request) {
-        return application.replace(
-                requestId, id, request.expectedVersion(), request.content());
+        return application.replace(requestId, id, request.expectedVersion(), request.content());
     }
 
     @DeleteMapping("/{id}")
@@ -98,8 +96,7 @@ public class PersonalMemoryController {
             @NotNull MemoryKind kind, @NotBlank String content, Boolean restore) {}
 
     /** 条目 CAS 版本从 1 开始，避免非法值进入领域命令构造器。 */
-    public record ReplaceRequest(
-            @NotBlank String content, @NotNull @Min(1) Long expectedVersion) {}
+    public record ReplaceRequest(@NotBlank String content, @NotNull @Min(1) Long expectedVersion) {}
 
     /** 设置 CAS 初始版本为 0；可空开关表示该字段保持原值。 */
     public record SettingsRequest(

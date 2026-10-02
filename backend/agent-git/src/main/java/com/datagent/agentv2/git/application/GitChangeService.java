@@ -34,8 +34,9 @@ public final class GitChangeService {
                 || message == null
                 || message.isBlank()
                 || message.length() > 10000
-                || summary.length() > 10000)
+                || summary.length() > 10000) {
             throw new GitException("GIT_INVALID_REQUEST", "候选请求不完整或超限");
+        }
         return workspaces.locked(
                 sessionId,
                 () -> {
@@ -56,13 +57,15 @@ public final class GitChangeService {
                                             .getBytes(StandardCharsets.UTF_8));
                     var existing = records.findRequest(w.getWorkspaceId(), requestKey);
                     if (existing != null) {
-                        if (!requestDigest.equals(existing.getRequestDigest()))
+                        if (!requestDigest.equals(existing.getRequestDigest())) {
                             throw new GitException("GIT_CONFLICT", "准备请求幂等键已用于不同内容");
+                        }
                         return GitChangeView.composeFromChange(existing);
                     }
                     workspaces.assertEditable(w);
-                    if (w.getDraftRevision() != expectedRevision)
+                    if (w.getDraftRevision() != expectedRevision) {
                         throw new GitException("GIT_CONFLICT", "草稿修订号已变化");
+                    }
                     GitSnapshot snapshot = git.freeze(workspaces.path(w), message);
                     var c = new GitChangeEntity();
                     c.setChangeId("gc_" + UUID.randomUUID());
@@ -88,8 +91,9 @@ public final class GitChangeService {
                     snapshots.save(c, snapshot, git, workspaces.path(w));
                     publisher.publish(executionId, c);
                     var registered = records.find(c.getChangeId());
-                    if (registered == null || registered.getConversationMessageId() == null)
+                    if (registered == null || registered.getConversationMessageId() == null) {
                         throw new GitException("GIT_PUBLICATION_FAILED", "候选与卡片尚未完成登记");
+                    }
                     return GitChangeView.composeFromChange(registered);
                 });
     }
@@ -116,8 +120,9 @@ public final class GitChangeService {
         var c = records.find(changeId);
         if (c == null
                 || !sessionId.equals(c.getConversationSessionId())
-                || !application.repositoryId().equals(c.getRepositoryId()))
+                || !application.repositoryId().equals(c.getRepositoryId())) {
             throw new GitException("GIT_CHANGE_NOT_FOUND", "当前会话候选不存在");
+        }
         return c;
     }
 
@@ -128,12 +133,14 @@ public final class GitChangeService {
             if (!c.getWorkspaceId().equals(w.getWorkspaceId())
                     || !c.getChangeId().equals(w.getActiveChangeId())
                     || !c.getDraftRevision().equals(w.getDraftRevision())
-                    || !c.getBaseCommit().equals(w.getBaseCommit()))
+                    || !c.getBaseCommit().equals(w.getBaseCommit())) {
                 throw new GitException("GIT_CONFLICT", "候选已不对应当前草稿");
+            }
             var current = git.freeze(workspaces.path(w), c.getCommitMessage());
             if (!current.treeId().equals(c.getTreeId())
-                    || !current.candidateDigest().equals(c.getCandidateDigest()))
+                    || !current.candidateDigest().equals(c.getCandidateDigest())) {
                 throw new GitException("GIT_SNAPSHOT_CORRUPT", "冻结候选与草稿不一致");
+            }
         }
     }
 }

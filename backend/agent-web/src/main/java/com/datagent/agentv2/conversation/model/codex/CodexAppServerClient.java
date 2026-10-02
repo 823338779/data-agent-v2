@@ -19,6 +19,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -32,6 +33,7 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /** 使用 Codex App Server 的 JSONL 协议完成一次隔离的模型调用。 */
+@lombok.RequiredArgsConstructor(access = lombok.AccessLevel.PACKAGE)
 final class CodexAppServerClient {
 
     private static final int REQUEST_INITIALIZE = 1;
@@ -136,16 +138,6 @@ final class CodexAppServerClient {
     /** 创建使用真实 Codex 子进程的客户端。 */
     CodexAppServerClient(CodexModelProperties properties, ObjectMapper json) {
         this(properties, json, () -> openProcess(properties));
-    }
-
-    /** 创建可注入协议连接的客户端，供 JSONL 协议测试使用。 */
-    CodexAppServerClient(
-            CodexModelProperties properties,
-            ObjectMapper json,
-            ConnectionFactory connectionFactory) {
-        this.properties = properties;
-        this.json = json;
-        this.connectionFactory = connectionFactory;
     }
 
     /** 在超时边界内执行一个临时 Codex thread，并返回领域模型结果。 */
@@ -532,12 +524,22 @@ final class CodexAppServerClient {
         void close() throws IOException;
     }
 
-    /** 真实 Codex 子进程连接；关闭时终止子进程并清理本次临时空目录。 */
+    /** 真实 Codex 子进程连接；关闭时回收本次进程树并清理临时空目录。 */
     private static final class ProcessConnection implements Connection {
         private final Process process;
+
+        @lombok.Getter(onMethod_ = @Override)
+        @lombok.experimental.Accessors(fluent = true)
         private final Path workingDirectory;
+
         private final boolean temporaryDirectory;
+
+        @lombok.Getter(onMethod_ = @Override)
+        @lombok.experimental.Accessors(fluent = true)
         private final BufferedReader reader;
+
+        @lombok.Getter(onMethod_ = @Override)
+        @lombok.experimental.Accessors(fluent = true)
         private final BufferedWriter writer;
 
         private ProcessConnection(
@@ -556,22 +558,10 @@ final class CodexAppServerClient {
         }
 
         @Override
-        public BufferedReader reader() {
-            return reader;
-        }
-
-        @Override
-        public BufferedWriter writer() {
-            return writer;
-        }
-
-        @Override
-        public Path workingDirectory() {
-            return workingDirectory;
-        }
-
-        @Override
         public void close() throws IOException {
+            // 管道 read/write 持有包装流的锁；包装器的后代也可能继承管道。
+            // 必须先回收整棵进程树，再关闭包装流，否则超时与取消都会卡在 close 的锁上。
+            terminateProcessTree();
             try {
                 writer.close();
             } catch (IOException ignored) {
@@ -582,21 +572,45 @@ final class CodexAppServerClient {
             } catch (IOException ignored) {
                 // 子进程退出与本地流关闭存在正常竞争。
             }
-            process.destroy();
-            try {
-                if (!process.waitFor(2, TimeUnit.SECONDS)) {
-                    process.destroyForcibly().waitFor(2, TimeUnit.SECONDS);
-                }
-            } catch (InterruptedException failure) {
-                Thread.currentThread().interrupt();
-                process.destroyForcibly();
-            }
             if (temporaryDirectory) {
                 try {
                     Files.deleteIfExists(workingDirectory);
                 } catch (IOException ignored) {
                     // Windows 可能短暂保留子进程 cwd 句柄，JVM 退出时再次清理。
                     workingDirectory.toFile().deleteOnExit();
+                }
+            }
+        }
+
+        /** 共享同一清理期限，避免后代数量增加时把取消延长为逐进程等待。 */
+        private void terminateProcessTree() throws IOException {
+            List<ProcessHandle> tree = new ArrayList<>(process.descendants().toList());
+            tree.add(process.toHandle());
+            boolean interrupted = Thread.interrupted();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            try {
+                // 在根进程退出、亲子关系丢失前取得后代；先杀后代，解除继承管道的持有。
+                tree.forEach(ProcessHandle::destroyForcibly);
+                CompletableFuture<Void> exited =
+                        CompletableFuture.allOf(
+                                tree.stream()
+                                        .map(ProcessHandle::onExit)
+                                        .toArray(CompletableFuture[]::new));
+                while (true) {
+                    try {
+                        exited.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                        return;
+                    } catch (InterruptedException failure) {
+                        // 取消不能跳过资源回收，但必须在回收后恢复调用线程的中断状态。
+                        interrupted = true;
+                    } catch (ExecutionException | TimeoutException failure) {
+                        // 未确认进程树退出时不能继续关流，否则会重新进入无界阻塞。
+                        throw new IOException("Codex process tree cleanup failed", failure);
+                    }
+                }
+            } finally {
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
                 }
             }
         }

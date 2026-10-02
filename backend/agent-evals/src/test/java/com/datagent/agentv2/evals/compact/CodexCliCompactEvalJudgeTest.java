@@ -18,6 +18,102 @@ class CodexCliCompactEvalJudgeTest {
                     "codex", "test-model", "medium", Duration.ofSeconds(1), new ObjectMapper());
 
     @Test
+    void interruptionAlwaysTerminatesTheStartedProcess() throws Exception {
+        Process child =
+                new ProcessBuilder(
+                                java.nio.file.Path.of(
+                                                System.getProperty("java.home"), "bin", "java")
+                                        .toString(),
+                                "-cp",
+                                System.getProperty("java.class.path"),
+                                SilentChild.class.getName())
+                        .start();
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        var interruptedJudge =
+                new CodexCliCompactEvalJudge(
+                        "unused",
+                        "unit",
+                        "medium",
+                        Duration.ofSeconds(30),
+                        new ObjectMapper(),
+                        (command, log) -> {
+                            started.countDown();
+                            return child;
+                        });
+        Thread worker =
+                Thread.ofVirtual()
+                        .start(
+                                () -> {
+                                    try {
+                                        interruptedJudge.judge("question", "answer", "candidate");
+                                    } catch (Exception exception) {
+                                        failure.set(exception);
+                                    }
+                                });
+        try {
+            assertTrue(started.await(2, java.util.concurrent.TimeUnit.SECONDS));
+            worker.interrupt();
+            worker.join(3000);
+            assertFalse(worker.isAlive());
+            assertTrue(failure.get() instanceof InterruptedException);
+            assertFalse(child.isAlive(), "cancelled judge must not leave a child process");
+        } finally {
+            child.destroyForcibly();
+            worker.interrupt();
+        }
+    }
+
+    @Test
+    void timeoutAlsoCoversWritingToAChildThatNeverReadsStdin() throws Exception {
+        Process child =
+                new ProcessBuilder(
+                                java.nio.file.Path.of(
+                                                System.getProperty("java.home"), "bin", "java")
+                                        .toString(),
+                                "-cp",
+                                System.getProperty("java.class.path"),
+                                SilentChild.class.getName())
+                        .start();
+        var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        var blockedJudge =
+                new CodexCliCompactEvalJudge(
+                        "unused",
+                        "unit",
+                        "medium",
+                        Duration.ofMillis(100),
+                        new ObjectMapper(),
+                        (command, log) -> child);
+        Thread worker =
+                Thread.ofVirtual()
+                        .start(
+                                () -> {
+                                    try {
+                                        blockedJudge.judge(
+                                                "q".repeat(2_000_000), "answer", "candidate");
+                                    } catch (Exception exception) {
+                                        failure.set(exception);
+                                    }
+                                });
+        try {
+            worker.join(3000);
+            assertFalse(worker.isAlive(), "stdin write must share the judge deadline");
+            assertTrue(failure.get() instanceof IllegalStateException);
+            assertFalse(child.isAlive());
+        } finally {
+            child.destroyForcibly();
+            worker.interrupt();
+            worker.join(2000);
+        }
+    }
+
+    public static class SilentChild {
+        public static void main(String[] args) throws Exception {
+            Thread.sleep(30000);
+        }
+    }
+
+    @Test
     void parsesStructuredJudgmentAndAppliesPassThreshold() throws Exception {
         CompactEvalJudge.Judgment passing =
                 judge.parseJudgment("{\"correct\":true,\"score\":0.75,\"reason\":\"核心答案正确\"}");

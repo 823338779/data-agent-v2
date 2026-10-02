@@ -8,6 +8,8 @@ public record GitApplicationProperties(String repositoryId, String authorName, S
                 || authorName == null
                 || authorName.isBlank()
                 || authorEmail == null
-                || authorEmail.isBlank()) throw new IllegalArgumentException("Git 应用配置不完整");
+                || authorEmail.isBlank()) {
+            throw new IllegalArgumentException("Git 应用配置不完整");
+        }
     }
 }

@@ -76,7 +76,9 @@ public class GitRuntimeConfiguration {
         return new BeanPostProcessor() {
             @Override
             public Object postProcessAfterInitialization(Object bean, String name) {
-                if (!(bean instanceof ToolPolicyProperties p)) return bean;
+                if (!(bean instanceof ToolPolicyProperties p)) {
+                    return bean;
+                }
                 List<String> gitTools =
                         List.of(
                                 GitWorkspacePrepareTool.TOOL_ID,
@@ -86,10 +88,15 @@ public class GitRuntimeConfiguration {
                                 GitFilesApplyTool.TOOL_ID,
                                 GitDiffTool.TOOL_ID,
                                 GitChangePrepareTool.TOOL_ID);
-                if (p.initial().stream().anyMatch(gitTools::contains))
+                if (p.initial().stream().anyMatch(gitTools::contains)) {
                     throw new IllegalStateException("Git 工具必须通过 Skill 读取激活，不能进入 initial");
+                }
                 List<String> maximum = new ArrayList<>(p.maximum());
-                for (String tool : gitTools) if (!maximum.contains(tool)) maximum.add(tool);
+                for (String tool : gitTools) {
+                    if (!maximum.contains(tool)) {
+                        maximum.add(tool);
+                    }
+                }
                 return new ToolPolicyProperties(maximum, p.initial());
             }
         };

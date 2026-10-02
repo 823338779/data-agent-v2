@@ -131,7 +131,18 @@ public final class LocalSseRegistry {
         }
 
         /** 按 attempt、模型调用和 delta 序号过滤重复、旧投影及跳号消息。 */
-        private synchronized void deliver(LocalExecutionDelta envelope) {
+        private void deliver(LocalExecutionDelta envelope) {
+            Delivery delivery = classify(envelope);
+            // 回调会获取 Subscription 锁，而快照在该锁内调用 resume；绝不能持 Connection 锁回调。
+            // 并发发布可能在此重排，Subscription 的序号缓冲负责恢复连续发送顺序。
+            if (delivery == Delivery.DELTA) {
+                subscriber.onDelta(envelope);
+            } else if (delivery == Delivery.GAP) {
+                subscriber.onGap(envelope);
+            }
+        }
+
+        private synchronized Delivery classify(LocalExecutionDelta envelope) {
             // 当前游标按 execution 隔离，新入站通知转换为可比较的三段坐标。
             Cursor current = cursors.get(envelope.executionId());
             Cursor incoming =
@@ -142,26 +153,31 @@ public final class LocalSseRegistry {
                 // 新投影首条消息建立游标；从中间开始的消息只能报告 gap。
                 if (incoming.outputDeltaSequence() == 1) {
                     cursors.put(envelope.executionId(), incoming);
-                    subscriber.onDelta(envelope);
+                    return Delivery.DELTA;
                 } else {
-                    subscriber.onGap(envelope);
+                    return Delivery.GAP;
                 }
-                return;
             }
 
             // 旧 attempt/模型调用以及已经投递的重复序号全部静默丢弃。
             if (incoming.isOlderProjectionThan(current)
                     || incoming.outputDeltaSequence() <= current.outputDeltaSequence()) {
-                return;
+                return Delivery.IGNORE;
             }
 
             // 精确相邻序号可以立即投递，其余情况交给 snapshot 重同步。
             if (incoming.outputDeltaSequence() == current.outputDeltaSequence() + 1) {
                 cursors.put(envelope.executionId(), incoming);
-                subscriber.onDelta(envelope);
+                return Delivery.DELTA;
             } else {
-                subscriber.onGap(envelope);
+                return Delivery.GAP;
             }
+        }
+
+        private enum Delivery {
+            DELTA,
+            GAP,
+            IGNORE
         }
     }
 

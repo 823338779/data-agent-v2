@@ -7,18 +7,18 @@ import java.nio.charset.*;
 import java.nio.file.*;
 import java.security.*;
 import java.util.*;
+import lombok.RequiredArgsConstructor;
 
 /** 在上层给定的工作区根目录内执行有界 UTF-8 普通文件操作。 */
+@RequiredArgsConstructor
 public final class GitWorkspaceFiles {
     private final GitProperties properties;
 
-    public GitWorkspaceFiles(GitProperties properties) {
-        this.properties = properties;
-    }
-
     public List<String> list(Path root, String relativeDirectory) {
         Path directory = resolve(root, relativeDirectory, false);
-        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return List.of();
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+            return List.of();
+        }
         try (var paths = Files.walk(directory)) {
             return paths.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
                     .filter(path -> !containsGit(root.relativize(path)))
@@ -46,10 +46,21 @@ public final class GitWorkspaceFiles {
     public List<FileSearchMatch> search(Path root, String relativeDirectory, String query) {
         List<FileSearchMatch> matches = new ArrayList<>();
         for (String path : list(root, relativeDirectory)) {
-            String[] lines = read(root, path).content().split("\\R", -1);
+            String[] lines;
+            try {
+                lines = read(root, path).content().split("\\R", -1);
+            } catch (GitException failure) {
+                // 仓库允许保留图片等非文本基线；只跳过不适用于文本搜索的文件，安全拒绝和真实 I/O 故障继续上抛。
+                if ("GIT_BINARY_FILE".equals(failure.code())
+                        || "GIT_FILE_TOO_LARGE".equals(failure.code())) {
+                    continue;
+                }
+                throw failure;
+            }
             for (int i = 0; i < lines.length; i++) {
-                if (lines[i].contains(query))
+                if (lines[i].contains(query)) {
                     matches.add(new FileSearchMatch(path, i + 1, lines[i]));
+                }
             }
         }
         return List.copyOf(matches);
@@ -65,11 +76,14 @@ public final class GitWorkspaceFiles {
         for (FileOperation operation : operations) {
             Path target =
                     resolve(root, operation.path(), operation.type() != FileOperation.Type.CREATE);
-            if (!targets.add(target))
+            if (!targets.add(target)) {
                 throw new GitException("GIT_CONTENT_CONFLICT", "同一路径不能在一次请求中重复修改");
+            }
             boolean exists = Files.exists(target, LinkOption.NOFOLLOW_LINKS);
             if (operation.type() == FileOperation.Type.CREATE) {
-                if (exists) throw new GitException("GIT_CONTENT_CONFLICT", "新增文件已存在");
+                if (exists) {
+                    throw new GitException("GIT_CONTENT_CONFLICT", "新增文件已存在");
+                }
                 validateContent(operation.content());
             } else {
                 byte[] original = exists ? readBytes(target) : null;
@@ -79,8 +93,9 @@ public final class GitWorkspaceFiles {
                 if (!exists || !Objects.equals(operation.expectedSha256(), sha256(original))) {
                     throw new GitException("GIT_CONTENT_CONFLICT", "文件摘要已变化");
                 }
-                if (operation.type() == FileOperation.Type.UPDATE)
+                if (operation.type() == FileOperation.Type.UPDATE) {
                     validateContent(operation.content());
+                }
             }
         }
         // 全部预检成功后才落盘，避免摘要冲突造成半次请求写入。
@@ -119,7 +134,9 @@ public final class GitWorkspaceFiles {
                     } catch (Exception nested) {
                         throw new GitException("GIT_FILE_IO", "无法更新文件", nested);
                     }
-                } else throw new GitException("GIT_CONTENT_CONFLICT", "新增文件已存在", exception);
+                } else {
+                    throw new GitException("GIT_CONTENT_CONFLICT", "新增文件已存在", exception);
+                }
             } catch (Exception exception) {
                 throw new GitException("GIT_FILE_IO", "无法应用文件操作", exception);
             }
@@ -127,8 +144,9 @@ public final class GitWorkspaceFiles {
     }
 
     private Path resolve(Path root, String relative, boolean requireFile) {
-        if (relative == null || relative.isBlank() && requireFile)
+        if (relative == null || relative.isBlank() && requireFile) {
             throw new GitException("GIT_PATH_REJECTED", "文件路径不能为空");
+        }
         Path supplied;
         try {
             supplied = Path.of(relative == null ? "" : relative);
@@ -142,8 +160,9 @@ public final class GitWorkspaceFiles {
         }
         Path normalizedRoot = root.toAbsolutePath().normalize();
         Path target = normalizedRoot.resolve(supplied).normalize();
-        if (!target.startsWith(normalizedRoot))
+        if (!target.startsWith(normalizedRoot)) {
             throw new GitException("GIT_PATH_REJECTED", "文件路径越过工作区边界");
+        }
         validateParents(normalizedRoot, target.getParent());
         if (Files.isSymbolicLink(target)
                 || requireFile
@@ -158,17 +177,21 @@ public final class GitWorkspaceFiles {
         for (Path current = parent;
                 current != null && current.startsWith(root);
                 current = current.getParent()) {
-            if (Files.isSymbolicLink(current))
+            if (Files.isSymbolicLink(current)) {
                 throw new GitException("GIT_PATH_REJECTED", "路径父目录不能是符号链接");
-            if (current.equals(root)) break;
+            }
+            if (current.equals(root)) {
+                break;
+            }
         }
     }
 
     private byte[] readBytes(Path file) {
         try {
             long size = Files.size(file);
-            if (size > properties.maxFileBytes())
+            if (size > properties.maxFileBytes()) {
                 throw new GitException("GIT_FILE_TOO_LARGE", "文件超过服务端上限");
+            }
             return Files.readAllBytes(file);
         } catch (GitException exception) {
             throw exception;
@@ -178,15 +201,22 @@ public final class GitWorkspaceFiles {
     }
 
     private void validateContent(String content) {
-        if (content == null) throw new GitException("GIT_BINARY_FILE", "文本内容不能为空");
+        if (content == null) {
+            throw new GitException("GIT_BINARY_FILE", "文本内容不能为空");
+        }
         byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length > properties.maxFileBytes())
+        if (bytes.length > properties.maxFileBytes()) {
             throw new GitException("GIT_FILE_TOO_LARGE", "文件超过服务端上限");
-        if (content.indexOf('\0') >= 0) throw new GitException("GIT_BINARY_FILE", "拒绝二进制内容");
+        }
+        if (content.indexOf('\0') >= 0) {
+            throw new GitException("GIT_BINARY_FILE", "拒绝二进制内容");
+        }
     }
 
     private static String decode(byte[] bytes) {
-        if (containsNul(bytes)) throw new GitException("GIT_BINARY_FILE", "拒绝二进制文件");
+        if (containsNul(bytes)) {
+            throw new GitException("GIT_BINARY_FILE", "拒绝二进制文件");
+        }
         try {
             return StandardCharsets.UTF_8
                     .newDecoder()
@@ -200,12 +230,20 @@ public final class GitWorkspaceFiles {
     }
 
     private static boolean containsNul(byte[] bytes) {
-        for (byte value : bytes) if (value == 0) return true;
+        for (byte value : bytes) {
+            if (value == 0) {
+                return true;
+            }
+        }
         return false;
     }
 
     private static boolean containsGit(Path path) {
-        for (Path part : path) if (part.toString().equalsIgnoreCase(".git")) return true;
+        for (Path part : path) {
+            if (part.toString().equalsIgnoreCase(".git")) {
+                return true;
+            }
+        }
         return false;
     }
 

@@ -134,7 +134,9 @@ public final class RollingColdSummaryGenerator {
                         sourceHash);
             } catch (RuntimeException invalid) {
                 if (attempt == 1) {
-                    throw new IllegalStateException("COMPACTION_OUTPUT_INVALID", invalid);
+                    throw new IllegalStateException(
+                            "COMPACTION_OUTPUT_INVALID",
+                            com.datagent.agentv2.diagnostics.SafeFailures.sanitized(invalid));
                 }
             }
         }

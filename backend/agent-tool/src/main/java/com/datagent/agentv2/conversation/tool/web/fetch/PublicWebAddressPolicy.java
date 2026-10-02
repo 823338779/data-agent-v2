@@ -5,11 +5,15 @@ import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
+import java.util.List;
+import lombok.AccessLevel;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /** 在每次请求和重定向前阻断本机、内网、链路本地、元数据及保留地址。 */
 @Component
+@RequiredArgsConstructor(access = AccessLevel.PACKAGE)
 public final class PublicWebAddressPolicy {
 
     @FunctionalInterface
@@ -24,12 +28,8 @@ public final class PublicWebAddressPolicy {
         this(InetAddress::getAllByName);
     }
 
-    PublicWebAddressPolicy(HostResolver resolver) {
-        this.resolver = resolver;
-    }
-
     /** 校验 URL 结构，并要求域名解析出的每一个地址都属于可公开路由范围。 */
-    public void validate(URI uri) throws WebFetchException {
+    public ValidatedWebAddress validate(URI uri) throws WebFetchException {
         String scheme = uri.getScheme();
         if (!("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
                 || uri.getHost() == null
@@ -47,6 +47,7 @@ public final class PublicWebAddressPolicy {
                     throw blocked();
                 }
             }
+            return new ValidatedWebAddress(uri, List.of(addresses));
         } catch (UnknownHostException failure) {
             throw new WebFetchException(
                     WebFetchException.Kind.UNAVAILABLE, "Host could not be resolved", failure);

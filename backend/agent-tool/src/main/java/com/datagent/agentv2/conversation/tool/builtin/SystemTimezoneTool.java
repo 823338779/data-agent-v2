@@ -6,6 +6,8 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.TextStyle;
 import java.util.Locale;
+import lombok.AccessLevel;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -17,6 +19,7 @@ import tools.jackson.databind.node.ObjectNode;
 /** 向模型公开当前服务端 JVM 使用的系统时区。 */
 @Component
 @Order(100)
+@RequiredArgsConstructor(access = AccessLevel.PRIVATE)
 public final class SystemTimezoneTool implements AgentTool {
 
     /** 注册给模型的稳定工具名称。 */
@@ -62,12 +65,6 @@ public final class SystemTimezoneTool implements AgentTool {
     /** 使用固定时钟创建可重复验证的工具实例。 */
     SystemTimezoneTool(Clock clock) {
         this(clock, JsonMapper.builder().build());
-    }
-
-    /** 保存工具运行所需的时钟和 JSON 组件。 */
-    private SystemTimezoneTool(Clock clock, ObjectMapper json) {
-        this.clock = clock;
-        this.json = json;
     }
 
     /** 返回模型协议中使用的稳定工具名称。 */

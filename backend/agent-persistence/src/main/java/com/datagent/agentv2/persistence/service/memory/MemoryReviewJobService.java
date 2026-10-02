@@ -104,7 +104,9 @@ public class MemoryReviewJobService
                                 .eq(MemoryReviewJobEntity::getConversationId, conversationId)
                                 .last("FOR UPDATE")
                                 .one());
-        if (old != null && old.learningEpoch() > epoch) return;
+        if (old != null && old.learningEpoch() > epoch) {
+            return;
+        }
         if (old == null || old.learningEpoch() < epoch) {
             var next =
                     new MemoryReviewJob(
@@ -123,8 +125,11 @@ public class MemoryReviewJobService
                             null,
                             old == null ? 0 : old.fencingToken() + 1,
                             null);
-            if (old == null) insert(next);
-            else requireChanged(compareAndSet(next, old.fencingToken(), old.learningEpoch()));
+            if (old == null) {
+                insert(next);
+            } else {
+                requireChanged(compareAndSet(next, old.fencingToken(), old.learningEpoch()));
+            }
             return;
         }
         boolean running = old.status() == MemoryReviewJob.Status.RUNNING;
@@ -149,7 +154,9 @@ public class MemoryReviewJobService
     }
 
     private static void requireChanged(boolean changed) {
-        if (!changed) throw new IllegalStateException("审查标记代际竞争失败");
+        if (!changed) {
+            throw new IllegalStateException("审查标记代际竞争失败");
+        }
     }
 
     public MemoryReviewJob find(String jobId) {

@@ -43,13 +43,18 @@ public class GitChangePersistenceService extends ServiceImpl<GitChangeMapper, Gi
         }
         if (w.getActiveChangeId() != null) {
             var old = find(w.getActiveChangeId());
-            if (old != null && List.of("SUBMITTING", "VERIFYING").contains(old.getStatus()))
+            if (old != null && List.of("SUBMITTING", "VERIFYING").contains(old.getStatus())) {
                 throw new IllegalStateException("工作区正在提交");
+            }
         }
         invalidatePending(w.getWorkspaceId());
-        if (!save(change)) throw new IllegalStateException("候选登记失败");
+        if (!save(change)) {
+            throw new IllegalStateException("候选登记失败");
+        }
         w.setActiveChangeId(change.getChangeId());
-        if (!workspaces.replace(w)) throw new IllegalStateException("工作区版本冲突");
+        if (!workspaces.replace(w)) {
+            throw new IllegalStateException("工作区版本冲突");
+        }
     }
 
     public void invalidatePending(String workspace) {
@@ -60,8 +65,9 @@ public class GitChangePersistenceService extends ServiceImpl<GitChangeMapper, Gi
                         .eq(GitChangeEntity::getStatus, "PENDING_CONFIRMATION")
                         .list();
         for (var candidate : pending) {
-            if (!transition(candidate, "INVALIDATED", null))
+            if (!transition(candidate, "INVALIDATED", null)) {
                 throw new IllegalStateException("候选版本冲突");
+            }
         }
     }
 
@@ -73,7 +79,7 @@ public class GitChangePersistenceService extends ServiceImpl<GitChangeMapper, Gi
                 .set(GitChangeEntity::getStatus, next)
                 .set(GitChangeEntity::getErrorCode, error)
                 .set(GitChangeEntity::getVersion, c.getVersion() + 1)
-                .update();
+                .update(new GitChangeEntity());
     }
 
     public boolean confirm(GitChangeEntity c, String operator, Instant time) {
@@ -87,7 +93,7 @@ public class GitChangePersistenceService extends ServiceImpl<GitChangeMapper, Gi
                 .set(GitChangeEntity::getConfirmedAt, time)
                 .set(GitChangeEntity::getCommitTime, time)
                 .set(GitChangeEntity::getVersion, c.getVersion() + 1)
-                .update();
+                .update(new GitChangeEntity());
     }
 
     public boolean recordCommit(GitChangeEntity c, String commit) {
@@ -98,7 +104,7 @@ public class GitChangePersistenceService extends ServiceImpl<GitChangeMapper, Gi
                 .isNull(GitChangeEntity::getCommitId)
                 .set(GitChangeEntity::getCommitId, commit)
                 .set(GitChangeEntity::getVersion, c.getVersion() + 1)
-                .update();
+                .update(new GitChangeEntity());
     }
 
     public boolean button(GitChangeEntity c, boolean retry) {
@@ -110,8 +116,11 @@ public class GitChangePersistenceService extends ServiceImpl<GitChangeMapper, Gi
                         .set(GitChangeEntity::getStatus, retry ? "SUBMITTING" : "CANCELLED")
                         .set(GitChangeEntity::getErrorCode, null)
                         .set(GitChangeEntity::getVersion, c.getVersion() + 1);
-        if (retry) update.set(GitChangeEntity::getRetryVersion, c.getVersion());
-        else update.set(GitChangeEntity::getCancelVersion, c.getVersion());
-        return update.update();
+        if (retry) {
+            update.set(GitChangeEntity::getRetryVersion, c.getVersion());
+        } else {
+            update.set(GitChangeEntity::getCancelVersion, c.getVersion());
+        }
+        return update.update(new GitChangeEntity());
     }
 }

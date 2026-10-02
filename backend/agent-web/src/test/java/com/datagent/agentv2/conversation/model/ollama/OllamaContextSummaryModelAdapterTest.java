@@ -84,7 +84,7 @@ class OllamaContextSummaryModelAdapterTest {
     }
 
     @Test
-    void removesUntrustedProviderCauseAndBodyFromTheStableFailure() {
+    void preservesSafeDiagnosticsWithoutProviderBody() {
         responseStatus.set(500);
         responseBody.set(SECRET_MARKER);
 
@@ -100,8 +100,15 @@ class OllamaContextSummaryModelAdapterTest {
                                                 4_096)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Ollama context summary request failed")
-                .hasNoCause()
-                .satisfies(failure -> assertThat(failure.toString()).doesNotContain(SECRET_MARKER));
+                .satisfies(
+                        failure -> {
+                            assertThat(failure.getCause()).isNotNull();
+                            assertThat(failure.getCause().getStackTrace()).isNotEmpty();
+                            assertThat(failure.getCause().getMessage()).contains("Exception");
+                            var diagnostic = new java.io.StringWriter();
+                            failure.printStackTrace(new java.io.PrintWriter(diagnostic));
+                            assertThat(diagnostic.toString()).doesNotContain(SECRET_MARKER);
+                        });
     }
 
     private void respond(HttpExchange exchange) throws IOException {

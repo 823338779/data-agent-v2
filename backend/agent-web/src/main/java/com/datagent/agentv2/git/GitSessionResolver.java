@@ -15,11 +15,13 @@ public final class GitSessionResolver implements com.datagent.agentv2.git.port.G
 
     @Override
     public String resolveSessionId(String executionId) {
-        if (executionId == null || executionId.isBlank())
+        if (executionId == null || executionId.isBlank()) {
             throw new GitException("GIT_EXECUTION_NOT_FOUND", "执行不存在");
+        }
         var execution = executions.findByExecutionId(executionId);
-        if (execution == null || execution.getConversationSessionId() == null)
+        if (execution == null || execution.getConversationSessionId() == null) {
             throw new GitException("GIT_EXECUTION_NOT_FOUND", "执行不存在");
+        }
         return execution.getConversationSessionId();
     }
 }

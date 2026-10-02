@@ -19,6 +19,7 @@ import tools.jackson.databind.node.ObjectNode;
 /** 将 V2 模型端口适配到本机已登录的 Codex App Server。 */
 @Service
 @ConditionalOnProperty(value = "data-agent.model.provider", havingValue = "codex")
+@lombok.RequiredArgsConstructor(access = lombok.AccessLevel.PACKAGE)
 public final class CodexAgentModelGateway implements AgentModelGateway {
 
     private static final String PROMPT_PREFIX =
@@ -44,12 +45,6 @@ public final class CodexAgentModelGateway implements AgentModelGateway {
     @Autowired
     public CodexAgentModelGateway(CodexModelProperties properties, ObjectMapper json) {
         this(json, new CodexAppServerClient(properties, json));
-    }
-
-    /** 创建可注入协议客户端的模型网关，供映射测试使用。 */
-    CodexAgentModelGateway(ObjectMapper json, CodexAppServerClient client) {
-        this.json = json;
-        this.client = client;
     }
 
     /** 将完整领域会话快照交给一次临时 Codex turn。 */

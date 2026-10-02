@@ -43,7 +43,9 @@ public class MemoryMetrics {
 
     /** 状态为实际提交终态，失去提交资格单列 LEASE_LOST，依赖故障单列 UNAVAILABLE。 */
     public void recordReview(String status, Duration duration) {
-        if (!REVIEW_STATUSES.contains(status)) throw new IllegalArgumentException("未知审查指标状态");
+        if (!REVIEW_STATUSES.contains(status)) {
+            throw new IllegalArgumentException("未知审查指标状态");
+        }
         registry.timer("memory.review", "status", status).record(duration);
     }
 
@@ -69,11 +71,12 @@ public class MemoryMetrics {
             Map<MemoryKind, AtomicInteger> values, String name, MemoryKind kind) {
         // 注册由 registry 保持弱引用，这两个小型枚举表保留 gauge 的强引用。
         var value = values.computeIfAbsent(kind, ignored -> new AtomicInteger());
-        if (registry.find(name).tag("kind", kind.value()).gauge() == null)
+        if (registry.find(name).tag("kind", kind.value()).gauge() == null) {
             registry.gauge(
                     name,
                     java.util.List.of(io.micrometer.core.instrument.Tag.of("kind", kind.value())),
                     value);
+        }
         return value;
     }
 

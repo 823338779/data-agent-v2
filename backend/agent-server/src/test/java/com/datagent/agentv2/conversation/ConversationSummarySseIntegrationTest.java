@@ -82,6 +82,35 @@ class ConversationSummarySseIntegrationTest {
                 .andExpect(status().isCreated());
     }
 
+    @Test
+    void existingConnectionReceivesConversationsCreatedAfterItsInitialSnapshot() throws Exception {
+        MvcResult stream =
+                mvc.perform(get(SUMMARY_EVENTS_PATH))
+                        .andExpect(request().asyncStarted())
+                        .andReturn();
+        try {
+            Awaitility.await()
+                    .atMost(Duration.ofSeconds(3))
+                    .untilAsserted(
+                            () ->
+                                    assertThat(stream.getResponse().getContentAsString())
+                                            .contains("event:conversation_summary_snapshot"));
+            int before = stream.getResponse().getContentAsString().length();
+            createSession(login());
+            Awaitility.await()
+                    .atMost(Duration.ofSeconds(5))
+                    .untilAsserted(
+                            () ->
+                                    assertThat(
+                                                    stream.getResponse()
+                                                            .getContentAsString()
+                                                            .substring(before))
+                                            .contains("event:conversation_summary_snapshot"));
+        } finally {
+            stream.getRequest().getAsyncContext().complete();
+        }
+    }
+
     private Cookie login() {
         return new Cookie("ignored", "ignored");
     }

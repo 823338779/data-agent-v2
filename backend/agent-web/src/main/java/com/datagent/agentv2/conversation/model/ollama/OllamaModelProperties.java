@@ -8,6 +8,8 @@ import org.springframework.stereotype.Component;
 
 @Getter
 @Setter
+@lombok.NoArgsConstructor
+@lombok.AllArgsConstructor
 @Component
 @ConfigurationProperties(prefix = "data-agent.model.ollama")
 public class OllamaModelProperties {
@@ -27,22 +29,7 @@ public class OllamaModelProperties {
     /** 从上下文窗口中固定保留、不用于业务输入的安全 token 数。 */
     private int safetyReserveTokens = 4096;
 
-    public OllamaModelProperties() {}
-
     public OllamaModelProperties(String model, Duration timeout, int maxOutputTokens) {
         this(model, timeout, maxOutputTokens, 65536, 4096);
-    }
-
-    public OllamaModelProperties(
-            String model,
-            Duration timeout,
-            int maxOutputTokens,
-            int contextWindowTokens,
-            int safetyReserveTokens) {
-        this.model = model;
-        this.timeout = timeout;
-        this.maxOutputTokens = maxOutputTokens;
-        this.contextWindowTokens = contextWindowTokens;
-        this.safetyReserveTokens = safetyReserveTokens;
     }
 }

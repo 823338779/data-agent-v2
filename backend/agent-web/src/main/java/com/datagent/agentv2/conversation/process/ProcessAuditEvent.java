@@ -54,7 +54,9 @@ public record ProcessAuditEvent(
 
     /** 只允许服务端已定义的有限码，错误字符串不可借此把个人信息写入日志。 */
     private static MemoryStatus memoryStatus(String value) {
-        if (value == null) return null;
+        if (value == null) {
+            return null;
+        }
         try {
             return MemoryStatus.valueOf(value);
         } catch (IllegalArgumentException ignored) {

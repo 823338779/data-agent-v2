@@ -1,5 +1,6 @@
 package com.datagent.agentv2.git.application;
 
+import com.datagent.agentv2.diagnostics.SafeFailures;
 import com.datagent.agentv2.git.local.GitRepositoryClient;
 import com.datagent.agentv2.git.model.*;
 import com.datagent.agentv2.persistence.entity.git.*;
@@ -10,9 +11,11 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.Executor;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /** 卡片按钮唯一授权入口；先持久化 CAS 再排队，后台固定仓库串行且不跨 Git 持有事务。 */
 @RequiredArgsConstructor
+@Slf4j
 public final class GitSubmissionService {
     private final GitWorkspaceService workspaces;
     private final GitChangeService changes;
@@ -26,13 +29,17 @@ public final class GitSubmissionService {
                 session,
                 () -> {
                     var c = changes.require(session, id);
-                    if (Objects.equals(c.getConfirmationVersion(), expectedVersion)) return view(c);
+                    if (Objects.equals(c.getConfirmationVersion(), expectedVersion)) {
+                        return view(c);
+                    }
                     expect(c, expectedVersion, "PENDING_CONFIRMATION");
                     verifyForSubmission(c);
                     if (!records.confirm(
                             c,
                             OperatorContext.requiredUserId(),
-                            clock.instant().truncatedTo(ChronoUnit.SECONDS))) throw conflict();
+                            clock.instant().truncatedTo(ChronoUnit.SECONDS))) {
+                        throw conflict();
+                    }
                     schedule(session, id);
                     return changes.detail(session, id);
                 });
@@ -43,9 +50,13 @@ public final class GitSubmissionService {
                 session,
                 () -> {
                     var c = changes.require(session, id);
-                    if (Objects.equals(c.getCancelVersion(), expectedVersion)) return view(c);
+                    if (Objects.equals(c.getCancelVersion(), expectedVersion)) {
+                        return view(c);
+                    }
                     expect(c, expectedVersion, "PENDING_CONFIRMATION");
-                    if (!records.button(c, false)) throw conflict();
+                    if (!records.button(c, false)) {
+                        throw conflict();
+                    }
                     return changes.detail(session, id);
                 });
     }
@@ -55,13 +66,19 @@ public final class GitSubmissionService {
                 session,
                 () -> {
                     var c = changes.require(session, id);
-                    if (Objects.equals(c.getRetryVersion(), expectedVersion)) return view(c);
+                    if (Objects.equals(c.getRetryVersion(), expectedVersion)) {
+                        return view(c);
+                    }
                     expect(c, expectedVersion, "FAILED");
                     if (c.getConfirmedAt() == null
                             || c.getConfirmedBy() == null
-                            || c.getCommitTime() == null) throw conflict();
+                            || c.getCommitTime() == null) {
+                        throw conflict();
+                    }
                     verifyForSubmission(c);
-                    if (!records.button(c, true)) throw conflict();
+                    if (!records.button(c, true)) {
+                        throw conflict();
+                    }
                     schedule(session, id);
                     return changes.detail(session, id);
                 });
@@ -76,8 +93,10 @@ public final class GitSubmissionService {
                                 TenantContext.TENANT_ID,
                                 () -> {
                                     var c = changes.require(session, id);
-                                    if (!List.of("SUBMITTING", "VERIFYING").contains(c.getStatus()))
+                                    if (!List.of("SUBMITTING", "VERIFYING")
+                                            .contains(c.getStatus())) {
                                         return view(c);
+                                    }
                                     if (c.getConfirmedAt() == null
                                             || c.getConfirmedBy() == null
                                             || c.getCommitTime() == null) {
@@ -111,8 +130,14 @@ public final class GitSubmissionService {
             executor.execute(
                     () -> TenantContext.run(TenantContext.TENANT_ID, () -> execute(session, id)));
         } catch (RuntimeException failure) {
+            log.warn(
+                    "Git submission scheduling failed changeId={}",
+                    id,
+                    SafeFailures.sanitized(failure));
             var c = changes.require(session, id);
-            if ("SUBMITTING".equals(c.getStatus())) transition(c, "FAILED", "GIT_TASK_REJECTED");
+            if ("SUBMITTING".equals(c.getStatus())) {
+                transition(c, "FAILED", "GIT_TASK_REJECTED");
+            }
         }
     }
 
@@ -121,7 +146,9 @@ public final class GitSubmissionService {
                 session,
                 () -> {
                     var c = changes.require(session, id);
-                    if (!"SUBMITTING".equals(c.getStatus())) return null;
+                    if (!"SUBMITTING".equals(c.getStatus())) {
+                        return null;
+                    }
                     if (c.getConfirmedAt() == null
                             || c.getConfirmedBy() == null
                             || c.getCommitTime() == null) {
@@ -131,7 +158,9 @@ public final class GitSubmissionService {
                     try {
                         var w = workspaces.require(session);
                         changes.verify(c, w, true);
-                        if (c.getCommitId() != null) verifyCommit(c, w);
+                        if (c.getCommitId() != null) {
+                            verifyCommit(c, w);
+                        }
                         String remote = git.fetchMain(workspaces.path(w));
                         // 已登记 commit 的重试先核实是否已经被远端包含，不能盲目再次推送。
                         if (c.getCommitId() != null
@@ -155,7 +184,9 @@ public final class GitSubmissionService {
                                             c.getAuthorEmail(),
                                             c.getCommitTime());
                             // 只有持久化成功才能向远端发送。登记前退出可用固定元信息重建相同对象。
-                            if (!records.recordCommit(c, commit)) throw conflict();
+                            if (!records.recordCommit(c, commit)) {
+                                throw conflict();
+                            }
                             c = changes.require(session, id);
                         }
                         // 所有 push 异常均先核实；非零退出也可能发生在远端已经接受之后。
@@ -163,14 +194,24 @@ public final class GitSubmissionService {
                             git.pushMain(workspaces.path(w), c.getCommitId(), c.getBaseCommit());
                             pushed(c, w);
                         } catch (RuntimeException uncertain) {
+                            log.warn(
+                                    "Git push requires reconciliation changeId={}",
+                                    id,
+                                    SafeFailures.sanitized(uncertain));
                             var current = changes.require(session, id);
                             transition(current, "VERIFYING", "GIT_RESULT_UNKNOWN");
                             reconcileCommit(changes.require(session, id));
                         }
                     } catch (GitException failure) {
+                        log.warn(
+                                "Git submission failed changeId={} code={}",
+                                id,
+                                failure.code(),
+                                SafeFailures.sanitized(failure));
                         var current = changes.require(session, id);
-                        if ("SUBMITTING".equals(current.getStatus()))
+                        if ("SUBMITTING".equals(current.getStatus())) {
                             transition(current, "FAILED", failure.code());
+                        }
                     }
                     return null;
                 });
@@ -183,6 +224,10 @@ public final class GitSubmissionService {
             try {
                 verifyCommit(c, w);
             } catch (GitException corrupt) {
+                log.warn(
+                        "Git commit verification failed changeId={}",
+                        c.getChangeId(),
+                        SafeFailures.sanitized(corrupt));
                 transition(c, "FAILED", corrupt.code());
                 return;
             }
@@ -192,22 +237,34 @@ public final class GitSubmissionService {
                 pushed(c, w);
                 return;
             }
-            if (!remote.equals(c.getBaseCommit()))
+            if (!remote.equals(c.getBaseCommit())) {
                 transition(c, "RECONFIRM_REQUIRED", "GIT_BASE_CHANGED");
-            else transition(c, "FAILED", "GIT_RETRY_REQUIRED");
+            } else {
+                transition(c, "FAILED", "GIT_RETRY_REQUIRED");
+            }
         } catch (RuntimeException unavailable) {
+            log.warn(
+                    "Git reconciliation unavailable changeId={}",
+                    c.getChangeId(),
+                    SafeFailures.sanitized(unavailable));
             var current = changes.require(c.getConversationSessionId(), c.getChangeId());
-            if (!"PUSHED".equals(current.getStatus()))
+            if (!"PUSHED".equals(current.getStatus())) {
                 transition(current, "VERIFYING", "GIT_RESULT_UNKNOWN");
+            }
         }
     }
 
     private void pushed(GitChangeEntity c, GitWorkspaceEntity w) {
         // 工作区基线同步失败不改变已经核实的远端事实；标记 BROKEN 后要求显式重建草稿。
         try {
-            if (c.getChangeId().equals(w.getActiveChangeId()))
+            if (c.getChangeId().equals(w.getActiveChangeId())) {
                 workspaces.accepted(w, c.getCommitId());
+            }
         } catch (RuntimeException failure) {
+            log.warn(
+                    "Git accepted commit local baseline failed changeId={}",
+                    c.getChangeId(),
+                    SafeFailures.sanitized(failure));
             workspaces.markBroken(w);
         }
         transition(c, "PUSHED", null);
@@ -226,11 +283,15 @@ public final class GitSubmissionService {
     }
 
     private void transition(GitChangeEntity c, String next, String error) {
-        if (!records.transition(c, next, error)) throw conflict();
+        if (!records.transition(c, next, error)) {
+            throw conflict();
+        }
     }
 
     private static void expect(GitChangeEntity c, long version, String status) {
-        if (c.getVersion() != version || !status.equals(c.getStatus())) throw conflict();
+        if (c.getVersion() != version || !status.equals(c.getStatus())) {
+            throw conflict();
+        }
     }
 
     private static GitChangeView view(GitChangeEntity c) {

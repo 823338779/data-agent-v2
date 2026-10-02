@@ -28,10 +28,15 @@ public final class ClasspathSkillResourceSource implements SkillResourceSource {
                 String path = uri.substring(start);
                 // 仅过滤这一项已知的可选资源，其他未知资源仍由目录严格拒绝。
                 if (path.equals("skills/git-repository-maintenance/SKILL.md")
-                        && !environment.getProperty("data-agent.git.enabled", Boolean.class, false))
+                        && !environment.getProperty(
+                                "data-agent.git.enabled", Boolean.class, false)) {
                     continue;
-                if (loaded.put(path, resource.getInputStream().readAllBytes()) != null)
-                    throw new IllegalStateException("Duplicate skill resource: " + path);
+                }
+                try (var input = resource.getInputStream()) {
+                    if (loaded.put(path, input.readAllBytes()) != null) {
+                        throw new IllegalStateException("Duplicate skill resource: " + path);
+                    }
+                }
             }
             return Map.copyOf(loaded);
         } catch (IOException failure) {

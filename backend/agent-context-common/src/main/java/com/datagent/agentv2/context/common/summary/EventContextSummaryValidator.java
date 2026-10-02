@@ -26,6 +26,9 @@ public final class EventContextSummaryValidator {
     private static final String MISSING_SCHEMA = "Event context summary schema resource is missing";
 
     private final ObjectMapper json;
+
+    @lombok.Getter
+    @lombok.experimental.Accessors(fluent = true)
     private final String schemaDocument;
 
     public EventContextSummaryValidator() {
@@ -35,10 +38,6 @@ public final class EventContextSummaryValidator {
     EventContextSummaryValidator(ObjectMapper json) {
         this.json = Objects.requireNonNull(json, "json");
         this.schemaDocument = readSchema();
-    }
-
-    public String schemaDocument() {
-        return schemaDocument;
     }
 
     public String schemaDocumentFor(EventSummaryCoverage coverage) {
@@ -78,7 +77,9 @@ public final class EventContextSummaryValidator {
             }
             return parsed;
         } catch (RuntimeException failure) {
-            throw new IllegalArgumentException(INVALID_DOCUMENT, failure);
+            throw new IllegalArgumentException(
+                    INVALID_DOCUMENT,
+                    com.datagent.agentv2.diagnostics.SafeFailures.sanitized(failure));
         }
     }
 

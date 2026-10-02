@@ -80,8 +80,8 @@ class ConversationOrganizationPersistenceTest {
         var before = sessions.findByUuid("s1");
         var at = Instant.parse("2026-09-15T01:00:00Z");
         sessions.updateOrganization("s1", "p1", at, 0);
-        before.setVersion(1L);
-        before.setTitle("Renamed");
+        before.acknowledgePersistence(1L, before.getCreatedAt(), before.getUpdatedAt());
+        before.rename("Renamed");
         assertThat(sessions.updateById(before)).isTrue();
         assertThat(sessions.findByUuid("s1").getProjectId()).isEqualTo("p1");
         assertThat(sessions.detachProject("p1")).isEqualTo(1);

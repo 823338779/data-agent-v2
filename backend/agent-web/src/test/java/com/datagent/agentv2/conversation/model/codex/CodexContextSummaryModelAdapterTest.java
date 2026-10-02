@@ -66,7 +66,7 @@ class CodexContextSummaryModelAdapterTest {
     }
 
     @Test
-    void removesProviderBodyAndCauseFromStableFailure() {
+    void preservesSafeDiagnosticsWithoutProviderBody() {
         CodexAppServerClient client = mock(CodexAppServerClient.class);
         CodexModelProperties properties = new CodexModelProperties();
         when(client.complete(any(), eq(List.of()), any()))
@@ -85,8 +85,15 @@ class CodexContextSummaryModelAdapterTest {
                                                 1_000)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Codex context summary request failed")
-                .hasNoCause()
-                .satisfies(failure -> assertThat(failure.toString()).doesNotContain(SECRET_BODY));
+                .satisfies(
+                        failure -> {
+                            assertThat(failure.getCause()).isNotNull();
+                            assertThat(failure.getCause().getStackTrace()).isNotEmpty();
+                            assertThat(failure.getCause().getMessage()).contains("Exception");
+                            var diagnostic = new java.io.StringWriter();
+                            failure.printStackTrace(new java.io.PrintWriter(diagnostic));
+                            assertThat(diagnostic.toString()).doesNotContain(SECRET_BODY);
+                        });
     }
 
     @Test

@@ -9,16 +9,12 @@ import org.mapstruct.Context;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.ReportingPolicy;
-import org.mapstruct.factory.Mappers;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /** 模型协议消息与供应商无关上下文消息之间的结构映射。 */
-@Mapper(unmappedTargetPolicy = ReportingPolicy.ERROR)
+@Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.ERROR)
 public interface ContextModelMessageStructMapper {
-
-    ContextModelMessageStructMapper INSTANCE =
-            Mappers.getMapper(ContextModelMessageStructMapper.class);
 
     List<ContextMessage> toContextMessages(
             List<ModelInputMessage> messages, @Context ObjectMapper json);

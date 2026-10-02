@@ -116,8 +116,9 @@ public final class HierarchicalConversationContextAssembler {
                         dynamic,
                         state.policy().softTriggerTokens(state.request().budget()));
         int estimated = estimator.estimate(state.request(), composition.dynamicMessages());
-        if (estimated > state.request().budget().hardInputLimitTokens())
+        if (estimated > state.request().budget().hardInputLimitTokens()) {
             failProtected(state.request());
+        }
         List<ContextMessage> complete = new ArrayList<>(state.request().fixedSystemMessages());
         complete.addAll(composition.dynamicMessages());
         return new PreparedConversationContext(
@@ -163,12 +164,19 @@ public final class HierarchicalConversationContextAssembler {
                                                                 state.request().budget()))
                                         .dynamicMessages())
                         - estimator.estimate(state.request(), dynamic);
-        int remaining =
-                state.request().budget().hardInputLimitTokens()
-                        - estimator.estimate(state.request(), protectedMessages)
-                        - runtimeTokens;
-        if (remaining <= 0) failProtected(state.request());
-        return remaining;
+        int protectedTokens =
+                estimator.estimate(state.request(), protectedMessages) + runtimeTokens;
+        int hardRemaining = state.request().budget().hardInputLimitTokens() - protectedTokens;
+        if (hardRemaining <= 0) {
+            failProtected(state.request());
+        }
+        int targetRemaining =
+                Math.min(
+                                state.policy().targetInputTokens(state.request().budget()),
+                                state.request().budget().hardInputLimitTokens())
+                        - protectedTokens;
+        // 近期原文不可丢弃；它已超过期望水位时只能退回硬预算，不能伪造一个负摘要预算。
+        return targetRemaining > 0 ? targetRemaining : hardRemaining;
     }
 
     private List<ContextMessage> dynamicMessages(
@@ -189,18 +197,23 @@ public final class HierarchicalConversationContextAssembler {
     }
 
     private HierarchicalCold activeCold(HierarchicalCheckpoint checkpoint) {
-        if (checkpoint.activeColdId() == null) return null;
+        if (checkpoint.activeColdId() == null) {
+            return null;
+        }
         HierarchicalCold cold =
                 colds.find(checkpoint.conversationSessionId(), checkpoint.activeColdId());
-        if (cold == null) throw new IllegalStateException("Hierarchical active Cold was not found");
+        if (cold == null) {
+            throw new IllegalStateException("Hierarchical active Cold was not found");
+        }
         return cold;
     }
 
     private HierarchicalCheckpoint requireCheckpoint(ConversationContextRequest request) {
         HierarchicalCheckpoint checkpoint =
                 checkpoints.findCheckpoint(request.execution().conversationSessionId());
-        if (checkpoint == null)
+        if (checkpoint == null) {
             throw new IllegalStateException("Hierarchical checkpoint was not found");
+        }
         return checkpoint;
     }
 

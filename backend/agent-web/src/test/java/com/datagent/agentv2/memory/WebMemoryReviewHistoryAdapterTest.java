@@ -21,27 +21,31 @@ class WebMemoryReviewHistoryAdapterTest {
         var state = new MemoryState(0, 0, true, true, true, 1, cutoff);
         when(service.snapshot()).thenReturn(new MemorySnapshot(state, List.of(), Map.of()));
         var user = ConversationMessage.user("u", "s", "正文", 1, "user_admin");
-        user.setExecutionId("done");
-        user.setMemoryEvidenceCreatedAt(cutoff);
-        user.setVersion(1L);
-        user.setCreatedAt(cutoff.minusDays(1));
+        user.associateExecution("done");
+        user.acknowledgePersistence(1L, cutoff.minusDays(1), cutoff);
         var assistant = spy(ConversationMessage.assistant("a", "s", "done", "最终正文", 2));
         doThrow(new AssertionError("审查不得读取工具/思考过程")).when(assistant).getThinkingProcess();
-        assistant.setMemoryEvidenceCreatedAt(cutoff);
-        assistant.setVersion(1L);
+        assistant.acknowledgePersistence(1L, cutoff, cutoff);
         var legacy = ConversationMessage.user("legacy", "s", "旧正文", 3, "user_admin");
-        legacy.setExecutionId("running");
-        legacy.setCreatedAt(cutoff.plusDays(1));
+        legacy.associateExecution("running");
+        legacy.acknowledgePersistence(0L, cutoff.plusDays(1), null);
         var pending = ConversationMessage.assistant("p", "s", "running", "部分正文", 5);
-        pending.setMemoryEvidenceCreatedAt(cutoff);
+        pending.acknowledgePersistence(0L, cutoff, cutoff);
         when(messages.findReviewPage("s", 0, 6, 10))
                 .thenReturn(List.of(user, assistant, legacy, pending));
-        var done = new AgentExecution();
-        done.setExecutionId("done");
-        done.setStatus(ExecutionStatus.DONE);
-        var running = new AgentExecution();
-        running.setExecutionId("running");
-        running.setStatus(ExecutionStatus.RUNNING);
+        var done =
+                AgentExecution.builder()
+                        .executionId("done")
+                        .conversationSessionId("s")
+                        .triggeringConversationMessageId("u")
+                        .requestIdempotencyKey("key")
+                        .requestPayloadHash("hash")
+                        .status(ExecutionStatus.DONE)
+                        .hardDeadlineAt(Instant.now().plusSeconds(60))
+                        .build();
+        var running =
+                AgentExecution.running(
+                        "running", "s", "legacy", "key2", "hash", Instant.now().plusSeconds(60));
         when(executions.findByExecutionIds(anyCollection())).thenReturn(List.of(done, running));
         var claim =
                 new MemoryReviewClaim(

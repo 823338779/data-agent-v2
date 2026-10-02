@@ -3,6 +3,8 @@ package com.datagent.agentv2.conversation.tool.builtin;
 import com.datagent.agentv2.conversation.tool.AgentTool;
 import java.time.Clock;
 import java.time.ZonedDateTime;
+import lombok.AccessLevel;
+import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -14,6 +16,7 @@ import tools.jackson.databind.node.ObjectNode;
 /** 向模型公开当前服务端时间，避免模型依赖训练数据推测时间。 */
 @Component
 @Order(110)
+@RequiredArgsConstructor(access = AccessLevel.PRIVATE)
 public final class CurrentTimeTool implements AgentTool {
 
     /** 注册给模型的稳定工具名称。 */
@@ -62,12 +65,6 @@ public final class CurrentTimeTool implements AgentTool {
     /** 使用固定时钟创建可重复验证的工具实例。 */
     CurrentTimeTool(Clock clock) {
         this(clock, JsonMapper.builder().build());
-    }
-
-    /** 保存工具运行所需的时钟和 JSON 组件。 */
-    private CurrentTimeTool(Clock clock, ObjectMapper json) {
-        this.clock = clock;
-        this.json = json;
     }
 
     /** 返回模型协议中使用的稳定工具名称。 */

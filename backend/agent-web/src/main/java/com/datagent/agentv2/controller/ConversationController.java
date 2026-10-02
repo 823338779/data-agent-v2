@@ -104,7 +104,14 @@ public class ConversationController {
     ResponseEntity<ConversationView> submitMessage(
             @PathVariable String conversationSessionId,
             @Valid @RequestBody SubmitConversationMessageRequest request,
-            @RequestHeader(IDEMPOTENCY_KEY_HEADER) String idempotencyKey) {
+            @RequestHeader(IDEMPOTENCY_KEY_HEADER)
+                    @NotBlank
+                    @Size(
+                            max =
+                                    com.datagent.agentv2.conversation.execution
+                                            .AgentExecutionSubmissionService
+                                            .MAX_IDEMPOTENCY_KEY_LENGTH)
+                    String idempotencyKey) {
         return ResponseEntity.accepted()
                 .body(
                         conversations.submitMessage(

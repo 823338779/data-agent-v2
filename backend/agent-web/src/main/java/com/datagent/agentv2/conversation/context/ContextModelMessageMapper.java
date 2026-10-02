@@ -12,21 +12,20 @@ import tools.jackson.databind.ObjectMapper;
 @RequiredArgsConstructor
 public class ContextModelMessageMapper {
 
-    private static final ContextModelMessageStructMapper MAPPINGS =
-            ContextModelMessageStructMapper.INSTANCE;
+    private final ContextModelMessageStructMapper mappings;
 
     private final ObjectMapper json;
 
     public List<ContextMessage> toContextMessages(List<ModelInputMessage> messages) {
-        return MAPPINGS.toContextMessages(messages, json);
+        return mappings.toContextMessages(messages, json);
     }
 
     /** 将策略输出无损恢复为现有模型网关使用的协议消息。 */
     public List<ModelInputMessage> toModelMessages(List<ContextMessage> messages) {
-        return MAPPINGS.toModelMessages(messages, json);
+        return mappings.toModelMessages(messages, json);
     }
 
     public List<ContextToolDefinition> toContextToolDefinitions(List<ModelToolDefinition> tools) {
-        return MAPPINGS.toContextToolDefinitions(tools);
+        return mappings.toContextToolDefinitions(tools);
     }
 }

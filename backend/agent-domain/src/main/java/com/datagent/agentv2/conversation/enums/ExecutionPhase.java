@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import java.util.Arrays;
 
 /** Agent 执行进度阶段的有限业务取值。 */
+@lombok.RequiredArgsConstructor
 public enum ExecutionPhase {
     RECEIVED,
     PREPARING_CONTEXT,

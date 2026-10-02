@@ -40,21 +40,16 @@ public record ModelInputMessage(
     }
 
     /** 模型供应商协议允许 TOOL；该角色不会持久化为 conversation_message。 */
+    @lombok.RequiredArgsConstructor
     public enum Role {
         SYSTEM("system"),
         USER("user"),
         ASSISTANT("assistant"),
         TOOL("tool");
 
+        @lombok.Getter
+        @lombok.experimental.Accessors(fluent = true)
         private final String value;
-
-        Role(String value) {
-            this.value = value;
-        }
-
-        public String value() {
-            return value;
-        }
 
         /** 将真实消息角色转换为模型协议角色。 */
         public static Role fromValue(String value) {

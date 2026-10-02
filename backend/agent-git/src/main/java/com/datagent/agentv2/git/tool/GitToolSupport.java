@@ -2,6 +2,7 @@ package com.datagent.agentv2.git.tool;
 
 import com.datagent.agentv2.conversation.exception.ToolBusinessException;
 import com.datagent.agentv2.conversation.tool.AgentTool.InvocationContext;
+import com.datagent.agentv2.diagnostics.SafeFailures;
 import com.datagent.agentv2.git.application.*;
 import com.datagent.agentv2.git.config.GitProperties;
 import com.datagent.agentv2.git.model.*;
@@ -12,6 +13,7 @@ import java.util.function.Function;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -21,6 +23,7 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 @ConditionalOnProperty(prefix = "data-agent.git", name = "enabled", havingValue = "true")
 @RequiredArgsConstructor
+@Slf4j
 public final class GitToolSupport {
     @Getter(AccessLevel.PACKAGE)
     private final GitWorkspaceService workspaces;
@@ -47,11 +50,18 @@ public final class GitToolSupport {
             Function<String, Object> action)
             throws ToolBusinessException {
         validate(args, json.readTree(schema));
-        if (context == null || context.executionId() == null || context.executionId().isBlank())
+        if (context == null || context.executionId() == null || context.executionId().isBlank()) {
             throw new IllegalArgumentException("缺少可信执行上下文");
+        }
         try {
             return result(action.apply(sessions.resolveSessionId(context.executionId())));
         } catch (GitException failure) {
+            // 错误消息可能含 Git stderr 或远端凭据；日志只保留类型、堆栈和可信执行标识。
+            log.warn(
+                    "Git tool failed executionId={} code={}",
+                    context.executionId(),
+                    failure.code(),
+                    SafeFailures.sanitized(failure));
             throw new ToolBusinessException(failure.code(), "Git 操作未完成，请根据错误码检查草稿或服务端配置");
         }
     }
@@ -85,8 +95,9 @@ public final class GitToolSupport {
         if (value.startsWith("/")
                 || value.contains(":")
                 || Arrays.stream(value.split("/"))
-                        .anyMatch(s -> s.equals("..") || s.equalsIgnoreCase(".git")))
+                        .anyMatch(s -> s.equals("..") || s.equalsIgnoreCase(".git"))) {
             throw new IllegalArgumentException("仅允许工作区相对路径");
+        }
         return value;
     }
 
@@ -127,37 +138,52 @@ public final class GitToolSupport {
                     case "string" -> value != null && value.isTextual();
                     default -> false;
                 };
-        if (!valid) throw new IllegalArgumentException("Git 参数类型无效");
+        if (!valid) {
+            throw new IllegalArgumentException("Git 参数类型无效");
+        }
         if (type.equals("object")) {
             for (String name : value.propertyNames()) {
-                if (!schema.path("properties").has(name))
+                if (!schema.path("properties").has(name)) {
                     throw new IllegalArgumentException("未知 Git 参数: " + name);
+                }
                 validate(value.path(name), schema.path("properties").path(name));
             }
-            for (JsonNode name : schema.path("required"))
-                if (!value.has(name.asString()))
+            for (JsonNode name : schema.path("required")) {
+                if (!value.has(name.asString())) {
                     throw new IllegalArgumentException("缺少 Git 参数: " + name.asString());
+                }
+            }
         } else if (type.equals("integer")) {
             long n = value.asLong();
             if (n < schema.path("minimum").asLong(0)
-                    || n > schema.path("maximum").asLong(Long.MAX_VALUE))
+                    || n > schema.path("maximum").asLong(Long.MAX_VALUE)) {
                 throw new IllegalArgumentException("Git 整数参数越界");
+            }
         } else if (type.equals("string")) {
             int n = value.asString().length();
             if (n < schema.path("minLength").asInt(0)
-                    || n > schema.path("maxLength").asInt(Integer.MAX_VALUE))
+                    || n > schema.path("maxLength").asInt(Integer.MAX_VALUE)) {
                 throw new IllegalArgumentException("Git 文本参数长度越界");
+            }
             if (schema.has("enum")) {
                 boolean found = false;
-                for (JsonNode allowed : schema.path("enum"))
-                    if (allowed.equals(value)) found = true;
-                if (!found) throw new IllegalArgumentException("Git 操作类型无效");
+                for (JsonNode allowed : schema.path("enum")) {
+                    if (allowed.equals(value)) {
+                        found = true;
+                    }
+                }
+                if (!found) {
+                    throw new IllegalArgumentException("Git 操作类型无效");
+                }
             }
         } else if (type.equals("array")) {
             if (value.size() < schema.path("minItems").asInt(0)
-                    || value.size() > schema.path("maxItems").asInt(Integer.MAX_VALUE))
+                    || value.size() > schema.path("maxItems").asInt(Integer.MAX_VALUE)) {
                 throw new IllegalArgumentException("Git 操作数量越界");
-            for (JsonNode item : value) validate(item, schema.path("items"));
+            }
+            for (JsonNode item : value) {
+                validate(item, schema.path("items"));
+            }
         }
     }
 }

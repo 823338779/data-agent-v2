@@ -80,6 +80,7 @@ public final class ContextSummaryGenerator {
         EventSummaryCoverage coverage = coverage(request);
         String segmentKey = keyFactory.create(request, identity);
 
+        Throwable lastFailure = null;
         // provider 输出无效时复用完全相同的协议、来源和 key，只允许一次重试。
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             ContextSummaryRequest modelRequest =
@@ -98,6 +99,8 @@ public final class ContextSummaryGenerator {
             try {
                 result = model.summarize(modelRequest);
             } catch (RuntimeException providerFailure) {
+                lastFailure =
+                        com.datagent.agentv2.diagnostics.SafeFailures.sanitized(providerFailure);
                 continue;
             }
             try {
@@ -138,10 +141,12 @@ public final class ContextSummaryGenerator {
                         identity.modelIdentity().model(),
                         segmentKey);
             } catch (IllegalArgumentException invalidSummary) {
+                lastFailure =
+                        com.datagent.agentv2.diagnostics.SafeFailures.sanitized(invalidSummary);
                 // 正文及 schema 错误不得进入日志或异常消息，下一轮只复用安全元数据。
             }
         }
-        throw new IllegalStateException(NO_VALID_DOCUMENT);
+        throw new IllegalStateException(NO_VALID_DOCUMENT, lastFailure);
     }
 
     /** 返回 kind/level 对应的固定严格输出上限。 */

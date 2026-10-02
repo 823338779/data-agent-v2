@@ -13,7 +13,8 @@ class PersonalMemoryViewTest {
 
     @Test
     void publicViewKeepsUiFieldsAndOmitsInternalStorageDetails() {
-        var view = PersonalMemoryView.composeFromMemory(memory("memory-1", MemoryKind.PERSON_PROFILE));
+        var view =
+                PersonalMemoryView.composeFromMemory(memory("memory-1", MemoryKind.PERSON_PROFILE));
 
         assertThat(view)
                 .isEqualTo(

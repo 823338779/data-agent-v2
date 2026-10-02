@@ -36,8 +36,12 @@ public class ConversationProjectApplicationService {
         } catch (IllegalArgumentException invalid) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, invalid.getMessage());
         }
-        if (project.name().equals(renamed.name())) return project;
-        if (!projects.renameProject(projectId, renamed.name(), expectedVersion)) throw conflict();
+        if (project.name().equals(renamed.name())) {
+            return project;
+        }
+        if (!projects.renameProject(projectId, renamed.name(), expectedVersion)) {
+            throw conflict();
+        }
         return projects.lockByProjectId(projectId);
     }
 
@@ -46,16 +50,22 @@ public class ConversationProjectApplicationService {
         lockExpected(projectId, expectedVersion);
         // 在项目锁内先清关联再逻辑删除；后续失败会回滚两步，置顶和运行状态始终保留。
         sessions.detachProject(projectId);
-        if (!projects.deleteProject(projectId, expectedVersion)) throw conflict();
+        if (!projects.deleteProject(projectId, expectedVersion)) {
+            throw conflict();
+        }
     }
 
     private ConversationProject lockExpected(String projectId, long expectedVersion) {
-        if (expectedVersion < 0)
+        if (expectedVersion < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid project version");
+        }
         var project = projects.lockByProjectId(projectId);
-        if (project == null)
+        if (project == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Project not found");
-        if (project.version() != expectedVersion) throw conflict();
+        }
+        if (project.version() != expectedVersion) {
+            throw conflict();
+        }
         return project;
     }
 

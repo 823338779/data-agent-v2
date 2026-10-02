@@ -40,7 +40,7 @@ public class ConversationTitleService {
         if (normalizedTitle.isEmpty() || normalizedTitle.length() > MAX_TITLE_LENGTH) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_INVALID_TITLE);
         }
-        session.setTitle(normalizedTitle);
+        session.rename(normalizedTitle);
 
         // MyBatis-Plus 乐观锁负责封闭读取与写入之间的并发窗口。
         if (!sessions.updateById(session)) {

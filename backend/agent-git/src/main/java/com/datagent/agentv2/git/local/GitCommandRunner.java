@@ -7,14 +7,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.*;
+import lombok.RequiredArgsConstructor;
 
 /** 以参数列表执行固定 Git，可控地限制时间和输出，并隔离交互、签名、hook 与外部协议。 */
+@RequiredArgsConstructor
 public final class GitCommandRunner {
     private final GitProperties properties;
-
-    public GitCommandRunner(GitProperties properties) {
-        this.properties = properties;
-    }
 
     public Result run(Path directory, List<String> arguments) {
         Result result = runAllowFailure(directory, arguments, Map.of());

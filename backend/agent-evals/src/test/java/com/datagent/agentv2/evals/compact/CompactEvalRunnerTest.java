@@ -3,6 +3,7 @@ package com.datagent.agentv2.evals.compact;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
@@ -141,6 +142,73 @@ class CompactEvalRunnerTest {
         assertEquals(0.0, report.score().officialScore());
         assertEquals(0.0, report.score().semanticJudgeScore());
         assertEquals(1.0, report.score().referenceMatchScore());
+    }
+
+    @Test
+    void interruptionStopsBeforeStartingTheNextScenario() {
+        int[] calls = {0};
+        CompactEvalGateway gateway =
+                new CompactEvalGateway() {
+                    public String createSession(String title) throws Exception {
+                        calls[0]++;
+                        throw new InterruptedException("cancelled");
+                    }
+
+                    public TurnResult submitAndAwait(String id, String content, Duration timeout) {
+                        throw new AssertionError("cancelled run must not submit");
+                    }
+                };
+        assertThrows(
+                InterruptedException.class,
+                () ->
+                        new CompactEvalRunner()
+                                .run(
+                                        "unit",
+                                        "local",
+                                        new CompactEvalCorpus(
+                                                "unit",
+                                                List.of(scenario("a", "42"), scenario("b", "42"))),
+                                        gateway,
+                                        new StubJudge(),
+                                        Duration.ofSeconds(1),
+                                        0));
+        assertEquals(1, calls[0]);
+    }
+
+    @Test
+    void judgeInterruptionStopsTheRun() {
+        StubGateway gateway =
+                new StubGateway(turn("done", "history", 0, 0, 0), turn("done", "42", 0, 0, 0));
+        CompactEvalJudge judge =
+                new CompactEvalJudge() {
+                    public String provider() {
+                        return "unit";
+                    }
+
+                    public String model() {
+                        return "unit";
+                    }
+
+                    public Judgment judge(String q, String expected, String answer)
+                            throws Exception {
+                        throw new InterruptedException("cancelled");
+                    }
+                };
+        assertThrows(
+                InterruptedException.class,
+                () ->
+                        new CompactEvalRunner()
+                                .run(
+                                        "unit",
+                                        "local",
+                                        new CompactEvalCorpus(
+                                                "unit",
+                                                List.of(scenario("a", "42"), scenario("b", "42"))),
+                                        gateway,
+                                        judge,
+                                        Duration.ofSeconds(1),
+                                        0));
+        assertEquals(1, gateway.sessionSequence);
     }
 
     private static CompactEvalCorpus.Scenario scenario(String id, String answer) {

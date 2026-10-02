@@ -9,6 +9,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import lombok.Getter;
+import lombok.experimental.Accessors;
 import org.springframework.stereotype.Service;
 
 /**
@@ -23,6 +25,10 @@ public final class ToolSupplyRegistry {
     private static final String ERROR_UNKNOWN_TOOL = "Unknown agent tool: ";
 
     private final Map<String, ToolBinding> bindingsByName;
+
+    /** Spring 注册顺序的不可变绑定列表，供执行视图保持模型 Tool 顺序稳定。 */
+    @Getter
+    @Accessors(fluent = true)
     private final List<ToolBinding> bindingsInRegistrationOrder;
 
     /** 按 Spring 注入顺序建立不可变索引，重复名称会在启动阶段直接失败。 */
@@ -50,11 +56,6 @@ public final class ToolSupplyRegistry {
             throw new IllegalStateException(ERROR_UNKNOWN_TOOL + runtimeName);
         }
         return binding;
-    }
-
-    /** 返回 Spring 注册顺序的不可变绑定列表，供执行视图保持模型 Tool 顺序稳定。 */
-    public List<ToolBinding> bindingsInRegistrationOrder() {
-        return bindingsInRegistrationOrder;
     }
 
     private static ToolBinding bind(AgentTool tool) {

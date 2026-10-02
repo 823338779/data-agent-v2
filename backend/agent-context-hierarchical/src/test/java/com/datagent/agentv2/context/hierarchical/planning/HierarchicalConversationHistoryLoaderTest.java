@@ -43,14 +43,22 @@ class HierarchicalConversationHistoryLoaderTest {
 
     @Test
     void rebuildsToolCallsDirectlyFromThinkingProcess() {
-        AgentExecution execution = new AgentExecution();
-        execution.setConversationSessionId("session");
+        var execution =
+                AgentExecution.running(
+                        "execution", "session", "user", "key", "hash", java.time.Instant.MAX);
         when(executions.findByExecutionId("execution")).thenReturn(execution);
 
         ConversationMessage user = message("user", 1L, MessageRole.USER, "weather?");
-        ConversationMessage assistant = message("assistant", 2L, MessageRole.ASSISTANT, "sunny");
-        assistant.setExecutionId("previous-execution");
-        assistant.setThinkingProcess(List.of(toolProcess()));
+        ConversationMessage assistant =
+                ConversationMessage.builder()
+                        .conversationMessageId("assistant")
+                        .conversationSessionId("session")
+                        .executionId("previous-execution")
+                        .conversationMessageSequence(2L)
+                        .role(MessageRole.ASSISTANT)
+                        .content("sunny")
+                        .thinkingProcess(List.of(toolProcess()))
+                        .build();
         when(messages.findByConversationSessionId("session")).thenReturn(List.of(user, assistant));
 
         List<ConversationTurn> turns =
@@ -77,8 +85,9 @@ class HierarchicalConversationHistoryLoaderTest {
 
     @Test
     void rejectsExecutionFromAnotherSessionBeforeReadingHistory() {
-        AgentExecution execution = new AgentExecution();
-        execution.setConversationSessionId("other");
+        var execution =
+                AgentExecution.running(
+                        "execution", "other", "user", "key", "hash", java.time.Instant.MAX);
         when(executions.findByExecutionId("execution")).thenReturn(execution);
 
         assertThatThrownBy(
@@ -93,14 +102,14 @@ class HierarchicalConversationHistoryLoaderTest {
 
     private static ConversationMessage message(
             String id, long sequence, MessageRole role, String content) {
-        ConversationMessage message = new ConversationMessage();
-        message.setConversationMessageId(id);
-        message.setConversationSessionId("session");
-        message.setExecutionId("execution");
-        message.setConversationMessageSequence(sequence);
-        message.setRole(role);
-        message.setContent(content);
-        return message;
+        return ConversationMessage.builder()
+                .conversationMessageId(id)
+                .conversationSessionId("session")
+                .executionId("execution")
+                .conversationMessageSequence(sequence)
+                .role(role)
+                .content(content)
+                .build();
     }
 
     private static ToolThinkingProcessItem toolProcess() {

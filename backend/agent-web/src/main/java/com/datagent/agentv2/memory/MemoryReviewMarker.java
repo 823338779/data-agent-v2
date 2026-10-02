@@ -32,9 +32,13 @@ public class MemoryReviewMarker {
     @Transactional(propagation = Propagation.MANDATORY)
     public void markCompleted(String executionId) {
         var state = states.lockCurrent();
-        if (!state.autoLearningEnabled()) return;
+        if (!state.autoLearningEnabled()) {
+            return;
+        }
         var execution = executions.findByExecutionId(executionId);
-        if (execution == null || execution.getStatus() != ExecutionStatus.DONE) return;
+        if (execution == null || execution.getStatus() != ExecutionStatus.DONE) {
+            return;
+        }
         var user =
                 messages.findByConversationMessageId(
                         execution.getTriggeringConversationMessageId());
@@ -48,7 +52,9 @@ public class MemoryReviewMarker {
                 || user.getConversationMessageSequence() < 1
                 || user.getMemoryEvidenceCreatedAt() == null
                 || state.learningEnabledAt() == null
-                || user.getMemoryEvidenceCreatedAt().isBefore(state.learningEnabledAt())) return;
+                || user.getMemoryEvidenceCreatedAt().isBefore(state.learningEnabledAt())) {
+            return;
+        }
         long through =
                 messages.findByExecutionId(executionId).stream()
                         .filter(message -> message.getRole() == MessageRole.ASSISTANT)

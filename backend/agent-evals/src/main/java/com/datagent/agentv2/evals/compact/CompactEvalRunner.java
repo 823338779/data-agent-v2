@@ -46,6 +46,7 @@ public final class CompactEvalRunner {
 
         // 每个场景独占一条产品会话，场景失败后继续保留已经完成的原始轮次。
         for (int scenarioIndex = 0; scenarioIndex < scenarioLimit; scenarioIndex++) {
+            checkInterrupted();
             CompactEvalCorpus.Scenario scenario = corpus.scenarios().get(scenarioIndex);
             String sessionId = null;
             List<CompactEvalReport.TurnResult> turns = new ArrayList<>();
@@ -58,6 +59,9 @@ public final class CompactEvalRunner {
                     completed =
                             replayProbes(scenario, sessionId, gateway, judge, turnTimeout, turns);
                 }
+            } catch (InterruptedException interrupted) {
+                // 取消必须退出整个评测，不能当作单个场景失败继续产生远端请求。
+                throw interrupted;
             } catch (Exception scenarioFailure) {
                 failure =
                         scenarioFailure.getClass().getSimpleName()
@@ -99,6 +103,7 @@ public final class CompactEvalRunner {
             List<CompactEvalReport.TurnResult> turns)
             throws Exception {
         for (String history : scenario.history()) {
+            checkInterrupted();
             CompactEvalGateway.TurnResult result =
                     gateway.submitAndAwait(sessionId, history, timeout);
             turns.add(
@@ -127,6 +132,7 @@ public final class CompactEvalRunner {
             List<CompactEvalReport.TurnResult> turns)
             throws Exception {
         for (CompactEvalCorpus.Probe probe : scenario.probes()) {
+            checkInterrupted();
             CompactEvalGateway.TurnResult result =
                     gateway.submitAndAwait(sessionId, probe.question(), timeout);
             turns.add(
@@ -152,7 +158,8 @@ public final class CompactEvalRunner {
             String expectedAnswer,
             CompactEvalCorpus.ScenarioMetadata metadata,
             CompactEvalGateway.TurnResult result,
-            CompactEvalJudge judge) {
+            CompactEvalJudge judge)
+            throws InterruptedException {
         CompactEvalReport.Evaluation evaluation =
                 expectedAnswer == null
                         ? null
@@ -178,7 +185,8 @@ public final class CompactEvalRunner {
             String expectedAnswer,
             CompactEvalCorpus.ScenarioMetadata metadata,
             CompactEvalGateway.TurnResult result,
-            CompactEvalJudge judge) {
+            CompactEvalJudge judge)
+            throws InterruptedException {
         boolean matched =
                 DONE_STATUS.equals(result.status())
                         && normalize(result.assistantAnswer()).contains(normalize(expectedAnswer));
@@ -223,6 +231,8 @@ public final class CompactEvalRunner {
                                 judged.correct(),
                                 judged.reason(),
                                 null);
+            } catch (InterruptedException interrupted) {
+                throw interrupted;
             } catch (Exception failure) {
                 officialScore =
                         "LongMemEval".equals(metadata == null ? null : metadata.dataset())
@@ -391,6 +401,12 @@ public final class CompactEvalRunner {
     private static void addDimension(Set<DimensionKey> keys, String dimension, String value) {
         if (value != null && !value.isBlank()) {
             keys.add(new DimensionKey(dimension, value));
+        }
+    }
+
+    private static void checkInterrupted() throws InterruptedException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException("Compact evaluation cancelled");
         }
     }
 

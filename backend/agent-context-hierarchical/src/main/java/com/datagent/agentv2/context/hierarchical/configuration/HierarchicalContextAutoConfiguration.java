@@ -4,7 +4,6 @@ import com.datagent.agentv2.context.common.summary.EventContextSummaryRenderer;
 import com.datagent.agentv2.context.common.summary.EventContextSummaryValidator;
 import com.datagent.agentv2.context.hierarchical.observability.HierarchicalContextMetrics;
 import com.datagent.agentv2.context.hierarchical.persistence.json.HierarchicalDocumentCodec;
-import com.datagent.agentv2.context.hierarchical.persistence.mapper.*;
 import com.datagent.agentv2.context.hierarchical.persistence.repository.*;
 import com.datagent.agentv2.context.hierarchical.planning.*;
 import com.datagent.agentv2.context.hierarchical.runtime.*;
@@ -49,17 +48,6 @@ public class HierarchicalContextAutoConfiguration {
     @Bean
     HierarchicalDocumentCodec hierarchicalDocumentCodec() {
         return new HierarchicalDocumentCodec();
-    }
-
-    @Bean
-    HierarchicalCheckpointRepository hierarchicalCheckpointRepository(
-            HierarchicalCheckpointMapper mapper) {
-        return new HierarchicalCheckpointRepository(mapper);
-    }
-
-    @Bean
-    HierarchicalColdRepository hierarchicalColdRepository(HierarchicalColdMapper mapper) {
-        return new HierarchicalColdRepository(mapper);
     }
 
     @Bean

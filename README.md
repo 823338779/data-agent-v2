@@ -5,8 +5,8 @@ Data Agent V2 是面向单实例部署的对话 Agent 工程，包含后端 Mave
 ## 目录
 
 - `backend/agent-persistence`：数据库迁移、MyBatis-Plus，以及 ID、时钟和请求上下文基础能力
-- `backend/agent-context-lsm`：同步执行的 LSM 会话上下文压缩策略及其摘要持久化
-- `backend/agent-context-hierarchical`：同步执行的 Hot/Warm/Cold 分层上下文压缩策略及其摘要持久化
+- `backend/agent-context-lsm`：同步执行的 LSM 会话上下文压缩策略
+- `backend/agent-context-hierarchical`：同步执行的单一滚动 Cold 会话上下文压缩策略
 - `backend/agent-web`：REST/SSE 接口、BFF、会话编排与契约测试
 - `backend/agent-server`：唯一可执行模块，负责 Spring Boot 启动、服务级全局拦截器、异常边界与运行时装配
 - `backend/agent-evals`：独立评测模块
@@ -67,7 +67,7 @@ $env:DATA_AGENT_CONTEXT_STRATEGY = 'raw'
 
 随后重启后端进程。`raw` 模式不会装载压缩插件策略、不会运行插件 Flyway，也不会读取或写入 `conversation_context_lsm_*` 或 `conversation_context_hierarchical_*` 表。切换策略不会删除已有的摘要、checkpoint 或 manifest，可供问题分析或后续重新启用相应插件使用。
 
-选择 `lsm` 时，插件从 `classpath:db/agent-context-lsm/migration` 迁移，并使用独立历史表 `flyway_agent_context_lsm_schema_history`。选择 `hierarchical` 时，插件从 `classpath:db/agent-context-hierarchical/migration` 迁移，并使用独立历史表 `flyway_agent_context_hierarchical_schema_history`。主 Flyway 始终先完成通用迁移；插件迁移分别只管理 `conversation_context_lsm_*` 或 `conversation_context_hierarchical_*` 对象，不污染主 Flyway 历史。
+上下文 Entity、Mapper、存储服务和迁移资源统一位于 `agent-persistence`，策略模块只负责规划、生成和运行编排。选择 `lsm` 时，持久化模块从 `classpath:db/agent-context-lsm/migration` 迁移，并使用独立历史表 `flyway_agent_context_lsm_schema_history`。选择 `hierarchical` 时，插件从 `classpath:db/agent-context-hierarchical/migration` 迁移，并使用独立历史表 `flyway_agent_context_hierarchical_schema_history`。主 Flyway 始终先完成通用迁移；条件迁移分别只管理 `conversation_context_lsm_*` 或 `conversation_context_hierarchical_*` 对象，不污染主 Flyway 历史。
 
 Hierarchical 上下文验证命令：
 

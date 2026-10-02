@@ -2,20 +2,37 @@ package com.datagent.agentv2.conversation.tool.web;
 
 import java.time.Duration;
 import java.util.Objects;
+import lombok.Getter;
+import lombok.experimental.Accessors;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /** 服务端联网搜索配置；API Key 仅供 Provider 使用，字符串表示始终脱敏。 */
 @ConfigurationProperties("data-agent.tool.web-search")
+@Accessors(fluent = true)
+@Getter
 public final class WebSearchProperties {
 
     private final String provider;
+
+    /** 仅在服务端发出搜索请求时使用；诊断字符串不得包含原文。 */
     private final String apiKey;
+
+    /** 未指定 limit 时返回的最大搜索结果数，范围 1～20。 */
     private final int defaultLimit;
+
     private final SearchDepth defaultDepth;
+
+    /** TCP 建连时间上限，必须不大于 requestTimeout。 */
     private final Duration connectTimeout;
+
+    /** 单次供应商 HTTP 请求时间上限，必须小于外层工具总预算。 */
     private final Duration requestTimeout;
+
+    /** 外层工具总时间预算，包含参数处理、供应商请求和输出转换。 */
     private final Duration toolTimeout;
+
+    /** 显式配置的 HTTP(S) 代理；空字符串表示直连，不继承系统代理。 */
     private final String proxy;
 
     public WebSearchProperties(
@@ -54,38 +71,6 @@ public final class WebSearchProperties {
             throw new IllegalArgumentException(field + " must be positive");
         }
         return value;
-    }
-
-    public String provider() {
-        return provider;
-    }
-
-    public String apiKey() {
-        return apiKey;
-    }
-
-    public int defaultLimit() {
-        return defaultLimit;
-    }
-
-    public SearchDepth defaultDepth() {
-        return defaultDepth;
-    }
-
-    public Duration connectTimeout() {
-        return connectTimeout;
-    }
-
-    public Duration requestTimeout() {
-        return requestTimeout;
-    }
-
-    public Duration toolTimeout() {
-        return toolTimeout;
-    }
-
-    public String proxy() {
-        return proxy;
     }
 
     @Override

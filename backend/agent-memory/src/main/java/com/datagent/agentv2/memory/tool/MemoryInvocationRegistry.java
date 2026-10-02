@@ -85,7 +85,9 @@ public final class MemoryInvocationRegistry {
             long committedRevision) {
         FrozenInvocation frozen = require(executionId, invocationSequence);
         // 幂等重放返回历史 revision。历史值不得让同轮已经推进的冻结版本倒退。
-        if (committedRevision <= expectedRevision) return;
+        if (committedRevision <= expectedRevision) {
+            return;
+        }
         if (!frozen.revision().compareAndSet(expectedRevision, committedRevision)) {
             throw new IllegalStateException(ERROR_REVISION_CHANGED);
         }
@@ -96,13 +98,17 @@ public final class MemoryInvocationRegistry {
     }
 
     public void closeExecution(String executionId) {
-        if (executionId == null) return;
+        if (executionId == null) {
+            return;
+        }
         invocations.keySet().removeIf(key -> executionId.equals(key.executionId()));
     }
 
     private FrozenInvocation require(String executionId, long invocationSequence) {
         FrozenInvocation frozen = invocations.get(key(executionId, invocationSequence));
-        if (frozen == null) throw new IllegalStateException(ERROR_CONTEXT_NOT_FOUND);
+        if (frozen == null) {
+            throw new IllegalStateException(ERROR_CONTEXT_NOT_FOUND);
+        }
         return frozen;
     }
 
@@ -162,7 +168,9 @@ public final class MemoryInvocationRegistry {
         private static String conversation(List<MemoryEvidence> evidence) {
             String conversationId = null;
             for (MemoryEvidence item : evidence) {
-                if (conversationId == null) conversationId = item.conversationId();
+                if (conversationId == null) {
+                    conversationId = item.conversationId();
+                }
                 if (!Objects.equals(conversationId, item.conversationId())) {
                     throw new IllegalArgumentException("Memory evidence must share a conversation");
                 }

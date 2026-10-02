@@ -128,22 +128,27 @@ public final class GitWorkspaceService {
 
     GitWorkspaceEntity require(String session) {
         var w = records.find(session, application.repositoryId());
-        if (w == null) throw new GitException("GIT_WORKSPACE_NOT_FOUND", "请先准备当前会话工作区");
+        if (w == null) {
+            throw new GitException("GIT_WORKSPACE_NOT_FOUND", "请先准备当前会话工作区");
+        }
         ensureIntegrity(w);
         return w;
     }
 
     GitWorkspaceEntity record(String session) {
         var w = records.find(session, application.repositoryId());
-        if (w == null) throw new GitException("GIT_WORKSPACE_NOT_FOUND", "工作区不存在");
+        if (w == null) {
+            throw new GitException("GIT_WORKSPACE_NOT_FOUND", "工作区不存在");
+        }
         return w;
     }
 
     Path path(GitWorkspaceEntity w) {
         Path root = properties.workspaceRoot().toAbsolutePath().normalize();
         Path result = root.resolve(w.getStorageKey()).normalize();
-        if (!result.startsWith(root) || result.equals(root))
+        if (!result.startsWith(root) || result.equals(root)) {
             throw new GitException("GIT_WORKSPACE_INVALID", "工作区存储键无效");
+        }
         return result;
     }
 
@@ -165,7 +170,7 @@ public final class GitWorkspaceService {
             }
         } catch (RuntimeException failure) {
             markBroken(w);
-            throw new GitException("GIT_WORKSPACE_CORRUPT", "工作区完整性校验失败，请显式重新开始草稿");
+            throw new GitException("GIT_WORKSPACE_CORRUPT", "工作区完整性校验失败，请显式重新开始草稿", failure);
         }
     }
 
@@ -194,23 +199,33 @@ public final class GitWorkspaceService {
     }
 
     private void persist(GitWorkspaceEntity w) {
-        if (!records.replace(w)) throw new GitException("GIT_CONFLICT", "工作区版本已变化");
+        if (!records.replace(w)) {
+            throw new GitException("GIT_CONFLICT", "工作区版本已变化");
+        }
     }
 
     static String fingerprint(Path root) {
         try {
-            if (!Files.isDirectory(root.resolve(".git"), LinkOption.NOFOLLOW_LINKS))
+            if (!Files.isDirectory(root.resolve(".git"), LinkOption.NOFOLLOW_LINKS)) {
                 throw new IllegalStateException();
+            }
             var digest = MessageDigest.getInstance("SHA-256");
             try (var paths = Files.walk(root)) {
                 for (Path p : paths.sorted().toList()) {
                     Path relative = root.relativize(p);
                     if (relative.toString().isEmpty()
-                            || relative.getName(0).toString().equals(".git")) continue;
-                    if (Files.isSymbolicLink(p)) throw new IllegalStateException();
-                    if (Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)) continue;
-                    if (!Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS))
+                            || relative.getName(0).toString().equals(".git")) {
+                        continue;
+                    }
+                    if (Files.isSymbolicLink(p)) {
                         throw new IllegalStateException();
+                    }
+                    if (Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)) {
+                        continue;
+                    }
+                    if (!Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)) {
+                        throw new IllegalStateException();
+                    }
                     digest.update(
                             relative.toString()
                                     .replace('\\', '/')
@@ -219,14 +234,16 @@ public final class GitWorkspaceService {
                     try (InputStream input = Files.newInputStream(p)) {
                         byte[] b = new byte[8192];
                         int count;
-                        while ((count = input.read(b)) >= 0) digest.update(b, 0, count);
+                        while ((count = input.read(b)) >= 0) {
+                            digest.update(b, 0, count);
+                        }
                     }
                     digest.update((byte) 0);
                 }
             }
             return HexFormat.of().formatHex(digest.digest());
         } catch (Exception failure) {
-            throw new GitException("GIT_WORKSPACE_CORRUPT", "工作区文件缺失或损坏");
+            throw new GitException("GIT_WORKSPACE_CORRUPT", "工作区文件缺失或损坏", failure);
         }
     }
 }

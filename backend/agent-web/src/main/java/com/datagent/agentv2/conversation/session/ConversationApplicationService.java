@@ -74,7 +74,7 @@ public class ConversationApplicationService {
                         normalizedTitle(title),
                         tag,
                         Instant.now());
-        session.setProjectId(projectId);
+        session.assignProject(projectId);
         conversationSessionService.save(session);
         return ConversationView.composeFromNewSession(session);
     }

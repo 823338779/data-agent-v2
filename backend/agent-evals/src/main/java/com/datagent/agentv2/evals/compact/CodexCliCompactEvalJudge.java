@@ -11,9 +11,15 @@ import java.time.Duration;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /** 使用本机 Codex 登录态非交互调用独立 LLM，对探针回答做结构化语义评分。 */
+@lombok.RequiredArgsConstructor(access = lombok.AccessLevel.PACKAGE)
 public final class CodexCliCompactEvalJudge implements CompactEvalJudge {
 
     private static final String PROVIDER = "codex-cli";
@@ -63,14 +69,21 @@ public final class CodexCliCompactEvalJudge implements CompactEvalJudge {
     private final String effort;
     private final Duration timeout;
     private final ObjectMapper json;
+    private final ProcessStarter processStarter;
 
     public CodexCliCompactEvalJudge(
             String executable, String model, String effort, Duration timeout, ObjectMapper json) {
-        this.executable = executable;
-        this.model = model;
-        this.effort = effort;
-        this.timeout = timeout;
-        this.json = json;
+        this(
+                executable,
+                model,
+                effort,
+                timeout,
+                json,
+                (command, log) ->
+                        new ProcessBuilder(command)
+                                .redirectErrorStream(true)
+                                .redirectOutput(log.toFile())
+                                .start());
     }
 
     @Override
@@ -112,30 +125,52 @@ public final class CodexCliCompactEvalJudge implements CompactEvalJudge {
     @Override
     public Judgment judge(JudgeRequest request) throws Exception {
         Path temporaryDirectory = Files.createTempDirectory("compact-eval-judge-");
+        Process process = null;
+        ExecutorService exchangeExecutor = null;
+        Future<Integer> exchange = null;
         try {
             Path schema = temporaryDirectory.resolve("output-schema.json");
             Path output = temporaryDirectory.resolve("judgment.json");
             Path log = temporaryDirectory.resolve("codex.log");
             Files.writeString(schema, OUTPUT_SCHEMA, StandardCharsets.UTF_8);
 
-            Process process = start(temporaryDirectory, schema, output, log);
-            try (OutputStream input = process.getOutputStream()) {
-                JsonNode evaluationInput =
-                        json.createObjectNode()
-                                .put("question", request.question())
-                                .put("referenceAnswer", request.expectedAnswer())
-                                .put("candidateAnswer", request.assistantAnswer());
-                input.write(
-                        PROMPT_TEMPLATE
-                                .formatted(
-                                        evaluationPolicy(request.metadata()),
-                                        json.writeValueAsString(evaluationInput))
-                                .getBytes(StandardCharsets.UTF_8));
-            }
-            if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
-                process.destroyForcibly();
-                process.waitFor();
-                throw new IllegalStateException("Codex judge timed out after " + timeout);
+            process = start(temporaryDirectory, schema, output, log);
+            JsonNode evaluationInput =
+                    json.createObjectNode()
+                            .put("question", request.question())
+                            .put("referenceAnswer", request.expectedAnswer())
+                            .put("candidateAnswer", request.assistantAnswer());
+            byte[] prompt =
+                    PROMPT_TEMPLATE
+                            .formatted(
+                                    evaluationPolicy(request.metadata()),
+                                    json.writeValueAsString(evaluationInput))
+                            .getBytes(StandardCharsets.UTF_8);
+            Process running = process;
+            exchangeExecutor =
+                    Executors.newThreadPerTaskExecutor(
+                            Thread.ofVirtual().name("compact-eval-judge-", 0).factory());
+            // 子进程可能从不读取 stdin；写入与等待退出必须共享同一个截止时间。
+            exchange =
+                    exchangeExecutor.submit(
+                            () -> {
+                                try (OutputStream input = running.getOutputStream()) {
+                                    input.write(prompt);
+                                }
+                                return running.waitFor();
+                            });
+            try {
+                exchange.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
+            } catch (TimeoutException failure) {
+                throw new IllegalStateException("Codex judge timed out after " + timeout, failure);
+            } catch (ExecutionException failure) {
+                if (failure.getCause() instanceof Exception cause) {
+                    throw cause;
+                }
+                if (failure.getCause() instanceof Error cause) {
+                    throw cause;
+                }
+                throw new IllegalStateException("Codex judge exchange failed", failure);
             }
             if (process.exitValue() != 0 || !Files.isRegularFile(output)) {
                 throw new IllegalStateException(
@@ -146,7 +181,34 @@ public final class CodexCliCompactEvalJudge implements CompactEvalJudge {
             }
             return parseJudgment(Files.readString(output, StandardCharsets.UTF_8));
         } finally {
+            // 取消、写入失败和解析失败均回收子进程；不能只在超时分支处理。
+            terminate(process);
+            if (exchange != null) {
+                exchange.cancel(true);
+            }
+            if (exchangeExecutor != null) {
+                exchangeExecutor.shutdownNow();
+            }
             deleteTemporaryDirectory(temporaryDirectory);
+        }
+    }
+
+    private static void terminate(Process process) {
+        if (process == null) {
+            return;
+        }
+        // 先终止进程树再等待，避免脚本包装器留下仍持有管道的子进程。
+        process.descendants().forEach(ProcessHandle::destroyForcibly);
+        process.destroyForcibly();
+        boolean interrupted = Thread.interrupted();
+        try {
+            process.waitFor(2, TimeUnit.SECONDS);
+        } catch (InterruptedException cancellation) {
+            interrupted = true;
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -175,10 +237,13 @@ public final class CodexCliCompactEvalJudge implements CompactEvalJudge {
                         "--output-last-message",
                         output.toString(),
                         "-");
-        return new ProcessBuilder(command)
-                .redirectErrorStream(true)
-                .redirectOutput(log.toFile())
-                .start();
+        return processStarter.start(command, log);
+    }
+
+    /** 隔离外部进程启动；裁判本身负责启动之后的完整生命周期。 */
+    @FunctionalInterface
+    interface ProcessStarter {
+        Process start(List<String> command, Path log) throws IOException;
     }
 
     Judgment parseJudgment(String content) throws IOException {

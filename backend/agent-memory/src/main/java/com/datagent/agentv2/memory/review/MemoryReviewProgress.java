@@ -8,7 +8,8 @@ package com.datagent.agentv2.memory.review;
  */
 public record MemoryReviewProgress(long reviewedThroughSequence, int rejectedOperations) {
     public MemoryReviewProgress {
-        if (reviewedThroughSequence < 0 || rejectedOperations < 0)
+        if (reviewedThroughSequence < 0 || rejectedOperations < 0) {
             throw new IllegalArgumentException("审查进度与拒绝数量不得为负数");
+        }
     }
 }

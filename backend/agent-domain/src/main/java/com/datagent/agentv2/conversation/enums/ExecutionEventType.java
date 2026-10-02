@@ -5,6 +5,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import java.util.Arrays;
 
 /** Agent 执行生命周期事件的有限协议取值。 */
+@lombok.RequiredArgsConstructor
 public enum ExecutionEventType {
     STARTED("execution_started"),
     DONE("execution_done"),
@@ -16,16 +17,9 @@ public enum ExecutionEventType {
     CONTEXT_COMPACTION_COMPLETED("context_compaction_completed"),
     CONTEXT_COMPACTION_FAILED("context_compaction_failed");
 
+    @lombok.Getter(onMethod_ = @JsonValue)
+    @lombok.experimental.Accessors(fluent = true)
     private final String value;
-
-    ExecutionEventType(String value) {
-        this.value = value;
-    }
-
-    @JsonValue
-    public String value() {
-        return value;
-    }
 
     @JsonCreator
     public static ExecutionEventType fromValue(String value) {

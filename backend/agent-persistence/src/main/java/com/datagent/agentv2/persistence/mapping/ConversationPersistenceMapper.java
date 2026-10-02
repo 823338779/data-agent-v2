@@ -25,6 +25,7 @@ import org.mapstruct.ReportingPolicy;
 /** 会话执行域业务模型与持久化 Entity 之间的唯一映射边界。 */
 @Mapper(
         componentModel = "spring",
+        injectionStrategy = org.mapstruct.InjectionStrategy.CONSTRUCTOR,
         uses = ConversationProcessDocumentCodec.class,
         unmappedTargetPolicy = ReportingPolicy.IGNORE)
 public interface ConversationPersistenceMapper {
@@ -83,7 +84,10 @@ public interface ConversationPersistenceMapper {
     @Mapping(target = "pinnedAt", ignore = true)
     void updateEntity(ConversationSession model, @MappingTarget ConversationSessionEntity entity);
 
-    void updateModel(ConversationSessionEntity entity, @MappingTarget ConversationSession model);
+    default void updateModel(ConversationSessionEntity entity, ConversationSession model) {
+        model.acknowledgePersistence(
+                entity.getVersion(), entity.getCreatedAt(), entity.getUpdatedAt());
+    }
 
     List<ConversationSession> toSessionModels(List<ConversationSessionEntity> entities);
 
@@ -99,8 +103,10 @@ public interface ConversationPersistenceMapper {
     @Mapping(target = "deleted", ignore = true)
     void updateEntity(ConversationMessage model, @MappingTarget ConversationMessageEntity entity);
 
-    @Mapping(target = "thinkingProcess", ignore = true)
-    void updateModel(ConversationMessageEntity entity, @MappingTarget ConversationMessage model);
+    default void updateModel(ConversationMessageEntity entity, ConversationMessage model) {
+        model.acknowledgePersistence(
+                entity.getVersion(), entity.getCreatedAt(), entity.getMemoryEvidenceCreatedAt());
+    }
 
     List<ConversationMessage> toMessageModels(List<ConversationMessageEntity> entities);
 
@@ -116,7 +122,9 @@ public interface ConversationPersistenceMapper {
     @Mapping(target = "deleted", ignore = true)
     void updateEntity(AgentExecution model, @MappingTarget AgentExecutionEntity entity);
 
-    void updateModel(AgentExecutionEntity entity, @MappingTarget AgentExecution model);
+    default void updateModel(AgentExecutionEntity entity, AgentExecution model) {
+        model.acknowledgePersistence(entity.getVersion());
+    }
 
     List<AgentExecution> toExecutionModels(List<AgentExecutionEntity> entities);
 

@@ -41,24 +41,33 @@ public class MemoryReviewCoordinator {
 
     /** 无锁选择候选后在统一锁序下重新判断；固定用户只能同时持有一份审查租约。 */
     public List<MemoryReviewClaim> claimDue(String owner, int limit) {
-        if (owner == null || owner.isBlank() || limit < 1)
+        if (owner == null || owner.isBlank() || limit < 1) {
             throw new IllegalArgumentException("领取所有者与数量必须有效");
+        }
         var observedState = states.findCurrent();
-        if (observedState == null) return List.of();
+        if (observedState == null) {
+            return List.of();
+        }
         LocalDateTime selectedAt = states.currentBusinessTime();
         // 两个候选桶各有独立名额：旧代际取消不必等待 due/TTL，也不让取消积压饿死当前就绪任务。
         var candidates = new ArrayList<>(jobs.findObsolete(observedState.learningEpoch(), limit));
         candidates.addAll(
                 jobs.findDue(
                         observedState.learningEpoch(), selectedAt, instant(selectedAt), limit));
-        if (candidates.isEmpty()) return List.of();
+        if (candidates.isEmpty()) {
+            return List.of();
+        }
         // 无锁 epoch 只是候选提示；若此时已切代，按锁内状态取消，本轮未选到的新工作留给下轮。
         var state = states.lockCurrent();
         for (String id : candidates) {
             var job = jobs.lock(id);
-            if (job == null) continue;
+            if (job == null) {
+                continue;
+            }
             // 候选快照之后可能已完成；切代取消只收敛未完成工作，不能改写已提交的完成历史。
-            if (job.status() == Status.COMPLETED || job.status() == Status.CANCELLED) continue;
+            if (job.status() == Status.COMPLETED || job.status() == Status.CANCELLED) {
+                continue;
+            }
             LocalDateTime now = states.currentBusinessTime();
             if (!state.autoLearningEnabled() || state.learningEpoch() != job.learningEpoch()) {
                 // 扫描没有用户 token 凭证，同 owner 可能已领取另一任务，不能据此释放用户租约。
@@ -76,17 +85,24 @@ public class MemoryReviewCoordinator {
                                 job.fencingToken()));
                 continue;
             }
-            if (!due(job, now)) continue;
+            if (!due(job, now)) {
+                continue;
+            }
             // 只有确定要领取时才锁用户租约；此后直接返回，不再倒序获取其他任务锁。
             var lease = leases.lockCurrent();
             if (lease != null
                     && lease.leaseUntil() != null
-                    && lease.leaseUntil().isAfter(instant(now))) return List.of();
+                    && lease.leaseUntil().isAfter(instant(now))) {
+                return List.of();
+            }
             Instant until = instant(now).plus(properties.getLeaseDuration());
             long userToken = lease == null ? 1 : lease.fencingToken() + 1;
             var acquired = new MemoryReviewLease(userToken, owner, until);
-            if (lease == null) leases.insert(acquired);
-            else requireChanged(leases.compareAndSet(acquired, lease.fencingToken()));
+            if (lease == null) {
+                leases.insert(acquired);
+            } else {
+                requireChanged(leases.compareAndSet(acquired, lease.fencingToken()));
+            }
             var running =
                     new MemoryReviewJob(
                             job.jobId(),
@@ -127,15 +143,21 @@ public class MemoryReviewCoordinator {
     /** 续租仅延长数据库里的截止时刻，原 claim 继续有效；绝不复活已经过期的 owner。 */
     public boolean renew(MemoryReviewClaim claim) {
         var locked = lock(claim.jobId());
-        if (!matches(locked, claim)) return false;
+        if (!matches(locked, claim)) {
+            return false;
+        }
         if (!currentEpoch(locked)) {
             cancel(locked);
             return false;
         }
-        if (!valid(claim)) return false;
+        if (!valid(claim)) {
+            return false;
+        }
         var job = locked.job();
         Instant until = instant(states.currentBusinessTime()).plus(properties.getLeaseDuration());
-        if (until.isBefore(job.leaseUntil())) until = job.leaseUntil();
+        if (until.isBefore(job.leaseUntil())) {
+            until = job.leaseUntil();
+        }
         return atomicActiveUpdate(
                 copy(
                         job,
@@ -153,15 +175,20 @@ public class MemoryReviewCoordinator {
     /** 只确认冻结范围；返回已持久化状态供 worker 区分继续、成功及取消，失去租约明确失败。 */
     public Status finish(MemoryReviewClaim claim, MemoryReviewProgress progress) {
         if (progress.reviewedThroughSequence() < claim.fromSequence()
-                || progress.reviewedThroughSequence() > claim.throughSequence())
+                || progress.reviewedThroughSequence() > claim.throughSequence()) {
             throw new IllegalArgumentException("审查进度超出冻结范围");
+        }
         var locked = lock(claim.jobId());
-        if (!matches(locked, claim)) throw lost();
+        if (!matches(locked, claim)) {
+            throw lost();
+        }
         if (!currentEpoch(locked)) {
             cancel(locked);
             return Status.CANCELLED;
         }
-        if (!valid(claim)) throw lost();
+        if (!valid(claim)) {
+            throw lost();
+        }
         var job = locked.job();
         Status status =
                 job.dirtyGeneration() > claim.claimedGeneration()
@@ -189,12 +216,16 @@ public class MemoryReviewCoordinator {
     public Status fail(
             MemoryReviewClaim claim, String reason, boolean blocked, String fingerprint) {
         var locked = lock(claim.jobId());
-        if (!matches(locked, claim)) return null;
+        if (!matches(locked, claim)) {
+            return null;
+        }
         if (!currentEpoch(locked)) {
             cancel(locked);
             return Status.CANCELLED;
         }
-        if (!valid(claim)) return null;
+        if (!valid(claim)) {
+            return null;
+        }
         int failures = locked.job().failureCount() + 1;
         Status status =
                 blocked || failures >= properties.getMaxAttempts() ? Status.BLOCKED : Status.FAILED;
@@ -214,10 +245,13 @@ public class MemoryReviewCoordinator {
 
     /** 配置扫描只触及当前代际有界 BLOCKED，不重试旧 epoch、未知配置或仍在重试等待的任务。 */
     public void reactivateBlocked(String fingerprint, int limit) {
-        if (fingerprint == null || fingerprint.isBlank() || limit < 1)
+        if (fingerprint == null || fingerprint.isBlank() || limit < 1) {
             throw new IllegalArgumentException("配置摘要和数量必须有效");
+        }
         var state = states.lockCurrent();
-        if (!state.autoLearningEnabled()) return;
+        if (!state.autoLearningEnabled()) {
+            return;
+        }
         for (String id :
                 jobs.findBlockedWithChangedConfiguration(
                         state.learningEpoch(), fingerprint, limit)) {
@@ -226,7 +260,9 @@ public class MemoryReviewCoordinator {
                     || job.learningEpoch() != state.learningEpoch()
                     || job.status() != Status.BLOCKED
                     || job.blockedConfigurationFingerprint() == null
-                    || fingerprint.equals(job.blockedConfigurationFingerprint())) continue;
+                    || fingerprint.equals(job.blockedConfigurationFingerprint())) {
+                continue;
+            }
             requireChanged(
                     jobs.compareAndSet(
                             copy(
@@ -246,12 +282,16 @@ public class MemoryReviewCoordinator {
     /** worker 提前退出时退回待处理；保留 token 计数，旧 finally 不能释放接管者的租约。 */
     public void release(MemoryReviewClaim claim) {
         var locked = lock(claim.jobId());
-        if (!matches(locked, claim)) return;
+        if (!matches(locked, claim)) {
+            return;
+        }
         if (!currentEpoch(locked)) {
             cancel(locked);
             return;
         }
-        if (!valid(claim)) return;
+        if (!valid(claim)) {
+            return;
+        }
         var job = locked.job();
         settle(
                 locked,
@@ -358,8 +398,9 @@ public class MemoryReviewCoordinator {
 
     private boolean atomicActiveUpdate(
             MemoryReviewJob job, MemoryReviewLease lease, MemoryReviewClaim claim) {
-        if (jobs.compareAndSetActive(job, claim) && leases.compareAndSetActive(lease, claim))
+        if (jobs.compareAndSetActive(job, claim) && leases.compareAndSetActive(lease, claim)) {
             return true;
+        }
         // 第二条 UPDATE 也可能刚好过期；回滚整个短事务，且 fail/release 不掩盖 worker 原有失败。
         TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
         return false;
@@ -398,7 +439,9 @@ public class MemoryReviewCoordinator {
     }
 
     private static void requireChanged(boolean changed) {
-        if (!changed) throw lost();
+        if (!changed) {
+            throw lost();
+        }
     }
 
     private static MemoryException lost() {

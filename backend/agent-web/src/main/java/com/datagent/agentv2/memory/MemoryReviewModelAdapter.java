@@ -21,6 +21,7 @@ import tools.jackson.databind.node.ObjectNode;
 /** 后台只使用 memory 私有 schema，复用实际 provider 和纯估算器；不进入主会话工具、SSE 或检查点。 */
 @Component
 @RequiredArgsConstructor
+@lombok.extern.slf4j.Slf4j
 public final class MemoryReviewModelAdapter implements MemoryReviewModelPort {
     private final ObjectProvider<AgentModelGateway> gateways;
     private final ContextInputEstimatorResolver estimators;
@@ -43,11 +44,15 @@ public final class MemoryReviewModelAdapter implements MemoryReviewModelPort {
         try {
             if (gateways.getIfAvailable() == null
                     || ("ollama".equals(provider)
-                            && (ollama.getModel() == null || ollama.getModel().isBlank())))
+                            && (ollama.getModel() == null || ollama.getModel().isBlank()))) {
                 throw new MemoryReviewConfigurationException();
+            }
             estimators.current();
             return budgets.currentBudget().hardInputLimitTokens();
         } catch (IllegalStateException | IllegalArgumentException failure) {
+            log.warn(
+                    "后台记忆模型配置不可用",
+                    com.datagent.agentv2.diagnostics.SafeFailures.sanitized(failure));
             throw new MemoryReviewConfigurationException();
         }
     }
@@ -87,20 +92,24 @@ public final class MemoryReviewModelAdapter implements MemoryReviewModelPort {
         maxInputTokens();
         var request = buildRequest(input);
         if (estimate(request)
-                > Math.min(input.maxInputTokens(), budgets.currentBudget().hardInputLimitTokens()))
+                > Math.min(
+                        input.maxInputTokens(), budgets.currentBudget().hardInputLimitTokens())) {
             throw new IllegalArgumentException("后台完整输入超过模型预算");
+        }
         var result =
                 gateways.getIfAvailable()
                         .complete(request.messages(), request.tools(), ignored -> {});
-        if (result instanceof ModelInvocationResult.FinalAnswer)
+        if (result instanceof ModelInvocationResult.FinalAnswer) {
             return new MemoryReviewOutput.Done();
+        }
         var calls =
                 ((ModelInvocationResult.ToolCalls) result)
                         .calls().stream()
                                 .map(
                                         call -> {
-                                            if (!"memory".equals(call.name()))
+                                            if (!"memory".equals(call.name())) {
                                                 throw new IllegalArgumentException("后台只允许 memory");
+                                            }
                                             return new MemoryReviewOutput.Call(
                                                     call.toolCallId(),
                                                     json.convertValue(call.arguments(), Map.class));
@@ -126,6 +135,8 @@ public final class MemoryReviewModelAdapter implements MemoryReviewModelPort {
                     .current()
                     .estimateCompleteInput(context, mapped.subList(1, mapped.size()));
         } catch (IllegalStateException failure) {
+            log.warn(
+                    "后台记忆输入估算失败", com.datagent.agentv2.diagnostics.SafeFailures.sanitized(failure));
             throw new MemoryReviewConfigurationException();
         }
     }
@@ -146,12 +157,13 @@ public final class MemoryReviewModelAdapter implements MemoryReviewModelPort {
                 case "calls" -> {
                     var calls = json.valueToTree(item.get("calls"));
                     var converted = new ArrayList<ModelToolCall>();
-                    for (var call : calls)
+                    for (var call : calls) {
                         converted.add(
                                 new ModelToolCall(
                                         call.path("providerCallId").asString(),
                                         "memory",
                                         call.path("arguments")));
+                    }
                     result.add(ModelInputMessage.assistantToolCalls(converted));
                 }
                 case "result" ->
@@ -186,14 +198,20 @@ public final class MemoryReviewModelAdapter implements MemoryReviewModelPort {
         var branches = json.createArrayNode();
         for (var branch : root.path("oneOf")) {
             String action = branch.path("properties").path("action").path("const").asString();
-            if ("list".equals(action)) continue;
+            if ("list".equals(action)) {
+                continue;
+            }
             var copy = (ObjectNode) branch.deepCopy();
             ((ObjectNode) copy.path("properties")).remove("write_reason");
-            if ("add".equals(action))
+            if ("add".equals(action)) {
                 ((ObjectNode) copy.path("properties").path("restore")).put("const", false);
+            }
             var required = json.createArrayNode();
-            for (var field : copy.path("required"))
-                if (!"write_reason".equals(field.asString())) required.add(field.asString());
+            for (var field : copy.path("required")) {
+                if (!"write_reason".equals(field.asString())) {
+                    required.add(field.asString());
+                }
+            }
             copy.set("required", required);
             branches.add(copy);
             if ("remove".equals(action)) {

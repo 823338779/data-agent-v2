@@ -64,7 +64,8 @@ class OllamaAgentModelGatewayTest {
                         api,
                         new OllamaModelProperties(MODEL_NAME, Duration.ofSeconds(3), 512),
                         JsonMapper.builder().build(),
-                        prefix -> prefix + "_generated");
+                        prefix -> prefix + "_generated",
+                        org.mapstruct.factory.Mappers.getMapper(OllamaModelStructMapper.class));
     }
 
     @AfterEach

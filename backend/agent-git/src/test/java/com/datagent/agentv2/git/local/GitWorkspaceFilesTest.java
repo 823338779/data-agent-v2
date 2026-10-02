@@ -109,6 +109,22 @@ class GitWorkspaceFilesTest {
                 .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
     }
 
+    @Test
+    void searchesTextAlongsideBinaryInvalidUtf8AndOversizedFiles() throws Exception {
+        Files.write(root.resolve("a-binary.dat"), new byte[] {0, 1, 2});
+        Files.write(root.resolve("b-invalid.txt"), new byte[] {(byte) 0xff});
+        Files.writeString(root.resolve("c-large.txt"), "old".repeat(20));
+        assertEquals(
+                List.of(new FileSearchMatch("metrics.yml", 1, "old")),
+                files.search(root, "", "old"));
+    }
+
+    @Test
+    void searchStillRejectsUnsafeDirectory() {
+        assertCode("GIT_PATH_REJECTED", () -> files.search(root, ".git", "old"));
+        assertCode("GIT_PATH_REJECTED", () -> files.search(root, "../", "old"));
+    }
+
     private static void assertCode(String code, Executable action) {
         GitException error = assertThrows(GitException.class, action);
         assertEquals(code, error.code());

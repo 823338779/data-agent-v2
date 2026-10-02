@@ -8,7 +8,9 @@ public sealed interface MemoryReviewOutput {
     record Calls(List<Call> calls) implements MemoryReviewOutput {
         public Calls {
             calls = List.copyOf(calls);
-            if (calls.isEmpty()) throw new IllegalArgumentException("空工具调用");
+            if (calls.isEmpty()) {
+                throw new IllegalArgumentException("空工具调用");
+            }
         }
     }
 

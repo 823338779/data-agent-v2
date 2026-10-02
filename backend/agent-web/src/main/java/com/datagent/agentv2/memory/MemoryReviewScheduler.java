@@ -28,7 +28,9 @@ public final class MemoryReviewScheduler implements DisposableBean {
 
     @EventListener(ApplicationReadyEvent.class)
     public synchronized void ready() {
-        if (ready) return;
+        if (ready) {
+            return;
+        }
         ready = true;
         scan =
                 memoryReviewScanExecutor.scheduleWithFixedDelay(
@@ -39,10 +41,14 @@ public final class MemoryReviewScheduler implements DisposableBean {
     }
 
     public void scan() {
-        if (!ready) return;
+        if (!ready) {
+            return;
+        }
         int slots =
                 memoryReviewExecutor.getMaximumPoolSize() - memoryReviewExecutor.getActiveCount();
-        if (slots <= 0) return;
+        if (slots <= 0) {
+            return;
+        }
         try {
             int limit = Math.min(Math.min(4, slots), properties.getClaimBatchSize());
             coordinator.reactivateBlocked(worker.configurationFingerprint(), limit);
@@ -55,13 +61,17 @@ public final class MemoryReviewScheduler implements DisposableBean {
             }
         } catch (RuntimeException failure) {
             // 不输出 provider 或数据库异常正文，且一次扫描失败不能让后续周期永久停止。
-            log.warn("后台记忆队列扫描暂时失败");
+            log.warn(
+                    "后台记忆队列扫描暂时失败",
+                    com.datagent.agentv2.diagnostics.SafeFailures.sanitized(failure));
         }
     }
 
     @Override
     public synchronized void destroy() {
         ready = false;
-        if (scan != null) scan.cancel(false);
+        if (scan != null) {
+            scan.cancel(false);
+        }
     }
 }

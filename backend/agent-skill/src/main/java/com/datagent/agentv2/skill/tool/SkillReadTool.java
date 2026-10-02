@@ -49,8 +49,9 @@ public final class SkillReadTool implements AgentTool {
     @Override
     public JsonNode execute(JsonNode arguments, InvocationContext context) throws Exception {
         JsonNode idNode = arguments.path("logical_id");
-        if (!idNode.isTextual() || idNode.asString().isBlank())
+        if (!idNode.isTextual() || idNode.asString().isBlank()) {
             throw new IllegalArgumentException("logical_id must be a nonblank string");
+        }
         String logicalId = idNode.asString();
         JsonNode pathNode = arguments.path("path");
         String path = pathNode.isMissingNode() ? "SKILL.md" : pathNode.asString();

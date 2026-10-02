@@ -40,8 +40,9 @@ public class GitChangeCardPublisher
         String session = sessions.resolveSessionId(executionId);
         if (message == null
                 || !session.equals(candidate.getConversationSessionId())
-                || !session.equals(message.getConversationSessionId()))
+                || !session.equals(message.getConversationSessionId())) {
             throw new GitException("GIT_PUBLICATION_FAILED", "候选与消息不属于同一执行会话");
+        }
         candidate.setConversationMessageId(message.getConversationMessageId());
         changes.register(candidate);
         String blockId = ids.next("ui_block");
@@ -76,6 +77,8 @@ public class GitChangeCardPublisher
     }
 
     private static void requireSaved(boolean saved) {
-        if (!saved) throw new GitException("GIT_PUBLICATION_FAILED", "候选卡片登记失败");
+        if (!saved) {
+            throw new GitException("GIT_PUBLICATION_FAILED", "候选卡片登记失败");
+        }
     }
 }

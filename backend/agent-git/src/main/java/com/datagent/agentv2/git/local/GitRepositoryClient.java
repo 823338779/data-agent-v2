@@ -68,8 +68,9 @@ public final class GitRepositoryClient {
 
     /** 专用本地 ref 仅保活候选 tree，避免 GC 清理未确认对象；不创建 commit、不移动分支且从不推送该 namespace。 */
     public void retainSnapshot(Path workspace, String changeId, String tree) {
-        if (!changeId.matches("[A-Za-z0-9_-]{1,128}"))
+        if (!changeId.matches("[A-Za-z0-9_-]{1,128}")) {
             throw new GitException("GIT_SNAPSHOT_FAILED", "候选标识无效");
+        }
         runner.run(workspace, List.of("update-ref", "refs/agent-candidates/" + changeId, tree, ""));
     }
 
@@ -98,10 +99,11 @@ public final class GitRepositoryClient {
                         + (message.endsWith("\n") ? "" : "\n");
         try {
             String actual = runner.run(workspace, List.of("cat-file", "commit", commit)).output();
-            if (!expected.equals(actual))
+            if (!expected.equals(actual)) {
                 throw new GitException("GIT_COMMIT_CORRUPT", "提交对象与确认元信息不一致");
+            }
         } catch (GitException failure) {
-            throw new GitException("GIT_COMMIT_CORRUPT", "提交对象缺失或与确认元信息不一致");
+            throw new GitException("GIT_COMMIT_CORRUPT", "提交对象缺失或与确认元信息不一致", failure);
         }
     }
 
@@ -310,8 +312,12 @@ public final class GitRepositoryClient {
                         workspace,
                         List.of("merge-base", "--is-ancestor", commit, "refs/remotes/origin/main"),
                         Map.of());
-        if (result.exitCode() == 0) return true;
-        if (result.exitCode() == 1) return false;
+        if (result.exitCode() == 0) {
+            return true;
+        }
+        if (result.exitCode() == 1) {
+            return false;
+        }
         throw new GitException("GIT_COMMAND_FAILED", "无法核实远端提交祖先关系");
     }
 
@@ -337,9 +343,13 @@ public final class GitRepositoryClient {
         if (result.exitCode() != 0) {
             throw new GitException("GIT_SNAPSHOT_FAILED", "无法读取候选文件大小");
         }
-        if (result.output().isEmpty()) return 0;
+        if (result.output().isEmpty()) {
+            return 0;
+        }
         int tab = result.output().indexOf('\t');
-        if (tab < 0) throw new GitException("GIT_SNAPSHOT_FAILED", "Git tree 文件元数据格式无效");
+        if (tab < 0) {
+            throw new GitException("GIT_SNAPSHOT_FAILED", "Git tree 文件元数据格式无效");
+        }
         String[] metadata = result.output().substring(0, tab).trim().split("\\s+");
         try {
             return Long.parseLong(metadata[3]);
@@ -349,7 +359,9 @@ public final class GitRepositoryClient {
     }
 
     private static List<GitFileChange> parseChanges(String names) {
-        if (names.isEmpty()) return List.of();
+        if (names.isEmpty()) {
+            return List.of();
+        }
         String[] fields = names.split("\u0000", -1);
         List<GitFileChange> changes = new ArrayList<>();
         for (int index = 0; index + 1 < fields.length && !fields[index].isEmpty(); index += 2) {
@@ -364,7 +376,9 @@ public final class GitRepositoryClient {
             List<Path> all = paths.toList();
             for (Path path : all) {
                 Path relative = root.relativize(path);
-                if (relative.getNameCount() == 0 || isRootGitMetadata(relative)) continue;
+                if (relative.getNameCount() == 0 || isRootGitMetadata(relative)) {
+                    continue;
+                }
                 if (Files.isSymbolicLink(path)
                         || containsGit(relative)
                         || (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)
@@ -391,9 +405,13 @@ public final class GitRepositoryClient {
                 runner.run(workspace, List.of("ls-tree", "-r", "-z", "--long", "HEAD")).output();
         Map<String, BaselineEntry> entries = new HashMap<>();
         for (String entry : output.split("\u0000", -1)) {
-            if (entry.isEmpty()) continue;
+            if (entry.isEmpty()) {
+                continue;
+            }
             int tab = entry.indexOf('\t');
-            if (tab < 0) throw new GitException("GIT_SNAPSHOT_FAILED", "Git tree 条目格式无效");
+            if (tab < 0) {
+                throw new GitException("GIT_SNAPSHOT_FAILED", "Git tree 条目格式无效");
+            }
             String[] metadata = entry.substring(0, tab).trim().split("\\s+");
             if (metadata.length != 4) {
                 throw new GitException("GIT_SNAPSHOT_FAILED", "Git tree 条目元数据无效");
@@ -441,7 +459,11 @@ public final class GitRepositoryClient {
     }
 
     private static boolean containsGit(Path path) {
-        for (Path part : path) if (part.toString().equalsIgnoreCase(".git")) return true;
+        for (Path part : path) {
+            if (part.toString().equalsIgnoreCase(".git")) {
+                return true;
+            }
+        }
         return false;
     }
 

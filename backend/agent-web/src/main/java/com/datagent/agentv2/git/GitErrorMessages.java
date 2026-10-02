@@ -5,7 +5,9 @@ public final class GitErrorMessages {
     private GitErrorMessages() {}
 
     public static String summary(String code) {
-        if (code == null) return null;
+        if (code == null) {
+            return null;
+        }
         return switch (code) {
             case "GIT_CONFLICT", "GIT_CONTENT_CONFLICT" -> "草稿或候选版本已变化，请刷新后重试。";
             case "GIT_BASE_CHANGED", "GIT_NON_FAST_FORWARD" -> "远端 main 已变化，需要基于最新内容重新准备并确认。";

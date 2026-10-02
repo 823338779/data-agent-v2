@@ -31,9 +31,10 @@ public class ConversationOrganizationService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Project not found");
         }
         var session = sessions.lockById(sessionId);
-        if (session == null)
+        if (session == null) {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, "Conversation session not found");
+        }
         if (session.getVersion() != expectedVersion) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT, "Conversation session version is stale");
@@ -43,7 +44,9 @@ public class ConversationOrganizationService {
                         ? (session.getPinnedAt() == null ? Instant.now() : session.getPinnedAt())
                         : null;
         if (Objects.equals(projectId, session.getProjectId())
-                && Objects.equals(targetPin, session.getPinnedAt())) return session;
+                && Objects.equals(targetPin, session.getPinnedAt())) {
+            return session;
+        }
         if (!sessions.updateOrganization(sessionId, projectId, targetPin, expectedVersion)) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT, "Conversation session version is stale");

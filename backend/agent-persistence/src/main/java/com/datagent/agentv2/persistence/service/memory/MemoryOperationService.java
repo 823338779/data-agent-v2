@@ -37,8 +37,9 @@ public class MemoryOperationService
     private com.baomidou.mybatisplus.extension.conditions.query.LambdaQueryChainWrapper<
                     MemoryOperationEntity>
             successfulReviewQuery(String prefix) {
-        if (prefix == null || !prefix.matches("mr:[a-f0-9:]+:"))
+        if (prefix == null || !prefix.matches("mr:[a-f0-9:]+:")) {
             throw new IllegalArgumentException("非法后台动作前缀");
+        }
         return lambdaQuery()
                 .eq(MemoryOperationEntity::getUserId, OperatorContext.requiredUserId())
                 .likeRight(MemoryOperationEntity::getRequestId, prefix)

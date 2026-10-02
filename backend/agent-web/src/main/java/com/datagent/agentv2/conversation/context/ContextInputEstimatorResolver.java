@@ -27,10 +27,11 @@ public final class ContextInputEstimatorResolver {
     /** 未配置估算器时调用方必须停止该后台模型流程，不得猜测预算或套用另一策略口径。 */
     public ContextInputEstimator current() {
         ContextInputEstimator selected = estimators.get(properties.getStrategy());
-        if (selected == null)
+        if (selected == null) {
             throw new IllegalStateException(
                     "Context input estimator unavailable for strategy: "
                             + properties.getStrategy());
+        }
         return selected;
     }
 }

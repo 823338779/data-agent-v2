@@ -1,5 +1,6 @@
 package com.datagent.agentv2.memory.review;
 
+import com.datagent.agentv2.diagnostics.SafeFailures;
 import com.datagent.agentv2.memory.*;
 import com.datagent.agentv2.memory.config.MemoryProperties;
 import com.datagent.agentv2.memory.observability.MemoryMetrics;
@@ -16,6 +17,7 @@ import tools.jackson.databind.ObjectMapper;
 
 /** 有界私有审查循环；模型 I/O 不持事务，提交与心跳由独立短事务再次检查数据库 fencing。 */
 @RequiredArgsConstructor
+@lombok.extern.slf4j.Slf4j
 public final class MemoryReviewWorker {
     private final MemoryProperties properties;
     private final MemoryReviewCoordinator coordinator;
@@ -61,9 +63,11 @@ public final class MemoryReviewWorker {
         var heartbeat =
                 guards.scheduleWithFixedDelay(
                         () -> {
-                            if (stopped.get()) return;
+                            if (stopped.get()) {
+                                return;
+                            }
                             try {
-                                if (!coordinator.renew(claim))
+                                if (!coordinator.renew(claim)) {
                                     stop(
                                             claim,
                                             stopped,
@@ -71,7 +75,9 @@ public final class MemoryReviewWorker {
                                             "LEASE_LOST",
                                             fingerprint,
                                             started);
+                                }
                             } catch (RuntimeException failure) {
+                                log.warn("个人记忆审查失败", SafeFailures.sanitized(failure));
                                 stop(
                                         claim,
                                         stopped,
@@ -91,13 +97,14 @@ public final class MemoryReviewWorker {
             String jobPrefix = jobPrefix(claim);
             var previous =
                     operations.findReviewResults(jobPrefix, properties.getMaxMaintenanceCalls());
-            if (!previous.isEmpty())
+            if (!previous.isEmpty()) {
                 protocol.add(
                         Map.of(
                                 "type",
                                 "historical",
                                 "results",
                                 previous.stream().map(MemoryOperation::outcome).toList()));
+            }
             var initial = snapshot;
             var slice =
                     new MemoryReviewSliceSelector(properties)
@@ -113,11 +120,14 @@ public final class MemoryReviewWorker {
                                                     new MemoryReviewInput(
                                                             initial, rows, protocol, budget)),
                                     budget);
-            if (slice.blocked()) throw new ReviewFailure("INPUT_TOO_LARGE", true);
+            if (slice.blocked()) {
+                throw new ReviewFailure("INPUT_TOO_LARGE", true);
+            }
             if (slice.messages().isEmpty()) {
                 check(stopped, deadline);
-                if (slice.reviewedThroughSequence() == claim.fromSequence())
+                if (slice.reviewedThroughSequence() == claim.fromSequence()) {
                     throw new ReviewFailure("PENDING_MESSAGE", false);
+                }
                 settle(
                         stopped,
                         started,
@@ -135,8 +145,9 @@ public final class MemoryReviewWorker {
             for (int call = 0; call < properties.getMaxModelCalls(); call++) {
                 check(stopped, deadline);
                 var input = new MemoryReviewInput(snapshot, slice.messages(), protocol, budget);
-                if (model.estimate(input) > budget)
+                if (model.estimate(input) > budget) {
                     throw new ReviewFailure("INPUT_TOO_LARGE", true);
+                }
                 var output = model.complete(input);
                 check(stopped, deadline);
                 if (output instanceof MemoryReviewOutput.Done) {
@@ -150,8 +161,9 @@ public final class MemoryReviewWorker {
                 protocol.add(Map.of("type", "calls", "calls", calls));
                 for (var item : calls) {
                     check(stopped, deadline);
-                    if (++maintenance > properties.getMaxMaintenanceCalls())
+                    if (++maintenance > properties.getMaxMaintenanceCalls()) {
                         throw new ReviewFailure("MAINTENANCE_LIMIT", false);
+                    }
                     var context = context(claim, "validating", revision);
                     var arguments = json.valueToTree(item.arguments());
                     var command = dispatcher.parse(context, arguments);
@@ -170,8 +182,9 @@ public final class MemoryReviewWorker {
                                                         entry ->
                                                                 entry.memoryId()
                                                                         .equals(old.memoryId())));
-                    } else if (handled.containsKey(stable)) outcome = handled.get(stable);
-                    else {
+                    } else if (handled.containsKey(stable)) {
+                        outcome = handled.get(stable);
+                    } else {
                         String request =
                                 stable
                                         + digest(
@@ -185,7 +198,9 @@ public final class MemoryReviewWorker {
                         check(stopped, deadline);
                         outcome = dispatcher.dispatch(context(claim, request, revision), arguments);
                         handled.put(stable, outcome);
-                        if (outcome.successful()) revision = outcome.revision();
+                        if (outcome.successful()) {
+                            revision = outcome.revision();
+                        }
                     }
                     protocol.add(
                             Map.of(
@@ -198,19 +213,22 @@ public final class MemoryReviewWorker {
                                     "outcome",
                                     outcome));
                     if (!outcome.successful()) {
-                        if (!definitive(outcome.status()))
+                        if (!definitive(outcome.status())) {
                             throw new ReviewFailure(outcome.status().name(), false);
+                        }
                         rejected++;
                     }
                 }
                 // 后续模型调用需要看到自己的成功更新；外部变化不能偷偷替换冻结 revision，必须停止并重新领取。
                 var refreshed = memory.snapshot();
-                if (refreshed.state().revision() != revision)
+                if (refreshed.state().revision() != revision) {
                     throw new ReviewFailure("CONFLICT", false);
+                }
                 snapshot = refreshed;
             }
             throw new ReviewFailure("MODEL_CALL_LIMIT", false);
         } catch (MemoryReviewConfigurationException failure) {
+            log.warn("个人记忆审查失败", SafeFailures.sanitized(failure));
             settle(
                     stopped,
                     started,
@@ -221,16 +239,19 @@ public final class MemoryReviewWorker {
                     started,
                     () -> coordinator.fail(claim, failure.reason, failure.blocked, fingerprint));
         } catch (MemoryException failure) {
+            log.warn("个人记忆审查失败", SafeFailures.sanitized(failure));
             settle(
                     stopped,
                     started,
                     () -> coordinator.fail(claim, failure.code().name(), false, fingerprint));
         } catch (IllegalArgumentException failure) {
+            log.warn("个人记忆审查失败", SafeFailures.sanitized(failure));
             settle(
                     stopped,
                     started,
                     () -> coordinator.fail(claim, "INVALID_REQUEST", false, fingerprint));
         } catch (RuntimeException failure) {
+            log.warn("个人记忆审查失败", SafeFailures.sanitized(failure));
             settle(
                     stopped,
                     started,
@@ -266,7 +287,9 @@ public final class MemoryReviewWorker {
             long started,
             java.util.function.Supplier<MemoryReviewJob.Status> operation) {
         synchronized (stopped) {
-            if (stopped.get()) return;
+            if (stopped.get()) {
+                return;
+            }
             var result = operation.get();
             stopped.set(true);
             metrics.recordReview(
@@ -282,7 +305,9 @@ public final class MemoryReviewWorker {
             String fingerprint,
             long started) {
         synchronized (stopped) {
-            if (!stopped.compareAndSet(false, true)) return;
+            if (!stopped.compareAndSet(false, true)) {
+                return;
+            }
             // 中断必须在数据库 I/O 前且与 finally 互斥；否则慢 fail 返回时可能误中断该池线程的下一任务。
             thread.interrupt();
         }
@@ -299,9 +324,12 @@ public final class MemoryReviewWorker {
     }
 
     private static void check(AtomicBoolean stopped, long deadline) {
-        if (stopped.get() || Thread.currentThread().isInterrupted())
+        if (stopped.get() || Thread.currentThread().isInterrupted()) {
             throw new ReviewFailure("LEASE_LOST", false);
-        if (System.nanoTime() >= deadline) throw new ReviewFailure("DEADLINE", false);
+        }
+        if (System.nanoTime() >= deadline) {
+            throw new ReviewFailure("DEADLINE", false);
+        }
     }
 
     private static MemoryWriteContext context(
@@ -337,7 +365,9 @@ public final class MemoryReviewWorker {
                                                                 new ReviewFailure(
                                                                         "INVALID_REQUEST", false)))
                         .toList();
-        if (result.isEmpty()) throw new ReviewFailure("INVALID_REQUEST", false);
+        if (result.isEmpty()) {
+            throw new ReviewFailure("INVALID_REQUEST", false);
+        }
         return result;
     }
 

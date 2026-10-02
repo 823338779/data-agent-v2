@@ -52,7 +52,12 @@ class ConversationContextStrategyResolverTest {
     void rawStrategyPreservesExistingToolProtocolOrder() {
         ConversationContextLoader loader = mock(ConversationContextLoader.class);
         JsonMapper json = JsonMapper.builder().build();
-        ContextModelMessageMapper messages = new ContextModelMessageMapper(json);
+        ContextModelMessageMapper messages =
+                new ContextModelMessageMapper(
+                        org.mapstruct.factory.Mappers.getMapper(
+                                com.datagent.agentv2.conversation.context
+                                        .ContextModelMessageStructMapper.class),
+                        json);
         ModelToolCall call = new ModelToolCall("call-1", "lookup", json.readTree("{\"q\":\"x\"}"));
         when(loader.load("execution-1", 4L))
                 .thenReturn(

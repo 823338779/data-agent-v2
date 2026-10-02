@@ -40,6 +40,7 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
     private final OllamaModelProperties properties;
     private final ObjectMapper json;
     private final IdGenerator ids;
+    private final OllamaModelStructMapper mappings;
 
     @Override
     public ModelInvocationResult complete(
@@ -50,12 +51,9 @@ public final class OllamaAgentModelGateway implements AgentModelGateway {
                 OllamaApi.ChatRequest.builder(properties.getModel())
                         .messages(
                                 messages.stream()
-                                        .map(
-                                                message ->
-                                                        OllamaModelStructMapper.INSTANCE
-                                                                .toProviderMessage(message, json))
+                                        .map(message -> mappings.toProviderMessage(message, json))
                                         .toList())
-                        .tools(OllamaModelStructMapper.INSTANCE.toProviderTools(tools))
+                        .tools(mappings.toProviderTools(tools))
                         .options(
                                 OllamaChatOptions.builder()
                                         .numCtx(properties.getContextWindowTokens())

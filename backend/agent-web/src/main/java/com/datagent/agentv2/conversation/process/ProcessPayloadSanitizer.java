@@ -32,9 +32,11 @@ public final class ProcessPayloadSanitizer {
                     "connectionstring",
                     "jdbcurl");
     private static final Pattern NON_ALPHANUMERIC = Pattern.compile("[^a-zA-Z0-9]");
+
+    /** 引号值允许暂未闭合；占有式重复避免长敏感值回溯耗尽栈，流式前缀不得先行泄漏。 */
     private static final Pattern TEXT_SECRET =
             Pattern.compile(
-                    "(?i)([\\\"']?(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|authorization|cookie|set[_-]?cookie|connection[_-]?string|jdbc[_-]?url)[\\\"']?\\s*[:=]\\s*)(\\\"(?:\\\\.|[^\\\"])*\\\"|'(?:\\\\.|[^'])*'|[^,;\\r\\n&}]+)");
+                    "(?i)([\\\"']?(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|authorization|cookie|set[_-]?cookie|connection[_-]?string|jdbc[_-]?url)[\\\"']?\\s*[:=]\\s*)(\\\"(?:\\\\.|[^\\\"])*+(?:\\\"|$)|'(?:\\\\.|[^'])*+(?:'|$)|[^,;\\r\\n&}]+)");
 
     private final ObjectMapper json;
 

@@ -19,15 +19,18 @@ public final class SkillBundleFactory {
         String logicalId = definition.logicalId();
         String description = definition.description();
         List<String> requiredTools = definition.requiredTools();
-        if (logicalId == null || !logicalId.matches("[a-z0-9][a-z0-9-]*"))
+        if (logicalId == null || !logicalId.matches("[a-z0-9][a-z0-9-]*")) {
             throw new IllegalArgumentException("Invalid skill logical id");
-        if (description == null || description.isBlank())
+        }
+        if (description == null || description.isBlank()) {
             throw new IllegalArgumentException("Invalid skill description");
+        }
         resources.forEach(
                 (path, bytes) -> {
                     SkillBundle.normalize(path);
-                    if (bytes.length > MAX_RESOURCE_BYTES)
+                    if (bytes.length > MAX_RESOURCE_BYTES) {
                         throw new IllegalArgumentException("Skill resource is too large");
+                    }
                 });
         validateUtf8(resources.get("SKILL.md"));
         return new SkillBundle(
@@ -37,7 +40,9 @@ public final class SkillBundleFactory {
     }
 
     private static void validateUtf8(byte[] bytes) {
-        if (bytes == null) throw new IllegalArgumentException("SKILL.md is required");
+        if (bytes == null) {
+            throw new IllegalArgumentException("SKILL.md is required");
+        }
         try {
             StandardCharsets.UTF_8
                     .newDecoder()

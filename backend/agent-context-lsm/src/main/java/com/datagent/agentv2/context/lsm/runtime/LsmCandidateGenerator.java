@@ -38,6 +38,7 @@ public final class LsmCandidateGenerator {
     private final LsmSummarySegmentRepository segments;
     private final LsmDocumentCodec documents;
     private final IdGenerator ids;
+    private final LsmPersistenceStructMapper models;
 
     public GeneratedCompaction generate(CompactionRequest request, LsmCompactionPlan plan) {
         Map<String, CandidateInput> inputs = new LinkedHashMap<>();
@@ -72,7 +73,7 @@ public final class LsmCandidateGenerator {
             }
             resolvedIds.put(operation.targetId(), persisted.getSummarySegmentId());
             generatedDocuments.put(operation.targetId(), persisted.getSummaryDocument());
-            candidates.add(LsmPersistenceStructMapper.INSTANCE.toDomain(persisted, documents));
+            candidates.add(models.toDomain(persisted, documents));
         }
         return new GeneratedCompaction(resolvePlan(plan, resolvedIds), candidates);
     }

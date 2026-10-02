@@ -7,14 +7,14 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.Setter;
 
-/** 用户、模型或工具产生的一条不可变会话消息。 */
+/** 会话消息聚合；身份固定，正文和过程仅通过受约束的业务操作变更。 */
 @Getter
-@Setter
-@NoArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class ConversationMessage {
 
     private static final String ERROR_DUPLICATE_PROCESS_ITEM_ID =
@@ -71,6 +71,37 @@ public final class ConversationMessage {
     /** 用户可见的消息创建时间。 */
     private LocalDateTime createdAt;
 
+    /** 从完整存储快照恢复领域状态；Builder 只负责组装，构造时统一校验不变量。 */
+    @Builder
+    private ConversationMessage(
+            String conversationMessageId,
+            String conversationSessionId,
+            String executionId,
+            MessageRole role,
+            String content,
+            List<ThinkingProcessItem> thinkingProcess,
+            Long conversationMessageSequence,
+            String authorUserId,
+            Long version,
+            LocalDateTime memoryEvidenceCreatedAt,
+            LocalDateTime createdAt) {
+        this.conversationMessageId =
+                DomainInvariants.text(conversationMessageId, "conversationMessageId");
+        this.conversationSessionId =
+                DomainInvariants.text(conversationSessionId, "conversationSessionId");
+        this.executionId = executionId;
+        this.role = java.util.Objects.requireNonNull(role, "role");
+        this.content = java.util.Objects.requireNonNull(content, "content");
+        restoreThinkingProcess(thinkingProcess);
+        this.conversationMessageSequence =
+                DomainInvariants.nonnegative(
+                        conversationMessageSequence, "conversationMessageSequence");
+        this.authorUserId = authorUserId;
+        this.version = DomainInvariants.nonnegative(version, "version");
+        this.memoryEvidenceCreatedAt = memoryEvidenceCreatedAt;
+        this.createdAt = createdAt;
+    }
+
     /** 组装用户提交消息。 */
     public static ConversationMessage user(
             String messageId,
@@ -89,7 +120,7 @@ public final class ConversationMessage {
             String messageId, String sessionId, String executionId, long sequence) {
         ConversationMessage message =
                 base(messageId, sessionId, MessageRole.ASSISTANT, "", sequence);
-        message.executionId = executionId;
+        message.executionId = DomainInvariants.text(executionId, "executionId");
         message.thinkingProcess = List.of();
         return message;
     }
@@ -99,22 +130,29 @@ public final class ConversationMessage {
             String messageId, String sessionId, String executionId, String content, long sequence) {
         ConversationMessage message =
                 base(messageId, sessionId, MessageRole.ASSISTANT, content, sequence);
-        message.executionId = executionId;
+        message.executionId = DomainInvariants.text(executionId, "executionId");
         return message;
     }
 
     /** 将已持久化的用户消息关联到其触发的执行。 */
     public void associateExecution(String executionId) {
+        DomainInvariants.text(executionId, "executionId");
+        if (this.executionId != null && !this.executionId.equals(executionId)) {
+            throw new IllegalStateException("Message already belongs to another execution");
+        }
         this.executionId = executionId;
     }
 
     /** 在执行终态把预建 assistant 占位正文替换为真实模型回答。 */
     public void completeAssistantContent(String content) {
+        if (role != MessageRole.ASSISTANT) {
+            throw new IllegalStateException("Only assistant content can be completed");
+        }
         this.content = Objects.requireNonNull(content, "content");
     }
 
     /** 使用不可变副本替换过程列表，避免持久化后被调用方继续修改。 */
-    public void setThinkingProcess(List<ThinkingProcessItem> thinkingProcess) {
+    private void restoreThinkingProcess(List<ThinkingProcessItem> thinkingProcess) {
         List<ThinkingProcessItem> candidate =
                 thinkingProcess == null ? List.of() : List.copyOf(thinkingProcess);
         validateUniqueProcessItems(candidate);
@@ -239,14 +277,22 @@ public final class ConversationMessage {
         return status == ThinkingProcessStatus.SUCCEEDED || status == ThinkingProcessStatus.FAILED;
     }
 
+    /** 成功提交后同步版本和数据库生成的证据时间，不改变正文及过程状态。 */
+    public void acknowledgePersistence(
+            long persistedVersion, LocalDateTime createdAt, LocalDateTime memoryEvidenceCreatedAt) {
+        version = DomainInvariants.advancedVersion(version, persistedVersion);
+        this.createdAt = Objects.requireNonNull(createdAt, "createdAt");
+        this.memoryEvidenceCreatedAt = memoryEvidenceCreatedAt;
+    }
+
     private static ConversationMessage base(
             String messageId, String sessionId, MessageRole role, String content, long sequence) {
         ConversationMessage message = new ConversationMessage();
-        message.conversationMessageId = messageId;
-        message.conversationSessionId = sessionId;
+        message.conversationMessageId = DomainInvariants.text(messageId, "messageId");
+        message.conversationSessionId = DomainInvariants.text(sessionId, "sessionId");
         message.role = Objects.requireNonNull(role, "role");
-        message.content = content;
-        message.conversationMessageSequence = sequence;
+        message.content = Objects.requireNonNull(content, "content");
+        message.conversationMessageSequence = DomainInvariants.nonnegative(sequence, "sequence");
         message.version = 0L;
         return message;
     }

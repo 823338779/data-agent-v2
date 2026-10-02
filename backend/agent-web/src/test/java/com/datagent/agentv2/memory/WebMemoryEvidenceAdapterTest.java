@@ -169,8 +169,7 @@ class WebMemoryEvidenceAdapterTest {
         var message =
                 ConversationMessage.user("persisted", "conversation", "真实消息", 20, "user_admin");
         var invented = LocalDateTime.of(2000, 1, 1, 0, 0);
-        message.setCreatedAt(invented);
-        message.setMemoryEvidenceCreatedAt(invented);
+        message.acknowledgePersistence(0L, invented, invented);
         var before =
                 jdbc.queryForObject(
                         "select clock_timestamp() at time zone 'Asia/Shanghai'",
@@ -184,8 +183,20 @@ class WebMemoryEvidenceAdapterTest {
         assertThat(stored.getCreatedAt()).isEqualTo(invented);
         assertThat(stored.getMemoryEvidenceCreatedAt()).isBetween(before, after);
         var trusted = stored.getMemoryEvidenceCreatedAt();
-        stored.setContent("更新正文");
-        stored.setMemoryEvidenceCreatedAt(invented);
+        stored =
+                ConversationMessage.builder()
+                        .conversationMessageId(stored.getConversationMessageId())
+                        .conversationSessionId(stored.getConversationSessionId())
+                        .executionId(stored.getExecutionId())
+                        .role(stored.getRole())
+                        .content("更新正文")
+                        .conversationMessageSequence(stored.getConversationMessageSequence())
+                        .authorUserId(stored.getAuthorUserId())
+                        .version(stored.getVersion())
+                        .createdAt(stored.getCreatedAt())
+                        .memoryEvidenceCreatedAt(invented)
+                        .thinkingProcess(stored.getThinkingProcess())
+                        .build();
         assertThat(messages.updateById(stored)).isTrue();
         jdbc.update(
                 "update conversation_message set updated_at=localtimestamp,created_at='1999-01-01' where conversation_message_id='persisted'");

@@ -151,7 +151,11 @@ class MemoryReviewModelAdapterTest {
                 provider,
                 new ContextInputEstimatorResolver(List.of(estimator), strategy),
                 new ContextModelBudgetProvider("ollama", ollama, generic),
-                new ContextModelMessageMapper(json),
+                new ContextModelMessageMapper(
+                        org.mapstruct.factory.Mappers.getMapper(
+                                com.datagent.agentv2.conversation.context
+                                        .ContextModelMessageStructMapper.class),
+                        json),
                 new MemoryTool(
                         mock(MemoryToolDispatcher.class),
                         mock(MemoryInvocationRegistry.class),

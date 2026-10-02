@@ -78,8 +78,9 @@ public class GitChangeController {
             @PathVariable String changeId,
             @Valid @RequestBody VersionRequest request) {
         // 核实只读取远端，不追加提交许可；版本检查提醒客户端刷新过期卡片。
-        if (changes.detail(sessionId, changeId).version() != request.version())
+        if (changes.detail(sessionId, changeId).version() != request.version()) {
             throw new GitException("GIT_CONFLICT", "候选版本已变化");
+        }
         return response(sessionId, submissions.reconcile(sessionId, changeId));
     }
 
@@ -89,7 +90,9 @@ public class GitChangeController {
                     view, changes.files(session, view.changeId()));
         } catch (GitException failure) {
             // 归属和按钮状态已校验；已知审阅损坏只影响审阅能力，不得改写或遮蔽持久化提交事实。
-            if (!"GIT_SNAPSHOT_CORRUPT".equals(failure.code())) throw failure;
+            if (!"GIT_SNAPSHOT_CORRUPT".equals(failure.code())) {
+                throw failure;
+            }
             return GitChangeResponse.composeFromUnavailableReview(view);
         }
     }

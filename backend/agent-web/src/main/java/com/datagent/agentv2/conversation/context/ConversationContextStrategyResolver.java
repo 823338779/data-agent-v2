@@ -12,6 +12,8 @@ public class ConversationContextStrategyResolver {
     private static final String ERROR_DUPLICATE_STRATEGY = "Duplicate context strategy id: ";
     private static final String ERROR_UNKNOWN_STRATEGY = "Unknown context strategy id: ";
 
+    @lombok.Getter
+    @lombok.experimental.Accessors(fluent = true)
     private final ConversationContextStrategy selected;
 
     public ConversationContextStrategyResolver(
@@ -28,10 +30,6 @@ public class ConversationContextStrategyResolver {
         if (selected == null) {
             throw new IllegalStateException(ERROR_UNKNOWN_STRATEGY + properties.getStrategy());
         }
-    }
-
-    public ConversationContextStrategy selected() {
-        return selected;
     }
 
     public PreparedConversationContext prepare(ConversationContextRequest request) {

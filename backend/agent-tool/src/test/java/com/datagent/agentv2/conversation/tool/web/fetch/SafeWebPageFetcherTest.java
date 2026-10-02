@@ -10,9 +10,40 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class SafeWebPageFetcherTest {
+
+    @Test
+    void sameHostRedirectCannotReusePreviousPublicDnsApproval() throws Exception {
+        AtomicInteger lookups = new AtomicInteger();
+        var policy =
+                new PublicWebAddressPolicy(
+                        host ->
+                                new InetAddress[] {
+                                    InetAddress.getByName(
+                                            lookups.incrementAndGet() == 1
+                                                    ? "93.184.216.34"
+                                                    : "127.0.0.1")
+                                });
+        var transport =
+                new StubTransport(
+                        new WebFetchHttpResponse(
+                                302, Map.of("Location", List.of("/after-rebinding")), new byte[0]));
+        assertThatThrownBy(
+                        () ->
+                                new SafeWebPageFetcher(transport, policy, properties())
+                                        .fetch(URI.create("https://rebound.example/start")))
+                .isInstanceOfSatisfying(
+                        WebFetchException.class,
+                        failure ->
+                                assertThat(failure.kind())
+                                        .isEqualTo(WebFetchException.Kind.BLOCKED));
+        assertThat(lookups).hasValue(2);
+        assertThat(transport.requested)
+                .containsExactly(URI.create("https://rebound.example/start"));
+    }
 
     @Test
     void validatesEveryRedirectTargetBeforeRequestingIt() throws Exception {
@@ -90,8 +121,8 @@ class SafeWebPageFetcherTest {
         }
 
         @Override
-        public WebFetchHttpResponse get(URI uri) {
-            requested.add(uri);
+        public WebFetchHttpResponse get(ValidatedWebAddress target) {
+            requested.add(target.uri());
             return responses.removeFirst();
         }
     }

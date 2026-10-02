@@ -7,6 +7,8 @@ import org.springframework.stereotype.Component;
 
 @Getter
 @Setter
+@lombok.NoArgsConstructor
+@lombok.AllArgsConstructor
 @Component
 @ConfigurationProperties(prefix = "data-agent.react.limits")
 public class ReactLimitsProperties {
@@ -16,11 +18,4 @@ public class ReactLimitsProperties {
 
     /** 单次 Agent 执行允许归档的最大工具调用数。 */
     private int maxToolCalls = 32;
-
-    public ReactLimitsProperties() {}
-
-    public ReactLimitsProperties(int maxModelInvocations, int maxToolCalls) {
-        this.maxModelInvocations = maxModelInvocations;
-        this.maxToolCalls = maxToolCalls;
-    }
 }

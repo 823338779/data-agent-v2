@@ -18,10 +18,13 @@ public final class GitFinalAnswerComposer {
         String content = answer;
         for (var block : blocks.listByMessageIds(List.of(message.getConversationMessageId()))) {
             if (!"git-change-card".equals(block.getType())
-                    || !Integer.valueOf(1).equals(block.getSchemaVersion())) continue;
+                    || !Integer.valueOf(1).equals(block.getSchemaVersion())) {
+                continue;
+            }
             String marker = "<agent-ui block-id=\"" + block.getUiBlockId() + "\"></agent-ui>";
-            if (!content.contains(marker))
+            if (!content.contains(marker)) {
                 content = content.isBlank() ? marker : content + "\n\n" + marker;
+            }
         }
         return content;
     }

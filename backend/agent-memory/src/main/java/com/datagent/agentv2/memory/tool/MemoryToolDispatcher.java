@@ -160,10 +160,14 @@ public final class MemoryToolDispatcher {
 
     private static MemoryWriteReason reason(MemoryWriteContext context, JsonNode node) {
         if (context.caller() == MemoryWriteContext.Caller.BACKGROUND) {
-            if (!node.isMissingNode()) throw invalid("Background reason is server controlled");
+            if (!node.isMissingNode()) {
+                throw invalid("Background reason is server controlled");
+            }
             return MemoryWriteReason.AGENT_INFERRED;
         }
-        if (!node.isTextual()) throw invalid("write_reason must be a string");
+        if (!node.isTextual()) {
+            throw invalid("write_reason must be a string");
+        }
         return switch (node.asString()) {
             case "user_requested" -> MemoryWriteReason.USER_REQUESTED;
             case "agent_inferred" -> MemoryWriteReason.AGENT_INFERRED;
@@ -179,7 +183,9 @@ public final class MemoryToolDispatcher {
 
     private static void requireOnly(JsonNode arguments, Set<String> allowed) {
         for (String name : arguments.propertyNames()) {
-            if (!allowed.contains(name)) throw invalid("Unexpected memory argument: " + name);
+            if (!allowed.contains(name)) {
+                throw invalid("Unexpected memory argument: " + name);
+            }
         }
     }
 
@@ -192,7 +198,9 @@ public final class MemoryToolDispatcher {
     }
 
     private static String optionalText(JsonNode node, String name) {
-        if (node.isMissingNode() || node.isNull()) return null;
+        if (node.isMissingNode() || node.isNull()) {
+            return null;
+        }
         if (!node.isTextual() || node.asString().isBlank()) {
             throw invalid(name + " must be a non-blank string");
         }
@@ -200,8 +208,12 @@ public final class MemoryToolDispatcher {
     }
 
     private static MemoryKind optionalKind(JsonNode node) {
-        if (node.isMissingNode() || node.isNull()) return null;
-        if (!node.isTextual()) throw invalid("kind must be a string");
+        if (node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        if (!node.isTextual()) {
+            throw invalid("kind must be a string");
+        }
         try {
             return MemoryKind.parse(node.asString());
         } catch (IllegalArgumentException failure) {
@@ -218,7 +230,9 @@ public final class MemoryToolDispatcher {
     }
 
     private static int optionalLimit(JsonNode node) {
-        if (node.isMissingNode() || node.isNull()) return DEFAULT_LIMIT;
+        if (node.isMissingNode() || node.isNull()) {
+            return DEFAULT_LIMIT;
+        }
         if (!node.isIntegralNumber() || !node.canConvertToInt()) {
             throw invalid("limit must be an integer");
         }
@@ -230,8 +244,12 @@ public final class MemoryToolDispatcher {
     }
 
     private static boolean optionalBoolean(JsonNode node, String name, boolean fallback) {
-        if (node.isMissingNode() || node.isNull()) return fallback;
-        if (!node.isBoolean()) throw invalid(name + " must be a boolean");
+        if (node.isMissingNode() || node.isNull()) {
+            return fallback;
+        }
+        if (!node.isBoolean()) {
+            throw invalid(name + " must be a boolean");
+        }
         return node.asBoolean();
     }
 

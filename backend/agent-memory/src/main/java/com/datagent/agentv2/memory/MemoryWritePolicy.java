@@ -15,8 +15,9 @@ public class MemoryWritePolicy {
             MemoryEntry target,
             MemoryState state) {
         if (command instanceof MemoryCommand.Confirm
-                && context.caller() != MemoryWriteContext.Caller.BACKGROUND)
+                && context.caller() != MemoryWriteContext.Caller.BACKGROUND) {
             reject(MemoryStatus.INVALID_REQUEST);
+        }
         boolean explicit = explicit(context, command);
         if (context.requestId().isBlank()
                 || (context.caller() == MemoryWriteContext.Caller.UI
@@ -41,7 +42,9 @@ public class MemoryWritePolicy {
             }
         }
         if (!(command instanceof MemoryCommand.Add)) {
-            if (target == null) reject(MemoryStatus.NOT_FOUND);
+            if (target == null) {
+                reject(MemoryStatus.NOT_FOUND);
+            }
             long expectedVersion =
                     switch (command) {
                         case MemoryCommand.Replace replace -> replace.expectedVersion();
@@ -50,36 +53,48 @@ public class MemoryWritePolicy {
                         case MemoryCommand.Add ignored ->
                                 throw new IllegalStateException("新增没有目标版本");
                     };
-            if (target.version() != expectedVersion) reject(MemoryStatus.CONFLICT);
-            if (target.userProtected() && !explicit) reject(MemoryStatus.PROTECTED);
+            if (target.version() != expectedVersion) {
+                reject(MemoryStatus.CONFLICT);
+            }
+            if (target.userProtected() && !explicit) {
+                reject(MemoryStatus.PROTECTED);
+            }
         }
     }
 
     /** 验证端口返回的持久化来源与完整请求集合，不能把角色/作者正确但不属于本轮的消息当授权。 */
     void validateEvidence(
             MemoryWriteContext context, MemoryCommand command, List<MemoryEvidence> evidence) {
-        if (context.caller() == MemoryWriteContext.Caller.UI) return;
+        if (context.caller() == MemoryWriteContext.Caller.UI) {
+            return;
+        }
         var ids = new HashSet<>(command.evidenceMessageIds());
         if (ids.isEmpty()
                 || ids.stream().anyMatch(MemoryWritePolicy::blank)
                 || evidence == null
-                || evidence.size() != ids.size()) reject(MemoryStatus.INVALID_REQUEST);
+                || evidence.size() != ids.size()) {
+            reject(MemoryStatus.INVALID_REQUEST);
+        }
         for (var item : evidence) {
             if (!ids.remove(item.evidenceId())
                     || item.kind() != MemoryEvidence.Kind.USER_MESSAGE
                     || !OperatorContext.requiredUserId().equals(item.authorUserId())
                     || !Objects.equals(context.conversationId(), item.conversationId())
                     || item.messageVersion() < 1
-                    || item.content().isBlank()) reject(MemoryStatus.INVALID_REQUEST);
-            if (context.caller() == MemoryWriteContext.Caller.MAIN
-                    && !Objects.equals(context.executionId(), item.executionId()))
+                    || item.content().isBlank()) {
                 reject(MemoryStatus.INVALID_REQUEST);
+            }
+            if (context.caller() == MemoryWriteContext.Caller.MAIN
+                    && !Objects.equals(context.executionId(), item.executionId())) {
+                reject(MemoryStatus.INVALID_REQUEST);
+            }
             if (context.caller() == MemoryWriteContext.Caller.BACKGROUND) {
                 var claim = context.reviewClaim();
                 if (blank(item.executionId())
                         || item.sequence() <= claim.fromSequence()
-                        || item.sequence() > claim.throughSequence())
+                        || item.sequence() > claim.throughSequence()) {
                     reject(MemoryStatus.INVALID_REQUEST);
+                }
             }
         }
     }
@@ -92,13 +107,18 @@ public class MemoryWritePolicy {
             List<MemoryEvidence> evidence) {
         if (!(command instanceof MemoryCommand.Add add)
                 || !add.restore()
-                || !explicit(context, command)) reject(MemoryStatus.SUPPRESSED);
+                || !explicit(context, command)) {
+            reject(MemoryStatus.SUPPRESSED);
+        }
         if (context.caller() == MemoryWriteContext.Caller.MAIN
                 && (context.expectedRevision() < suppression.deletedRevision()
                         || evidence.stream()
                                 .noneMatch(
-                                        item -> item.createdAt().isAfter(suppression.deletedAt()))))
+                                        item ->
+                                                item.createdAt()
+                                                        .isAfter(suppression.deletedAt())))) {
             reject(MemoryStatus.SUPPRESSED);
+        }
     }
 
     static boolean explicit(MemoryWriteContext context, MemoryCommand command) {

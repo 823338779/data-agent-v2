@@ -23,7 +23,9 @@ public final class ExecutionSkillView {
 
     /** 只向模型披露摘要，完整指令必须通过 skill_read 获取。 */
     public String systemPrompt() {
-        if (snapshots.isEmpty()) return "";
+        if (snapshots.isEmpty()) {
+            return "";
+        }
         StringBuilder prompt = new StringBuilder("可用技能（仅摘要）：\n");
         snapshots
                 .values()
@@ -40,10 +42,13 @@ public final class ExecutionSkillView {
     /** 校验目录快照未漂移后读取内存资源。 */
     public ReadResult read(String logicalId, String path) {
         Snapshot snapshot = snapshots.get(logicalId);
-        if (snapshot == null) throw new IllegalArgumentException("Unknown skill: " + logicalId);
+        if (snapshot == null) {
+            throw new IllegalArgumentException("Unknown skill: " + logicalId);
+        }
         SkillBundle current = catalog.require(logicalId);
-        if (!snapshot.digest().equals(current.digest()))
+        if (!snapshot.digest().equals(current.digest())) {
             throw new IllegalStateException("Skill digest changed during execution");
+        }
         return new ReadResult(
                 snapshot.descriptor(), snapshot.digest(), path, current.readText(path));
     }

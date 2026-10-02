@@ -55,8 +55,9 @@ public final class GitChangePrepareTool implements AgentTool {
                 SCHEMA,
                 context,
                 session -> {
-                    if (context.idempotencyKey() == null || context.idempotencyKey().isBlank())
+                    if (context.idempotencyKey() == null || context.idempotencyKey().isBlank()) {
                         throw new IllegalArgumentException("缺少可信幂等键");
+                    }
                     return support.getChanges()
                             .prepare(
                                     session,

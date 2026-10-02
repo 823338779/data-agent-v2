@@ -69,7 +69,7 @@ public class ConversationProcessCoordinator {
     /** 保存成功后发布中心消息更新和提交后审计事件。 */
     private final ApplicationEventPublisher applicationEvents;
 
-    /** 保存当前 owner attempt 的完整安全 thinking，外层列表不做总大小限制。 */
+    /** 仅在本机执行期间保留原始 thinking；每次输出均整体脱敏，终态和 worker finally 必须清理。 */
     private final ConcurrentMap<ProcessBufferKey, ThinkingCheckpointBuffer> thinkingBuffers =
             new ConcurrentHashMap<>();
 
@@ -128,7 +128,7 @@ public class ConversationProcessCoordinator {
                         thinkingBuffers.put(
                                 key(run, processItemId),
                                 new ThinkingCheckpointBuffer(
-                                        fullSafeContent, fullSafeContent.length(), now)));
+                                        delta, fullSafeContent.length(), now)));
         return processItemId;
     }
 
@@ -136,7 +136,6 @@ public class ConversationProcessCoordinator {
     public void appendThinking(
             LocalAgentExecution run, UUID processItemId, String delta, Instant now) {
         Objects.requireNonNull(delta, "delta");
-        String safeDelta = sanitizer.sanitizeText(delta);
         ThinkingAppendResult appended =
                 mutate(
                         run,
@@ -154,7 +153,10 @@ public class ConversationProcessCoordinator {
                                                     current.content(),
                                                     current.content().length(),
                                                     current.createdAt()));
-                            String changedFull = buffer.fullSafeContent() + safeDelta;
+                            // 键名、分隔符和值可能位于不同 delta；不能拼接分别脱敏过的片段。
+                            // 原文只进入短生命周期缓冲，持久化和每条审计从累计原文重新生成安全投影。
+                            String changedRaw = buffer.rawContent() + delta;
+                            String changedFull = sanitizer.sanitizeText(changedRaw);
                             ModelThinkingProcessItem changed =
                                     thinkingItem(
                                             current,
@@ -167,7 +169,7 @@ public class ConversationProcessCoordinator {
                             }
                             return new Mutation<>(
                                     new ThinkingAppendResult(
-                                            changedFull,
+                                            changedRaw,
                                             checkpoint
                                                     ? changedFull.length()
                                                     : buffer.checkpointedCharacters(),
@@ -182,7 +184,7 @@ public class ConversationProcessCoordinator {
                         thinkingBuffers.put(
                                 key(run, processItemId),
                                 new ThinkingCheckpointBuffer(
-                                        appended.fullSafeContent(),
+                                        appended.rawContent(),
                                         appended.checkpointedCharacters(),
                                         appended.checkpointedAt())));
     }
@@ -201,7 +203,9 @@ public class ConversationProcessCoordinator {
                     ModelThinkingProcessItem current = requireThinking(assistant, processItemId);
                     ThinkingCheckpointBuffer buffer = thinkingBuffers.get(key(run, processItemId));
                     String fullSafeContent =
-                            buffer == null ? current.content() : buffer.fullSafeContent();
+                            buffer == null
+                                    ? current.content()
+                                    : sanitizer.sanitizeText(buffer.rawContent());
                     ModelThinkingProcessItem changed =
                             thinkingItem(current, status, now, fullSafeContent);
                     assistant.replaceProcessItem(processItemId, changed);
@@ -350,7 +354,9 @@ public class ConversationProcessCoordinator {
             if (item instanceof ModelThinkingProcessItem thinking) {
                 ThinkingCheckpointBuffer buffer = thinkingBuffers.get(bufferKey);
                 String fullSafeContent =
-                        buffer == null ? thinking.content() : buffer.fullSafeContent();
+                        buffer == null
+                                ? thinking.content()
+                                : sanitizer.sanitizeText(buffer.rawContent());
                 ModelThinkingProcessItem failed =
                         thinkingItem(thinking, ThinkingProcessStatus.FAILED, now, fullSafeContent);
                 assistant.replaceProcessItem(item.processItemId(), failed);
@@ -547,6 +553,14 @@ public class ConversationProcessCoordinator {
         return new ProcessBufferKey(run.executionId(), processItemId);
     }
 
+    /** 即使终态事务失败，进程内原始正文与工具参数也必须随 worker 退出释放。 */
+    @Transactional(
+            propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public void releaseExecution(String executionId) {
+        thinkingBuffers.keySet().removeIf(key -> key.executionId().equals(executionId));
+        toolInputBuffers.keySet().removeIf(key -> key.executionId().equals(executionId));
+    }
+
     /** 本地缓冲只在事务提交后更新，避免回滚事务留下不可见的脏状态。 */
     private static void afterCommit(Runnable action) {
         if (!TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -566,13 +580,13 @@ public class ConversationProcessCoordinator {
     private record Mutation<T>(
             T result, List<ProcessAuditEvent> auditEvents, boolean messageChanged) {}
 
-    /** thinking append 返回完整安全正文以及更新后的 checkpoint 游标。 */
+    /** thinking append 返回仅供本机继续脱敏的原文及安全投影的 checkpoint 游标。 */
     private record ThinkingAppendResult(
-            String fullSafeContent, int checkpointedCharacters, Instant checkpointedAt) {}
+            String rawContent, int checkpointedCharacters, Instant checkpointedAt) {}
 
-    /** 当前 owner 本地保留的完整安全 thinking 及最近数据库 checkpoint。 */
+    /** 原文不得直接进入日志、事件或数据库；计数和时刻仅对应最近已持久化的安全投影。 */
     private record ThinkingCheckpointBuffer(
-            String fullSafeContent, int checkpointedCharacters, Instant checkpointedAt) {}
+            String rawContent, int checkpointedCharacters, Instant checkpointedAt) {}
 
     /** execution、attempt 和 ProcessItem UUID 共同隔离本地完整安全缓冲。 */
     private record ProcessBufferKey(String executionId, UUID processItemId) {}

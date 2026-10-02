@@ -16,8 +16,9 @@ import org.springframework.context.annotation.*;
 public class GitConfiguration {
     @Bean
     GitProperties gitProperties(GitSettings s) {
-        if (s.remoteUri() == null || s.remoteUri().isBlank())
+        if (s.remoteUri() == null || s.remoteUri().isBlank()) {
             throw new GitException("GIT_NOT_CONFIGURED", "启用 Git 前必须配置远端仓库");
+        }
         return new GitProperties(
                 s.executable(),
                 s.remoteUri(),

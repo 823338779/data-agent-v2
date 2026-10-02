@@ -23,12 +23,18 @@ import org.springframework.web.server.ResponseStatusException;
 @RequiredArgsConstructor
 public final class AgentExecutionSubmissionService {
 
+    public static final int MAX_IDEMPOTENCY_KEY_LENGTH = 256;
+
     private final AgentExecutionSubmissionTransactionService submissionTransactions;
 
     public ConversationSession submit(
             String conversationSessionId, String content, String idempotencyKey) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ERROR_IDEMPOTENCY_KEY_BLANK);
+        }
+        if (idempotencyKey.length() > MAX_IDEMPOTENCY_KEY_LENGTH) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "Idempotency-Key must not exceed 256 characters");
         }
         String payloadHash = payloadHash(content);
 

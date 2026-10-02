@@ -33,9 +33,8 @@ class ConversationApplicationServiceTest {
         var messages = mock(ConversationMessageService.class);
         var executions = mock(AgentExecutionService.class);
         var blocks = mock(MessageUiBlockService.class);
-        var session = new ConversationSession();
-        session.setConversationSessionId("session-1");
-        session.setVersion(0L);
+        var session =
+                ConversationSession.create("session-1", "title", null, java.time.Instant.now());
         var first = ConversationMessage.assistantPlaceholder("message-1", "session-1", "run-1", 1);
         var second = ConversationMessage.assistantPlaceholder("message-2", "session-1", "run-2", 2);
         when(sessions.findByUuid("session-1")).thenReturn(session);
@@ -106,8 +105,8 @@ class ConversationApplicationServiceTest {
         doAnswer(
                         invocation -> {
                             ConversationSession session = invocation.getArgument(0);
-                            session.setCreatedAt(createdAt);
-                            session.setUpdatedAt(updatedAt);
+                            session.acknowledgePersistence(
+                                    session.getVersion(), createdAt, updatedAt);
                             return true;
                         })
                 .when(sessions)

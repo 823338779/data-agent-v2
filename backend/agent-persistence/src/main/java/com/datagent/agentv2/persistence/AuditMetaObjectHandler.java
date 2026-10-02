@@ -31,7 +31,8 @@ public final class AuditMetaObjectHandler implements MetaObjectHandler {
     public void updateFill(MetaObject metaObject) {
         // 使用服务端本地时间刷新记录的最后更新时间。
         LocalDateTime now = LocalDateTime.now(BUSINESS_TIME_ZONE);
-        strictUpdateFill(metaObject, "updatedAt", LocalDateTime.class, now);
+        // 更新已读取实体时旧值必定非空，strictUpdateFill 会保留旧值，必须主动覆盖。
+        setFieldValByName("updatedAt", now, metaObject);
     }
 
     private static TenantAuditedEntity tenantAuditedEntity(MetaObject metaObject) {
