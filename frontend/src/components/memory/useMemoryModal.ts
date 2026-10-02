@@ -26,6 +26,7 @@ export function useMemoryModal(
     initialFocusRef.current?.focus();
 
     function handleKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         onCloseRef.current();
@@ -54,9 +55,10 @@ export function useMemoryModal(
       }
     }
 
-    document.addEventListener('keydown', handleKeyDown, true);
+    // 子菜单先消费 Escape/Tab，未处理的按键再交给外层抽屉，避免一次关闭多层。
+    document.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('keydown', handleKeyDown, true);
+      document.removeEventListener('keydown', handleKeyDown);
       previouslyFocused?.focus();
     };
   }, [initialFocusRef, panelRef, enabled]);

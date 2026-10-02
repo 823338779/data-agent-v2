@@ -154,6 +154,10 @@ $env:DATA_AGENT_DBT_PROJECT_DIRECTORY='.'
 
 地址和项目只能由服务配置，不能由模型覆盖。子目录必须与 dbt-service 的 `projectSubdir` 一致。建连默认 5 秒、请求默认 20 秒（最大 20 秒，覆盖正文读取）；应用启动不访问远端，首次使用核对 `agent-dbt-v1` 能力声明。数据分析 Skill 提供目录、资源、异步查询选项、查询提交和结果分页。
 
+多步建模和查询默认允许单次执行最多 32 次模型调用、32 次工具调用，执行时限仍为 10 分钟；可用 `DATA_AGENT_REACT_MAX_MODEL_INVOCATIONS`、`DATA_AGENT_REACT_MAX_TOOL_CALLS` 调整。异步校验和查询的轮询也计入调用次数。
+
+非 Ollama provider 的上下文预算可用 `DATA_AGENT_CONTEXT_WINDOW_TOKENS` 设置，默认 65536。当前估算按 UTF-8 字节保守计量，并原样保护近期 10 个用户轮次；连续建模、查询和复查可能触及硬上限。应先核实实际模型容量再调整本地预算，例如已确认模型支持 272000 时可保守设为 131072；不要超过所用模型容量或关闭硬上限保护。
+
 维护 YAML 时还需按上面的 Git 文档开启 Git，并指向与服务绑定一致的仓库。流程为：会话草稿 → 冻结修订 → dbt 定义验证 → 确认卡片 → 用户点击确认 → 原 Git 推送流程。通用 Git 候选入口同样校验凭证，受管项目内不能混入 SQL、宏或项目配置改动。当前维护范围是 `models/` 内的 YAML；自定义 model-paths 暂不通过 agent 编辑。
 
 验证只运行 YAML/重复键、模板、dbt parse 和语义引用检查；`SUCCEEDED` 且 `valid=true` 才可准备候选，不证明物理字段、SQL 执行或发布成功。再次编辑使旧证据失效。推送成功后仍由既有流程发布，agent 只能查询活动发布，不能直接查询草稿。
@@ -161,6 +165,8 @@ $env:DATA_AGENT_DBT_PROJECT_DIRECTORY='.'
 升级先部署支持本协议的 dbt-service，再部署 agent（Flyway 自动增加 V11/V12），最后启用开关。超时保留原受理键或任务 ID 重试；发布过期重新取目录及选项；校验 FAILED 可对同一草稿重新发起尝试，valid=false 则先修正定义。
 
 时间使用带 offset 的 ISO 输入，服务按发布固定业务时区解释；历史无 offset 平台调用保持原行为。查询结果最多每页 200 行，agent 按完整行裁剪到 20000 字符。始终用实际 `nextOffset` 继续；`availableRows` 仅表示已保存行数，`resultTruncated=true` 时不能宣称结果完整。
+
+当前时间边界遵循 MetricFlow 的包含结束时间及粒度对齐规则，不是左闭右开区间。整月查询应以月末最后一秒为 `endTime`，不能传下月首日；`normalizedTimeRange` 是时区转换后的输入，不能当作引擎实际对齐边界。
 
 接入验证（临时 Git 裸仓库及 Testcontainers PostgreSQL，需要 Docker）：
 

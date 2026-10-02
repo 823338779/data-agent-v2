@@ -60,7 +60,7 @@ describe('conversation sidebar', () => {
     ).toBeInTheDocument();
     expect(screen.getAllByText('每周经营数据复盘')).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: '每周经营数据复盘的更多操作' }));
-    fireEvent.click(screen.getByRole('button', { name: '取消置顶' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '取消置顶' }));
     await waitFor(() =>
       expect(inputs.onSetOrganization).toHaveBeenCalledWith('s1', {
         projectId: 'p1',
@@ -116,8 +116,12 @@ describe('conversation sidebar', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: '删除项目' }), { key: 'Escape' });
     const trigger = screen.getByRole('button', { name: '每周经营数据复盘的更多操作' });
     fireEvent.click(trigger);
-    fireEvent.change(screen.getByRole('combobox', { name: '目标项目' }), { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: '确认移动' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '移动到项目' }));
+    expect(screen.getByRole('menuitemradio', { name: '经营分析 当前项目' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '未分组' }));
     await waitFor(() =>
       expect(inputs.onSetOrganization).toHaveBeenCalledWith('s1', {
         projectId: null,
@@ -125,10 +129,82 @@ describe('conversation sidebar', () => {
         expectedVersion: 4,
       }),
     );
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
     fireEvent.click(trigger);
-    fireEvent.keyDown(screen.getByRole('combobox', { name: '目标项目' }), { key: 'Escape' });
-    expect(screen.queryByRole('combobox', { name: '目标项目' })).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+  it('navigates menu actions with the keyboard and returns from destinations without moving', () => {
+    const inputs = props();
+    render(<ConversationSidebar {...inputs} />);
+    fireEvent.click(screen.getByRole('button', { name: '每周经营数据复盘的更多操作' }));
+    expect(screen.getByRole('menuitem', { name: '取消置顶' })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+    expect(screen.getByRole('menuitem', { name: '重命名会话' })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: 'End' });
+    const move = screen.getByRole('menuitem', { name: '移动到项目' });
+    expect(move).toHaveFocus();
+    fireEvent.click(move);
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    expect(screen.getByRole('menuitem', { name: '移动到项目' })).toHaveFocus();
+    expect(inputs.onSetOrganization).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('menuitem', { name: '重命名会话' }));
+    expect(screen.getByRole('textbox', { name: '编辑“每周经营数据复盘”标题' })).toHaveFocus();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+  it('dismisses on outside interaction and keeps only the newly opened session menu', () => {
+    const inputs = props();
+    inputs.snapshot = {
+      ...snapshot,
+      sessions: [
+        ...snapshot.sessions,
+        {
+          ...snapshot.sessions[0],
+          conversationSessionId: 's2',
+          title: '另一个会话',
+          pinnedAt: null,
+          projectId: null,
+        },
+      ],
+    };
+    render(<ConversationSidebar {...inputs} />);
+    const first = screen.getByRole('button', { name: '每周经营数据复盘的更多操作' });
+    fireEvent.click(first);
+    const second = screen.getByRole('button', { name: '另一个会话的更多操作' });
+    fireEvent.pointerDown(second);
+    fireEvent.click(second);
+    expect(screen.getAllByRole('menu')).toHaveLength(1);
+    expect(first).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.pointerDown(screen.getByRole('textbox', { name: '搜索会话' }));
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+  it('keeps destinations open after rejection and retries with the refreshed version', async () => {
+    const inputs = props();
+    inputs.onSetOrganization.mockResolvedValueOnce({ outcome: 'rejected', refreshed: true });
+    const { rerender } = render(<ConversationSidebar {...inputs} />);
+    fireEvent.click(screen.getByRole('button', { name: '每周经营数据复盘的更多操作' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '移动到项目' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '经营分析 当前项目' }));
+    expect(inputs.onSetOrganization).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '未分组' }));
+    await waitFor(() => expect(inputs.onSetOrganization).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    rerender(
+      <ConversationSidebar
+        {...inputs}
+        snapshot={{ ...snapshot, sessions: [{ ...snapshot.sessions[0], version: 5 }] }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('menuitemradio', { name: '未分组' }));
+    await waitFor(() =>
+      expect(inputs.onSetOrganization).toHaveBeenLastCalledWith('s1', {
+        projectId: null,
+        pinned: true,
+        expectedVersion: 5,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
   });
   it('preserves a rejected name draft and retries using the refreshed project version', async () => {
     const inputs = props();

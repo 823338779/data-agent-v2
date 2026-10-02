@@ -46,6 +46,10 @@ public final class DbtAnalysisTool implements AgentTool {
             STRING = "string",
             INTEGER = "integer";
     private static final String PROPERTIES = "properties", REQUIRED = "required", TYPE = "type";
+    private static final String DEFAULT_RESOURCE_VIEW = "detail";
+    private static final List<String> RESOURCE_VIEWS =
+            List.of(DEFAULT_RESOURCE_VIEW, "source", "lineage", "native-details");
+    private static final int MAX_RESULT_PAGE_SIZE = 200, MAX_QUERY_ROWS = 10000;
     private static final String QUERY_SCHEMA =
             """
         {"type":"object","additionalProperties":false,"required":["releaseId","mode"],"properties":{
@@ -88,7 +92,7 @@ public final class DbtAnalysisTool implements AgentTool {
             case RESOURCE -> "读取固定发布资源详情、源码或依赖；源码按字符分页。";
             case OPTIONS -> "获取指标集合的合法查询选项，或用 optionsJobId 继续轮询。";
             case SUBMIT -> "提交固定发布的指标查询、解释、维度值或数据集预览，不接收 SQL。";
-            case GET -> "读取查询状态及结果页；按返回 nextOffset 继续，不重新执行 SQL。";
+            case GET -> "读取查询状态及结果页；每页最多 200 行，较大的 limit 自动封顶；按返回 nextOffset 继续，不重新执行 SQL。";
         };
     }
 
@@ -113,6 +117,11 @@ public final class DbtAnalysisTool implements AgentTool {
                 text(p, RESOURCE, 512);
                 required.add(RELEASE).add(RESOURCE);
                 text(p, VIEW, 32);
+                // 将客户端实际支持的视图暴露给模型，避免猜测 DETAIL 等无法路由的枚举值。
+                var view = (ObjectNode) p.path(VIEW);
+                view.put("default", DEFAULT_RESOURCE_VIEW);
+                var views = view.putArray("enum");
+                RESOURCE_VIEWS.forEach(views::add);
                 number(p, "offset", 0, 10000000);
                 number(p, "limit", 1, 10000);
             }
@@ -130,7 +139,7 @@ public final class DbtAnalysisTool implements AgentTool {
                 text(p, QUERY, 64);
                 required.add(QUERY);
                 number(p, "offset", 0, 10000);
-                number(p, "limit", 1, 200);
+                number(p, "limit", 1, MAX_QUERY_ROWS);
             }
             default -> throw new IllegalStateException();
         }
@@ -186,11 +195,11 @@ public final class DbtAnalysisTool implements AgentTool {
                         String id = args.path(QUERY).asString();
                         JsonNode status = client.queryStatus(id);
                         checkTask(status, QUERY, id);
+                        // 模型常沿用提交查询的行数上限；只封顶传输页大小，保留服务实际游标避免漏行。
+                        int pageSize =
+                                Math.min(args.path("limit").asInt(100), MAX_RESULT_PAGE_SIZE);
                         yield status.path("resultAvailable").asBoolean(false)
-                                ? client.queryPage(
-                                        id,
-                                        args.path("offset").asInt(0),
-                                        args.path("limit").asInt(100))
+                                ? client.queryPage(id, args.path("offset").asInt(0), pageSize)
                                 : status;
                     }
                 };
@@ -218,7 +227,7 @@ public final class DbtAnalysisTool implements AgentTool {
                         client.resource(
                                         args.path(RELEASE).asString(),
                                         args.path(RESOURCE).asString(),
-                                        args.path(VIEW).asString("detail"))
+                                        args.path(VIEW).asString(DEFAULT_RESOURCE_VIEW))
                                 .deepCopy();
         if (resource.has(CONTENT)) {
             String content = resource.path(CONTENT).asString();

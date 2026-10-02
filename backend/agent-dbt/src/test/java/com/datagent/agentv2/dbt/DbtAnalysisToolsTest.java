@@ -12,6 +12,59 @@ class DbtAnalysisToolsTest {
     private final JsonMapper json = new JsonMapper();
 
     @Test
+    void resourceSchemaAdvertisesOnlySupportedLowercaseViews() {
+        // 实际对话曾按未约束的字符串参数生成 DETAIL；工具契约必须让模型看到客户端接受的值。
+        var tool = new DbtAnalysisTool(DbtAnalysisTool.Kind.RESOURCE, null, json);
+        var view = tool.parametersSchema().path("properties").path("view");
+        assertThat(view.path("enum").isArray()).isTrue();
+        assertThat(json.convertValue(view.path("enum"), String[].class))
+                .containsExactlyInAnyOrder("detail", "source", "lineage", "native-details");
+        assertThat(view.path("default").asString()).isEqualTo("detail");
+    }
+
+    @Test
+    void largeRequestedPageIsCappedWithoutSkippingTheServerCursor() throws Exception {
+        // 模型可能沿用查询提交的 limit；读取时封顶，但不能用请求的 1000 推进真实分页游标。
+        var client =
+                org.mockito.Mockito.mock(com.datagent.agentv2.dbt.client.DbtServiceClient.class);
+        org.mockito.Mockito.when(client.project())
+                .thenReturn(
+                        json.readTree(
+                                """
+                        {"protocolVersion":"agent-dbt-v1","capabilities":[
+                        "query-options-async-v1","query-results-page-v1","query-time-v1"]}
+                        """));
+        org.mockito.Mockito.when(client.queryStatus("q"))
+                .thenReturn(
+                        json.readTree(
+                                "{\"queryId\":\"q\",\"state\":\"READY\",\"resultAvailable\":true}"));
+        var page =
+                json.createObjectNode()
+                        .put("queryId", "q")
+                        .put("state", "READY")
+                        .put("offset", 0)
+                        .put("nextOffset", 200)
+                        .put("availableRows", 300)
+                        .put("returnedRows", 200)
+                        .put("resultTruncated", false);
+        var rows = page.putArray("rows");
+        for (int i = 0; i < 200; i++) rows.addArray().add(i);
+        org.mockito.Mockito.when(client.queryPage("q", 0, 200)).thenReturn(page);
+        var tool = new DbtAnalysisTool(DbtAnalysisTool.Kind.GET, client, json);
+        var result =
+                org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+                        () ->
+                                tool.execute(
+                                        json.readTree("{\"queryId\":\"q\",\"limit\":1000}"),
+                                        new com.datagent.agentv2.conversation.tool.AgentTool
+                                                .InvocationContext("t", "e", 1, "c", "k")));
+        assertThat(result.path("rows").size()).isEqualTo(200);
+        assertThat(result.path("nextOffset").asInt()).isEqualTo(200);
+        assertThat(result.path("availableRows").asInt()).isEqualTo(300);
+        assertThat(result.path("resultTruncated").asBoolean()).isFalse();
+    }
+
+    @Test
     void unknownRemoteStateFailsClosed() throws Exception {
         var client =
                 org.mockito.Mockito.mock(com.datagent.agentv2.dbt.client.DbtServiceClient.class);

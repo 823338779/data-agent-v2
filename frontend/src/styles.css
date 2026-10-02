@@ -1046,7 +1046,6 @@ pre {
 .session-row {
   position: relative;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   border-radius: 8px;
 }
@@ -1078,10 +1077,10 @@ pre {
   font-size: 10px;
 }
 .session-actions {
-  flex: 0 0 26px;
-  width: 26px;
-  height: 30px;
-  color: #8a857d;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  color: var(--muted);
 }
 .sidebar-project-heading > .icon-button {
   flex: 0 0 26px;
@@ -1128,13 +1127,6 @@ pre {
 .sidebar-delete button:hover {
   background: #e9e6e0;
 }
-.sidebar-menu label {
-  display: grid;
-  gap: 5px;
-  padding: 4px 8px;
-  color: #817d76;
-}
-.sidebar-menu select,
 .sidebar-project-editor input {
   min-width: 0;
   width: 100%;
@@ -1256,8 +1248,95 @@ pre {
   opacity: 0;
 }
 .session-row:hover .session-actions,
-.session-row:focus-within .session-actions {
+.session-row:focus-within .session-actions,
+.session-actions[aria-expanded='true'] {
   opacity: 1;
+}
+.session-actions[aria-expanded='true'] {
+  background: #e3e3e0;
+  color: #242424;
+}
+/* 只浮起会话操作，不占用列表高度；保留侧栏内的 DOM 归属以适配抽屉焦点管理。 */
+.session-menu {
+  position: fixed;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  width: 224px;
+  max-width: calc(100vw - 16px);
+  max-height: min(360px, calc(100dvh - 16px));
+  padding: 5px;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 14%);
+  font-size: 13px;
+}
+.session-menu button {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  text-align: left;
+  line-height: 20px;
+}
+.session-menu button > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.session-menu button > span:not(.sr-only) {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-menu button:hover:not(:disabled),
+.session-menu button:focus-visible {
+  background: #f1f1ef;
+}
+.conversation-sidebar-content .session-menu button:focus-visible {
+  outline: 2px solid #707070;
+  outline-offset: -2px;
+}
+.session-menu button[aria-checked='true'] {
+  color: var(--muted);
+  cursor: default;
+}
+.session-menu-separator {
+  flex-shrink: 0;
+  height: 1px;
+  margin: 4px 5px;
+  background: var(--line);
+}
+.session-menu-back {
+  font-weight: 500;
+}
+.session-menu-destinations {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.session-menu-hint {
+  margin: 6px 10px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+@media (hover: none), (pointer: coarse) {
+  .session-actions {
+    opacity: 1;
+    min-height: 44px;
+    flex-basis: 44px;
+  }
+  .session-menu button {
+    min-height: 44px;
+  }
 }
 .project-toggle {
   font-size: 13px;

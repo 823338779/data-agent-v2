@@ -19,6 +19,11 @@ public record HierarchicalContextState(
         /** 当前完整模型输入的保守 token 估算。 */
         int estimatedTokens) {
 
+
+
+
+
+
     /** 冻结可变集合并校验状态中的必需对象和非负估算。 */
     public HierarchicalContextState {
         Objects.requireNonNull(request, "request");

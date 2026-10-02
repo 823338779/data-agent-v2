@@ -25,6 +25,9 @@ data-agent:
     # 会话上下文策略：raw 不压缩，lsm 使用 LSM 摘要树，hierarchical 使用滚动 Cold 摘要。
     # 当前默认启用 hierarchical；可通过 DATA_AGENT_CONTEXT_STRATEGY 在所有服务实例上统一覆盖。
     strategy: ${DATA_AGENT_CONTEXT_STRATEGY:hierarchical}
+    model-input:
+      # 非 Ollama provider 的预算必须不超过实际模型容量；建模与查询的工具历史也占用该预算。
+      context-window-tokens: ${DATA_AGENT_CONTEXT_WINDOW_TOKENS:65536}
     # 以下参数仅在 strategy=lsm 时生效。
     compaction:
       fanout: ${DATA_AGENT_CONTEXT_COMPACTION_FANOUT:5}
@@ -44,6 +47,12 @@ data-agent:
       working-directory: ${DATA_AGENT_MODEL_CODEX_WORKING_DIRECTORY:}
   execution:
     deadline: ${DATA_AGENT_EXECUTION_DEADLINE:10m}
+  react:
+    limits:
+      # dbt 建模与分析包含能力加载、文件分页和异步任务轮询；12 轮可能在生成卡片后阻断最终回答。
+      # 仍保留模型次数、工具次数及 execution.deadline 三重上限。
+      max-model-invocations: ${DATA_AGENT_REACT_MAX_MODEL_INVOCATIONS:32}
+      max-tool-calls: ${DATA_AGENT_REACT_MAX_TOOL_CALLS:32}
   git:
     # 关闭时不装配 Git Tool、Skill、应用服务和工作目录；开启时 maximum 自动加入七个草稿工具。
     # initial 不允许包含 Git 工具，读取 git-repository-maintenance Skill 才激活。

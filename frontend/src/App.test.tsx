@@ -122,6 +122,27 @@ afterEach(() => {
 });
 
 describe('server-backed conversation workspace', () => {
+  it('handles Escape inside a narrow sidebar menu before dismissing the drawer', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockReturnValue({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    );
+    render(<App client={client()} />);
+    fireEvent.click(screen.getByRole('button', { name: '展开会话列表' }));
+    const trigger = await screen.findByRole('button', { name: '订单延迟分析的更多操作' });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole('menuitem', { name: '移动到项目' }));
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    expect(screen.getByRole('menuitem', { name: '置顶会话' })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: '会话列表' })).toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
   it('discards a sidebar response started before home creation and keeps the new stream', async () => {
     let resolveOld!: (value: { projects: []; sessions: ConversationSession[] }) => void;
     const created = { ...session, conversationSessionId: 'created', title: '新会话' };
@@ -835,7 +856,7 @@ describe('server-backed conversation workspace', () => {
     render(<App client={backend} />);
     await openSession('订单延迟分析');
     fireEvent.click(screen.getByRole('button', { name: '订单延迟分析的更多操作' }));
-    fireEvent.click(screen.getByRole('button', { name: '置顶会话' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '置顶会话' }));
     expect(screen.getByRole('button', { name: '新会话', exact: true })).toBeDisabled();
     fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '继续对话' } });
     fireEvent.keyDown(screen.getByLabelText('输入消息'), { key: 'Enter' });
