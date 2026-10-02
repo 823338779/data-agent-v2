@@ -78,7 +78,7 @@ payload 两个 ID 均由服务器写入。候选、UI Block、正文占位符和
 
 ## 终答边界
 
-`ModelInvocationCoordinator.completeFinalAnswer` 在原终答落库位置调用可选的 `GitFinalAnswerComposer`，将当前 assistant 消息已登记的 Git 卡片占位符补回最终文字，并同时写入流检查点。否则正常模型回答会覆盖工具发布的占位符。此接入不修改 ReAct 循环、AgentTool SPI、执行状态机、artifact 投影或 artifact 终答行为。Git 关闭时该服务不存在，原终答行为保持不变。
+`ModelInvocationCoordinator.completeFinalAnswer` 在原终答落库位置调用可选的 `GitFinalAnswerComposer`，将当前 assistant 消息已登记的 Git 卡片占位符补回最终文字，并同时写入流检查点。否则正常模型回答会覆盖工具发布的占位符。此接入不修改 ReAct 循环、AgentTool SPI、执行状态机。Git 关闭时该服务不存在，原终答行为保持不变。
 
 
 ### 审阅可用性与基础检查

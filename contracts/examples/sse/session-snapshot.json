@@ -12,25 +12,15 @@
         "executionId": "execution_demo",
         "role": "assistant",
         "author": "assistant",
-        "content": "报告已生成。\n\n<agent-ui block-id=\"ui_block_demo\"></agent-ui>",
+        "content": "代码变更已完成。\n\n<agent-ui block-id=\"ui_block_demo\"></agent-ui>",
         "version": 3,
         "thinkingProcess": [],
-        "artifacts": [{
-          "artifactId": "artifact_demo",
-          "artifactType": "DOCX",
-          "displayName": "报告.docx",
-          "mediaType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          "sizeBytes": 3,
-          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "pageOrSheetCount": 1,
-          "downloadUrl": "/api/v1/agent-sessions/session_demo/artifacts/artifact_demo/content"
-        }],
         "uiBlocks": [{
           "blockId": "ui_block_demo",
-          "type": "artifact-card",
+          "type": "git-change-card",
           "schemaVersion": 1,
           "variant": "default",
-          "payload": { "artifactId": "artifact_demo" },
+          "payload": { "changeId": "change_demo", "sessionId": "session_demo" },
           "displayOrder": 0
         }],
         "createdAt": "2026-08-01T06:00:00Z"

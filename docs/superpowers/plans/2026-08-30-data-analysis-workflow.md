@@ -1,5 +1,7 @@
 # Data Agent 受控数据分析 Workflow Implementation Plan
 
+> 历史设计：相关 Workflow 或 Office 文件产出、沙箱实现已于 2026-10-02 移除，本文不再代表当前运行时能力。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在现有单实例会话执行模型中加入顶层执行路由，使数据请求进入受控 StarRocks 分析 Workflow，其他请求继续使用现有 ReAct，并通过现有 SSE 实时展示不持久化的 Workflow 过程和完整已验证 SQL。

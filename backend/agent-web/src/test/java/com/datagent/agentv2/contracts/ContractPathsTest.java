@@ -25,7 +25,7 @@ class ContractPathsTest {
 
         assertThat(api.path("openapi").asText()).isEqualTo("3.1.0");
         assertThat(paths.size()).isEqualTo(REQUIRED.size());
-        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(21);
+        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(20);
         assertThat(REQUIRED)
                 .allSatisfy(
                         (path, methods) -> {
@@ -100,7 +100,6 @@ class ContractPathsTest {
         required.put("/api/v1/agent-sessions/summary-events", Set.of("get"));
         required.put(SESSION_PATH, Set.of("get", "patch"));
         required.put(SESSION_PATH + "/messages", Set.of("post"));
-        required.put(SESSION_PATH + "/artifacts/{artifactId}/content", Set.of("get"));
         required.put(SESSION_PATH + "/executions/{executionId}:cancel", Set.of("post"));
         required.put(SESSION_PATH + "/events", Set.of("get"));
         String gitPath = "/api/v1/agent-sessions/{sessionId}/git-changes/{changeId}";

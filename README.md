@@ -7,8 +7,6 @@ Data Agent V2 是面向单实例部署的对话 Agent 工程，包含后端 Mave
 - `backend/agent-persistence`：数据库迁移、MyBatis-Plus，以及 ID、时钟和请求上下文基础能力
 - `backend/agent-context-lsm`：同步执行的 LSM 会话上下文压缩策略及其摘要持久化
 - `backend/agent-context-hierarchical`：同步执行的 Hot/Warm/Cold 分层上下文压缩策略及其摘要持久化
-- `backend/agent-data-source`：单一 StarRocks 数据源、语义目录、SQL 安全校验与有界查询
-- `backend/agent-workflow`：数据分析固定状态机、瞬时运行快照与服务端执行边界
 - `backend/agent-web`：REST/SSE 接口、BFF、会话编排与契约测试
 - `backend/agent-server`：唯一可执行模块，负责 Spring Boot 启动、服务级全局拦截器、异常边界与运行时装配
 - `backend/agent-evals`：独立评测模块
@@ -108,32 +106,6 @@ $env:DATA_AGENT_MODEL_PROVIDER = 'codex'
 Tool 和 Skill 分别由独立 Maven Module `agent-tool`、`agent-skill` 承载。服务启动后，`system_timezone`、`current_time`、`skill_read` 默认可见；`web_search`、`web_fetch` 默认隐藏。模型需要先读取 bundled `web-research` Skill，系统才会在本次 execution 内原子激活两个联网 Tool，下一轮 ReAct 才能看到它们。
 
 联网搜索首版固定使用 Tavily，需通过 `DATA_AGENT_TAVILY_API_KEY` 配置服务端密钥；未配置时应用仍可启动，实际搜索返回 `web_search_not_configured`。`web_fetch` 用于继续读取搜索结果 URL 的 HTML 或纯文本正文，限制为公开 HTTP(S) 地址，并对每次重定向重新执行内网/本机地址检查、响应类型检查和响应体大小限制。搜索词和目标 URL 都属于外部数据，Skill 会要求模型不要提交凭据、客户机密或未脱敏个人信息，也不能把页面正文当作指令。搜索配置可使用 `DATA_AGENT_WEB_SEARCH_*` 环境变量；抓取超时、重定向数、响应体大小、正文字符数和 User-Agent 可使用对应的 `DATA_AGENT_WEB_FETCH_*` 环境变量覆盖。自动化测试不访问真实第三方服务。
-
-### 数据分析 Workflow
-
-数据分析请求与原有 ReAct 执行器是同级路由。服务只在启动时配置一个 StarRocks 数据源；数据请求进入固定的强类型 Java 状态机：语义资源检索、`QueryPlan` 构建与校验、逐任务生成 SQL、SQL 本地校验、`EXPLAIN`、执行查询、结果校验、结果分析和最终回答。当前实现不包含 MQL，也不使用 DSL 动态定义或改写流程。
-
-Workflow 的步骤、重试次数、查询任务数量、SQL/结果大小和总执行时间都由服务端配置限制，模型不能改变这些边界。多个查询任务按顺序执行。只有 SQL 通过本地 AST 白名单校验和 StarRocks `EXPLAIN` 后，才会通过 `workflow_update` SSE 展示完整 SQL；查询结果行不会进入 SSE、日志或持久化。
-
-中间状态只保存在当前 JVM 内存中，用于实时界面和同一次连接内的快照握手。服务重启或执行结束后不恢复、不续跑，也不会把 Workflow 步骤写入数据库。会话消息和最终回答仍沿用现有持久化路径。
-
-启用前必须先完成两项配置：
-
-1. 在 `backend/agent-server/src/main/resources/semantic/starrocks.yaml` 中按实际 Schema 配置至少一个 dataset，并配置需要使用的指标和关联关系。
-2. 提供唯一 StarRocks 实例的连接参数后设置 `$env:DATA_AGENT_WORKFLOW_ENABLED = 'true'`。
-
-最小连接配置如下；密码只能从运行环境注入，不要写入仓库：
-
-```powershell
-$env:DATA_AGENT_STARROCKS_JDBC_URL = 'jdbc:mysql://starrocks-host:9030/analytics'
-$env:DATA_AGENT_STARROCKS_USERNAME = 'data_agent'
-$env:DATA_AGENT_STARROCKS_PASSWORD = '<secret>'
-$env:DATA_AGENT_STARROCKS_CATALOG = 'default_catalog'
-$env:DATA_AGENT_STARROCKS_DATABASE = 'analytics'
-$env:DATA_AGENT_WORKFLOW_ENABLED = 'true'
-```
-
-`DATA_AGENT_WORKFLOW_MAX_QUERY_TASKS` 等阈值可在服务端随时调整，完整默认值见 `backend/agent-server/src/main/resources/application-business.yml`。未启用时不创建 StarRocks 连接池，所有请求继续走原有 ReAct 执行器；启用后，连接配置、语义目录或物理 Schema 不一致会使服务启动失败。
 
 单实例联调分别启动：
 

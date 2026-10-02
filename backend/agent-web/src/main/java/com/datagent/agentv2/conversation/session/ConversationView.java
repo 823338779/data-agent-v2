@@ -1,8 +1,5 @@
 package com.datagent.agentv2.conversation.session;
 
-import com.datagent.agentv2.artifact.application.ArtifactProjection;
-import com.datagent.agentv2.artifact.application.MessageArtifactBundle;
-import com.datagent.agentv2.artifact.application.MessageUiBlockProjection;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
@@ -64,8 +61,6 @@ public record ConversationView(
             long version,
             /** 与正文绑定的有序思考及工具过程节点。 */
             List<ThinkingProcessItem> thinkingProcess,
-            /** 当前消息关联的可下载正式产物；仅包含经过会话校验的公开元数据。 */
-            List<ArtifactProjection> artifacts,
             /** Markdown 占位符引用的受控 UI Block；前端只按已注册版本渲染。 */
             List<MessageUiBlockProjection> uiBlocks,
             LocalDateTime createdAt,
@@ -75,14 +70,14 @@ public record ConversationView(
         /** 从消息及其可选执行详情组装公开消息。 */
         public static MessageView composeFromMessage(
                 ConversationMessage message, AgentExecutionView execution) {
-            return composeFromMessage(message, execution, MessageArtifactBundle.empty());
+            return composeFromMessage(message, execution, List.of());
         }
 
-        /** 从消息、执行详情和预先批量读取的产物关系组装公开消息。 */
+        /** 从消息、执行详情和预先批量读取的受控卡片组装公开消息。 */
         public static MessageView composeFromMessage(
                 ConversationMessage message,
                 AgentExecutionView execution,
-                MessageArtifactBundle artifactBundle) {
+                List<MessageUiBlockProjection> uiBlocks) {
             String author =
                     message.getAuthorUserId() == null
                             ? message.getRole().value()
@@ -95,8 +90,7 @@ public record ConversationView(
                     message.getContent(),
                     java.util.Objects.requireNonNullElse(message.getVersion(), 0L),
                     message.getThinkingProcess(),
-                    artifactBundle.artifacts(),
-                    artifactBundle.uiBlocks(),
+                    uiBlocks,
                     message.getCreatedAt(),
                     execution);
         }

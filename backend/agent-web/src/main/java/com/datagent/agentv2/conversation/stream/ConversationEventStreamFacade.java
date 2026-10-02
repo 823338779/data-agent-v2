@@ -6,13 +6,8 @@ import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.session.ConversationApplicationService;
 import com.datagent.agentv2.conversation.session.ConversationView;
-import com.datagent.agentv2.conversation.workflow.WorkflowSseEventPublisher.WorkflowEventPublished;
 import com.datagent.agentv2.persistence.service.AgentExecutionEventPersisted;
 import com.datagent.agentv2.platform.context.TenantContext;
-import com.datagent.agentv2.workflow.runtime.WorkflowEvent;
-import com.datagent.agentv2.workflow.runtime.WorkflowEventType;
-import com.datagent.agentv2.workflow.runtime.WorkflowRunRegistry;
-import com.datagent.agentv2.workflow.runtime.WorkflowSnapshot;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
@@ -32,7 +27,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
-import org.springframework.context.event.EventListener;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.event.TransactionPhase;
@@ -55,9 +49,6 @@ public final class ConversationEventStreamFacade {
 
     /** 保存本实例连接并接收本机执行增量。 */
     private final LocalSseRegistry localStreams;
-
-    /** 提供当前 JVM 内活动 Workflow 快照，并用于终态关闭 fencing。 */
-    private final WorkflowRunRegistry workflowRuns;
 
     private static final Duration STREAM_GAP_TIMEOUT = Duration.ofSeconds(60);
 
@@ -113,9 +104,6 @@ public final class ConversationEventStreamFacade {
 
         // 每次连接先发送权威会话快照，再归并握手期间到达的增量更新。
         subscription.acceptInitialSnapshot(conversations.streamBootstrap(conversationSessionId));
-        workflowRuns
-                .snapshot(tenantId, conversationSessionId)
-                .ifPresent(subscription::acceptWorkflowSnapshot);
         subscription.finishInitialization();
         return emitter;
     }
@@ -156,24 +144,10 @@ public final class ConversationEventStreamFacade {
         sessionSubscriptions.forEach(
                 subscription -> {
                     subscription.acceptMessage(message);
-                    if (!active
-                            && (message.executionId() == null
-                                    || !workflowRuns.isActive(message.executionId()))) {
+                    if (!active) {
                         subscription.completeAfterPending();
                     }
                 });
-    }
-
-    /** 同 JVM Workflow 更新直接进入连接初始化缓冲或实时发送队列。 */
-    @EventListener
-    public void publish(WorkflowEventPublished published) {
-        WorkflowEvent event = published.event();
-        SessionKey key = new SessionKey(event.tenantId(), event.conversationSessionId());
-        Set<Subscription> sessionSubscriptions = subscriptions.get(key);
-        if (sessionSubscriptions == null || sessionSubscriptions.isEmpty()) {
-            return;
-        }
-        sessionSubscriptions.forEach(subscription -> subscription.acceptWorkflowUpdate(event));
     }
 
     /** 每秒仅扫描本实例仍有详细连接的会话，补齐持久事件与 checkpoint。 */
@@ -242,9 +216,7 @@ public final class ConversationEventStreamFacade {
             if (assistantMessage != null) {
                 subscription.acceptMessage(assistantMessage);
             }
-            if (!active
-                    && (subscription.snapshotExecutionId == null
-                            || !workflowRuns.isActive(subscription.snapshotExecutionId))) {
+            if (!active) {
                 subscription.completeAfterPending();
                 continue;
             }
@@ -390,9 +362,6 @@ public final class ConversationEventStreamFacade {
         /** 握手期间到达的中心消息全量替换。 */
         private final List<ConversationView.MessageView> pendingMessages = new ArrayList<>();
 
-        /** 握手期间到达的瞬时 Workflow 更新。 */
-        private final List<WorkflowEvent> pendingWorkflowEvents = new ArrayList<>();
-
         /** 当前连接已发送的每条消息版本，用于本地事件和跨实例对账共同去重。 */
         private final Map<String, Long> messageVersions = new HashMap<>();
 
@@ -401,11 +370,6 @@ public final class ConversationEventStreamFacade {
 
         /** 最近一次发送 snapshot 的 execution，用于识别身份切换。 */
         private volatile String snapshotExecutionId;
-
-        /** 当前连接已归约的 Workflow execution 与序号，仅用于瞬时事件去重。 */
-        private String workflowExecutionId;
-
-        private long workflowSequence;
 
         /** 标记 replay/snapshot 握手尚未结束，入站消息需要先缓冲。 */
         private volatile boolean initializing = true;
@@ -453,39 +417,6 @@ public final class ConversationEventStreamFacade {
                 return;
             }
             sendMessage(message);
-        }
-
-        /** 接受活动 Workflow 快照；它总是在 session_snapshot 之后发送。 */
-        private synchronized void acceptWorkflowSnapshot(WorkflowSnapshot snapshot) {
-            workflowExecutionId = snapshot.executionId();
-            workflowSequence = snapshot.latestSequence();
-            send(
-                    ConversationStreamEventType.WORKFLOW_SNAPSHOT.value(),
-                    new WorkflowSnapshotEvent(
-                            ConversationStreamEventType.WORKFLOW_SNAPSHOT,
-                            conversationSessionId,
-                            snapshot.executionId(),
-                            snapshot,
-                            Instant.now()));
-        }
-
-        /** 按 execution 与单调序号接受 Workflow 更新。 */
-        private synchronized void acceptWorkflowUpdate(WorkflowEvent event) {
-            if (workflowExecutionId != null
-                    && workflowExecutionId.equals(event.executionId())
-                    && event.sequence() <= workflowSequence) {
-                return;
-            }
-            if (initializing) {
-                pendingWorkflowEvents.add(event);
-                if (pendingWorkflowEvents.size() > MAX_PENDING_SENDS) {
-                    closeWithError(
-                            this,
-                            new IllegalStateException("SSE workflow initialization overflow"));
-                }
-                return;
-            }
-            sendWorkflowUpdate(event);
         }
 
         /** 使用首次数据库快照建立复合游标，并只发送一次完整会话状态。 */
@@ -572,19 +503,10 @@ public final class ConversationEventStreamFacade {
                     .sorted(Comparator.comparingLong(ConversationView.MessageView::version))
                     .forEach(this::acceptMessageAfterSnapshot);
 
-            pendingWorkflowEvents.stream()
-                    .sorted(Comparator.comparingLong(WorkflowEvent::sequence))
-                    .filter(
-                            event ->
-                                    !event.executionId().equals(workflowExecutionId)
-                                            || event.sequence() > workflowSequence)
-                    .forEach(this::sendWorkflowUpdate);
-
             // 清空临时引用后再关闭初始化标记，使之后入站消息直接实时处理。
             pendingEvents.clear();
             pendingDeltas.clear();
             pendingMessages.clear();
-            pendingWorkflowEvents.clear();
             initializing = false;
         }
 
@@ -606,8 +528,7 @@ public final class ConversationEventStreamFacade {
                             update.execution(),
                             update.event(),
                             update.messages()));
-            if (isTerminal(update.execution().status())
-                    && !workflowRuns.isActive(update.execution().executionId())) {
+            if (isTerminal(update.execution().status())) {
                 completeAfterPending();
             }
         }
@@ -639,33 +560,6 @@ public final class ConversationEventStreamFacade {
                             envelope.outputDeltaSequence(),
                             envelope.delta(),
                             envelope.occurredAt()));
-        }
-
-        /** 发送完整的公开 Workflow 更新；查询结果行从未进入该对象。 */
-        private void sendWorkflowUpdate(WorkflowEvent event) {
-            if (workflowExecutionId != null
-                    && workflowExecutionId.equals(event.executionId())
-                    && event.sequence() <= workflowSequence) {
-                return;
-            }
-            workflowExecutionId = event.executionId();
-            workflowSequence = event.sequence();
-            send(
-                    ConversationStreamEventType.WORKFLOW_UPDATE.value(),
-                    new WorkflowUpdateEvent(
-                            ConversationStreamEventType.WORKFLOW_UPDATE,
-                            event.conversationSessionId(),
-                            event.executionId(),
-                            event.workflowId(),
-                            event.sequence(),
-                            event.eventType(),
-                            event.step(),
-                            event.status(),
-                            event.task(),
-                            event.detail(),
-                            event.occurredAt()));
-            // Workflow 失败后，外层 launcher 还需要把 execution 终态持久化；连接关闭统一交给
-            // execution/message 事件或 reconciliation，避免客户端只看到瞬时失败而错过权威终态。
         }
 
         /** 在有界单线程队列中异步写 SSE，隔离慢客户端和业务线程。 */
@@ -838,27 +732,5 @@ public final class ConversationEventStreamFacade {
             long outputDeltaSequence,
             ExecutionPhase phase,
             String answer,
-            Instant occurredAt) {}
-
-    /** 活动 Workflow 的非持久化完整快照。 */
-    private record WorkflowSnapshotEvent(
-            ConversationStreamEventType type,
-            String conversationSessionId,
-            String executionId,
-            WorkflowSnapshot workflow,
-            Instant occurredAt) {}
-
-    /** 非持久化 Workflow 单步更新。 */
-    private record WorkflowUpdateEvent(
-            ConversationStreamEventType type,
-            String conversationSessionId,
-            String executionId,
-            String workflowId,
-            long sequence,
-            WorkflowEventType eventType,
-            com.datagent.agentv2.workflow.runtime.WorkflowStep step,
-            com.datagent.agentv2.workflow.runtime.WorkflowStatus status,
-            com.datagent.agentv2.workflow.runtime.WorkflowTaskRef task,
-            com.datagent.agentv2.workflow.runtime.WorkflowEventDetail detail,
             Instant occurredAt) {}
 }

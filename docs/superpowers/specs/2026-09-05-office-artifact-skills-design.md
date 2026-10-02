@@ -1,5 +1,7 @@
 # Office 文档产出 Skill 与本机沙箱设计
 
+> 历史设计：相关 Workflow 或 Office 文件产出、沙箱实现已于 2026-10-02 移除，本文不再代表当前运行时能力。
+
 ## 1. 背景与目标
 
 Data Agent V2 当前已经具备 Tool/Skill 分模块、bundled Skill 渐进披露、Skill 读取后原子激活 Tool，以及会话消息和 SSE 持久化投影能力。当前 `agent-skill` 只扫描 `skills/*/SKILL.md`，现有 Skill 也只承担模型指令与 Tool 激活，不具备文件构建、渲染、存储或下载链路。

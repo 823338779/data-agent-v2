@@ -598,7 +598,7 @@ describe('server-backed conversation workspace', () => {
     expect(await screen.findByRole('heading', { name: '新的会话标题' })).toBeInTheDocument();
   });
 
-  it('keeps organization from the sidebar when an old detail arrives and preserves workflow on refresh', async () => {
+  it('keeps organization from the sidebar when an old detail arrives and preserves messages on refresh', async () => {
     let resolveDetail!: (value: ConversationSession) => void;
     const oldDetail = new Promise<ConversationSession>((resolve) => {
       resolveDetail = resolve;
@@ -632,16 +632,6 @@ describe('server-backed conversation workspace', () => {
           execution,
         },
       ],
-      workflow: {
-        workflowId: 'workflow_1',
-        executionId: 'execution_1',
-        latestSequence: 1,
-        status: 'running',
-        currentStep: 'execute_query',
-        tasks: [],
-        startedAt: session.createdAt,
-        updatedAt: session.updatedAt,
-      },
     };
     const backend = client({
       getSidebar: vi.fn().mockResolvedValue(snapshot),
@@ -659,11 +649,9 @@ describe('server-backed conversation workspace', () => {
     expect(
       within(screen.getByRole('region', { name: '未分组会话' })).queryByText('订单延迟分析'),
     ).not.toBeInTheDocument();
-    expect(screen.getByText('查询数据')).toBeInTheDocument();
     await act(async () => {
       window.dispatchEvent(new Event('focus'));
     });
-    expect(screen.getByText('查询数据')).toBeInTheDocument();
     expect(screen.getAllByText('详情已保留')).toHaveLength(1);
     expect(backend.listSessions).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: '新分组', exact: true }));

@@ -2,10 +2,6 @@ package com.datagent.agentv2.conversation.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.datagent.agentv2.artifact.application.ArtifactProjection;
-import com.datagent.agentv2.artifact.application.MessageArtifactBundle;
-import com.datagent.agentv2.artifact.application.MessageUiBlockProjection;
-import com.datagent.agentv2.artifact.domain.ArtifactType;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
@@ -44,23 +40,12 @@ class ConversationViewCompositionTest {
 
         ConversationSummaryView summary =
                 ConversationSummaryView.composeFromSession(session, execution);
-        MessageArtifactBundle artifactBundle =
-                new MessageArtifactBundle(
-                        List.of(
-                                new ArtifactProjection(
-                                        "artifact-1",
-                                        ArtifactType.DOCX,
-                                        "report.docx",
-                                        ArtifactType.DOCX.mediaType(),
-                                        3,
-                                        "a".repeat(64),
-                                        1,
-                                        "/api/v1/agent-sessions/session-1/artifacts/artifact-1/content")),
-                        List.of(
-                                new MessageUiBlockProjection(
-                                        "block-1", "artifact-card", 1, "default", null, 0)));
+        List<MessageUiBlockProjection> uiBlocks =
+                List.of(
+                        new MessageUiBlockProjection(
+                                "block-1", "git-change-card", 1, "default", null, 0));
         ConversationView.MessageView messageView =
-                ConversationView.MessageView.composeFromMessage(message, null, artifactBundle);
+                ConversationView.MessageView.composeFromMessage(message, null, uiBlocks);
         ConversationView.AgentExecutionView executionView =
                 ConversationView.AgentExecutionView.composeFromExecution(
                         execution, "question", List.of(), checkpoint);
@@ -68,12 +53,11 @@ class ConversationViewCompositionTest {
         assertThat(summary.tag()).isEmpty();
         assertThat(summary.status()).isEqualTo(SessionExecutionStatus.RUNNING);
         assertThat(messageView.version()).isZero();
-        assertThat(messageView.artifacts())
-                .extracting(ArtifactProjection::artifactId)
-                .containsExactly("artifact-1");
         assertThat(messageView.uiBlocks())
                 .extracting(MessageUiBlockProjection::blockId)
                 .containsExactly("block-1");
+        assertThat(ConversationView.MessageView.composeFromMessage(message, null).uiBlocks())
+                .isEmpty();
         assertThat(executionView.progress()).isEqualTo(70);
         assertThat(executionView.streamCheckpoint().answer()).isEqualTo("answer");
     }

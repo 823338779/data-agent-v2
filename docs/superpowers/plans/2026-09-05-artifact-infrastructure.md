@@ -1,5 +1,7 @@
 # Artifact 基础设施 Implementation Plan
 
+> 历史设计：相关 Workflow 或 Office 文件产出、沙箱实现已于 2026-10-02 移除，本文不再代表当前运行时能力。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 完成 Office 文档产出的第一个垂直切片：建立 Artifact 领域、持久化、本机不可变存储、沙箱选择契约、消息附件投影、受控 UI Block、文件卡片和安全下载链路，并用固定测试文件验证端到端交付；本切片不生成真实 Word/PPT/XLSX，也不注册 `artifact_build` Tool 或正式文档 Skill。

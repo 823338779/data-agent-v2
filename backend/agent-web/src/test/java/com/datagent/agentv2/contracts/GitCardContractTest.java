@@ -62,7 +62,7 @@ class GitCardContractTest {
                     SchemaRegistry.withDefaultDialect(Draft202012.getInstance())
                             .getSchema(document);
             assertThat(schema.validate(git)).isEmpty();
-            assertThat(schema.validate(artifact)).isEmpty();
+            assertThat(schema.validate(artifact)).isNotEmpty();
             var malformed = git.deepCopy();
             ((tools.jackson.databind.node.ObjectNode) malformed.path("payload"))
                     .remove("sessionId");

@@ -4,16 +4,11 @@ import {
   AgentExecutionStreamCheckpoint,
   ConversationMessage,
   ConversationSession,
-  MessageArtifact,
   MessageRole,
   MessageUiBlock,
   ModelThinkingProcessItem,
   ThinkingProcessItem,
   ToolThinkingProcessItem,
-  WorkflowSnapshot,
-  WorkflowStatus,
-  WorkflowStep,
-  WorkflowTaskRef,
 } from '../domain/agent';
 import { createIdempotencyKey } from './idempotencyKey';
 import {
@@ -29,8 +24,6 @@ const EXECUTION_UPDATE_EVENT = 'execution_update';
 const MESSAGE_UPDATE_EVENT = 'message_update';
 const STREAM_SNAPSHOT_EVENT = 'stream_snapshot';
 const ASSISTANT_DELTA_EVENT = 'assistant_delta';
-const WORKFLOW_SNAPSHOT_EVENT = 'workflow_snapshot';
-const WORKFLOW_UPDATE_EVENT = 'workflow_update';
 const THINKING_PROCESS_TYPE = 'THINKING';
 const TOOL_PROCESS_TYPE = 'TOOL';
 const SESSION_MISMATCH_ERROR = 'SSE_PROTOCOL_SESSION_MISMATCH';
@@ -40,8 +33,6 @@ const SESSION_EVENT_TYPES = [
   MESSAGE_UPDATE_EVENT,
   STREAM_SNAPSHOT_EVENT,
   ASSISTANT_DELTA_EVENT,
-  WORKFLOW_SNAPSHOT_EVENT,
-  WORKFLOW_UPDATE_EVENT,
 ] as const;
 const EXECUTION_STATUSES: AgentExecutionStatus[] = [
   'idle',
@@ -59,7 +50,6 @@ interface BackendMessage {
   content: string;
   version: number;
   thinkingProcess: BackendThinkingProcessItem[];
-  artifacts?: unknown[];
   uiBlocks?: unknown[];
   createdAt: string;
   execution: BackendAgentExecution | null;
@@ -175,51 +165,7 @@ export type ConversationStreamEvent =
       message: ConversationMessage;
       occurredAt: string;
     }
-  | WorkflowSnapshotEvent
-  | WorkflowUpdateEvent
   | ExecutionStreamEvent;
-
-export interface WorkflowSnapshotEvent {
-  type: 'workflow_snapshot';
-  conversationSessionId: string;
-  executionId: string;
-  workflow: WorkflowSnapshot;
-  occurredAt: string;
-}
-
-export interface WorkflowEventDetail {
-  semanticResourceNames: string[];
-  sql: string | null;
-  returnedRows: number | null;
-  truncated: boolean | null;
-  attempt: number | null;
-  maxAttempts: number | null;
-  elapsedMillis: number | null;
-  message: string | null;
-  failureCode: string | null;
-}
-
-export interface WorkflowUpdateEvent {
-  type: 'workflow_update';
-  conversationSessionId: string;
-  executionId: string;
-  workflowId: string;
-  sequence: number;
-  eventType:
-    | 'workflow_started'
-    | 'step_started'
-    | 'step_progress'
-    | 'step_succeeded'
-    | 'step_failed'
-    | 'step_retrying'
-    | 'workflow_succeeded'
-    | 'workflow_failed';
-  step: WorkflowStep;
-  status: WorkflowStatus;
-  task: WorkflowTaskRef | null;
-  detail: WorkflowEventDetail;
-  occurredAt: string;
-}
 
 interface StreamCursor {
   modelInvocationSequence: number;
@@ -316,58 +262,6 @@ export function applyConversationStreamEvent(
   // 路由会话标识是详情流的隔离边界，异常载荷不能污染当前页面。
   if (event.conversationSessionId !== current.conversationSessionId) return current;
   if (event.type === SESSION_SNAPSHOT_EVENT) return event.session;
-  if (event.type === WORKFLOW_SNAPSHOT_EVENT) {
-    if (!current.execution || current.execution.executionId !== event.executionId) return current;
-    if (
-      current.workflow?.executionId === event.executionId &&
-      current.workflow.latestSequence > event.workflow.latestSequence
-    ) {
-      return current;
-    }
-    return { ...current, workflow: event.workflow };
-  }
-  if (event.type === WORKFLOW_UPDATE_EVENT) {
-    if (!current.execution || current.execution.executionId !== event.executionId) return current;
-    const existing = current.workflow;
-    if (existing) {
-      if (existing.executionId !== event.executionId || existing.workflowId !== event.workflowId) {
-        return current;
-      }
-      if (event.sequence !== existing.latestSequence + 1) return current;
-    } else if (event.sequence !== 1) {
-      return current;
-    }
-    const tasks = existing ? [...existing.tasks] : [];
-    if (event.task) {
-      const index = tasks.findIndex((task) => task.task.taskId === event.task?.taskId);
-      const previous = index >= 0 ? tasks[index] : null;
-      const task = {
-        task: event.task,
-        currentStep: event.step,
-        sql: event.detail.sql ?? previous?.sql ?? null,
-        returnedRows: event.detail.returnedRows ?? previous?.returnedRows ?? null,
-        truncated: event.detail.truncated ?? previous?.truncated ?? null,
-        attempt: event.detail.attempt ?? previous?.attempt ?? null,
-        message: event.detail.message ?? previous?.message ?? null,
-      };
-      if (index >= 0) tasks[index] = task;
-      else tasks.push(task);
-      tasks.sort((left, right) => left.task.index - right.task.index);
-    }
-    return {
-      ...current,
-      workflow: {
-        workflowId: event.workflowId,
-        executionId: event.executionId,
-        latestSequence: event.sequence,
-        status: event.status,
-        currentStep: event.step,
-        tasks,
-        startedAt: existing?.startedAt ?? event.occurredAt,
-        updatedAt: event.occurredAt,
-      },
-    };
-  }
   if (event.type === MESSAGE_UPDATE_EVENT) {
     const index = current.messages.findIndex(
       (message) => message.conversationMessageId === event.message.conversationMessageId,
@@ -487,47 +381,9 @@ function toMessage(message: BackendMessage): ConversationMessage {
     timestamp: message.createdAt,
     version: message.version,
     thinkingProcess: message.thinkingProcess.map(toThinkingProcessItem),
-    artifacts: (message.artifacts ?? []).flatMap(toArtifact),
     uiBlocks: (message.uiBlocks ?? []).flatMap(toUiBlock),
     execution: message.execution ? toExecution(message.execution) : null,
   };
-}
-
-function toArtifact(value: unknown): MessageArtifact[] {
-  if (!isRecord(value)) return [];
-  const artifactType = value.artifactType;
-  const downloadUrl = value.downloadUrl;
-  if (
-    !['DOCX', 'PPTX', 'XLSX'].includes(String(artifactType)) ||
-    typeof value.artifactId !== 'string' ||
-    typeof value.displayName !== 'string' ||
-    typeof value.mediaType !== 'string' ||
-    typeof value.sizeBytes !== 'number' ||
-    !Number.isSafeInteger(value.sizeBytes) ||
-    value.sizeBytes <= 0 ||
-    typeof value.sha256 !== 'string' ||
-    !/^[0-9a-f]{64}$/.test(value.sha256) ||
-    (value.pageOrSheetCount !== null &&
-      (typeof value.pageOrSheetCount !== 'number' ||
-        !Number.isSafeInteger(value.pageOrSheetCount) ||
-        value.pageOrSheetCount <= 0)) ||
-    typeof downloadUrl !== 'string' ||
-    !/^\/api\/v1\/agent-sessions\/[^/]+\/artifacts\/[^/]+\/content$/.test(downloadUrl)
-  ) {
-    return [];
-  }
-  return [
-    {
-      artifactId: value.artifactId,
-      artifactType: artifactType as MessageArtifact['artifactType'],
-      displayName: value.displayName,
-      mediaType: value.mediaType,
-      sizeBytes: value.sizeBytes,
-      sha256: value.sha256,
-      pageOrSheetCount: value.pageOrSheetCount as number | null,
-      downloadUrl,
-    },
-  ];
 }
 
 function toUiBlock(value: unknown): MessageUiBlock[] {
@@ -579,7 +435,6 @@ function toSession(session: BackendSession | BackendSessionSummary): Conversatio
     latestExecutionStatus: session.status ? toStatus(session.status) : undefined,
     messages: detail.messages?.map(toMessage) ?? [],
     execution: detail.execution ? toExecution(detail.execution) : null,
-    workflow: null,
   };
 }
 
@@ -757,16 +612,6 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
               message: toMessage(update.message),
               occurredAt: update.occurredAt,
             });
-            return;
-          }
-          if (eventType === WORKFLOW_SNAPSHOT_EVENT || eventType === WORKFLOW_UPDATE_EVENT) {
-            const workflowEvent = JSON.parse(raw.data) as
-              WorkflowSnapshotEvent | WorkflowUpdateEvent;
-            if (workflowEvent.conversationSessionId !== conversationSessionId) {
-              onError(new Error(SESSION_MISMATCH_ERROR));
-              return;
-            }
-            onEvent(workflowEvent);
             return;
           }
           const streamEvent = JSON.parse(raw.data) as ExecutionStreamEvent;

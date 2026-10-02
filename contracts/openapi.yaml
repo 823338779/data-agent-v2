@@ -165,23 +165,6 @@ paths:
               schema: { $ref: '#/components/schemas/ConversationSession' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
-  /api/v1/agent-sessions/{conversationSessionId}/artifacts/{artifactId}/content:
-    get:
-      operationId: downloadConversationArtifact
-      parameters:
-        - { $ref: '#/components/parameters/ConversationSessionId' }
-        - { $ref: '#/components/parameters/ArtifactId' }
-      responses:
-        '200':
-          description: 已通过会话归属与完整性校验的 Office 文件流
-          headers:
-            Content-Disposition: { schema: { type: string } }
-            ETag: { schema: { type: string } }
-          content:
-            application/octet-stream:
-              schema: { type: string, format: binary }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
   /api/v1/agent-sessions/{conversationSessionId}/executions/{executionId}:cancel:
     post:
       operationId: cancelAgentExecution
@@ -212,8 +195,6 @@ paths:
                   - { $ref: '#/components/schemas/ConversationMessageUpdateEvent' }
                   - { $ref: '#/components/schemas/AgentExecutionStreamSnapshotEvent' }
                   - { $ref: '#/components/schemas/AssistantDeltaEvent' }
-                  - { $ref: '#/components/schemas/WorkflowSnapshotEvent' }
-                  - { $ref: '#/components/schemas/WorkflowUpdateEvent' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/agent-sessions/{sessionId}/git-changes/{changeId}:
@@ -467,11 +448,6 @@ components:
       in: path
       required: true
       schema: { type: string, minLength: 1 }
-    ArtifactId:
-      name: artifactId
-      in: path
-      required: true
-      schema: { type: string, minLength: 1, maxLength: 80 }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -611,7 +587,7 @@ components:
         snapshotAt: { type: string, format: date-time }
     ConversationMessage:
       type: object
-      required: [conversationMessageId, executionId, role, author, content, version, thinkingProcess, artifacts, uiBlocks, createdAt]
+      required: [conversationMessageId, executionId, role, author, content, version, thinkingProcess, uiBlocks, createdAt]
       properties:
         conversationMessageId: { type: string }
         executionId: { type: [string, 'null'] }
@@ -622,9 +598,6 @@ components:
         thinkingProcess:
           type: array
           items: { type: object, additionalProperties: true }
-        artifacts:
-          type: array
-          items: { $ref: '#/components/schemas/ArtifactView' }
         uiBlocks:
           type: array
           items: { $ref: '#/components/schemas/MessageUiBlockView' }
@@ -633,46 +606,13 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/AgentExecution' }
             - { type: 'null' }
-    ArtifactView:
-      type: object
-      additionalProperties: false
-      required: [artifactId, artifactType, displayName, mediaType, sizeBytes, sha256, pageOrSheetCount, downloadUrl]
-      properties:
-        artifactId: { type: string }
-        artifactType: { type: string, enum: [DOCX, PPTX, XLSX] }
-        displayName: { type: string }
-        mediaType: { type: string }
-        sizeBytes: { type: integer, format: int64, minimum: 1 }
-        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
-        pageOrSheetCount: { type: [integer, 'null'], minimum: 1 }
-        downloadUrl:
-          type: string
-          pattern: '^/api/v1/agent-sessions/[^/]+/artifacts/[^/]+/content$'
     MessageUiBlockView:
       oneOf:
-        - { $ref: '#/components/schemas/ArtifactCardUiBlock' }
         - { $ref: '#/components/schemas/GitChangeCardUiBlock' }
       discriminator:
         propertyName: type
         mapping:
-          artifact-card: '#/components/schemas/ArtifactCardUiBlock'
           git-change-card: '#/components/schemas/GitChangeCardUiBlock'
-    ArtifactCardUiBlock:
-      type: object
-      additionalProperties: false
-      required: [blockId, type, schemaVersion, variant, payload, displayOrder]
-      properties:
-        blockId: { type: string }
-        type: { type: string, const: artifact-card }
-        schemaVersion: { type: integer, const: 1 }
-        variant: { type: string }
-        payload:
-          type: object
-          additionalProperties: false
-          required: [artifactId]
-          properties:
-            artifactId: { type: string }
-        displayOrder: { type: integer, minimum: 0 }
     GitChangeCardUiBlock:
       type: object
       additionalProperties: false
@@ -828,88 +768,6 @@ components:
         outputDeltaSequence: { type: integer, format: int64, minimum: 0 }
         delta: { type: string }
         occurredAt: { type: string, format: date-time }
-    WorkflowSnapshotEvent:
-      type: object
-      required: [type, conversationSessionId, executionId, workflow, occurredAt]
-      properties:
-        type: { type: string, const: workflow_snapshot }
-        conversationSessionId: { type: string }
-        executionId: { type: string }
-        workflow: { $ref: '#/components/schemas/WorkflowSnapshot' }
-        occurredAt: { type: string, format: date-time }
-    WorkflowUpdateEvent:
-      type: object
-      required: [type, conversationSessionId, executionId, workflowId, sequence, eventType, step, status, task, detail, occurredAt]
-      properties:
-        type: { type: string, const: workflow_update }
-        conversationSessionId: { type: string }
-        executionId: { type: string }
-        workflowId: { type: string }
-        sequence: { type: integer, format: int64, minimum: 1 }
-        eventType:
-          type: string
-          enum: [workflow_started, step_started, step_progress, step_succeeded, step_failed, step_retrying, workflow_succeeded, workflow_failed]
-        step: { $ref: '#/components/schemas/WorkflowStep' }
-        status: { $ref: '#/components/schemas/WorkflowStatus' }
-        task:
-          oneOf:
-            - { $ref: '#/components/schemas/WorkflowTaskRef' }
-            - { type: 'null' }
-        detail: { $ref: '#/components/schemas/WorkflowEventDetail' }
-        occurredAt: { type: string, format: date-time }
-    WorkflowSnapshot:
-      type: object
-      required: [workflowId, executionId, latestSequence, status, currentStep, tasks, startedAt, updatedAt]
-      properties:
-        workflowId: { type: string }
-        executionId: { type: string }
-        latestSequence: { type: integer, format: int64, minimum: 0 }
-        status: { $ref: '#/components/schemas/WorkflowStatus' }
-        currentStep: { $ref: '#/components/schemas/WorkflowStep' }
-        tasks:
-          type: array
-          items: { $ref: '#/components/schemas/WorkflowTaskSnapshot' }
-        startedAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-    WorkflowTaskSnapshot:
-      type: object
-      required: [task, currentStep, sql, returnedRows, truncated, attempt, message]
-      properties:
-        task: { $ref: '#/components/schemas/WorkflowTaskRef' }
-        currentStep: { $ref: '#/components/schemas/WorkflowStep' }
-        sql: { type: [string, 'null'] }
-        returnedRows: { type: [integer, 'null'], format: int64, minimum: 0 }
-        truncated: { type: [boolean, 'null'] }
-        attempt: { type: [integer, 'null'], minimum: 1 }
-        message: { type: [string, 'null'] }
-    WorkflowTaskRef:
-      type: object
-      required: [taskId, purpose, index, total]
-      properties:
-        taskId: { type: string }
-        purpose: { type: string }
-        index: { type: integer, minimum: 1 }
-        total: { type: integer, minimum: 1 }
-    WorkflowEventDetail:
-      type: object
-      additionalProperties: false
-      required: [semanticResourceNames, sql, returnedRows, truncated, attempt, maxAttempts, elapsedMillis, message, failureCode]
-      properties:
-        semanticResourceNames: { type: array, items: { type: string } }
-        sql: { type: [string, 'null'] }
-        returnedRows: { type: [integer, 'null'], format: int64, minimum: 0 }
-        truncated: { type: [boolean, 'null'] }
-        attempt: { type: [integer, 'null'], minimum: 1 }
-        maxAttempts: { type: [integer, 'null'], minimum: 1 }
-        elapsedMillis: { type: [integer, 'null'], format: int64, minimum: 0 }
-        message: { type: [string, 'null'] }
-        failureCode: { type: [string, 'null'] }
-    WorkflowStatus:
-      type: string
-      enum: [running, succeeded, failed, cancelled, timed_out]
-    WorkflowStep:
-      type: string
-      enum: [discover_semantic_resources, build_query_plan, validate_query_plan, generate_sql, validate_sql, explain_sql, execute_query, verify_results, analyze_results, finalize_response]
     ProblemDetail:
       type: object
       required: [title, status, detail, code]

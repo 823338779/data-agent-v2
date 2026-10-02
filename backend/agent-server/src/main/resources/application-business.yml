@@ -61,36 +61,3 @@ data-agent:
     max-candidate-files: ${DATA_AGENT_GIT_MAX_CANDIDATE_FILES:100}
     max-candidate-bytes: ${DATA_AGENT_GIT_MAX_CANDIDATE_BYTES:5242880}
     max-diff-bytes: ${DATA_AGENT_GIT_MAX_DIFF_BYTES:2097152}
-  artifact:
-    # 首个基础设施切片默认关闭；启用后必须存在当前系统对应的唯一健康沙箱 Runner。
-    enabled: ${DATA_AGENT_ARTIFACT_ENABLED:false}
-    root-directory: ${DATA_AGENT_ARTIFACT_ROOT:./data/artifacts}
-    max-concurrent-builds: ${DATA_AGENT_ARTIFACT_MAX_CONCURRENT_BUILDS:1}
-    max-build-duration: ${DATA_AGENT_ARTIFACT_MAX_BUILD_DURATION:180s}
-    max-build-attempts-per-execution: ${DATA_AGENT_ARTIFACT_MAX_ATTEMPTS:3}
-    max-input-bytes: ${DATA_AGENT_ARTIFACT_MAX_INPUT_BYTES:20971520}
-    max-output-bytes: ${DATA_AGENT_ARTIFACT_MAX_OUTPUT_BYTES:52428800}
-    min-free-disk-bytes: ${DATA_AGENT_ARTIFACT_MIN_FREE_DISK_BYTES:1073741824}
-    staging-retention: ${DATA_AGENT_ARTIFACT_STAGING_RETENTION:24h}
-  workflow:
-    # 未配置真实 StarRocks 与语义目录前保持关闭；启用后连接或语义不一致会在启动期失败。
-    enabled: ${DATA_AGENT_WORKFLOW_ENABLED:false}
-    max-query-tasks: ${DATA_AGENT_WORKFLOW_MAX_QUERY_TASKS:5}
-    max-query-plan-attempts: ${DATA_AGENT_WORKFLOW_MAX_PLAN_ATTEMPTS:3}
-    max-sql-attempts-per-task: ${DATA_AGENT_WORKFLOW_MAX_SQL_ATTEMPTS:3}
-    max-transient-query-retries: ${DATA_AGENT_WORKFLOW_MAX_TRANSIENT_RETRIES:1}
-    max-generated-sql-bytes: ${DATA_AGENT_WORKFLOW_MAX_SQL_BYTES:64KB}
-    max-semantic-resources: ${DATA_AGENT_WORKFLOW_MAX_SEMANTIC_RESOURCES:30}
-    max-analysis-input-bytes: ${DATA_AGENT_WORKFLOW_MAX_ANALYSIS_BYTES:512KB}
-    hard-timeout: ${DATA_AGENT_WORKFLOW_TIMEOUT:120s}
-  datasource:
-    jdbc-url: ${DATA_AGENT_STARROCKS_JDBC_URL:}
-    username: ${DATA_AGENT_STARROCKS_USERNAME:}
-    password: ${DATA_AGENT_STARROCKS_PASSWORD:}
-    default-catalog: ${DATA_AGENT_STARROCKS_CATALOG:default_catalog}
-    default-database: ${DATA_AGENT_STARROCKS_DATABASE:analytics}
-    connect-timeout: ${DATA_AGENT_STARROCKS_CONNECT_TIMEOUT:5s}
-    query-timeout: ${DATA_AGENT_STARROCKS_QUERY_TIMEOUT:30s}
-    max-rows: ${DATA_AGENT_STARROCKS_MAX_ROWS:1000}
-    max-result-bytes: ${DATA_AGENT_STARROCKS_MAX_RESULT_BYTES:4MB}
-    semantic-config: classpath:semantic/starrocks.yaml

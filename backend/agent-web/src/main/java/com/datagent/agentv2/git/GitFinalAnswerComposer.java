@@ -1,13 +1,13 @@
 package com.datagent.agentv2.git;
 
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
-import com.datagent.agentv2.persistence.service.artifact.MessageUiBlockService;
+import com.datagent.agentv2.persistence.service.MessageUiBlockService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
-/** 终答只补回当前消息已登记的 Git 卡片；不从模型文本推断卡片授权，不迁移 artifact 投影。 */
+/** 终答只补回当前消息已登记的 Git 卡片；不从模型文本推断卡片授权。 */
 @Service
 @ConditionalOnProperty(prefix = "data-agent.git", name = "enabled", havingValue = "true")
 @RequiredArgsConstructor

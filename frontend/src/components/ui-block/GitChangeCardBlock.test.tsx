@@ -24,7 +24,7 @@ const block = {
 };
 const response = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 let fetchMock: ReturnType<typeof vi.fn>;
-const mount = () => render(<UiBlockRenderer block={block} artifacts={[]} />);
+const mount = () => render(<UiBlockRenderer block={block} />);
 const flush = async () => {
   await act(async () => {
     await Promise.resolve();
@@ -144,7 +144,7 @@ describe('GitChangeCardBlock', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(20000);
     });
-    view.rerender(<UiBlockRenderer block={{ ...block }} artifacts={[]} />);
+    view.rerender(<UiBlockRenderer block={{ ...block }} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(40000);
     });

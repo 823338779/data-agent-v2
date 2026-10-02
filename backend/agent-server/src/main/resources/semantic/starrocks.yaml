@@ -1,6 +1,0 @@
-# 启用数据分析 Workflow 前，请按实际 StarRocks Schema 配置至少一个 dataset。
-# 该文件只允许结构化物理映射、指标口径和关系，不接受任意 SQL 表达式。
-version: 1
-datasets: []
-metrics: []
-relationships: []

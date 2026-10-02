@@ -8,7 +8,7 @@
   "properties": {
     "type": {
       "type": "string",
-      "enum": ["session_snapshot", "execution_update", "message_update", "assistant_delta", "stream_snapshot", "workflow_snapshot", "workflow_update"]
+      "enum": ["session_snapshot", "execution_update", "message_update", "assistant_delta", "stream_snapshot"]
     },
     "conversationSessionId": { "type": "string", "minLength": 1 },
     "session": {
@@ -29,15 +29,7 @@
     "delta": { "type": "string" },
     "answer": { "type": "string" },
     "occurredAt": { "type": "string", "format": "date-time" },
-    "phase": { "type": "string" },
-    "workflowId": { "type": "string", "minLength": 1 },
-    "sequence": { "type": "integer", "minimum": 1 },
-    "workflow": { "$ref": "#/$defs/workflowSnapshot" },
-    "eventType": { "enum": ["workflow_started", "step_started", "step_progress", "step_succeeded", "step_failed", "step_retrying", "workflow_succeeded", "workflow_failed"] },
-    "step": { "$ref": "#/$defs/workflowStep" },
-    "status": { "$ref": "#/$defs/workflowStatus" },
-    "task": { "anyOf": [{ "$ref": "#/$defs/workflowTaskRef" }, { "type": "null" }] },
-    "detail": { "$ref": "#/$defs/workflowDetail" }
+    "phase": { "type": "string" }
   },
   "oneOf": [
     {
@@ -64,22 +56,12 @@
       "title": "流检查点快照",
       "properties": { "type": { "const": "stream_snapshot" } },
       "required": ["executionId", "modelInvocationSequence", "outputDeltaSequence", "phase", "answer", "occurredAt"]
-    },
-    {
-      "title": "活动 Workflow 快照",
-      "properties": { "type": { "const": "workflow_snapshot" } },
-      "required": ["executionId", "workflow", "occurredAt"]
-    },
-    {
-      "title": "Workflow 步骤更新",
-      "properties": { "type": { "const": "workflow_update" } },
-      "required": ["executionId", "workflowId", "sequence", "eventType", "step", "status", "task", "detail", "occurredAt"]
     }
   ],
   "$defs": {
     "message": {
       "type": "object",
-      "required": ["conversationMessageId", "executionId", "role", "author", "content", "version", "thinkingProcess", "artifacts", "uiBlocks", "createdAt"],
+      "required": ["conversationMessageId", "executionId", "role", "author", "content", "version", "thinkingProcess", "uiBlocks", "createdAt"],
       "properties": {
         "conversationMessageId": { "type": "string" },
         "executionId": { "type": ["string", "null"] },
@@ -88,49 +70,14 @@
         "content": { "type": "string" },
         "version": { "type": "integer", "minimum": 0 },
         "thinkingProcess": { "type": "array", "items": { "$ref": "#/$defs/processItem" } },
-        "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifact" } },
         "uiBlocks": { "type": "array", "items": { "$ref": "#/$defs/uiBlock" } },
         "createdAt": { "type": "string", "format": "date-time" }
       }
     },
-    "artifact": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["artifactId", "artifactType", "displayName", "mediaType", "sizeBytes", "sha256", "pageOrSheetCount", "downloadUrl"],
-      "properties": {
-        "artifactId": { "type": "string" },
-        "artifactType": { "enum": ["DOCX", "PPTX", "XLSX"] },
-        "displayName": { "type": "string" },
-        "mediaType": { "type": "string" },
-        "sizeBytes": { "type": "integer", "minimum": 1 },
-        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "pageOrSheetCount": { "type": ["integer", "null"], "minimum": 1 },
-        "downloadUrl": { "type": "string", "pattern": "^/api/v1/agent-sessions/[^/]+/artifacts/[^/]+/content$" }
-      }
-    },
     "uiBlock": {
       "oneOf": [
-        { "$ref": "#/$defs/artifactCard" },
         { "$ref": "#/$defs/gitChangeCard" }
       ]
-    },
-    "artifactCard": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["blockId", "type", "schemaVersion", "variant", "payload", "displayOrder"],
-      "properties": {
-        "blockId": { "type": "string" },
-        "type": { "const": "artifact-card" },
-        "schemaVersion": { "const": 1 },
-        "variant": { "type": "string" },
-        "payload": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["artifactId"],
-          "properties": { "artifactId": { "type": "string" } }
-        },
-        "displayOrder": { "type": "integer", "minimum": 0 }
-      }
     },
     "gitChangeCard": {
       "type": "object",
@@ -220,68 +167,6 @@
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "contentType": { "type": "string" }
       }
-    },
-    "workflowStatus": {
-      "enum": ["running", "succeeded", "failed", "cancelled", "timed_out"]
-    },
-    "workflowStep": {
-      "enum": ["discover_semantic_resources", "build_query_plan", "validate_query_plan", "generate_sql", "validate_sql", "explain_sql", "execute_query", "verify_results", "analyze_results", "finalize_response"]
-    },
-    "workflowTaskRef": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["taskId", "purpose", "index", "total"],
-      "properties": {
-        "taskId": { "type": "string" },
-        "purpose": { "type": "string" },
-        "index": { "type": "integer", "minimum": 1 },
-        "total": { "type": "integer", "minimum": 1 }
-      }
-    },
-    "workflowTaskSnapshot": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["task", "currentStep", "sql", "returnedRows", "truncated", "attempt", "message"],
-      "properties": {
-        "task": { "$ref": "#/$defs/workflowTaskRef" },
-        "currentStep": { "$ref": "#/$defs/workflowStep" },
-        "sql": { "type": ["string", "null"] },
-        "returnedRows": { "type": ["integer", "null"], "minimum": 0 },
-        "truncated": { "type": ["boolean", "null"] },
-        "attempt": { "type": ["integer", "null"], "minimum": 1 },
-        "message": { "type": ["string", "null"] }
-      }
-    },
-    "workflowSnapshot": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["workflowId", "executionId", "latestSequence", "status", "currentStep", "tasks", "startedAt", "updatedAt"],
-      "properties": {
-        "workflowId": { "type": "string" },
-        "executionId": { "type": "string" },
-        "latestSequence": { "type": "integer", "minimum": 0 },
-        "status": { "$ref": "#/$defs/workflowStatus" },
-        "currentStep": { "$ref": "#/$defs/workflowStep" },
-        "tasks": { "type": "array", "items": { "$ref": "#/$defs/workflowTaskSnapshot" } },
-        "startedAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
-      }
-    },
-    "workflowDetail": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["semanticResourceNames", "sql", "returnedRows", "truncated", "attempt", "maxAttempts", "elapsedMillis", "message", "failureCode"],
-      "properties": {
-        "semanticResourceNames": { "type": "array", "items": { "type": "string" } },
-        "sql": { "type": ["string", "null"] },
-        "returnedRows": { "type": ["integer", "null"], "minimum": 0 },
-        "truncated": { "type": ["boolean", "null"] },
-        "attempt": { "type": ["integer", "null"], "minimum": 1 },
-        "maxAttempts": { "type": ["integer", "null"], "minimum": 1 },
-        "elapsedMillis": { "type": ["integer", "null"], "minimum": 0 },
-        "message": { "type": ["string", "null"] },
-        "failureCode": { "type": ["string", "null"] }
-      }
     }
   },
   "x-frontend-projection": {
@@ -289,9 +174,7 @@
     "execution_update": "execution.timeline",
     "message_update": "conversation.message",
     "assistant_delta": "assistant.draft",
-    "stream_snapshot": "execution.streamCheckpoint",
-    "workflow_snapshot": "conversation.workflow",
-    "workflow_update": "conversation.workflow"
+    "stream_snapshot": "execution.streamCheckpoint"
   },
   "x-sensitive-payload-fields-forbidden": ["prompt", "toolInput", "toolOutput", "rows", "jdbcUrl", "password", "exception", "stackTrace"]
 }

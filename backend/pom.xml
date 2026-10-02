@@ -24,9 +24,6 @@
         <module>agent-tool</module>
         <module>agent-skill</module>
         <module>agent-git</module>
-        <module>agent-artifact</module>
-        <module>agent-data-source</module>
-        <module>agent-workflow</module>
         <module>agent-web</module>
         <module>agent-server</module>
         <module>agent-evals</module>
@@ -52,8 +49,6 @@
     <properties>
         <mybatis-plus.version>3.5.16</mybatis-plus.version>
         <spring-ai.version>2.0.0</spring-ai.version>
-        <starrocks-jdbc.version>1.1.1</starrocks-jdbc.version>
-        <jsqlparser.version>5.3</jsqlparser.version>
     </properties>
 
     <build>

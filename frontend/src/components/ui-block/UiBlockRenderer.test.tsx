@@ -1,13 +1,14 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 import { UiBlockRenderer } from './UiBlockRenderer';
+
+afterEach(cleanup);
 
 describe('UiBlockRenderer', () => {
   it('falls back for unknown type and version', () => {
     render(
       <UiBlockRenderer
         block={{ blockId: 'one', type: 'custom', schemaVersion: 99, variant: '', payload: {} }}
-        artifacts={[]}
       />,
     );
     expect(screen.getByText('暂不支持此内容卡片')).toBeInTheDocument();
@@ -18,15 +19,14 @@ describe('UiBlockRenderer', () => {
       <UiBlockRenderer
         block={{
           blockId: 'one',
-          type: 'artifact-card',
+          type: 'git-change-card',
           schemaVersion: 1,
           variant: '',
-          payload: { artifactId: 'missing', style: '<script>alert(1)</script>' },
+          payload: { changeId: 'missing', sessionId: 's1', style: '<script>alert(1)</script>' },
         }}
-        artifacts={[]}
       />,
     );
-    expect(screen.getByText('文件卡片数据无效')).toBeInTheDocument();
+    expect(screen.getByText('Git 卡片数据无效')).toBeInTheDocument();
     expect(document.querySelector('script')).toBeNull();
   });
 });
@@ -40,7 +40,6 @@ it('rejects Git payloads with missing, empty or extra fields', () => {
     const view = render(
       <UiBlockRenderer
         block={{ blockId: 'g1', type: 'git-change-card', schemaVersion: 1, variant: '', payload }}
-        artifacts={[]}
       />,
     );
     expect(screen.getByText('Git 卡片数据无效')).toBeInTheDocument();

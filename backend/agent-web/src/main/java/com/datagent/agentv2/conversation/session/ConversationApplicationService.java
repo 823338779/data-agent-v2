@@ -6,14 +6,13 @@ import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERR
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ERROR_CONVERSATION_SESSION_NOT_FOUND;
 import static com.datagent.agentv2.conversation.execution.ExecutionConstants.ID_PREFIX_CONVERSATION_SESSION;
 
-import com.datagent.agentv2.artifact.application.ArtifactQueryService;
-import com.datagent.agentv2.artifact.application.MessageArtifactBundle;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.AgentExecutionEvent;
 import com.datagent.agentv2.conversation.domain.AgentExecutionStreamCheckpoint;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.domain.ConversationSession;
 import com.datagent.agentv2.conversation.domain.MessageRole;
+import com.datagent.agentv2.conversation.domain.MessageUiBlock;
 import com.datagent.agentv2.conversation.enums.ExecutionPhase;
 import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.conversation.execution.AgentExecutionSubmissionService;
@@ -23,6 +22,7 @@ import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointSe
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ConversationProjectService;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
+import com.datagent.agentv2.persistence.service.MessageUiBlockService;
 import com.datagent.agentv2.platform.id.IdGenerator;
 import java.time.Instant;
 import java.util.HashMap;
@@ -49,7 +49,7 @@ public class ConversationApplicationService {
     private final AgentExecutionStreamCheckpointService agentExecutionStreamCheckpointService;
     private final AgentExecutionSubmissionService agentExecutionSubmissionService;
     private final IdGenerator idGenerator;
-    private final ArtifactQueryService artifactQueryService;
+    private final MessageUiBlockService messageUiBlockService;
     private final ConversationProjectService projects;
 
     @Transactional
@@ -112,7 +112,7 @@ public class ConversationApplicationService {
         return snapshot(requiredSession(conversationSessionId));
     }
 
-    /** 组织操作只返回轻量摘要，不额外读取消息或产物。 */
+    /** 组织操作只返回轻量摘要，不额外读取消息或卡片。 */
     @Transactional(readOnly = true)
     public ConversationSummaryView summary(String sessionId) {
         var session = requiredSession(sessionId);
@@ -221,7 +221,7 @@ public class ConversationApplicationService {
                 .collect(Collectors.groupingBy(ConversationMessage::getConversationSessionId))
                 .forEach(
                         (sessionId, sessionMessages) ->
-                                composeMessageViews(sessionId, sessionMessages, Map.of())
+                                composeMessageViews(sessionMessages, Map.of())
                                         .forEach(
                                                 message ->
                                                         assistantMessagesBySession.put(
@@ -257,7 +257,6 @@ public class ConversationApplicationService {
         }
         List<ConversationView.MessageView> relatedMessages =
                 composeMessageViews(
-                        run.getConversationSessionId(),
                         conversationMessageService.findByExecutionId(run.getExecutionId()),
                         Map.of());
         String objective =
@@ -286,7 +285,7 @@ public class ConversationApplicationService {
             throw new ResponseStatusException(
                     HttpStatus.NOT_FOUND, ERROR_CONVERSATION_SESSION_NOT_FOUND);
         }
-        return composeMessageViews(conversationSessionId, List.of(message), Map.of()).getFirst();
+        return composeMessageViews(List.of(message), Map.of()).getFirst();
     }
 
     public ConversationView submitMessage(
@@ -306,7 +305,6 @@ public class ConversationApplicationService {
         }
         List<ConversationView.MessageView> messageViews =
                 composeMessageViews(
-                        conversationSessionId,
                         conversationMessageService.findByConversationSessionId(
                                 conversationSessionId),
                         Map.of());
@@ -327,11 +325,10 @@ public class ConversationApplicationService {
         List<ConversationMessage> messageEntities =
                 conversationMessageService.findByConversationSessionId(
                         session.getConversationSessionId());
-        Map<String, MessageArtifactBundle> artifactBundles =
-                artifactQueryService.findByMessageIds(
-                        session.getConversationSessionId(), messageIds(messageEntities));
+        Map<String, List<MessageUiBlockProjection>> blocksByMessage =
+                uiBlocksByMessage(messageEntities);
         List<ConversationView.MessageView> baseMessageViews =
-                composeMessageViews(messageEntities, Map.of(), artifactBundles);
+                composeMessageViews(messageEntities, Map.of(), blocksByMessage);
         List<AgentExecution> executionEntities =
                 agentExecutionService.findByConversationSessionIdOrderByCreatedAtDesc(
                         session.getConversationSessionId());
@@ -346,7 +343,7 @@ public class ConversationApplicationService {
                                         Function.identity(),
                                         (first, ignored) -> first));
         List<ConversationView.MessageView> messageViews =
-                composeMessageViews(messageEntities, executionViewsById, artifactBundles);
+                composeMessageViews(messageEntities, executionViewsById, blocksByMessage);
         ConversationView.AgentExecutionView latestAgentExecutionView =
                 executionEntities.isEmpty()
                         ? null
@@ -378,20 +375,33 @@ public class ConversationApplicationService {
                 run, objective, eventViews, stream);
     }
 
-    /** 每个会话先批量读取一次附件，避免消息数量增长时产生 N+1 查询。 */
+    /** 每批消息只读取一次受控卡片，避免消息数量增长时产生 N+1 查询。 */
     private List<ConversationView.MessageView> composeMessageViews(
-            String sessionId,
             List<ConversationMessage> messages,
             Map<String, ConversationView.AgentExecutionView> executionsById) {
-        Map<String, MessageArtifactBundle> bundles =
-                artifactQueryService.findByMessageIds(sessionId, messageIds(messages));
-        return composeMessageViews(messages, executionsById, bundles);
+        return composeMessageViews(messages, executionsById, uiBlocksByMessage(messages));
+    }
+
+    private Map<String, List<MessageUiBlockProjection>> uiBlocksByMessage(
+            List<ConversationMessage> messages) {
+        if (messages.isEmpty()) {
+            return Map.of();
+        }
+        return messageUiBlockService.findByMessageIds(messageIds(messages)).stream()
+                // 历史数据仍可包含已下线的卡片，只投影当前接口支持的 Git 卡片。
+                .filter(block -> "git-change-card".equals(block.type()))
+                .collect(
+                        Collectors.groupingBy(
+                                MessageUiBlock::conversationMessageId,
+                                Collectors.mapping(
+                                        MessageUiBlockProjection::composeFromBlock,
+                                        Collectors.toList())));
     }
 
     private static List<ConversationView.MessageView> composeMessageViews(
             List<ConversationMessage> messages,
             Map<String, ConversationView.AgentExecutionView> executionsById,
-            Map<String, MessageArtifactBundle> artifactBundles) {
+            Map<String, List<MessageUiBlockProjection>> blocksByMessage) {
         return messages.stream()
                 .map(
                         message ->
@@ -400,9 +410,8 @@ public class ConversationApplicationService {
                                         message.getRole() == MessageRole.ASSISTANT
                                                 ? executionsById.get(message.getExecutionId())
                                                 : null,
-                                        artifactBundles.getOrDefault(
-                                                message.getConversationMessageId(),
-                                                MessageArtifactBundle.empty())))
+                                        blocksByMessage.getOrDefault(
+                                                message.getConversationMessageId(), List.of())))
                 .toList();
     }
 

@@ -719,75 +719,11 @@ textarea:focus-visible {
   margin-bottom: 0;
 }
 
-.artifact-card {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  margin: 0.8rem 0;
-  padding: 0.8rem;
-  border: 1px solid var(--border-color, #dbe3ec);
-  border-radius: 0.75rem;
-  background: var(--surface-color, #fff);
-}
-
-.artifact-card__icon {
-  display: grid;
-  flex: 0 0 2.5rem;
-  width: 2.5rem;
-  height: 2.5rem;
-  place-items: center;
-  border-radius: 0.6rem;
-  color: #2563eb;
-  background: #eff6ff;
-}
-
-.artifact-card__details {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.artifact-card__name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.artifact-card__meta,
 .ui-block-fallback {
   color: var(--muted-color, #64748b);
   font-size: 0.8rem;
 }
 
-.artifact-card__download {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.55rem 0.7rem;
-  border-radius: 0.55rem;
-  color: #fff !important;
-  background: #2563eb;
-  text-decoration: none;
-}
-
-.artifact-card__download:focus-visible {
-  outline: 3px solid #93c5fd;
-  outline-offset: 2px;
-}
-
-@media (max-width: 520px) {
-  .artifact-card {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .artifact-card__download {
-    width: 100%;
-    justify-content: center;
-  }
-}
 .markdown-content h1,
 .markdown-content h2,
 .markdown-content h3,
@@ -864,67 +800,6 @@ textarea:focus-visible {
 }
 .run-stream-panel {
   margin: 0 0 28px 44px;
-}
-.workflow-run-panel {
-  margin: 0 0 20px;
-  padding: 14px 16px;
-  border: 1px solid #e1ded8;
-  border-radius: 12px;
-  background: #faf9f6;
-  color: #4f4b45;
-  font-size: 12px;
-}
-.workflow-run-panel > header,
-.workflow-task-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.workflow-status {
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: #ece9e2;
-  text-transform: uppercase;
-}
-.workflow-status.failed,
-.workflow-status.cancelled,
-.workflow-status.timed_out {
-  color: #9a3f2a;
-}
-.workflow-current-step {
-  margin: 8px 0;
-  color: #6d665d;
-}
-.workflow-run-panel ol {
-  display: grid;
-  gap: 10px;
-  margin: 12px 0 0;
-  padding: 0;
-  list-style: none;
-}
-.workflow-run-panel li {
-  padding: 11px;
-  border: 1px solid #e7e3dc;
-  border-radius: 9px;
-  background: #fff;
-}
-.workflow-run-panel li p {
-  margin: 6px 0 0;
-  color: #6d665d;
-  font-size: 11px;
-}
-.workflow-sql {
-  margin-top: 10px;
-}
-.workflow-sql > span {
-  font-weight: 650;
-}
-.workflow-sql pre {
-  max-width: 100%;
-  margin: 6px 0 0;
-  overflow-x: auto;
-  white-space: pre;
 }
 .stream-loading {
   display: inline-flex;

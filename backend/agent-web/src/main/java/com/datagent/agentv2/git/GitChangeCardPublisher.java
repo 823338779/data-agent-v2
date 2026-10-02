@@ -2,11 +2,11 @@ package com.datagent.agentv2.git;
 
 import com.datagent.agentv2.conversation.domain.event.ConversationMessageChanged;
 import com.datagent.agentv2.git.model.GitException;
-import com.datagent.agentv2.persistence.entity.artifact.MessageUiBlockEntity;
+import com.datagent.agentv2.persistence.entity.MessageUiBlockEntity;
 import com.datagent.agentv2.persistence.entity.git.GitChangeEntity;
-import com.datagent.agentv2.persistence.json.ArtifactJsonDocumentCodec;
+import com.datagent.agentv2.persistence.json.MessageUiBlockJsonCodec;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
-import com.datagent.agentv2.persistence.service.artifact.MessageUiBlockService;
+import com.datagent.agentv2.persistence.service.MessageUiBlockService;
 import com.datagent.agentv2.persistence.service.git.GitChangePersistenceService;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
@@ -28,7 +28,7 @@ public class GitChangeCardPublisher
     private final ConversationMessageService messages;
     private final GitChangePersistenceService changes;
     private final MessageUiBlockService blocks;
-    private final ArtifactJsonDocumentCodec json;
+    private final MessageUiBlockJsonCodec json;
     private final IdGenerator ids;
     private final ApplicationEventPublisher events;
 

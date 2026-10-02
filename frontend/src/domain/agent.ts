@@ -57,20 +57,6 @@ export interface ToolThinkingProcessItem extends ProcessItemBase {
 /** 与一条 assistant 正文绑定、按 sequence 有序展示的过程节点。 */
 export type ThinkingProcessItem = ModelThinkingProcessItem | ToolThinkingProcessItem;
 
-export type ArtifactType = 'DOCX' | 'PPTX' | 'XLSX';
-
-/** 服务端完成完整性校验后公开给消息卡片的不可变文件元数据。 */
-export interface MessageArtifact {
-  artifactId: string;
-  artifactType: ArtifactType;
-  displayName: string;
-  mediaType: string;
-  sizeBytes: number;
-  sha256: string;
-  pageOrSheetCount: number | null;
-  downloadUrl: string;
-}
-
 /** Markdown 占位符引用的受控 UI 描述；只有前端注册过的 type@version 才会渲染。 */
 export interface MessageUiBlock {
   blockId: string;
@@ -100,7 +86,6 @@ export interface ConversationMessage {
   version: number;
   /** 与当前消息正文一同持久化的有序思考和工具过程。 */
   thinkingProcess: ThinkingProcessItem[];
-  artifacts: MessageArtifact[];
   uiBlocks: MessageUiBlock[];
   /** 回答对应的持久化 Agent 执行，用于恢复该条消息自己的执行过程。 */
   execution: AgentExecution | null;
@@ -128,50 +113,6 @@ export interface AgentExecution {
   streamCheckpoint: AgentExecutionStreamCheckpoint | null;
 }
 
-export type WorkflowStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
-export type WorkflowStep =
-  | 'discover_semantic_resources'
-  | 'build_query_plan'
-  | 'validate_query_plan'
-  | 'generate_sql'
-  | 'validate_sql'
-  | 'explain_sql'
-  | 'execute_query'
-  | 'verify_results'
-  | 'analyze_results'
-  | 'finalize_response';
-
-export interface WorkflowTaskRef {
-  taskId: string;
-  purpose: string;
-  /** 从 1 开始的任务位置。 */
-  index: number;
-  total: number;
-}
-
-export interface WorkflowTaskSnapshot {
-  task: WorkflowTaskRef;
-  currentStep: WorkflowStep;
-  /** 仅在本地策略和 StarRocks EXPLAIN 均成功后出现的完整 SQL。 */
-  sql: string | null;
-  returnedRows: number | null;
-  truncated: boolean | null;
-  attempt: number | null;
-  message: string | null;
-}
-
-/** 当前页面内的瞬时 Workflow 状态；REST 刷新不会恢复。 */
-export interface WorkflowSnapshot {
-  workflowId: string;
-  executionId: string;
-  latestSequence: number;
-  status: WorkflowStatus;
-  currentStep: WorkflowStep;
-  tasks: WorkflowTaskSnapshot[];
-  startedAt: string;
-  updatedAt: string;
-}
-
 /** 用户与 Agent 之间的一段连续对话。 */
 export interface ConversationSession {
   conversationSessionId: string;
@@ -189,7 +130,6 @@ export interface ConversationSession {
   latestExecutionStatus?: AgentExecutionStatus;
   messages: ConversationMessage[];
   execution: AgentExecution | null;
-  workflow?: WorkflowSnapshot | null;
 }
 
 const BEIJING_TIME_ZONE = 'Asia/Shanghai';
