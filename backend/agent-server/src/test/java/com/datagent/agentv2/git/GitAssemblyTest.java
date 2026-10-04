@@ -47,6 +47,10 @@ class GitAssemblyTest {
                                     .registerSingleton(
                                             "changeRecords",
                                             mock(GitChangePersistenceService.class));
+                            ctx.getBeanFactory()
+                                    .registerSingleton(
+                                            "sessionWorkspaces",
+                                            mock(GitSessionWorkspaceService.class));
                         })
                 .withBean(GitChangeCardPublisher.class, () -> mock(GitChangeCardPublisher.class))
                 .withBean(Clock.class, Clock::systemUTC)

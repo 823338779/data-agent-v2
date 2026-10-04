@@ -119,10 +119,14 @@ class GitWebIntegrationTest {
     @Autowired ExecutionSkillViews skillViews;
     @Autowired SkillReadTool skillRead;
     @MockitoBean ReactExecutionEngine engine;
+    @MockitoBean com.datagent.agentv2.git.port.GitBranchRegistry branches;
 
     @AfterEach
-    void resetEvents() {
+    void resetEvents() throws Exception {
         events.fail.set(false);
+        // 所有既有确认/恢复断言继续执行，同时证明新开发流程不再修改生产引用。
+        assertThat(run(ROOT, "--git-dir=" + ROOT.resolve("remote.git"), "rev-parse", "main").trim())
+                .isEqualTo(run(ROOT.resolve("seed"), "rev-parse", "HEAD").trim());
     }
 
     @AfterAll
@@ -136,7 +140,7 @@ class GitWebIntegrationTest {
         }
     }
 
-    record Run(String session, String execution) {}
+    record Run(String session, String execution, String workspace, String gitRef) {}
 
     Run execution() throws Exception {
         var s =
@@ -150,12 +154,32 @@ class GitWebIntegrationTest {
                 json.readTree(s.getResponse().getContentAsString())
                         .path("conversationSessionId")
                         .asString();
+        // fixture 升级为显式开发分支；原 Web 授权、事务、确认与恢复断言不变。
+        String branchId = UUID.randomUUID().toString();
+        String gitRef = "refs/heads/dev/" + branchId;
+        String sha = run(ROOT.resolve("seed"), "rev-parse", "HEAD").trim();
+        run(ROOT, "--git-dir=" + ROOT.resolve("remote.git"), "update-ref", gitRef, sha);
+        org.mockito.Mockito.when(branches.get(branchId))
+                .thenReturn(
+                        json.createObjectNode()
+                                .put("projectId", "metrics")
+                                .put("branchId", branchId)
+                                .put("gitRef", gitRef)
+                                .put("mode", "PREVIEW")
+                                .put("status", "ACTIVE"));
+        var workspace = workspaces.create(session, branchId, sha, UUID.randomUUID().toString());
         var e =
                 mvc.perform(
                                 post("/api/v1/agent-sessions/" + session + "/messages")
                                         .header("Idempotency-Key", UUID.randomUUID().toString())
                                         .contentType("application/json")
-                                        .content("{\"content\":\"修改指标\"}"))
+                                        .content(
+                                                json.writeValueAsString(
+                                                        Map.of(
+                                                                "content",
+                                                                "修改指标",
+                                                                "workspaceId",
+                                                                workspace.workspaceId()))))
                         .andExpect(status().isAccepted())
                         .andReturn();
         return new Run(
@@ -163,7 +187,9 @@ class GitWebIntegrationTest {
                 json.readTree(e.getResponse().getContentAsString())
                         .path("execution")
                         .path("executionId")
-                        .asString());
+                        .asString(),
+                workspace.workspaceId(),
+                gitRef);
     }
 
     long edit(Run r) throws Exception {
@@ -176,6 +202,8 @@ class GitWebIntegrationTest {
                         .execute(
                                 json.valueToTree(
                                         Map.of(
+                                                "expectedRevision",
+                                                workspaces.get(r.workspace()).draftRevision(),
                                                 "operations",
                                                 List.of(
                                                         Map.of(
@@ -251,7 +279,13 @@ class GitWebIntegrationTest {
         gitExecutor.submit(() -> {}).get(15, TimeUnit.SECONDS);
         var completed = changes.detail(r.session(), c.changeId());
         assertThat(completed.status()).isEqualTo(GitChangeStatus.PUSHED);
-        assertThat(run(ROOT, "--git-dir=" + ROOT.resolve("remote.git"), "rev-parse", "main").trim())
+        assertThat(
+                        run(
+                                        ROOT,
+                                        "--git-dir=" + ROOT.resolve("remote.git"),
+                                        "rev-parse",
+                                        r.gitRef())
+                                .trim())
                 .isEqualTo(completed.commitId());
     }
 
@@ -309,7 +343,7 @@ class GitWebIntegrationTest {
                                         "--git-dir=" + ROOT.resolve("remote.git"),
                                         "rev-list",
                                         "--count",
-                                        "main")
+                                        r.gitRef())
                                 .trim());
         String request = "{\"version\":" + c.version() + "}";
         mvc.perform(post(base + "/confirm").contentType("application/json").content(request))
@@ -324,7 +358,13 @@ class GitWebIntegrationTest {
         mvc.perform(post(base + "/confirm").contentType("application/json").content(request))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.commitId").value(commit));
-        assertThat(run(ROOT, "--git-dir=" + ROOT.resolve("remote.git"), "rev-parse", "main").trim())
+        assertThat(
+                        run(
+                                        ROOT,
+                                        "--git-dir=" + ROOT.resolve("remote.git"),
+                                        "rev-parse",
+                                        r.gitRef())
+                                .trim())
                 .isEqualTo(commit);
         assertThat(
                         run(
@@ -332,7 +372,7 @@ class GitWebIntegrationTest {
                                         "--git-dir=" + ROOT.resolve("remote.git"),
                                         "rev-list",
                                         "--count",
-                                        "main")
+                                        r.gitRef())
                                 .trim())
                 .isEqualTo(Long.toString(initialCommits + 1));
         assertThat(
@@ -433,7 +473,8 @@ class GitWebIntegrationTest {
         events.fail.set(true);
         assertThatThrownBy(
                         () ->
-                                changes.prepare(
+                                changes.prepareWorkspace(
+                                        r.workspace(),
                                         r.session(),
                                         r.execution(),
                                         "rollback",
@@ -475,7 +516,8 @@ class GitWebIntegrationTest {
         long revision = edit(owner);
         assertThatThrownBy(
                         () ->
-                                changes.prepare(
+                                changes.prepareWorkspace(
+                                        owner.workspace(),
                                         owner.session(),
                                         other.execution(),
                                         "cross",

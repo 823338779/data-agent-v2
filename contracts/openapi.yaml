@@ -5,6 +5,255 @@ info:
   description: 单实例本地执行模式下的会话 REST 与 SSE 契约。
 
 paths:
+  /api/v1/git-workspaces:
+    get:
+      operationId: listGitWorkspaces
+      parameters:
+        - { in: query, name: sessionId, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: 会话已关联的独立工作区
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/GitWorkspace' } }
+        '404': { description: 会话不存在 }
+    post:
+      operationId: createGitWorkspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateGitWorkspaceRequest' }
+      responses:
+        '200':
+          description: 已创建或重放原工作区；MUTATING/BROKEN 不代表可执行
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitWorkspace' }
+        '400': { description: 输入无效或包含远端、路径等未知参数 }
+        '404': { description: 会话或分支不存在 }
+        '409': { description: 同键输入变化或目标分支不可开发 }
+        '503': { description: 分支服务未配置或暂不可用 }
+  /api/v1/git-workspaces/{workspaceId}:
+    parameters:
+      - { in: path, name: workspaceId, required: true, schema: { type: string } }
+    get:
+      operationId: getGitWorkspace
+      responses:
+        '200':
+          description: 固定分支与草稿状态，不返回本地存储路径
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitWorkspace' }
+        '404': { description: 工作区不存在 }
+  /api/v1/git-workspaces/{workspaceId}/sync:
+    parameters:
+      - { in: path, name: workspaceId, required: true, schema: { type: string } }
+    post:
+      operationId: syncGitWorkspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: integer, minimum: 0, description: 当前草稿修订号 }
+      responses:
+        '200':
+          description: 返回同步结果；冲突保留原草稿与材料，不推进修订
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workspaceId, baseCommitSha, remoteCommitSha, draftRevision, status, conflictPaths]
+                properties:
+                  workspaceId: { type: string }
+                  baseCommitSha: { type: string }
+                  remoteCommitSha: { type: string }
+                  draftRevision: { type: integer, minimum: 0 }
+                  status: { type: string, enum: [UNCHANGED, MERGED, CONFLICT] }
+                  conflictPaths: { type: array, items: { type: string } }
+                  conflicts:
+                    type: array
+                    description: 固定三方正文，完整有界；null 表示文件不存在
+                    items:
+                      type: object
+                      required: [path, baseContent, localContent, remoteContent]
+                      properties:
+                        path: { type: string }
+                        baseContent: { type: [string, 'null'] }
+                        localContent: { type: [string, 'null'] }
+                        remoteContent: { type: [string, 'null'] }
+        '400': { description: 输入无效 }
+        '404': { description: 工作区不存在 }
+        '409': { description: 草稿、分支或候选状态变化 }
+        '503': { description: 远端或分支服务不可用 }
+  /api/v1/git-workspaces/{workspaceId}/restart:
+    parameters:
+      - { in: path, name: workspaceId, required: true, schema: { type: string } }
+    post:
+      operationId: restartGitWorkspace
+      description: 显式保留旧材料并从原基线重建草稿；无需先受理执行，未决提交时拒绝
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: integer, minimum: 0 }
+      responses:
+        '200':
+          description: 同一工作区的新草稿，修订递增
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitWorkspace' }
+        '400': { description: 输入无效 }
+        '404': { description: 工作区不存在 }
+        '409': { description: 修订过期、原分支不可用或提交未决 }
+  /api/v1/git-workspaces/{workspaceId}/sync/resolve:
+    parameters:
+      - { in: path, name: workspaceId, required: true, schema: { type: string } }
+    post:
+      operationId: resolveGitWorkspaceConflict
+      description: 对固定三方输入应用人工决议，成功后推进基线和修订并撤销旧候选
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision, remoteCommitSha, resolutions]
+              properties:
+                expectedRevision: { type: integer, minimum: 0 }
+                remoteCommitSha: { type: string, pattern: '^[0-9a-f]{40}$' }
+                resolutions:
+                  type: object
+                  minProperties: 1
+                  maxProperties: 100
+                  additionalProperties: { type: [string, 'null'] }
+                  description: 必须恰好覆盖全部冲突路径，null 明确删除，其余为完整 UTF-8 正文
+      responses:
+        '200': { description: 同 sync 成功结果，重新验证后才能生成确认候选 }
+        '400': { description: 输入无效 }
+        '404': { description: 工作区不存在 }
+        '409': { description: 修订或远端推进，必须重新读取冲突 }
+  /api/v1/agent-sessions/{sessionId}/git-workspaces/{workspaceId}:
+    parameters:
+      - { in: path, name: sessionId, required: true, schema: { type: string } }
+      - { in: path, name: workspaceId, required: true, schema: { type: string } }
+    put:
+      operationId: attachGitWorkspace
+      responses:
+        '200':
+          description: 幂等关联可选上下文，不转移所有权、不改变已受理执行
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GitWorkspace' }
+        '404': { description: 会话或工作区不存在 }
+        '409': { description: 历史生产工作区不能关联新开发 }
+  /api/v1/metric-branches:
+    get:
+      operationId: listMetricBranches
+      responses:
+        '200':
+          description: dbt 服务固定项目的分支目录
+          content:
+            application/json:
+              schema: { type: array, items: { type: object, additionalProperties: true } }
+        '503': { description: 分支服务暂不可用 }
+    post:
+      operationId: createMetricBranch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateMetricBranchRequest' }
+      responses:
+        '200':
+          description: 返回 dbt 服务登记的分支身份及状态
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '400': { description: 输入无效 }
+        '409': { description: 分支或幂等键冲突 }
+        '503': { description: 分支服务能力或部署凭据未配置 }
+  /api/v1/metric-branches/register:
+    post:
+      operationId: registerMetricBranch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterMetricBranchRequest' }
+      responses:
+        '200':
+          description: 已核实并登记的远端分支
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '400': { description: 输入无效 }
+        '409': { description: 基线、远端或幂等键冲突 }
+        '503': { description: 分支服务能力或部署凭据未配置 }
+  /api/v1/metric-branches/{branchId}:
+    parameters:
+      - { in: path, name: branchId, required: true, schema: { type: string } }
+    get:
+      operationId: getMetricBranch
+      responses:
+        '200':
+          description: dbt 服务的分支详情
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '404': { description: 分支不存在 }
+    delete:
+      operationId: deleteMetricBranch
+      parameters:
+        - { in: query, name: expectedVersion, required: true, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200':
+          description: dbt 服务的删除状态；不会自动删除会话草稿材料
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '400': { description: 输入无效 }
+        '404': { description: 分支不存在 }
+        '409': { description: 版本变化或生产分支禁止删除 }
+        '503': { description: 分支服务能力或部署凭据未配置 }
+  /api/v1/metric-branches/{branchId}/releases:
+    parameters:
+      - { in: path, name: branchId, required: true, schema: { type: string } }
+    get:
+      operationId: listMetricBranchReleases
+      responses:
+        '200':
+          description: 原分支的构建版本列表，按 sourceSha 查找卡片提交
+          content:
+            application/json:
+              schema: { type: array, items: { type: object, additionalProperties: true } }
+        '404': { description: 分支不存在 }
+        '503': { description: 预览服务暂不可用 }
+  /api/v1/metric-branches/{branchId}/releases/{releaseId}:
+    parameters:
+      - { in: path, name: branchId, required: true, schema: { type: string } }
+      - { in: path, name: releaseId, required: true, schema: { type: string } }
+    get:
+      operationId: getMetricBranchRelease
+      responses:
+        '200':
+          description: 固定版本的构建状态和安全验证摘要；不触发构建
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '404': { description: 分支或版本不存在 }
+        '503': { description: 预览服务暂不可用 }
   /api/v1/agent-sidebar:
     get:
       operationId: getConversationSidebar
@@ -537,6 +786,10 @@ components:
       required: [content]
       properties:
         content: { type: string, minLength: 1, maxLength: 8000 }
+        workspaceId:
+          type: [string, 'null']
+          maxLength: 128
+          description: 本次执行固定的已关联工作区；为空时不提供 Git 开发上下文。
     ConversationSession:
       type: object
       required: [conversationSessionId, title, tag, projectId, pinnedAt, createdAt, updatedAt, version, messages]
@@ -630,6 +883,44 @@ components:
             changeId: { type: string, minLength: 1 }
             sessionId: { type: string, minLength: 1 }
         displayOrder: { type: integer, minimum: 0 }
+    GitWorkspace:
+      type: object
+      required: [workspaceId, baseCommit, draftRevision, status, activeChangeId, projectId, branchId, gitRef]
+      properties:
+        workspaceId: { type: string, description: 独立草稿的稳定标识 }
+        baseCommit: { type: [string, 'null'], description: 当前草稿基线 SHA }
+        draftRevision: { type: integer, minimum: 0, description: 草稿内容修订号 }
+        status: { type: string, enum: [READY, MUTATING, BROKEN] }
+        activeChangeId: { type: [string, 'null'], description: 当前候选卡片标识 }
+        projectId: { type: [string, 'null'], description: 固定项目，历史草稿为空 }
+        branchId: { type: [string, 'null'], description: 固定分支实例，历史草稿为空 }
+        gitRef: { type: [string, 'null'], description: 完整远端引用 }
+    CreateGitWorkspaceRequest:
+      type: object
+      additionalProperties: false
+      required: [sessionId, branchId, baseCommitSha, idempotencyKey]
+      properties:
+        sessionId: { type: string, minLength: 1, maxLength: 128 }
+        branchId: { type: string, minLength: 1, maxLength: 128 }
+        baseCommitSha: { type: string, pattern: '^[0-9a-f]{40}$' }
+        idempotencyKey: { type: string, minLength: 1, maxLength: 128 }
+    CreateMetricBranchRequest:
+      type: object
+      additionalProperties: false
+      required: [name, sourceBranchId, sourceCommitSha, idempotencyKey]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        sourceBranchId: { type: string, minLength: 1, maxLength: 128 }
+        sourceCommitSha: { type: string, pattern: '^[0-9a-f]{40}$' }
+        idempotencyKey: { type: string, minLength: 1, maxLength: 128 }
+    RegisterMetricBranchRequest:
+      type: object
+      additionalProperties: false
+      required: [name, baseCommitSha, idempotencyKey]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        baseCommitSha: { type: string, pattern: '^[0-9a-f]{40}$' }
+        idempotencyKey: { type: string, minLength: 1, maxLength: 128 }
     GitChangeVersionRequest:
       type: object
       additionalProperties: false
@@ -656,6 +947,10 @@ components:
       additionalProperties: false
       required: [changeId, version, status, branch, baseCommit, summary, commitMessage, commitId, reviewAvailable, files, errorCode, errorSummary]
       properties:
+        workspaceId: { type: string, description: 冻结工作区，不随页面当前选择变化 }
+        projectId: { type: [string, 'null'], description: 冻结项目，历史候选为空 }
+        branchId: { type: [string, 'null'], description: 冻结分支实例，历史候选为空 }
+        gitRef: { type: [string, 'null'], description: 冻结完整远端引用，历史候选为空 }
         changeId: { type: string }
         version: { type: integer, format: int64, minimum: 0 }
         status: { type: string, enum: [PENDING_CONFIRMATION, SUBMITTING, VERIFYING, PUSHED, RECONFIRM_REQUIRED, INVALIDATED, CANCELLED, FAILED] }
@@ -682,7 +977,7 @@ components:
             validatedAt: { type: string, description: 服务记录的验证完成时间，ISO 8601 }
             checkedLevels:
               type: array
-              items: { type: string, enum: [YAML, TEMPLATE, DBT_PARSE, SEMANTIC] }
+              items: { type: string, enum: [YAML, TEMPLATE, DBT_PARSE, SQL_DEFINITION, SEMANTIC] }
     AgentExecution:
       type: object
       required: [executionId, status, progress, objective, events]

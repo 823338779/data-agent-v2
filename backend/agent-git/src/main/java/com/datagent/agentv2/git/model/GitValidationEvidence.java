@@ -14,11 +14,47 @@ public record GitValidationEvidence(
         String configVersion,
         String toolchainVersion,
         String validatedAt,
-        List<String> checkedLevels) {
+        List<String> checkedLevels,
+        /** 固定项目，历史凭据为空。 */
+        String projectId,
+        /** 固定分支实例，历史凭据为空。 */
+        String branchId,
+        /** 固定工作区，历史凭据为空。 */
+        String workspaceId,
+        /** 固定完整引用，历史凭据为空。 */
+        String gitRef) {
     private static final JsonMapper JSON = new JsonMapper();
 
     public GitValidationEvidence {
         checkedLevels = List.copyOf(checkedLevels);
+    }
+
+    public GitValidationEvidence(
+            String recordId,
+            String validationId,
+            String baseCommitSha,
+            String treeId,
+            long draftRevision,
+            String changesDigest,
+            String configVersion,
+            String toolchainVersion,
+            String validatedAt,
+            List<String> checkedLevels) {
+        this(
+                recordId,
+                validationId,
+                baseCommitSha,
+                treeId,
+                draftRevision,
+                changesDigest,
+                configVersion,
+                toolchainVersion,
+                validatedAt,
+                checkedLevels,
+                null,
+                null,
+                null,
+                null);
     }
 
     public String encode() {

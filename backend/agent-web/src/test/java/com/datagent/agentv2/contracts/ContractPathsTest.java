@@ -25,7 +25,7 @@ class ContractPathsTest {
 
         assertThat(api.path("openapi").asText()).isEqualTo("3.1.0");
         assertThat(paths.size()).isEqualTo(REQUIRED.size());
-        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(20);
+        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(34);
         assertThat(REQUIRED)
                 .allSatisfy(
                         (path, methods) -> {
@@ -108,6 +108,19 @@ class ContractPathsTest {
         required.put(gitPath + "/diff", Set.of("get"));
         for (String action : java.util.List.of("confirm", "cancel", "retry", "reconcile"))
             required.put(gitPath + "/" + action, Set.of("post"));
+        // 保留全部既有操作，精确加入本次分支工作区契约；不放宽路径或方法检查。
+        required.put("/api/v1/git-workspaces", Set.of("get", "post"));
+        required.put("/api/v1/git-workspaces/{workspaceId}", Set.of("get"));
+        required.put("/api/v1/git-workspaces/{workspaceId}/sync", Set.of("post"));
+        required.put("/api/v1/git-workspaces/{workspaceId}/restart", Set.of("post"));
+        required.put("/api/v1/git-workspaces/{workspaceId}/sync/resolve", Set.of("post"));
+        required.put(
+                "/api/v1/agent-sessions/{sessionId}/git-workspaces/{workspaceId}", Set.of("put"));
+        required.put("/api/v1/metric-branches", Set.of("get", "post"));
+        required.put("/api/v1/metric-branches/register", Set.of("post"));
+        required.put("/api/v1/metric-branches/{branchId}", Set.of("get", "delete"));
+        required.put("/api/v1/metric-branches/{branchId}/releases", Set.of("get"));
+        required.put("/api/v1/metric-branches/{branchId}/releases/{releaseId}", Set.of("get"));
         return required;
     }
 }

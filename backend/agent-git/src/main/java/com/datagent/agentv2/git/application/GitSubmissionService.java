@@ -25,8 +25,9 @@ public final class GitSubmissionService {
     private final Clock clock;
 
     public GitChangeView confirm(String session, String id, long expectedVersion) {
+        changes.checkCurrent(session, id);
         return workspaces.locked(
-                session,
+                workspaces.target(changes.require(session, id)),
                 () -> {
                     var c = changes.require(session, id);
                     if (Objects.equals(c.getConfirmationVersion(), expectedVersion)) {
@@ -47,7 +48,7 @@ public final class GitSubmissionService {
 
     public GitChangeView cancel(String session, String id, long expectedVersion) {
         return workspaces.locked(
-                session,
+                workspaces.target(changes.require(session, id)),
                 () -> {
                     var c = changes.require(session, id);
                     if (Objects.equals(c.getCancelVersion(), expectedVersion)) {
@@ -62,8 +63,9 @@ public final class GitSubmissionService {
     }
 
     public GitChangeView retry(String session, String id, long expectedVersion) {
+        changes.checkCurrent(session, id);
         return workspaces.locked(
-                session,
+                workspaces.target(changes.require(session, id)),
                 () -> {
                     var c = changes.require(session, id);
                     if (Objects.equals(c.getRetryVersion(), expectedVersion)) {
@@ -87,7 +89,7 @@ public final class GitSubmissionService {
     /** 显式核实和启动恢复共用，不生成 commit，不执行 push。 */
     public GitChangeView reconcile(String session, String id) {
         return workspaces.submitting(
-                session,
+                workspaces.target(changes.require(session, id)),
                 () ->
                         TenantContext.call(
                                 TenantContext.TENANT_ID,
@@ -118,7 +120,12 @@ public final class GitSubmissionService {
 
     private void verifyForSubmission(GitChangeEntity c) {
         try {
-            changes.verify(c, workspaces.require(c.getConversationSessionId()), true);
+            var w = workspaces.require(workspaces.target(c));
+            if (Boolean.TRUE.equals(w.getLegacyReadOnly())) {
+                throw new GitException("GIT_CONFLICT", "历史 main 候选只允许核实，不允许新的提交授权");
+            }
+            workspaces.assertBranchActive(w);
+            changes.verify(c, w, true);
         } catch (GitException failure) {
             records.transition(c, "FAILED", failure.code());
             throw failure;
@@ -142,8 +149,15 @@ public final class GitSubmissionService {
     }
 
     private void execute(String session, String id) {
+        try {
+            changes.checkCurrent(session, id);
+        } catch (GitException stale) {
+            var c = changes.require(session, id);
+            if ("SUBMITTING".equals(c.getStatus())) transition(c, "FAILED", stale.code());
+            return;
+        }
         workspaces.submitting(
-                session,
+                workspaces.target(changes.require(session, id)),
                 () -> {
                     var c = changes.require(session, id);
                     if (!"SUBMITTING".equals(c.getStatus())) {
@@ -156,16 +170,15 @@ public final class GitSubmissionService {
                         return null;
                     }
                     try {
-                        var w = workspaces.require(session);
+                        var w = workspaces.require(workspaces.target(c));
+                        workspaces.assertBranchActive(w);
                         changes.verify(c, w, true);
                         if (c.getCommitId() != null) {
                             verifyCommit(c, w);
                         }
-                        String remote = git.fetchMain(workspaces.path(w));
+                        String remote = fetch(c, w);
                         // 已登记 commit 的重试先核实是否已经被远端包含，不能盲目再次推送。
-                        if (c.getCommitId() != null
-                                && git.isAncestorOfRemoteMain(
-                                        workspaces.path(w), c.getCommitId())) {
+                        if (c.getCommitId() != null && contains(c, w)) {
                             pushed(c, w);
                             return null;
                         }
@@ -191,7 +204,16 @@ public final class GitSubmissionService {
                         }
                         // 所有 push 异常均先核实；非零退出也可能发生在远端已经接受之后。
                         try {
-                            git.pushMain(workspaces.path(w), c.getCommitId(), c.getBaseCommit());
+                            if (c.getBranchId() == null) {
+                                git.pushMain(
+                                        workspaces.path(w), c.getCommitId(), c.getBaseCommit());
+                            } else {
+                                git.pushCommit(
+                                        workspaces.path(w),
+                                        c.getGitRef(),
+                                        c.getBaseCommit(),
+                                        c.getCommitId());
+                            }
                             pushed(c, w);
                         } catch (RuntimeException uncertain) {
                             log.warn(
@@ -220,7 +242,8 @@ public final class GitSubmissionService {
     private void reconcileCommit(GitChangeEntity c) {
         GitWorkspaceEntity w;
         try {
-            w = workspaces.record(c.getConversationSessionId());
+            w = workspaces.record(workspaces.target(c));
+            workspaces.assertBranchActive(w);
             try {
                 verifyCommit(c, w);
             } catch (GitException corrupt) {
@@ -232,8 +255,8 @@ public final class GitSubmissionService {
                 return;
             }
             // 远端包含关系是 push 成功依据；本地草稿缺失不能被静默重建，但也不能谎报远端未接受。
-            String remote = git.fetchMain(workspaces.path(w));
-            if (git.isAncestorOfRemoteMain(workspaces.path(w), c.getCommitId())) {
+            String remote = fetch(c, w);
+            if (contains(c, w)) {
                 pushed(c, w);
                 return;
             }
@@ -252,6 +275,18 @@ public final class GitSubmissionService {
                 transition(current, "VERIFYING", "GIT_RESULT_UNKNOWN");
             }
         }
+    }
+
+    private String fetch(GitChangeEntity c, GitWorkspaceEntity w) {
+        return c.getBranchId() == null
+                ? git.fetchMain(workspaces.path(w))
+                : git.fetchBranch(workspaces.path(w), c.getGitRef());
+    }
+
+    private boolean contains(GitChangeEntity c, GitWorkspaceEntity w) {
+        return c.getBranchId() == null
+                ? git.isAncestorOfRemoteMain(workspaces.path(w), c.getCommitId())
+                : git.containsCommit(workspaces.path(w), c.getGitRef(), c.getCommitId());
     }
 
     private void pushed(GitChangeEntity c, GitWorkspaceEntity w) {

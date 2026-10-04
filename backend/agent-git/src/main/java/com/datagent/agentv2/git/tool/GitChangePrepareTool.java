@@ -58,14 +58,12 @@ public final class GitChangePrepareTool implements AgentTool {
                     if (context.idempotencyKey() == null || context.idempotencyKey().isBlank()) {
                         throw new IllegalArgumentException("缺少可信幂等键");
                     }
-                    return support.getChanges()
-                            .prepare(
-                                    session,
-                                    context.executionId(),
-                                    context.idempotencyKey(),
-                                    text(args, "summary", null),
-                                    text(args, "commitMessage", null),
-                                    args.path("expectedRevision").asLong());
+                    return support.prepareCandidate(
+                            session,
+                            context,
+                            text(args, "summary", null),
+                            text(args, "commitMessage", null),
+                            args.path("expectedRevision").asLong());
                 });
     }
 }

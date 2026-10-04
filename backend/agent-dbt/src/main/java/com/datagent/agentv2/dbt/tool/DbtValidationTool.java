@@ -6,6 +6,7 @@ import com.datagent.agentv2.dbt.application.DbtValidationService;
 import com.datagent.agentv2.dbt.model.DbtToolOutput;
 import com.datagent.agentv2.git.model.GitException;
 import com.datagent.agentv2.git.port.GitSessionResolver;
+import com.datagent.agentv2.git.port.GitWorkspaceResolver;
 import java.time.Duration;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,17 @@ public final class DbtValidationTool implements AgentTool {
     private final DbtValidationService service;
     private final GitSessionResolver sessions;
     private final ObjectMapper json;
+
+    /** 新运行时必须提供执行绑定，旧独立嵌入保留原会话协议。 */
+    private final GitWorkspaceResolver workspaces;
+
+    public DbtValidationTool(
+            boolean submit,
+            DbtValidationService service,
+            GitSessionResolver sessions,
+            ObjectMapper json) {
+        this(submit, service, sessions, json, null);
+    }
 
     @Override
     public String name() {
@@ -62,6 +74,16 @@ public final class DbtValidationTool implements AgentTool {
             throw new IllegalArgumentException("缺少可信执行身份");
         String session = sessions.resolveSessionId(context.executionId());
         try {
+            if (workspaces != null) {
+                var workspace = workspaces.resolve(context);
+                return DbtToolOutput.bounded(
+                        submit
+                                ? service.submit(
+                                        workspace, session, args.path("expectedRevision").asLong())
+                                : service.get(
+                                        workspace, session, args.path("validationId").asString()),
+                        json);
+            }
             return DbtToolOutput.bounded(
                     submit
                             ? service.submit(session, args.path("expectedRevision").asLong())

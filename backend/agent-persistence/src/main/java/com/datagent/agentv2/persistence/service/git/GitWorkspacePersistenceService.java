@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class GitWorkspacePersistenceService
         extends ServiceImpl<GitWorkspaceMapper, GitWorkspaceEntity> {
+    private static final String FOR_UPDATE = "FOR UPDATE";
+
     public GitWorkspaceEntity find(String session, String repository) {
         return lambdaQuery()
                 .eq(GitWorkspaceEntity::getConversationSessionId, session)
@@ -18,6 +20,22 @@ public class GitWorkspacePersistenceService
 
     public GitWorkspaceEntity findByWorkspaceId(String workspaceId) {
         return lambdaQuery().eq(GitWorkspaceEntity::getWorkspaceId, workspaceId).one();
+    }
+
+    /** 创建会话内的幂等请求；不能用创建会话替代工作区身份。 */
+    public GitWorkspaceEntity findCreationRequest(String sessionId, String creationKey) {
+        return lambdaQuery()
+                .eq(GitWorkspaceEntity::getConversationSessionId, sessionId)
+                .eq(GitWorkspaceEntity::getCreationKey, creationKey)
+                .one();
+    }
+
+    /** 只供短事务核实身份与状态，锁内不能执行 Git 或文件 I/O。 */
+    public GitWorkspaceEntity lockByWorkspaceId(String workspaceId) {
+        return lambdaQuery()
+                .eq(GitWorkspaceEntity::getWorkspaceId, workspaceId)
+                .last(FOR_UPDATE)
+                .one();
     }
 
     public boolean replace(GitWorkspaceEntity w) {

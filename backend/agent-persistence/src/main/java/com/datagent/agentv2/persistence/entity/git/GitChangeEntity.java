@@ -38,8 +38,17 @@ public final class GitChangeEntity extends TenantAuditedEntity {
     /** 固定配置仓库标识。 */
     private String repositoryId;
 
-    /** 目标分支固定为 main。 */
+    /** 冻结目标的短分支名称，历史候选为 main。 */
     private String branch;
+
+    /** 冻结项目身份，历史候选为空。 */
+    private String projectId;
+
+    /** 冻结分支实例，禁止按当前同名引用重新解析。 */
+    private String branchId;
+
+    /** 冻结完整远端引用，历史候选为空时按 main 恢复。 */
+    private String gitRef;
 
     /** 冻结草稿的远端基线，不随重试改变。 */
     private String baseCommit;

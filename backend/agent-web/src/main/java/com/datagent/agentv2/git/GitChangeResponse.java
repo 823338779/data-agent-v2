@@ -27,7 +27,15 @@ public record GitChangeResponse(
         List<FileSummary> files,
         String errorCode,
         String errorSummary,
-        ValidationSummary validation) {
+        ValidationSummary validation,
+        /** 候选固定工作区，不随页面当前选择变化。 */
+        String workspaceId,
+        /** 固定项目，历史候选为空。 */
+        String projectId,
+        /** 固定分支实例，历史候选为空。 */
+        String branchId,
+        /** 固定完整引用，历史候选为空。 */
+        String gitRef) {
     public static GitChangeResponse composeFromChange(
             GitChangeView change, List<GitSnapshotStore.SnapshotFile> files) {
         return compose(
@@ -56,7 +64,11 @@ public record GitChangeResponse(
                 files,
                 change.errorCode(),
                 GitErrorMessages.summary(change.errorCode()),
-                ValidationSummary.composeFromEvidence(change.validation()));
+                ValidationSummary.composeFromEvidence(change.validation()),
+                change.workspaceId(),
+                change.projectId(),
+                change.branchId(),
+                change.gitRef());
     }
 
     /** fileId 只在当前候选内有意义，供 diff 查询使用，不能解释为文件系统路径。 */

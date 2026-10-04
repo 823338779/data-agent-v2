@@ -136,7 +136,7 @@ npm.cmd run build
 
 ## Git 仓库维护
 
-Git 能力默认关闭。启用后可通过会话工具准备草稿与冻结候选，并在 Git 卡片查看完整文件差异、确认或取消；已确认失败可按状态重试或核实。“已推送”表示远端 `main` 已接受提交。
+Git 能力默认关闭。启用后在“开发工作区”选择或创建分支草稿，通过会话工具编辑与冻结候选，在 Git 卡片审阅完整差异并确认；失败后可按状态重试或核实。“已推送”表示候选固定分支已接受提交，预览构建状态单独展示。会话和工作区是多对多关联，切换选择只影响下一次执行。
 
 - [Agent Git 运行配置与接口](docs/agent-git-runtime.md)
 - [独立 Git 仓库接入与运维](docs/git-repository-setup.md)
@@ -158,9 +158,11 @@ $env:DATA_AGENT_DBT_PROJECT_DIRECTORY='.'
 
 非 Ollama provider 的上下文预算可用 `DATA_AGENT_CONTEXT_WINDOW_TOKENS` 设置，默认 65536。当前估算按 UTF-8 字节保守计量，并原样保护近期 10 个用户轮次；连续建模、查询和复查可能触及硬上限。应先核实实际模型容量再调整本地预算，例如已确认模型支持 272000 时可保守设为 131072；不要超过所用模型容量或关闭硬上限保护。
 
-维护 YAML 时还需按上面的 Git 文档开启 Git，并指向与服务绑定一致的仓库。流程为：会话草稿 → 冻结修订 → dbt 定义验证 → 确认卡片 → 用户点击确认 → 原 Git 推送流程。通用 Git 候选入口同样校验凭证，受管项目内不能混入 SQL、宏或项目配置改动。当前维护范围是 `models/` 内的 YAML；自定义 model-paths 暂不通过 agent 编辑。
+维护分支时还需开启 Git，并指向与服务绑定一致的仓库。配置 `DATA_AGENT_DBT_BRANCH_SERVICE_TOKEN` 与服务端 `BRANCH_SERVICE_TOKEN` 一致。服务必须支持 `branch-development-v1` 和 `draft-validation-v2`，分支 publication 必须返回当前 configVersion/toolchainVersion。流程为：选择独立工作区 → 冻结修订 → dbt 定义验证 → 确认卡片 → 用户点击确认 → 固定分支 push。支持 `models/`、`tests/` 下的 SQL/YAML，禁止宏和项目配置变更；实际 SQL 支持范围由服务验证。
 
-验证只运行 YAML/重复键、模板、dbt parse 和语义引用检查；`SUCCEEDED` 且 `valid=true` 才可准备候选，不证明物理字段、SQL 执行或发布成功。再次编辑使旧证据失效。推送成功后仍由既有流程发布，agent 只能查询活动发布，不能直接查询草稿。
+定义验证包含 YAML/重复键、模板、dbt parse/compile、SQL 定义和语义引用检查；`SUCCEEDED` 且 `valid=true` 才可准备候选，不证明物理字段或构建成功。编辑、同步及服务配置变化使旧证据失效。共享分支远端推进时需先同步、重新验证及确认。查询固定分支的已发布版本，预览未就绪会明确失败。仅开启 dbt 时保留原线上分析；同时开启 Git 时分析也需要选择开发工作区。
+
+前端构建时可设置 `VITE_METRIC_PLATFORM_URL` 为指标平台地址。推送卡片按原提交 SHA 查找预览，并链接到固定 branchId/releaseId；未配置时仍显示预览状态。工作区使用方式、迁移和恢复限制见 [运行说明](docs/agent-git-runtime.md)。
 
 升级先部署支持本协议的 dbt-service，再部署 agent（Flyway 自动增加 V11/V12），最后启用开关。超时保留原受理键或任务 ID 重试；发布过期重新取目录及选项；校验 FAILED 可对同一草稿重新发起尝试，valid=false 则先修正定义。
 

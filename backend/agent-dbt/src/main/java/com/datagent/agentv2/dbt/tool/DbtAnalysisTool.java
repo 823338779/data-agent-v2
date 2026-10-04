@@ -4,6 +4,7 @@ import com.datagent.agentv2.conversation.exception.ToolBusinessException;
 import com.datagent.agentv2.conversation.tool.AgentTool;
 import com.datagent.agentv2.dbt.client.DbtServiceClient;
 import com.datagent.agentv2.dbt.model.DbtToolOutput;
+import com.datagent.agentv2.git.port.GitWorkspaceResolver;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.OffsetDateTime;
@@ -67,6 +68,13 @@ public final class DbtAnalysisTool implements AgentTool {
     private final Kind kind;
     private final DbtServiceClient client;
     private final ObjectMapper json;
+
+    /** Git 启用时解析执行固定目标；无 Git 装配为空，保留线上分析。 */
+    private final GitWorkspaceResolver workspaces;
+
+    public DbtAnalysisTool(Kind kind, DbtServiceClient client, ObjectMapper json) {
+        this(kind, client, json, null);
+    }
 
     @Override
     public String name() {
@@ -159,48 +167,59 @@ public final class DbtAnalysisTool implements AgentTool {
         validate(args, parametersSchema());
         if (context == null || context.executionId() == null || context.executionId().isBlank())
             throw new IllegalArgumentException("缺少可信执行身份");
-        JsonNode project = client.project();
+        String branchId = workspaces == null ? null : workspaces.resolve(context).branchId();
+        JsonNode project = branchId == null ? client.project() : client.project(branchId);
         if (!project.path("protocolVersion").asString().equals("agent-dbt-v1")) throw unsupported();
         Set<String> capabilities = new HashSet<>();
         project.path("capabilities").forEach(item -> capabilities.add(item.asString()));
+        if (branchId != null
+                && (!capabilities.contains("branch-development-v1")
+                        || !branchId.equals(project.path("branchId").asString())))
+            throw unsupported();
         if (!capabilities.containsAll(
                 Set.of("query-options-async-v1", "query-results-page-v1", "query-time-v1")))
             throw unsupported();
         JsonNode result =
                 switch (kind) {
                     case PROJECT -> project;
-                    case CATALOG ->
-                            client.catalog(
-                                    args.path(RELEASE).asString(),
-                                    args.path("query").asString(""),
-                                    args.path("page").asInt(1),
-                                    args.path("size").asInt(20));
-                    case RESOURCE -> resource(args);
+                    case CATALOG -> catalog(args, branchId);
+                    case RESOURCE -> resource(args, branchId);
                     case OPTIONS -> {
                         if (args.has(OPTIONS)) {
                             if (args.has(RELEASE) || args.has(METRICS))
                                 throw new IllegalArgumentException("轮询选项只需 optionsJobId");
-                            yield client.getOptions(args.path(OPTIONS).asString());
+                            yield branchId == null
+                                    ? client.getOptions(args.path(OPTIONS).asString())
+                                    : client.getOptions(branchId, args.path(OPTIONS).asString());
                         }
                         if (!args.has(RELEASE) || !args.has(METRICS))
                             throw new IllegalArgumentException("查询选项必须提供发布和指标集合");
-                        yield client.submitOptions(args);
+                        yield branchId == null
+                                ? client.submitOptions(args)
+                                : client.submitOptions(branchId, args);
                     }
                     case SUBMIT -> {
                         ObjectNode request = (ObjectNode) args.deepCopy();
                         request.put(KEY, queryKey(context.executionId(), request, json));
-                        yield client.submitQuery(request);
+                        yield branchId == null
+                                ? client.submitQuery(request)
+                                : client.submitQuery(branchId, request);
                     }
                     case GET -> {
                         String id = args.path(QUERY).asString();
-                        JsonNode status = client.queryStatus(id);
+                        JsonNode status =
+                                branchId == null
+                                        ? client.queryStatus(id)
+                                        : client.queryStatus(branchId, id);
                         checkTask(status, QUERY, id);
                         // 模型常沿用提交查询的行数上限；只封顶传输页大小，保留服务实际游标避免漏行。
                         int pageSize =
                                 Math.min(args.path("limit").asInt(100), MAX_RESULT_PAGE_SIZE);
-                        yield status.path("resultAvailable").asBoolean(false)
-                                ? client.queryPage(id, args.path("offset").asInt(0), pageSize)
-                                : status;
+                        if (!status.path("resultAvailable").asBoolean(false)) yield status;
+                        int offset = args.path("offset").asInt(0);
+                        yield branchId == null
+                                ? client.queryPage(id, offset, pageSize)
+                                : client.queryPage(branchId, id, offset, pageSize);
                     }
                 };
         if (kind == Kind.OPTIONS)
@@ -221,13 +240,23 @@ public final class DbtAnalysisTool implements AgentTool {
         }
     }
 
-    private JsonNode resource(JsonNode args) throws Exception {
+    private JsonNode catalog(JsonNode args, String branchId) throws Exception {
+        String release = args.path(RELEASE).asString();
+        String query = args.path("query").asString("");
+        int page = args.path("page").asInt(1), size = args.path("size").asInt(20);
+        return branchId == null
+                ? client.catalog(release, query, page, size)
+                : client.catalog(branchId, release, query, page, size);
+    }
+
+    private JsonNode resource(JsonNode args, String branchId) throws Exception {
+        String release = args.path(RELEASE).asString(), id = args.path(RESOURCE).asString();
+        String view = args.path(VIEW).asString(DEFAULT_RESOURCE_VIEW);
         ObjectNode resource =
                 (ObjectNode)
-                        client.resource(
-                                        args.path(RELEASE).asString(),
-                                        args.path(RESOURCE).asString(),
-                                        args.path(VIEW).asString(DEFAULT_RESOURCE_VIEW))
+                        (branchId == null
+                                        ? client.resource(release, id, view)
+                                        : client.resource(branchId, release, id, view))
                                 .deepCopy();
         if (resource.has(CONTENT)) {
             String content = resource.path(CONTENT).asString();

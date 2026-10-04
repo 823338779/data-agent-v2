@@ -204,7 +204,11 @@ export interface AgentBackendClient {
     title: string,
     expectedVersion: number,
   ): Promise<ConversationSession>;
-  submitMessage(conversationSessionId: string, content: string): Promise<ConversationSession>;
+  submitMessage(
+    conversationSessionId: string,
+    content: string,
+    workspaceId?: string,
+  ): Promise<ConversationSession>;
   cancelExecution(conversationSessionId: string, executionId: string): Promise<AgentExecution>;
   subscribeSessionEvents(
     conversationSessionId: string,
@@ -548,14 +552,14 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
         body: JSON.stringify({ title, expectedVersion }),
       });
     },
-    submitMessage(conversationSessionId, content) {
+    submitMessage(conversationSessionId, content, workspaceId) {
       const idempotencyKey = createIdempotencyKey();
       return sessionRequest(
         `/${encodeURIComponent(conversationSessionId)}/messages`,
         {
           method: 'POST',
           headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify({ content, ...(workspaceId ? { workspaceId } : {}) }),
         },
         true,
       );

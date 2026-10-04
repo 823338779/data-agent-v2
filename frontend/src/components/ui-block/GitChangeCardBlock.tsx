@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowRight, FileText, X } from 'lucide-react';
 import { useMemoryModal } from '../memory/useMemoryModal';
+import { GitBranchPreview } from './GitBranchPreview';
 import {
   createGitChangeClient,
   type GitChange,
@@ -278,7 +279,19 @@ export function GitChangeCardBlock({
               )}
               <dl>
                 <dt>目标分支</dt>
-                <dd>{change.branch}</dd>
+                <dd>{change.gitRef ?? change.branch}</dd>
+                {change.projectId && (
+                  <>
+                    <dt>项目</dt>
+                    <dd>{change.projectId}</dd>
+                  </>
+                )}
+                {change.workspaceId && (
+                  <>
+                    <dt>工作区</dt>
+                    <dd>{change.workspaceId}</dd>
+                  </>
+                )}
                 <dt>基线</dt>
                 <dd>
                   <code>{change.baseCommit}</code>
@@ -294,9 +307,19 @@ export function GitChangeCardBlock({
                   </>
                 )}
               </dl>
+              {change.status === 'PUSHED' &&
+                change.branchId &&
+                change.projectId &&
+                change.commitId && (
+                  <GitBranchPreview
+                    branchId={change.branchId}
+                    projectId={change.projectId}
+                    commitId={change.commitId}
+                  />
+                )}
               <p>
                 {change.validation?.status === 'SUCCEEDED'
-                  ? '已通过 YAML、模板、dbt parse 与语义定义检查；不代表物理查询可执行。'
+                  ? '已通过定义、模板、dbt parse/compile 与语义检查；物理查询仍需等待构建验证。'
                   : '冻结时基础检查已通过：变更文件 UTF-8、文件与 Git 变更完整性及大小限制；未进行指标业务口径校验。'}
               </p>
               {!change.reviewAvailable && (

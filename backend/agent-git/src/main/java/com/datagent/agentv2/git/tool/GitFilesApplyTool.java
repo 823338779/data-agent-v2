@@ -19,8 +19,9 @@ public final class GitFilesApplyTool implements AgentTool {
     public static final String TOOL_ID = "git_files_apply";
     private static final String SCHEMA =
             """
-        {"type":"object","additionalProperties":false,"required":["operations"],"properties":{"operations":{"type":"array","minItems":1,"maxItems":100,"items":{"type":"object","additionalProperties":false,"required":["type","path"],"properties":{"type":{"type":"string","enum":["CREATE","UPDATE","DELETE"]},"path":{"type":"string","minLength":1,"maxLength":1024},"expectedSha256":{"type":"string","minLength":64,"maxLength":64},"content":{"type":"string","minLength":0,"maxLength":1000000}}}}}}
+        {"type":"object","additionalProperties":false,"required":["operations"],"properties":{"expectedRevision":{"type":"integer","minimum":0},"operations":{"type":"array","minItems":1,"maxItems":100,"items":{"type":"object","additionalProperties":false,"required":["type","path"],"properties":{"type":{"type":"string","enum":["CREATE","UPDATE","DELETE"]},"path":{"type":"string","minLength":1,"maxLength":1024},"expectedSha256":{"type":"string","minLength":64,"maxLength":64},"content":{"type":"string","minLength":0,"maxLength":1000000}}}}}}
         """;
+    private static final String EXPECTED_REVISION = "expectedRevision";
     private final GitToolSupport support;
 
     @Override
@@ -75,7 +76,13 @@ public final class GitFilesApplyTool implements AgentTool {
                         }
                         operations.add(new FileOperation(type, path(op, "path"), digest, content));
                     }
-                    return support.getWorkspaces().apply(session, operations);
+                    return args.has(EXPECTED_REVISION)
+                            ? support.getWorkspaces()
+                                    .apply(
+                                            session,
+                                            operations,
+                                            args.path(EXPECTED_REVISION).asLong())
+                            : support.getWorkspaces().apply(session, operations);
                 });
     }
 }

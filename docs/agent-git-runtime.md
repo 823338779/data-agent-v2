@@ -2,7 +2,7 @@
 
 ## 启用
 
-默认 `data-agent.git.enabled=false`。部署时设置 `DATA_AGENT_GIT_ENABLED=true`，并通过服务端配置提供 `DATA_AGENT_GIT_REMOTE_URI`。服务器需要可执行的 Git 和访问目标仓库的服务端身份；凭据不能进入模型参数、卡片或仓库配置文件。所有会话共用这个远端的 `main`。
+默认 `data-agent.git.enabled=false`。部署时设置 `DATA_AGENT_GIT_ENABLED=true`，并通过服务端配置提供 `DATA_AGENT_GIT_REMOTE_URI`。服务器需要可执行的 Git 和访问目标仓库的服务端身份；凭据不能进入模型参数、卡片或仓库配置文件。分支开发还需开启 dbt 并配置同一项目及分支服务凭据；`main` 保持生产用途。
 
 | 环境变量 | 默认值 | 含义 |
 | --- | --- | --- |
@@ -29,7 +29,7 @@
 
 ## 模型工具边界
 
-只有以下七个工具：`git_workspace_prepare`、`git_files_list`、`git_files_search`、`git_file_read`、`git_files_apply`、`git_diff`、`git_change_prepare`。所有 Schema 拒绝未知字段，运行时再次检查字段、类型、整数范围和相对路径。会话与幂等键来自服务端 InvocationContext。
+只有以下七个工具：`git_workspace_prepare`、`git_files_list`、`git_files_search`、`git_file_read`、`git_files_apply`、`git_diff`、`git_change_prepare`。所有 Schema 拒绝未知字段，运行时再次检查字段、类型、整数范围和相对路径。会话与幂等键来自服务端 InvocationContext；工作区由受理时持久化的 executionId 绑定解析，模型不能传入或改变分支、远端、schema 或目录。
 
 - list：offset/limit 分页，limit 最大 100。
 - search：offset/limit 分页，limit 最大 50，每条命中文本最多 300 字符。
@@ -88,3 +88,39 @@ payload 两个 ID 均由服务器写入。候选、UI Block、正文占位符和
 卡片说明冻结时通过变更文件 UTF-8、文件与 Git 变更完整性及大小限制检查；这仅是冻结当时的基础检查，不表示当前材料仍可用，也未进行指标业务口径校验。
 
 工作根目录在配置边界转为绝对规范化路径，相对路径以服务进程启动目录为基准。启动就绪前通过短数据库查询固定不可变的遗留 ID 集合，再向受管串行执行器投递一次后台任务，仅核实该批记录，避免选入就绪后的新确认；不等待远端完成而阻塞 readiness；后台异常记录固定安全日志，不输出异常详情、路径或凭据。恢复不自动确认或推送。
+
+## 分支工作区协作与迁移
+
+先在“开发工作区”选择来源分支及基线 SHA，新建开发分支或在已有开发分支上建立独立草稿。多个会话可以关联同一个 workspaceId，共享同一草稿和修订；也可以在同一 branchId 下各建工作区，保留独立文件目录。每个会话可以切换不同工作区，消息受理时保存不可变绑定。正在运行的工具与既有卡片不会跟随切换。
+
+分支由 dbt-service 登记。Agent 使用受控项目和 `DATA_AGENT_DBT_BRANCH_SERVICE_TOKEN` 访问分支写接口，禁止把 remote、凭据、物理目录或 schema 作为请求参数。前端可通过 `VITE_METRIC_PLATFORM_URL` 配置预览链接基址。需要分支服务支持 `branch-development-v1`、`draft-validation-v2` 及 publication 当前配置/工具链版本。
+
+| API | 用途 |
+| --- | --- |
+| GET/POST `/api/v1/git-workspaces` | 按 sessionId 列举关联；按 sessionId、branchId、baseCommitSha、idempotencyKey 创建草稿 |
+| GET `/api/v1/git-workspaces/{workspaceId}` | 查看固定目标与草稿状态 |
+| PUT `/api/v1/agent-sessions/{sessionId}/git-workspaces/{workspaceId}` | 幂等关联已有草稿 |
+| POST `/api/v1/git-workspaces/{workspaceId}/sync` | 携带 expectedRevision 三方同步；冲突保留原草稿 |
+| GET/POST `/api/v1/metric-branches` | 列举分支或从明确来源创建 |
+| POST `/api/v1/metric-branches/register` | 登记并核实已有远端 ref |
+| GET/DELETE `/api/v1/metric-branches/{branchId}` | 查看或按 expectedVersion 删除开发分支 |
+| GET `/api/v1/metric-branches/{branchId}/releases` | 查看构建列表 |
+| GET `/api/v1/metric-branches/{branchId}/releases/{releaseId}` | 查看固定构建状态、安全摘要 |
+
+创建工作区的示例：
+
+```json
+{"sessionId":"session_示例","branchId":"服务登记的分支标识","baseCommitSha":"明确的40位提交SHA","idempotencyKey":"本次创建的稳定键"}
+```
+
+受理消息增加可空 workspaceId。无工作区可以普通聊天；Git 工具没有绑定时明确失败。同 idempotencyKey 改变 workspaceId 会返回 409。会话归档不删除工作区或远端分支。
+
+共享分支上有人先推送时，旧候选需要同步、重新验证和确认。同步成功递增修订，撤销原候选和校验；冲突保留旧目录及材料。push 先证明快进关系，再用明确 expected SHA 的 lease 完成远端比较与交换，禁止覆盖远端历史。响应丢失时只核实原分支是否包含固定 commitId，不生成新提交。
+
+V13 迁移旧 session 工作区为独立身份并回填关联，旧 main 工作区标为只读；历史候选仍可查看和核实已推送结果，不允许新确认或重试推生产。升级前应处理未完成的生产候选；升级后未推送的历史材料应人工核对并迁至新开发草稿。V14 保存候选及校验的分支和配置上下文。
+
+创建失败的 MUTATING/BROKEN 草稿会保留身份，同键重试不会覆盖材料；可以刷新后创建新的独立草稿。删除分支后旧工作区不可继续开发；同名 ref 重新登记是新 branchId，不能复用旧卡片。草稿和旧 clone 尚无自动清理。
+
+恢复入口为 `POST /api/v1/git-workspaces/{workspaceId}/restart`，必须带 `expectedRevision`；工作区面板为损坏/中断草稿提供按钮，原目录留存。分支工具 `git_files_apply` 及 `git_workspace_prepare(restartDraft=true)` 同样核对修订，旧修订不允许修改任何文件。
+
+同步冲突返回 `conflicts` 三方完整有界正文。人工决议通过 `POST /api/v1/git-workspaces/{workspaceId}/sync/resolve` 提交原 `expectedRevision`、`remoteCommitSha` 与完整 `resolutions` 路径集合（正文为 null 表示删除）。服务重新核对远端与原草稿，成功后才推进基线、递增修订并撤销旧确认；必须重新完成定义验证和确认。

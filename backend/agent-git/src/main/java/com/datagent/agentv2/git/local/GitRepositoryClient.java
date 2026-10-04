@@ -10,6 +10,39 @@ import java.util.*;
 
 /** 固定远端与 main 分支的本地 Git 门面，不接受任意 Git 参数。 */
 public final class GitRepositoryClient {
+    private static final String HEADS_PREFIX = "refs/heads/";
+    private static final String MAIN_REF = "refs/heads/main";
+    private static final String CHECK_REF = "check-ref-format";
+    private static final String MERGE_BASE = "merge-base";
+    private static final String IS_ANCESTOR = "--is-ancestor";
+    private static final String CHECKOUT = "checkout";
+    private static final String DETACH = "--detach";
+    private static final String HEAD = "HEAD";
+    private static final String SHA_PATTERN = "[0-9a-f]{40}";
+    private static final String FETCH = "fetch";
+    private static final String NO_TAGS = "--no-tags";
+    private static final String ORIGIN = "origin";
+    private static final String REMOTE_PREFIX = "refs/remotes/origin/";
+    private static final String REV_PARSE = "rev-parse";
+    private static final String PUSH = "push";
+    private static final String LEASE_PREFIX = "--force-with-lease=";
+    private static final String REF_SEPARATOR = ":";
+    private static final String MERGE_TREE = "merge-tree";
+    private static final String WRITE_TREE = "--write-tree";
+    private static final String NAME_ONLY = "--name-only";
+    private static final String ZERO = "-z";
+    private static final String MERGE_BASE_OPTION = "--merge-base=";
+    private static final String SYNC_MESSAGE = "local draft merge input";
+    private static final String SYNC_AUTHOR = "Agent workspace sync";
+    private static final String SYNC_EMAIL = "workspace-sync@localhost";
+    private static final String CLONE = "clone";
+    private static final String NO_HARDLINKS = "--no-hardlinks";
+    private static final String NO_CHECKOUT = "--no-checkout";
+    private static final String END_OPTIONS = "--";
+    private static final String READ_TREE = "read-tree";
+    private static final String RESET_INDEX = "--reset";
+    private static final String UPDATE_FILES = "-u";
+    private static final String UPDATE_REF = "update-ref";
     private final GitProperties properties;
     private final GitCommandRunner runner;
 
@@ -19,12 +52,23 @@ public final class GitRepositoryClient {
     }
 
     public void cloneRepository(Path workspace) {
+        cloneRepository(workspace, MAIN_REF, null);
+    }
+
+    /** 从登记引用独立克隆，再固定至已选基线；不会创建或推送远端分支。 */
+    public void cloneRepository(Path workspace, String gitRef, String baseCommitSha) {
+        if (gitRef == null
+                || !gitRef.startsWith(HEADS_PREFIX)
+                || (baseCommitSha != null && !baseCommitSha.matches(SHA_PATTERN))) {
+            throw new GitException("GIT_WORKSPACE_INVALID", "分支引用或基线提交无效");
+        }
         Path parent = workspace.toAbsolutePath().normalize().getParent();
         try {
             Files.createDirectories(parent);
         } catch (Exception exception) {
             throw new GitException("GIT_WORKSPACE_INVALID", "无法创建工作区父目录", exception);
         }
+        runner.run(parent, List.of(CHECK_REF, gitRef));
         runner.run(
                 parent,
                 List.of(
@@ -33,11 +77,16 @@ public final class GitRepositoryClient {
                         "--origin",
                         "origin",
                         "--branch",
-                        "main",
+                        gitRef.substring(HEADS_PREFIX.length()),
                         "--single-branch",
                         "--",
                         properties.remoteUri(),
                         workspace.toString()));
+        // 只允许该分支可达的明确基线，防止参数注入及错用其他分支提交。
+        if (baseCommitSha != null) {
+            runner.run(workspace, List.of(MERGE_BASE, IS_ANCESTOR, baseCommitSha, HEAD));
+            runner.run(workspace, List.of(CHECKOUT, DETACH, baseCommitSha));
+        }
     }
 
     public String fetchMain(Path workspace) {
@@ -50,6 +99,130 @@ public final class GitRepositoryClient {
                         "+refs/heads/main:refs/remotes/origin/main"));
         return text(runner.run(workspace, List.of("rev-parse", "refs/remotes/origin/main")));
     }
+
+    /** 显式抓取原目标；引用被删除时失败，不沿用本地残留的 tracking ref。 */
+    public String fetchBranch(Path workspace, String gitRef) {
+        validateBranch(workspace, gitRef);
+        String tracking = trackingRef(gitRef);
+        runner.run(workspace, List.of(FETCH, NO_TAGS, ORIGIN, gitRef + REF_SEPARATOR + tracking));
+        return text(runner.run(workspace, List.of(REV_PARSE, tracking)));
+    }
+
+    /** 固定 SHA 的包含关系；用于结果未知恢复，不能重新生成提交。 */
+    public boolean containsCommit(Path workspace, String gitRef, String commitId) {
+        validateBranch(workspace, gitRef);
+        requireSha(commitId);
+        var result =
+                runner.runAllowFailure(
+                        workspace,
+                        List.of(MERGE_BASE, IS_ANCESTOR, commitId, trackingRef(gitRef)),
+                        Map.of());
+        if (result.exitCode() == 0) return true;
+        if (result.exitCode() == 1) return false;
+        throw new GitException("GIT_COMMAND_FAILED", "无法核实固定分支提交祖先关系");
+    }
+
+    /** 仅允许快进，同时要求远端仍为预期 SHA，关闭 fetch 与 push 之间的删除/变更窗口。 */
+    public void pushCommit(Path workspace, String gitRef, String expectedHead, String commitId) {
+        requireSha(expectedHead);
+        requireSha(commitId);
+        if (!expectedHead.equals(fetchBranch(workspace, gitRef))) {
+            throw new GitException("GIT_NON_FAST_FORWARD", "远端分支已变化，需要同步并重新确认");
+        }
+        // lease 仅充当远端 CAS；先证明祖先关系，绝不利用该选项允许历史回退或覆盖。
+        runner.run(workspace, List.of(MERGE_BASE, IS_ANCESTOR, expectedHead, commitId));
+        var result =
+                runner.runAllowFailure(
+                        workspace,
+                        List.of(
+                                PUSH,
+                                LEASE_PREFIX + gitRef + REF_SEPARATOR + expectedHead,
+                                ORIGIN,
+                                commitId + REF_SEPARATOR + gitRef),
+                        Map.of());
+        if (result.exitCode() != 0) {
+            throw new GitException("GIT_NON_FAST_FORWARD", "远端拒绝快进或目标已删除，需要重新确认");
+        }
+    }
+
+    private void validateBranch(Path workspace, String gitRef) {
+        if (gitRef == null || !gitRef.startsWith(HEADS_PREFIX)) {
+            throw new GitException("GIT_WORKSPACE_INVALID", "分支必须使用完整引用");
+        }
+        runner.run(workspace, List.of(CHECK_REF, gitRef));
+    }
+
+    private static void requireSha(String sha) {
+        if (sha == null || !sha.matches(SHA_PATTERN)) {
+            throw new GitException("GIT_WORKSPACE_INVALID", "提交必须使用完整 SHA");
+        }
+    }
+
+    private static String trackingRef(String gitRef) {
+        return REMOTE_PREFIX + gitRef.substring(HEADS_PREFIX.length());
+    }
+
+    /** 本地合并对象只用于保存三方材料，不是确认候选，也不会推送。 */
+    public MergeResult mergeDraft(Path workspace, String base, String tree, String remote) {
+        requireSha(base);
+        requireSha(tree);
+        requireSha(remote);
+        String treeId = text(runner.run(workspace, List.of(REV_PARSE, tree + "^{tree}")));
+        String draft =
+                createCommit(
+                        workspace,
+                        treeId,
+                        base,
+                        SYNC_MESSAGE,
+                        SYNC_AUTHOR,
+                        SYNC_EMAIL,
+                        Instant.ofEpochSecond(1_000_000_000));
+        var result =
+                runner.runAllowFailure(
+                        workspace,
+                        List.of(
+                                MERGE_TREE,
+                                WRITE_TREE,
+                                NAME_ONLY,
+                                ZERO,
+                                MERGE_BASE_OPTION + base,
+                                remote,
+                                draft),
+                        Map.of());
+        if (result.exitCode() != 0 && result.exitCode() != 1) {
+            throw new GitException("GIT_COMMAND_FAILED", "无法合并草稿与远端");
+        }
+        String[] sections = result.output().split("\u0000", -1);
+        requireSha(sections[0]);
+        List<String> conflicts = new ArrayList<>();
+        if (result.exitCode() == 1) {
+            for (int i = 1; i < sections.length && !sections[i].isEmpty(); i++)
+                conflicts.add(sections[i]);
+            if (conflicts.isEmpty()) throw new GitException("GIT_COMMAND_FAILED", "合并冲突缺少路径信息");
+        }
+        retainSnapshot(workspace, UUID.randomUUID().toString(), sections[0]);
+        return new MergeResult(sections[0], List.copyOf(conflicts));
+    }
+
+    /** 在新目录物化合并结果；旧目录不执行 reset、checkout 或删除。 */
+    public void materializeMerge(Path source, Path destination, String tree, String remote) {
+        runner.run(
+                source,
+                List.of(
+                        CLONE,
+                        NO_HARDLINKS,
+                        NO_CHECKOUT,
+                        END_OPTIONS,
+                        source.toAbsolutePath().toString(),
+                        destination.toAbsolutePath().toString()));
+        runner.run(destination, List.of(READ_TREE, RESET_INDEX, UPDATE_FILES, tree));
+        runner.run(destination, List.of(UPDATE_REF, HEAD, remote));
+        // 新 clone 的 origin 指向本地来源；恢复受控部署远端，避免后续推送到草稿目录。
+        runner.run(destination, List.of("remote", "set-url", ORIGIN, properties.remoteUri()));
+    }
+
+    /** tree 为完整合并树；冲突路径只用于定位，原材料保留在原 clone 中。 */
+    public record MergeResult(String tree, List<String> conflictPaths) {}
 
     public String head(Path workspace) {
         return text(runner.run(workspace, List.of("rev-parse", "HEAD")));
@@ -334,6 +507,17 @@ public final class GitRepositoryClient {
             throw new GitException("GIT_PATH_REJECTED", "拒绝读取不安全的 tree 路径");
         }
         return runner.run(workspace, List.of("show", treeish + ":" + path)).output();
+    }
+
+    /** 冲突允许新增/删除文件；先检查存在与大小，再返回受控文本。 */
+    public String readConflictFile(Path workspace, String treeish, String path) {
+        requireSha(treeish);
+        var found = runner.run(workspace, List.of("ls-tree", "-z", treeish, "--", path)).output();
+        if (found.isEmpty()) return null;
+        if (fileSizeAt(workspace, treeish, path) > properties.maxFileBytes()) {
+            throw new GitException("GIT_LIMIT_EXCEEDED", "冲突文件超过服务端上限");
+        }
+        return readTreeFile(workspace, treeish, path);
     }
 
     private long fileSizeAt(Path workspace, String tree, String path) {

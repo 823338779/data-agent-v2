@@ -7,7 +7,7 @@ import com.datagent.agentv2.persistence.entity.git.GitChangeEntity;
  *
  * @param changeId 候选稳定标识，所有确认、重试和审阅操作均定位到此候选
  * @param workspaceId 候选所属工作区；不能将候选移动到其他会话草稿
- * @param branch 固定目标分支，当前阶段仅为 main
+ * @param branch 固定目标短分支名
  * @param baseCommit 冻结时的基线提交；远端变化时必须重新确认
  * @param candidateDigest 绑定远端、分支、基线、tree、提交说明和完整 diff 的 SHA-256 摘要
  * @param summary 卡片供用户审阅的变更摘要
@@ -33,7 +33,48 @@ public record GitChangeView(
         long version,
         String commitId,
         String errorCode,
-        GitValidationEvidence validation) {
+        GitValidationEvidence validation,
+        /** 冻结项目，历史候选为空。 */
+        String projectId,
+        /** 冻结分支实例，历史候选为空。 */
+        String branchId,
+        /** 冻结完整远端引用，历史候选为空。 */
+        String gitRef) {
+    public GitChangeView(
+            String changeId,
+            String workspaceId,
+            String branch,
+            String baseCommit,
+            String candidateDigest,
+            String summary,
+            String commitMessage,
+            long draftRevision,
+            int fileCount,
+            GitChangeStatus status,
+            long version,
+            String commitId,
+            String errorCode,
+            GitValidationEvidence validation) {
+        this(
+                changeId,
+                workspaceId,
+                branch,
+                baseCommit,
+                candidateDigest,
+                summary,
+                commitMessage,
+                draftRevision,
+                fileCount,
+                status,
+                version,
+                commitId,
+                errorCode,
+                validation,
+                null,
+                null,
+                null);
+    }
+
     public static GitChangeView composeFromChange(GitChangeEntity c) {
         return new GitChangeView(
                 c.getChangeId(),
@@ -49,6 +90,9 @@ public record GitChangeView(
                 c.getVersion(),
                 c.getCommitId(),
                 c.getErrorCode(),
-                GitValidationEvidence.decode(c.getValidationEvidence()));
+                GitValidationEvidence.decode(c.getValidationEvidence()),
+                c.getProjectId(),
+                c.getBranchId(),
+                c.getGitRef());
     }
 }

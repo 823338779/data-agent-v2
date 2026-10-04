@@ -296,6 +296,20 @@ public class ConversationApplicationService {
         return snapshot(session);
     }
 
+    /** 仅本次受理固定工作区，不把默认选择写成会话与分支的一对一关系。 */
+    public ConversationView submitMessage(
+            String conversationSessionId,
+            String content,
+            String idempotencyKey,
+            String workspaceId) {
+        if (workspaceId == null) {
+            return submitMessage(conversationSessionId, content, idempotencyKey);
+        }
+        return snapshot(
+                agentExecutionSubmissionService.submit(
+                        conversationSessionId, content, idempotencyKey, workspaceId));
+    }
+
     @Transactional(readOnly = true)
     public ConversationView.AgentExecutionView controlView(
             String conversationSessionId, AgentExecution run) {

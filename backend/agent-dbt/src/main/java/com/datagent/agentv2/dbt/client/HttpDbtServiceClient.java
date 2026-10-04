@@ -24,9 +24,62 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
     private static final int MAX_BYTES = 8 * 1024 * 1024;
     private static final String GET = "GET", POST = "POST", JSON = "application/json";
     private static final String UNAVAILABLE = "DBT_UNAVAILABLE", INVALID = "DBT_PROTOCOL_INVALID";
+    private static final String BRANCHES = "/branches";
+    private static final String REGISTER_BRANCH = BRANCHES + ":register";
+    private static final String BRANCH_PREFIX = BRANCHES + "/";
+    private static final String DELETE = "DELETE";
+    private static final String EXPECTED_VERSION = "?expectedVersion=";
+    private static final String AUTHORIZATION = "Authorization";
+    private static final String BEARER = "Bearer ";
+    private static final String BRANCH_NOT_CONFIGURED = "DBT_BRANCH_NOT_CONFIGURED";
+    private static final String VALIDATIONS = "/validations";
+    private static final String RELEASES = "/releases";
     private final DbtProperties properties;
     private final ObjectMapper json;
     private final ExecutorService requests = Executors.newVirtualThreadPerTaskExecutor();
+
+    @Override
+    public JsonNode releases(String branchId) throws Exception {
+        var result = call(GET, BRANCH_PREFIX + part(branchId) + RELEASES, null);
+        for (var release : result) {
+            if (!branchId.equals(release.path("branchId").asString())) throw protocolError();
+        }
+        return result;
+    }
+
+    @Override
+    public JsonNode release(String branchId, String releaseId) throws Exception {
+        return branchCall(branchId, GET, RELEASES + "/" + part(releaseId), null, false);
+    }
+
+    @Override
+    public JsonNode branches() throws Exception {
+        return call(GET, BRANCHES, null);
+    }
+
+    @Override
+    public JsonNode branch(String branchId) throws Exception {
+        return call(GET, BRANCH_PREFIX + part(branchId), null);
+    }
+
+    @Override
+    public JsonNode createBranch(JsonNode request) throws Exception {
+        return call(POST, BRANCHES, request, true);
+    }
+
+    @Override
+    public JsonNode registerBranch(JsonNode request) throws Exception {
+        return call(POST, REGISTER_BRANCH, request, true);
+    }
+
+    @Override
+    public JsonNode deleteBranch(String branchId, long expectedVersion) throws Exception {
+        return call(
+                DELETE,
+                BRANCH_PREFIX + part(branchId) + EXPECTED_VERSION + expectedVersion,
+                null,
+                true);
+    }
 
     public JsonNode project() throws Exception {
         return call(GET, "/publication", null);
@@ -90,11 +143,119 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
         return call(GET, "/validations/" + part(id), null);
     }
 
+    // 所有分支调用使用路径隔离，并验证响应仍属于原分支实例。
+    @Override
+    public JsonNode project(String branchId) throws Exception {
+        if (branchId == null) return project();
+        return branchCall(branchId, GET, "/publication", null, false);
+    }
+
+    @Override
+    public JsonNode catalog(String branchId, String r, String q, int page, int size)
+            throws Exception {
+        if (branchId == null) return catalog(r, q, page, size);
+        return branchCall(
+                branchId,
+                GET,
+                "/releases/"
+                        + part(r)
+                        + "/catalog?q="
+                        + part(q)
+                        + "&page="
+                        + page
+                        + "&size="
+                        + size,
+                null,
+                false);
+    }
+
+    @Override
+    public JsonNode resource(String branchId, String r, String id, String view) throws Exception {
+        if (branchId == null) return resource(r, id, view);
+        if (!Set.of("detail", "source", "lineage", "native-details").contains(view))
+            throw new IllegalArgumentException("未知资源视图");
+        return branchCall(
+                branchId,
+                GET,
+                "/releases/"
+                        + part(r)
+                        + "/resources/"
+                        + part(id)
+                        + (view.equals("detail") ? "" : "/" + view),
+                null,
+                false);
+    }
+
+    @Override
+    public JsonNode submitOptions(String branchId, JsonNode body) throws Exception {
+        if (branchId == null) return submitOptions(body);
+        return branchCall(branchId, POST, "/query-option-jobs", body, false);
+    }
+
+    @Override
+    public JsonNode getOptions(String branchId, String id) throws Exception {
+        if (branchId == null) return getOptions(id);
+        return branchCall(branchId, GET, "/query-option-jobs/" + part(id), null, false);
+    }
+
+    @Override
+    public JsonNode submitQuery(String branchId, JsonNode body) throws Exception {
+        if (branchId == null) return submitQuery(body);
+        return branchCall(branchId, POST, "/queries", body, false);
+    }
+
+    @Override
+    public JsonNode queryStatus(String branchId, String id) throws Exception {
+        if (branchId == null) return queryStatus(id);
+        return branchCall(branchId, GET, "/queries/" + part(id) + "/status", null, false);
+    }
+
+    @Override
+    public JsonNode queryPage(String branchId, String id, int offset, int limit) throws Exception {
+        if (branchId == null) return queryPage(id, offset, limit);
+        return branchCall(
+                branchId,
+                GET,
+                "/queries/" + part(id) + "/results?offset=" + offset + "&limit=" + limit,
+                null,
+                false);
+    }
+
+    @Override
+    public JsonNode submitValidation(String branchId, JsonNode body) throws Exception {
+        if (branchId == null) return submitValidation(body);
+        // 服务回执仅包含任务 ID/状态；随后的固定分支 GET 核对完整归属和摘要。
+        return call(POST, BRANCH_PREFIX + part(branchId) + VALIDATIONS, body, true);
+    }
+
+    @Override
+    public JsonNode getValidation(String branchId, String id) throws Exception {
+        if (branchId == null) return getValidation(id);
+        return branchCall(branchId, GET, "/validations/" + part(id), null, false);
+    }
+
+    private JsonNode branchCall(
+            String branchId, String method, String suffix, JsonNode body, boolean mutation)
+            throws Exception {
+        var result = call(method, BRANCH_PREFIX + part(branchId) + suffix, body, mutation);
+        if (!branchId.equals(result.path("branchId").asString())) throw protocolError();
+        return result;
+    }
+
     private static String part(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private JsonNode call(String method, String suffix, JsonNode body) throws Exception {
+        return call(method, suffix, body, false);
+    }
+
+    private JsonNode call(String method, String suffix, JsonNode body, boolean branchMutation)
+            throws Exception {
+        boolean collection =
+                GET.equals(method)
+                        && (BRANCHES.equals(suffix)
+                                || suffix.startsWith(BRANCH_PREFIX) && suffix.endsWith(RELEASES));
         String base = properties.baseUrl().toString().replaceAll("/+$", "");
         var request =
                 new HttpUriRequestBase(
@@ -102,6 +263,14 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
                         java.net.URI.create(
                                 base + "/v2/projects/" + part(properties.projectId()) + suffix));
         request.setHeader("Accept", JSON);
+        // 凭据只添加到受控基址的分支写调用；禁用重定向，不能随响应泄露到其他地址。
+        if (branchMutation) {
+            String token = properties.branchServiceToken();
+            if (token == null || token.isBlank()) {
+                throw new ToolBusinessException(BRANCH_NOT_CONFIGURED, "未配置分支服务部署凭据");
+            }
+            request.setHeader(AUTHORIZATION, BEARER + token);
+        }
         if (body != null) {
             byte[] bytes = json.writeValueAsBytes(body);
             if (bytes.length > MAX_BYTES)
@@ -159,7 +328,10 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
                                     } catch (RuntimeException invalid) {
                                         throw protocolError();
                                     }
-                                    if (result == null || !result.isObject()) throw protocolError();
+                                    if (result == null
+                                            || (collection
+                                                    ? !result.isArray()
+                                                    : !result.isObject())) throw protocolError();
                                     return result;
                                 } finally {
                                     request.cancel();

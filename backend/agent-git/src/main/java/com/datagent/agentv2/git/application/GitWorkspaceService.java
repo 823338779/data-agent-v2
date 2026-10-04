@@ -3,6 +3,7 @@ package com.datagent.agentv2.git.application;
 import com.datagent.agentv2.git.config.*;
 import com.datagent.agentv2.git.local.*;
 import com.datagent.agentv2.git.model.*;
+import com.datagent.agentv2.git.port.GitBranchRegistry;
 import com.datagent.agentv2.persistence.entity.git.*;
 import com.datagent.agentv2.persistence.service.git.*;
 import java.io.InputStream;
@@ -13,9 +14,19 @@ import java.util.*;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 
-/** 会话草稿门面；互斥覆盖读写、完整性检查及冻结，数据库更新不跨文件/Git I/O。 */
+/** 独立工作区草稿门面；互斥覆盖读写、完整性检查及冻结，数据库更新不跨文件/Git I/O。 */
 @RequiredArgsConstructor
 public final class GitWorkspaceService {
+    private static final String SHA_PATTERN = "[0-9a-f]{40}";
+    private static final String PREVIEW = "PREVIEW";
+    private static final String ACTIVE = "ACTIVE";
+    private static final String MAIN_REF = "refs/heads/main";
+    private static final String BRANCH_ID = "branchId";
+    private static final String PROJECT_ID = "projectId";
+    private static final String GIT_REF = "gitRef";
+    private static final String MODE = "mode";
+    private static final String STATUS = "status";
+    private static final String CREATION_PREFIX = "creation:";
     private final GitWorkspacePersistenceService records;
     private final GitChangePersistenceService changes;
     private final GitRepositoryClient git;
@@ -23,13 +34,135 @@ public final class GitWorkspaceService {
     private final GitProperties properties;
     private final GitApplicationProperties application;
     private final GitWorkspaceLocks locks;
+    private final GitBranchRegistry branches;
+    private final GitSessionWorkspaceService sessions;
+
+    /** 仅保留原独立模块调用协议；运行时装配始终提供关联服务并要求 workspaceId。 */
+    public GitWorkspaceService(
+            GitWorkspacePersistenceService records,
+            GitChangePersistenceService changes,
+            GitRepositoryClient git,
+            GitWorkspaceFiles files,
+            GitProperties properties,
+            GitApplicationProperties application,
+            GitWorkspaceLocks locks) {
+        this(records, changes, git, files, properties, application, locks, null, null);
+    }
+
+    /** 创建独立 clone；持久化意图先于 I/O，重试不重建、不覆盖未完成草稿。 */
+    public GitWorkspaceView create(
+            String sessionId, String branchId, String baseCommitSha, String idempotencyKey) {
+        if (branches == null || sessions == null) {
+            throw new GitException("GIT_NOT_CONFIGURED", "未配置分支开发服务");
+        }
+        if (sessionId == null
+                || sessionId.isBlank()
+                || branchId == null
+                || branchId.isBlank()
+                || baseCommitSha == null
+                || !baseCommitSha.matches(SHA_PATTERN)
+                || idempotencyKey == null
+                || idempotencyKey.isBlank()
+                || idempotencyKey.length() > 128) {
+            throw new GitException("GIT_WORKSPACE_INVALID", "工作区创建参数无效");
+        }
+        String digest = creationDigest(branchId, baseCommitSha);
+        return locked(
+                CREATION_PREFIX + sessionId + idempotencyKey,
+                () -> {
+                    var existing = records.findCreationRequest(sessionId, idempotencyKey);
+                    if (existing != null) {
+                        if (!digest.equals(existing.getCreationDigest())) {
+                            throw new GitException("GIT_CONFLICT", "同一创建键不能修改分支或基线");
+                        }
+                        sessions.attach(sessionId, existing.getWorkspaceId());
+                        return GitWorkspaceView.composeFromWorkspace(existing);
+                    }
+                    var branch = branches.get(branchId);
+                    if (!branchId.equals(branch.path(BRANCH_ID).asText())
+                            || !PREVIEW.equals(branch.path(MODE).asText())
+                            || !ACTIVE.equals(branch.path(STATUS).asText())
+                            || branch.path(PROJECT_ID).asText().isBlank()
+                            || branch.path(GIT_REF).asText().isBlank()
+                            || MAIN_REF.equals(branch.path(GIT_REF).asText())) {
+                        throw new GitException("GIT_CONFLICT", "分支尚未就绪或不能用于开发写入");
+                    }
+                    var w =
+                            GitWorkspaceEntity.composeForCreation(
+                                    sessionId,
+                                    application.repositoryId(),
+                                    branch.path(PROJECT_ID).asText(),
+                                    branchId,
+                                    branch.path(GIT_REF).asText(),
+                                    baseCommitSha,
+                                    idempotencyKey,
+                                    digest);
+                    // 唯一创建键保护跨进程重复请求；落库后失败只返回原工作区状态。
+                    try {
+                        records.save(w);
+                    } catch (org.springframework.dao.DuplicateKeyException duplicate) {
+                        existing = records.findCreationRequest(sessionId, idempotencyKey);
+                        if (existing == null || !digest.equals(existing.getCreationDigest())) {
+                            throw new GitException("GIT_CONFLICT", "工作区创建请求已存在");
+                        }
+                        sessions.attach(sessionId, existing.getWorkspaceId());
+                        return GitWorkspaceView.composeFromWorkspace(existing);
+                    }
+                    sessions.attach(sessionId, w.getWorkspaceId());
+                    return locked(
+                            w.getWorkspaceId(),
+                            () -> {
+                                initialize(w);
+                                return get(w.getWorkspaceId());
+                            });
+                });
+    }
+
+    public GitWorkspaceView get(String workspaceId) {
+        return GitWorkspaceView.composeFromWorkspace(record(workspaceId));
+    }
+
+    public List<GitWorkspaceView> listForSession(String sessionId) {
+        return sessions.listForSession(sessionId).stream()
+                .map(link -> get(link.getWorkspaceId()))
+                .toList();
+    }
+
+    public GitWorkspaceView attach(String sessionId, String workspaceId) {
+        var w = record(workspaceId);
+        if (Boolean.TRUE.equals(w.getLegacyReadOnly())) {
+            throw new GitException("GIT_CONFLICT", "历史生产工作区不能用于新的开发关联");
+        }
+        sessions.attach(sessionId, workspaceId);
+        return GitWorkspaceView.composeFromWorkspace(w);
+    }
+
+    private static String creationDigest(String branchId, String baseCommitSha) {
+        try {
+            var digest = MessageDigest.getInstance("SHA-256");
+            digest.update(branchId.getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) 0);
+            return HexFormat.of()
+                    .formatHex(digest.digest(baseCommitSha.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
 
     public GitWorkspaceView prepare(String sessionId, boolean restartDraft) {
+        return prepare(sessionId, restartDraft, null);
+    }
+
+    /** 显式恢复无需执行绑定；预期修订阻止排队中的旧请求丢弃他人新草稿。 */
+    public GitWorkspaceView prepare(String sessionId, boolean restartDraft, Long expectedRevision) {
         return locked(
                 sessionId,
                 () -> {
-                    var w = records.find(sessionId, application.repositoryId());
+                    var w = lookup(sessionId);
                     if (w == null) {
+                        if (sessions != null) {
+                            throw new GitException("GIT_WORKSPACE_NOT_FOUND", "请先创建或选择明确工作区");
+                        }
                         w = new GitWorkspaceEntity();
                         w.setWorkspaceId("gw_" + UUID.randomUUID());
                         w.setConversationSessionId(sessionId);
@@ -42,28 +175,33 @@ public final class GitWorkspaceService {
                         records.save(w);
                         initialize(w);
                     } else if (restartDraft) {
+                        assertRevision(w, expectedRevision);
                         assertEditable(w);
+                        assertBranchActive(w);
                         changes.invalidatePending(w.getWorkspaceId());
                         w.setActiveChangeId(null);
                         w.setStatus("MUTATING");
                         persist(w);
                         // 旧 clone 与候选文件保留作为归档；新草稿使用全新服务端键，绝不 reset 掉审阅证据。
-                        w = records.find(sessionId, application.repositoryId());
+                        w = lookup(sessionId);
                         w.setStorageKey("workspaces/" + UUID.randomUUID());
                         w.setDraftRevision(w.getDraftRevision() + 1);
                         persist(w);
-                        initialize(records.find(sessionId, application.repositoryId()));
+                        initialize(lookup(sessionId));
                     } else {
                         ensureIntegrity(w);
                     }
-                    return GitWorkspaceView.composeFromWorkspace(
-                            records.find(sessionId, application.repositoryId()));
+                    return GitWorkspaceView.composeFromWorkspace(lookup(sessionId));
                 });
     }
 
     private void initialize(GitWorkspaceEntity w) {
         try {
-            git.cloneRepository(path(w));
+            if (w.getBranchId() == null) {
+                git.cloneRepository(path(w));
+            } else {
+                git.cloneRepository(path(w), w.getGitRef(), w.getBaseCommit());
+            }
             w.setBaseCommit(git.head(path(w)));
             w.setDraftDigest(fingerprint(path(w)));
             w.setStatus("READY");
@@ -134,14 +272,24 @@ public final class GitWorkspaceService {
                 w.getBaseCommit(),
                 snapshot.treeId(),
                 w.getDraftRevision(),
-                entries);
+                entries,
+                w.getProjectId(),
+                w.getBranchId(),
+                w.getGitRef());
     }
 
     public GitWorkspaceView apply(String sessionId, List<FileOperation> operations) {
+        return apply(sessionId, operations, null);
+    }
+
+    /** 分支工作区的每次编辑同时核对整体修订和每个文件摘要。 */
+    public GitWorkspaceView apply(
+            String sessionId, List<FileOperation> operations, Long expectedRevision) {
         return locked(
                 sessionId,
                 () -> {
                     var w = require(sessionId);
+                    assertRevision(w, expectedRevision);
                     assertEditable(w);
                     String before = w.getDraftDigest();
                     // 写入前持久化屏障，崩溃后禁止把未登记的新内容当作旧草稿批准。
@@ -150,7 +298,7 @@ public final class GitWorkspaceService {
                     try {
                         files.apply(path(w), operations);
                     } finally {
-                        var current = records.find(sessionId, application.repositoryId());
+                        var current = lookup(sessionId);
                         String after = fingerprint(path(current));
                         if (!before.equals(after)) {
                             changes.invalidatePending(current.getWorkspaceId());
@@ -160,8 +308,7 @@ public final class GitWorkspaceService {
                         current.setStatus("READY");
                         persist(current);
                     }
-                    return GitWorkspaceView.composeFromWorkspace(
-                            records.find(sessionId, application.repositoryId()));
+                    return GitWorkspaceView.composeFromWorkspace(lookup(sessionId));
                 });
     }
 
@@ -169,12 +316,20 @@ public final class GitWorkspaceService {
         return locks.workspace(application.repositoryId(), session, action);
     }
 
+    private void assertRevision(GitWorkspaceEntity workspace, Long expectedRevision) {
+        if ((workspace.getBranchId() != null && expectedRevision == null)
+                || (expectedRevision != null
+                        && !expectedRevision.equals(workspace.getDraftRevision()))) {
+            throw new GitException("GIT_CONFLICT", "必须提供当前草稿修订号，读取后重试");
+        }
+    }
+
     <T> T submitting(String session, Supplier<T> action) {
         return locks.repository(application.repositoryId(), () -> locked(session, action));
     }
 
     GitWorkspaceEntity require(String session) {
-        var w = records.find(session, application.repositoryId());
+        var w = lookup(session);
         if (w == null) {
             throw new GitException("GIT_WORKSPACE_NOT_FOUND", "请先准备当前会话工作区");
         }
@@ -183,11 +338,85 @@ public final class GitWorkspaceService {
     }
 
     GitWorkspaceEntity record(String session) {
-        var w = records.find(session, application.repositoryId());
+        var w = lookup(session);
         if (w == null) {
             throw new GitException("GIT_WORKSPACE_NOT_FOUND", "工作区不存在");
         }
         return w;
+    }
+
+    private GitWorkspaceEntity lookup(String target) {
+        // 生产运行时只接受稳定工作区 ID，绝不回退到会话或 main。
+        return sessions == null
+                ? records.find(target, application.repositoryId())
+                : records.findByWorkspaceId(target);
+    }
+
+    /** 卡片按钮必须跟随候选自身的工作区，而不是当前会话选择。 */
+    String target(GitChangeEntity candidate) {
+        return sessions == null ? candidate.getConversationSessionId() : candidate.getWorkspaceId();
+    }
+
+    /** 同步完成后替换目录指针；原 clone 留存，CAS 失败不会覆盖原工作目录。 */
+    void acceptSync(GitWorkspaceEntity w, String storageKey, String remoteCommit) {
+        changes.invalidatePending(w.getWorkspaceId());
+        w.setStorageKey(storageKey);
+        w.setBaseCommit(remoteCommit);
+        w.setDraftDigest(fingerprint(path(w)));
+        w.setDraftRevision(w.getDraftRevision() + 1);
+        w.setActiveChangeId(null);
+        persist(w);
+    }
+
+    /** 仅在未接管的新合并目录写入人工决议，当前草稿在成功 CAS 前保持不变。 */
+    void resolveFiles(Path destination, Map<String, String> resolutions) {
+        if (resolutions.size() > properties.maxCandidateFiles())
+            throw new GitException("GIT_LIMIT_EXCEEDED", "冲突文件数超过服务端上限");
+        var operations = new ArrayList<FileOperation>();
+        resolutions.forEach(
+                (name, content) -> {
+                    var current = files.read(destination, name);
+                    operations.add(
+                            content == null
+                                    ? FileOperation.delete(name, current.sha256())
+                                    : FileOperation.update(name, current.sha256(), content));
+                });
+        files.apply(destination, operations);
+        // 完整 freeze 再次检查文件数量/总字节/完整 diff，不能以人工解决绕过候选上限。
+        try {
+            git.freeze(destination);
+        } catch (GitException failure) {
+            if (!"GIT_EMPTY_CHANGE".equals(failure.code())) throw failure;
+        }
+    }
+
+    void checkConflictSize(List<GitConflict> conflicts) {
+        long bytes = 0;
+        for (var conflict : conflicts) {
+            for (var content :
+                    Arrays.asList(
+                            conflict.baseContent(),
+                            conflict.localContent(),
+                            conflict.remoteContent()))
+                if (content != null) bytes += content.getBytes(StandardCharsets.UTF_8).length;
+        }
+        if (conflicts.size() > properties.maxCandidateFiles()
+                || bytes > properties.maxCandidateBytes())
+            throw new GitException("GIT_LIMIT_EXCEEDED", "冲突材料超过服务端上限");
+    }
+
+    /** 每次变更核对原分支实例，禁止删除后同名引用被旧工作区复用。 */
+    void assertBranchActive(GitWorkspaceEntity w) {
+        if (w.getBranchId() == null) return;
+        if (branches == null) throw new GitException("GIT_NOT_CONFIGURED", "未配置分支服务");
+        var branch = branches.get(w.getBranchId());
+        if (!w.getBranchId().equals(branch.path(BRANCH_ID).asText())
+                || !w.getGitRef().equals(branch.path(GIT_REF).asText())
+                || !w.getProjectId().equals(branch.path(PROJECT_ID).asText())
+                || !ACTIVE.equals(branch.path(STATUS).asText())
+                || !PREVIEW.equals(branch.path(MODE).asText())) {
+            throw new GitException("GIT_CONFLICT", "原分支实例已不可开发");
+        }
     }
 
     Path path(GitWorkspaceEntity w) {
@@ -200,6 +429,9 @@ public final class GitWorkspaceService {
     }
 
     void assertEditable(GitWorkspaceEntity w) {
+        if (Boolean.TRUE.equals(w.getLegacyReadOnly())) {
+            throw new GitException("GIT_CONFLICT", "历史生产工作区只允许读取恢复材料");
+        }
         if (w.getActiveChangeId() != null) {
             var c = changes.find(w.getActiveChangeId());
             if (c != null && List.of("SUBMITTING", "VERIFYING").contains(c.getStatus())) {
@@ -223,7 +455,7 @@ public final class GitWorkspaceService {
 
     void markBroken(GitWorkspaceEntity w) {
         changes.invalidatePending(w.getWorkspaceId());
-        var fresh = records.find(w.getConversationSessionId(), application.repositoryId());
+        var fresh = records.findByWorkspaceId(w.getWorkspaceId());
         if (fresh != null) {
             fresh.setStatus("BROKEN");
             persist(fresh);
@@ -238,7 +470,7 @@ public final class GitWorkspaceService {
         w.setStatus("MUTATING");
         persist(w);
         git.acceptSubmittedCommit(path(w), commit);
-        var fresh = record(w.getConversationSessionId());
+        var fresh = records.findByWorkspaceId(w.getWorkspaceId());
         fresh.setBaseCommit(commit);
         fresh.setDraftDigest(fingerprint(path(fresh)));
         fresh.setStatus("READY");

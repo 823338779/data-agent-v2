@@ -23,6 +23,7 @@ import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.AgentExecutionStreamCheckpointService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
+import com.datagent.agentv2.persistence.service.git.GitExecutionWorkspaceService;
 import com.datagent.agentv2.platform.context.OperatorContext;
 import com.datagent.agentv2.platform.context.TenantContext;
 import com.datagent.agentv2.platform.id.IdGenerator;
@@ -48,10 +49,21 @@ public class AgentExecutionSubmissionTransactionService {
     private final LocalExecutionProperties properties;
     private final ApplicationEventPublisher applicationEvents;
     private final IdGenerator ids;
+    private final GitExecutionWorkspaceService workspaces;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ConversationSession createOrReplay(
             String sessionId, String content, String idempotencyKey, String payloadHash) {
+        return createOrReplay(sessionId, content, idempotencyKey, payloadHash, null);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public ConversationSession createOrReplay(
+            String sessionId,
+            String content,
+            String idempotencyKey,
+            String payloadHash,
+            String workspaceId) {
         ConversationSession session = sessions.lockById(sessionId);
         if (session == null) {
             throw new ResponseStatusException(
@@ -93,6 +105,16 @@ public class AgentExecutionSubmissionTransactionService {
                         payloadHash,
                         now.plus(properties.deadline()));
         executions.save(execution);
+        // 与受理记录处于同一事务；上下文不合法时消息、序号和 execution 全部回滚。
+        if (workspaceId != null) {
+            try {
+                workspaces.bind(execution.getExecutionId(), sessionId, workspaceId);
+            } catch (IllegalArgumentException missing) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前会话未关联此工作区", missing);
+            } catch (IllegalStateException unavailable) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "工作区暂不可用于开发执行", unavailable);
+            }
+        }
         userMessage.associateExecution(execution.getExecutionId());
         messages.updateById(userMessage);
         messages.save(

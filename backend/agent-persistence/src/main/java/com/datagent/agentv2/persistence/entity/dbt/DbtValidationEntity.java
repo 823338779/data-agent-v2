@@ -20,6 +20,18 @@ public final class DbtValidationEntity extends TenantAuditedEntity {
     private String workspaceId;
     private String projectId;
 
+    /** 固定分支实例，历史线上验证为空。 */
+    private String branchId;
+
+    /** 固定完整引用，不能随会话选择变化。 */
+    private String gitRef;
+
+    /** 能力查询时的配置版本，作为快照身份的一部分。 */
+    private String configVersion;
+
+    /** 能力查询时的工具链版本，作为快照身份的一部分。 */
+    private String toolchainVersion;
+
     /** 配置项目相对 Git 根目录；不能用相似路径前缀代替。 */
     private String projectSubdir;
 

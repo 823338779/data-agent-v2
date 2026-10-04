@@ -3,6 +3,7 @@ package com.datagent.agentv2.git.config;
 import com.datagent.agentv2.git.application.*;
 import com.datagent.agentv2.git.local.*;
 import com.datagent.agentv2.git.model.GitException;
+import com.datagent.agentv2.git.port.GitBranchRegistry;
 import com.datagent.agentv2.git.port.GitCandidateValidation;
 import com.datagent.agentv2.git.port.GitChangeCardPublisher;
 import com.datagent.agentv2.persistence.service.git.*;
@@ -67,8 +68,17 @@ public class GitConfiguration {
             GitWorkspaceFiles files,
             GitProperties p,
             GitApplicationProperties a,
-            GitWorkspaceLocks locks) {
-        return new GitWorkspaceService(w, c, git, files, p, a, locks);
+            GitWorkspaceLocks locks,
+            ObjectProvider<GitBranchRegistry> branches,
+            GitSessionWorkspaceService sessions) {
+        return new GitWorkspaceService(
+                w, c, git, files, p, a, locks, branches.getIfAvailable(), sessions);
+    }
+
+    @Bean
+    GitWorkspaceSyncService gitWorkspaceSyncService(
+            GitWorkspaceService workspaces, GitRepositoryClient git) {
+        return new GitWorkspaceSyncService(workspaces, git);
     }
 
     @Bean

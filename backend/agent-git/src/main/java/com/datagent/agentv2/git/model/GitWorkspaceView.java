@@ -16,13 +16,31 @@ public record GitWorkspaceView(
         String baseCommit,
         long draftRevision,
         String status,
-        String activeChangeId) {
+        String activeChangeId,
+        /** dbt 服务登记的项目；历史工作区为空。 */
+        String projectId,
+        /** 创建时固定的分支实例，删除重建后不能复用。 */
+        String branchId,
+        /** 固定完整远端引用。 */
+        String gitRef) {
+    public GitWorkspaceView(
+            String workspaceId,
+            String baseCommit,
+            long draftRevision,
+            String status,
+            String activeChangeId) {
+        this(workspaceId, baseCommit, draftRevision, status, activeChangeId, null, null, null);
+    }
+
     public static GitWorkspaceView composeFromWorkspace(GitWorkspaceEntity w) {
         return new GitWorkspaceView(
                 w.getWorkspaceId(),
                 w.getBaseCommit(),
                 w.getDraftRevision(),
                 w.getStatus(),
-                w.getActiveChangeId());
+                w.getActiveChangeId(),
+                w.getProjectId(),
+                w.getBranchId(),
+                w.getGitRef());
     }
 }

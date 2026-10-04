@@ -7,6 +7,7 @@ import com.datagent.agentv2.git.application.*;
 import com.datagent.agentv2.git.config.GitProperties;
 import com.datagent.agentv2.git.model.*;
 import com.datagent.agentv2.git.port.GitSessionResolver;
+import com.datagent.agentv2.git.port.GitWorkspaceResolver;
 import java.time.Duration;
 import java.util.*;
 import java.util.function.Function;
@@ -14,6 +15,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -35,12 +37,41 @@ public final class GitToolSupport {
     private final GitProperties properties;
     private final ObjectMapper json;
 
+    /** 服务装配提供执行绑定；独立旧模块调用保留原 session 适配。 */
+    private final ObjectProvider<GitWorkspaceResolver> workspaceResolver;
+
     JsonNode schema(String source) {
         return json.readTree(source);
     }
 
     JsonNode result(Object value) {
         return json.valueToTree(value);
+    }
+
+    /** 文件目标与卡片会话分别从可信上下文解析，避免把工作区 ID 当成会话 ID。 */
+    GitChangeView prepareCandidate(
+            String target,
+            InvocationContext context,
+            String summary,
+            String message,
+            long revision) {
+        if (workspaceResolver.getIfAvailable() == null) {
+            return changes.prepare(
+                    target,
+                    context.executionId(),
+                    context.idempotencyKey(),
+                    summary,
+                    message,
+                    revision);
+        }
+        return changes.prepareWorkspace(
+                target,
+                sessions.resolveSessionId(context.executionId()),
+                context.executionId(),
+                context.idempotencyKey(),
+                summary,
+                message,
+                revision);
     }
 
     JsonNode call(
@@ -54,7 +85,13 @@ public final class GitToolSupport {
             throw new IllegalArgumentException("缺少可信执行上下文");
         }
         try {
-            return result(action.apply(sessions.resolveSessionId(context.executionId())));
+            var resolver = workspaceResolver.getIfAvailable();
+            // 真实执行缺少绑定时由 resolver 拒绝，绝不能再回退 session/main。
+            String target =
+                    resolver == null
+                            ? sessions.resolveSessionId(context.executionId())
+                            : resolver.resolve(context).workspaceId();
+            return result(action.apply(target));
         } catch (GitException failure) {
             // 错误消息可能含 Git stderr 或远端凭据；日志只保留类型、堆栈和可信执行标识。
             log.warn(

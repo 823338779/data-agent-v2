@@ -9,6 +9,7 @@ import java.util.*;
 /** Python/Java 共用 changes-v1；UTF-8 无符号字节排序且不转换换行。 */
 public final class DbtChangesDigest {
     private static final String HEADER = "dbt-changes-v1\n", ABSENT = "-", SHA256 = "SHA-256";
+    private static final String HEADER_V2 = "dbt-changes-v2\n";
 
     private DbtChangesDigest() {}
 
@@ -17,8 +18,16 @@ public final class DbtChangesDigest {
     }
 
     public static String digest(List<DraftChange> changes) {
+        return digest(changes, HEADER);
+    }
+
+    public static String digestV2(List<DraftChange> changes) {
+        return digest(changes, HEADER_V2);
+    }
+
+    private static String digest(List<DraftChange> changes, String header) {
         var digest = hasher();
-        digest.update(HEADER.getBytes(StandardCharsets.UTF_8));
+        digest.update(header.getBytes(StandardCharsets.UTF_8));
         changes.stream()
                 .sorted(
                         (a, b) ->

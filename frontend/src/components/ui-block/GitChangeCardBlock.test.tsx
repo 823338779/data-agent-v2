@@ -41,9 +41,43 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.useRealTimers();
 });
 describe('GitChangeCardBlock', () => {
+  it('keeps push success separate from the fixed commit preview failure', async () => {
+    vi.stubEnv('VITE_METRIC_PLATFORM_URL', 'https://metrics.example.test');
+    const release = {
+      releaseId: 'r1',
+      projectId: 'metrics',
+      sourceSha: 'sha-a',
+      state: 'FAILED',
+      publicationSequence: 1,
+    };
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/git-changes/'))
+        return response({
+          ...pending,
+          status: 'PUSHED',
+          branch: 'dev/a',
+          gitRef: 'refs/heads/dev/a',
+          workspaceId: 'wa',
+          projectId: 'metrics',
+          branchId: 'ba',
+          commitId: 'sha-a',
+        });
+      if (url.endsWith('/releases')) return response([release]);
+      if (url.endsWith('/releases/r1')) return response(release);
+      return response({ branchId: 'ba', status: 'ACTIVE' });
+    });
+    mount();
+    expect(await screen.findByText('预览构建失败')).toBeInTheDocument();
+    expect(screen.getByText('已推送')).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: '在指标平台查看此版本' }).getAttribute('href'),
+    ).toContain('branchId=ba&releaseId=r1');
+    expect(fetchMock.mock.calls.every((call) => !String(call[0]).includes('/main'))).toBe(true);
+  });
   it('shows definition proof only when supplied by server', async () => {
     fetchMock.mockResolvedValueOnce(
       response({

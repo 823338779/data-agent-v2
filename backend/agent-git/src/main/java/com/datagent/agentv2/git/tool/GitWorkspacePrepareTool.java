@@ -19,8 +19,9 @@ public final class GitWorkspacePrepareTool implements AgentTool {
     public static final String TOOL_ID = "git_workspace_prepare";
     private static final String SCHEMA =
             """
-        {"type":"object","additionalProperties":false,"required":[],"properties":{"restartDraft":{"type":"boolean"}}}
+        {"type":"object","additionalProperties":false,"required":[],"properties":{"expectedRevision":{"type":"integer","minimum":0},"restartDraft":{"type":"boolean"}}}
         """;
+    private static final String EXPECTED_REVISION = "expectedRevision";
     private final GitToolSupport support;
 
     @Override
@@ -50,8 +51,14 @@ public final class GitWorkspacePrepareTool implements AgentTool {
                 SCHEMA,
                 context,
                 session -> {
-                    return support.getWorkspaces()
-                            .prepare(session, args.path("restartDraft").asBoolean(false));
+                    return args.has(EXPECTED_REVISION)
+                            ? support.getWorkspaces()
+                                    .prepare(
+                                            session,
+                                            args.path("restartDraft").asBoolean(false),
+                                            args.path(EXPECTED_REVISION).asLong())
+                            : support.getWorkspaces()
+                                    .prepare(session, args.path("restartDraft").asBoolean(false));
                 });
     }
 }

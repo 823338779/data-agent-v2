@@ -115,7 +115,10 @@ public class ConversationController {
         return ResponseEntity.accepted()
                 .body(
                         conversations.submitMessage(
-                                conversationSessionId, request.content(), idempotencyKey));
+                                conversationSessionId,
+                                request.content(),
+                                idempotencyKey,
+                                request.workspaceId()));
     }
 
     @PostMapping("/{conversationSessionId}/executions/{executionId}:cancel")
@@ -145,5 +148,7 @@ public class ConversationController {
             @NotBlank @Size(max = 120) String title, @Min(0) long expectedVersion) {}
 
     /** 向指定对话会话提交用户消息的请求。 */
-    record SubmitConversationMessageRequest(@NotBlank @Size(max = 8000) String content) {}
+    /** workspaceId 只固定本次执行，为空表示普通聊天或线上分析。 */
+    record SubmitConversationMessageRequest(
+            @NotBlank @Size(max = 8000) String content, @Size(max = 128) String workspaceId) {}
 }

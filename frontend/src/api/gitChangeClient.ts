@@ -19,6 +19,11 @@ export interface GitChange {
   version: number;
   status: GitChangeStatus;
   branch: string;
+  /** 以下身份由候选冻结，旧候选可为空。 */
+  workspaceId?: string;
+  projectId?: string | null;
+  branchId?: string | null;
+  gitRef?: string | null;
   baseCommit: string;
   summary: string;
   commitMessage: string;

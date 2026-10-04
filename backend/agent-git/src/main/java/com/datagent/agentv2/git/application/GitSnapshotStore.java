@@ -135,6 +135,12 @@ public final class GitSnapshotStore {
                         .map(v -> v.length() + ":" + v)
                         .collect(java.util.stream.Collectors.joining());
         // 旧无凭证快照保持原格式；新凭证参与摘要，删除或替换凭证都会使快照核对失败。
+        if (c.getBranchId() != null) {
+            base +=
+                    List.of(c.getProjectId(), c.getBranchId(), c.getGitRef()).stream()
+                            .map(value -> value.length() + ":" + value)
+                            .collect(java.util.stream.Collectors.joining());
+        }
         return c.getValidationEvidence() == null
                 ? base
                 : base + c.getValidationEvidence().length() + ":" + c.getValidationEvidence();

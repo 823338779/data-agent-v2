@@ -11,6 +11,28 @@ import org.springframework.stereotype.Service;
 public class DbtValidationPersistenceService
         extends ServiceImpl<DbtValidationMapper, DbtValidationEntity> {
     private static final String FAILED = "FAILED", UNKNOWN = "UNKNOWN", SUCCEEDED = "SUCCEEDED";
+    private static final String LIMIT_ONE = "LIMIT 1";
+
+    /** 固定内容的最新配置尝试；新配置正在验证时不选回旧成功凭据。 */
+    public DbtValidationEntity latestBranchSnapshot(
+            String sessionId,
+            String workspaceId,
+            String branchId,
+            String baseCommit,
+            String treeId,
+            long revision) {
+        return lambdaQuery()
+                .eq(DbtValidationEntity::getConversationSessionId, sessionId)
+                .eq(DbtValidationEntity::getWorkspaceId, workspaceId)
+                .eq(DbtValidationEntity::getBranchId, branchId)
+                .eq(DbtValidationEntity::getBaseCommitSha, baseCommit)
+                .eq(DbtValidationEntity::getTreeId, treeId)
+                .eq(DbtValidationEntity::getDraftRevision, revision)
+                .orderByDesc(DbtValidationEntity::getCreatedAt)
+                .orderByDesc(DbtValidationEntity::getId)
+                .last(LIMIT_ONE)
+                .one();
+    }
 
     public DbtValidationEntity snapshot(String key) {
         return lambdaQuery().eq(DbtValidationEntity::getSnapshotKey, key).one();

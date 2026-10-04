@@ -5,7 +5,9 @@ import com.datagent.agentv2.dbt.client.*;
 import com.datagent.agentv2.dbt.tool.*;
 import com.datagent.agentv2.git.application.GitWorkspaceService;
 import com.datagent.agentv2.git.port.GitSessionResolver;
+import com.datagent.agentv2.git.port.GitWorkspaceResolver;
 import com.datagent.agentv2.persistence.service.dbt.DbtValidationPersistenceService;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -23,38 +25,49 @@ public class DbtConfiguration {
     }
 
     @Bean
-    DbtAnalysisTool dbtProjectGet(DbtServiceClient c, ObjectMapper j) {
-        return new DbtAnalysisTool(DbtAnalysisTool.Kind.PROJECT, c, j);
+    DbtAnalysisTool dbtProjectGet(
+            DbtServiceClient c, ObjectMapper j, ObjectProvider<GitWorkspaceResolver> w) {
+        return new DbtAnalysisTool(DbtAnalysisTool.Kind.PROJECT, c, j, w.getIfAvailable());
     }
 
     @Bean
-    DbtAnalysisTool dbtCatalogSearch(DbtServiceClient c, ObjectMapper j) {
-        return new DbtAnalysisTool(DbtAnalysisTool.Kind.CATALOG, c, j);
+    DbtAnalysisTool dbtCatalogSearch(
+            DbtServiceClient c, ObjectMapper j, ObjectProvider<GitWorkspaceResolver> w) {
+        return new DbtAnalysisTool(DbtAnalysisTool.Kind.CATALOG, c, j, w.getIfAvailable());
     }
 
     @Bean
-    DbtAnalysisTool dbtResourceGet(DbtServiceClient c, ObjectMapper j) {
-        return new DbtAnalysisTool(DbtAnalysisTool.Kind.RESOURCE, c, j);
+    DbtAnalysisTool dbtResourceGet(
+            DbtServiceClient c, ObjectMapper j, ObjectProvider<GitWorkspaceResolver> w) {
+        return new DbtAnalysisTool(DbtAnalysisTool.Kind.RESOURCE, c, j, w.getIfAvailable());
     }
 
     @Bean
-    DbtAnalysisTool dbtQueryOptions(DbtServiceClient c, ObjectMapper j) {
-        return new DbtAnalysisTool(DbtAnalysisTool.Kind.OPTIONS, c, j);
+    DbtAnalysisTool dbtQueryOptions(
+            DbtServiceClient c, ObjectMapper j, ObjectProvider<GitWorkspaceResolver> w) {
+        return new DbtAnalysisTool(DbtAnalysisTool.Kind.OPTIONS, c, j, w.getIfAvailable());
     }
 
     @Bean
-    DbtAnalysisTool dbtQuerySubmit(DbtServiceClient c, ObjectMapper j) {
-        return new DbtAnalysisTool(DbtAnalysisTool.Kind.SUBMIT, c, j);
+    DbtAnalysisTool dbtQuerySubmit(
+            DbtServiceClient c, ObjectMapper j, ObjectProvider<GitWorkspaceResolver> w) {
+        return new DbtAnalysisTool(DbtAnalysisTool.Kind.SUBMIT, c, j, w.getIfAvailable());
     }
 
     @Bean
-    DbtAnalysisTool dbtQueryGet(DbtServiceClient c, ObjectMapper j) {
-        return new DbtAnalysisTool(DbtAnalysisTool.Kind.GET, c, j);
+    DbtAnalysisTool dbtQueryGet(
+            DbtServiceClient c, ObjectMapper j, ObjectProvider<GitWorkspaceResolver> w) {
+        return new DbtAnalysisTool(DbtAnalysisTool.Kind.GET, c, j, w.getIfAvailable());
     }
 
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnExpression("${data-agent.dbt.enabled:false} and ${data-agent.git.enabled:false}")
     static class Maintenance {
+        @Bean
+        DbtGitBranchRegistry dbtGitBranchRegistry(DbtServiceClient client) {
+            return new DbtGitBranchRegistry(client);
+        }
+
         @Bean
         DbtValidationService dbtValidationService(
                 GitWorkspaceService w,
@@ -67,20 +80,29 @@ public class DbtConfiguration {
 
         @Bean
         DbtCandidateValidation dbtCandidateValidation(
-                DbtValidationPersistenceService r, DbtProperties p, ObjectMapper j) {
-            return new DbtCandidateValidation(r, p, j);
+                DbtValidationPersistenceService r,
+                DbtProperties p,
+                ObjectMapper j,
+                DbtServiceClient c) {
+            return new DbtCandidateValidation(r, p, j, c);
         }
 
         @Bean
         DbtValidationTool dbtValidationSubmit(
-                DbtValidationService s, GitSessionResolver r, ObjectMapper j) {
-            return new DbtValidationTool(true, s, r, j);
+                DbtValidationService s,
+                GitSessionResolver r,
+                ObjectMapper j,
+                ObjectProvider<GitWorkspaceResolver> w) {
+            return new DbtValidationTool(true, s, r, j, w.getIfAvailable());
         }
 
         @Bean
         DbtValidationTool dbtValidationGet(
-                DbtValidationService s, GitSessionResolver r, ObjectMapper j) {
-            return new DbtValidationTool(false, s, r, j);
+                DbtValidationService s,
+                GitSessionResolver r,
+                ObjectMapper j,
+                ObjectProvider<GitWorkspaceResolver> w) {
+            return new DbtValidationTool(false, s, r, j, w.getIfAvailable());
         }
     }
 }
