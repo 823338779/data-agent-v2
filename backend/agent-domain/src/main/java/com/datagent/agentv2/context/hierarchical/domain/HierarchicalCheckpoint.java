@@ -18,8 +18,47 @@ public record HierarchicalCheckpoint(
         String activeColdId,
         long evaluatedUpToConversationMessageSequence,
         long strategyGeneration,
-        long version) {
+        long version,
+        /** V3 已覆盖位置；V2 为空。 */
+        ContextStepCursor coveredThrough,
+        /** V3 已观察位置，可以超前于覆盖位置。 */
+        ContextStepCursor evaluatedThrough,
+        /** 冻结策略版本。 */
+        int policyVersion,
+        /** 摘要协议版本。 */
+        int schemaVersion) {
+    public HierarchicalCheckpoint(
+            String checkpointId,
+            String conversationSessionId,
+            String activeColdId,
+            long evaluatedUpToConversationMessageSequence,
+            long strategyGeneration,
+            long version) {
+        this(
+                checkpointId,
+                conversationSessionId,
+                activeColdId,
+                evaluatedUpToConversationMessageSequence,
+                strategyGeneration,
+                version,
+                null,
+                null,
+                2,
+                2);
+    }
+
     public HierarchicalCheckpoint {
+        if (policyVersion != schemaVersion
+                || (schemaVersion != 2 && schemaVersion != 3)
+                || (schemaVersion == 3
+                        && (coveredThrough == null
+                                || evaluatedThrough == null
+                                || coveredThrough.compareTo(evaluatedThrough) > 0))
+                || (schemaVersion == 2 && (coveredThrough != null || evaluatedThrough != null))) {
+            throw new IllegalArgumentException(
+                    "Invalid hierarchical checkpoint versions or cursors");
+        }
+
         Objects.requireNonNull(checkpointId, "checkpointId");
         Objects.requireNonNull(conversationSessionId, "conversationSessionId");
         if (activeColdId != null && activeColdId.isBlank()) {

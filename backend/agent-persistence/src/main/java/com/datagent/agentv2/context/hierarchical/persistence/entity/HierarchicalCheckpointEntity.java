@@ -50,4 +50,16 @@ public final class HierarchicalCheckpointEntity {
 
     /** checkpoint CAS 发布使用的乐观锁版本。 */
     @Version private Long version;
+
+    /** 已摘要覆盖的 V3 游标 JSON，V2 为空。 */
+    private String coveredThroughJson;
+
+    /** 已观察的 V3 游标 JSON，不代表覆盖。 */
+    private String evaluatedThroughJson;
+
+    /** 冻结策略版本。 */
+    private Integer policyVersion;
+
+    /** 摘要协议版本。 */
+    private Integer schemaVersion;
 }

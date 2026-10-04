@@ -46,6 +46,10 @@ public final class HierarchicalConversationContextStrategy implements Conversati
     /** 当前服务配置只用于首次创建 execution 的不可变策略快照。 */
     private final HierarchicalContextPolicySnapshot configuredPolicy;
 
+    /** 默认运行的 V3 引擎；旧构造入口仅用于 V2 兼容验证。 */
+    private final com.datagent.agentv2.context.hierarchical.runtime.HierarchicalStepContextEngine
+            stepEngine;
+
     public HierarchicalConversationContextStrategy(
             HierarchicalCheckpointRepository checkpoints,
             HierarchicalConversationContextAssembler assembler,
@@ -54,6 +58,20 @@ public final class HierarchicalConversationContextStrategy implements Conversati
             ContextSummaryModelPort summaryModel,
             IdGenerator ids,
             HierarchicalContextProperties properties) {
+        this(checkpoints, assembler, coordinator, metrics, summaryModel, ids, properties, null);
+    }
+
+    public HierarchicalConversationContextStrategy(
+            HierarchicalCheckpointRepository checkpoints,
+            HierarchicalConversationContextAssembler assembler,
+            HierarchicalCompactionCoordinator coordinator,
+            HierarchicalContextMetrics metrics,
+            ContextSummaryModelPort summaryModel,
+            IdGenerator ids,
+            HierarchicalContextProperties properties,
+            com.datagent.agentv2.context.hierarchical.runtime.HierarchicalStepContextEngine
+                    stepEngine) {
+        this.stepEngine = stepEngine;
         this.checkpoints = Objects.requireNonNull(checkpoints, "checkpoints");
         this.assembler = Objects.requireNonNull(assembler, "assembler");
         this.coordinator = Objects.requireNonNull(coordinator, "coordinator");
@@ -70,6 +88,9 @@ public final class HierarchicalConversationContextStrategy implements Conversati
 
     @Override
     public PreparedConversationContext prepare(ConversationContextRequest request) {
+        if (stepEngine != null) {
+            return stepEngine.prepare(request);
+        }
         ConversationContextRequest checkedRequest = Objects.requireNonNull(request, "request");
 
         HierarchicalContextPolicySnapshot frozen = configuredPolicy;
@@ -128,5 +149,12 @@ public final class HierarchicalConversationContextStrategy implements Conversati
         metrics.recordCheckpoint(
                 checkpoint.evaluatedUpToConversationMessageSequence(),
                 checkpoint.strategyGeneration());
+    }
+
+    @Override
+    public void closeExecution(String executionId) {
+        if (stepEngine != null) {
+            stepEngine.closeExecution(executionId);
+        }
     }
 }

@@ -69,6 +69,9 @@ public class ConversationProcessCoordinator {
     /** 保存成功后发布中心消息更新和提交后审计事件。 */
     private final ApplicationEventPublisher applicationEvents;
 
+    /** 仅新 Hierarchical 策略存在归档组件，其他策略为空集合。 */
+    private final List<ContextPayloadArchive> payloadArchives;
+
     /** 仅在本机执行期间保留原始 thinking；每次输出均整体脱敏，终态和 worker finally 必须清理。 */
     private final ConcurrentMap<ProcessBufferKey, ThinkingCheckpointBuffer> thinkingBuffers =
             new ConcurrentHashMap<>();
@@ -248,7 +251,14 @@ public class ConversationProcessCoordinator {
                                             call.name(),
                                             call.toolCallId(),
                                             modelInvocationSequence,
-                                            boundedInput,
+                                            archivePayload(
+                                                    run,
+                                                    itemId,
+                                                    com.datagent.agentv2.context.hierarchical.domain
+                                                            .ContextPayloadReference.Direction
+                                                            .INPUT,
+                                                    fullSafeInput,
+                                                    boundedInput),
                                             null,
                                             null,
                                             null);
@@ -320,7 +330,14 @@ public class ConversationProcessCoordinator {
                                             status,
                                             current.startedAt(),
                                             now,
-                                            boundedOutput,
+                                            archivePayload(
+                                                    run,
+                                                    processItemId,
+                                                    com.datagent.agentv2.context.hierarchical.domain
+                                                            .ContextPayloadReference.Direction
+                                                            .OUTPUT,
+                                                    fullSafeOutput,
+                                                    boundedOutput),
                                             result.failureCode(),
                                             safeFailureMessage);
                             assistant.replaceProcessItem(processItemId, changed);
@@ -334,6 +351,29 @@ public class ConversationProcessCoordinator {
                         });
         afterCommit(() -> toolInputBuffers.remove(key(run, processItemId)));
         return auditEvent;
+    }
+
+    /** 与过程状态在同一事务内保存引用；失败退出本次执行，不回到工具执行入口。 */
+    private BoundedProcessPayload archivePayload(
+            LocalAgentExecution run,
+            UUID processItemId,
+            com.datagent.agentv2.context.hierarchical.domain.ContextPayloadReference.Direction
+                    direction,
+            JsonNode safeContent,
+            BoundedProcessPayload bounded) {
+        if (bounded == null || safeContent == null || payloadArchives.isEmpty()) {
+            return bounded;
+        }
+        var reference =
+                payloadArchives
+                        .getFirst()
+                        .archive(
+                                run.conversationSessionId(),
+                                run.executionId(),
+                                processItemId.toString(),
+                                direction,
+                                safeContent.toString());
+        return bounded.withReference(reference);
     }
 
     /** 在执行异常边界一次更新中把所有未完成节点收敛为 FAILED。 */

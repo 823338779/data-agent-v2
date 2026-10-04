@@ -55,6 +55,16 @@ public class HierarchicalCheckpointRepository
                 || replacement.strategyGeneration() != expected.strategyGeneration() + 1L) {
             return false;
         }
+        // V3 的覆盖位置不能随模型摘要倒退，且升级后的记录不允许旧算法继续写入。
+        if (replacement.schemaVersion() < expected.schemaVersion()
+                || (expected.coveredThrough() != null
+                        && (replacement.coveredThrough().compareTo(expected.coveredThrough()) < 0
+                                || replacement
+                                                .evaluatedThrough()
+                                                .compareTo(expected.evaluatedThrough())
+                                        < 0))) {
+            return false;
+        }
         // 单条条件 UPDATE 同时验证读取快照和单调边界；不能让旧执行倒退已发布的摘要范围。
         return baseMapper.update(
                         null,
@@ -95,6 +105,18 @@ public class HierarchicalCheckpointRepository
                                         HierarchicalCheckpointEntity::getUpdatedAt,
                                         LocalDateTime.now(ZoneId.of("Asia/Shanghai")))
                                 .set(HierarchicalCheckpointEntity::getUpdatedBy, SYSTEM_OPERATOR)
+                                .set(
+                                        HierarchicalCheckpointEntity::getCoveredThroughJson,
+                                        models.writeCursor(replacement.coveredThrough()))
+                                .set(
+                                        HierarchicalCheckpointEntity::getEvaluatedThroughJson,
+                                        models.writeCursor(replacement.evaluatedThrough()))
+                                .set(
+                                        HierarchicalCheckpointEntity::getPolicyVersion,
+                                        replacement.policyVersion())
+                                .set(
+                                        HierarchicalCheckpointEntity::getSchemaVersion,
+                                        replacement.schemaVersion())
                                 .setIncrBy(HierarchicalCheckpointEntity::getVersion, 1))
                 == 1;
     }

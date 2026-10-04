@@ -62,6 +62,46 @@ class ToolExecutionCoordinatorTest {
         }
     }
 
+    @Test
+    void archiveFailureNeverReexecutesSuccessfulTool() throws Exception {
+        JsonMapper json = JsonMapper.builder().build();
+        AgentTool tool = org.mockito.Mockito.spy(new EchoTool(json));
+        var processes = mock(ConversationProcessCoordinator.class);
+        var run = new LocalAgentExecution("tenant", "session", "execution", 2L);
+        var id = UUID.randomUUID();
+        var invocation =
+                new PreparedToolInvocation(
+                        id, new ModelToolCall("call", "echo", json.createObjectNode()));
+        var views =
+                new ExecutionToolViews(
+                        new ToolSupplyRegistry(List.of(tool)),
+                        new ToolPolicyProperties(List.of("echo"), List.of("echo")));
+        views.open(run.executionId());
+        org.mockito.Mockito.doThrow(new IllegalStateException("archive failed"))
+                .when(processes)
+                .finishTool(
+                        org.mockito.ArgumentMatchers.eq(run),
+                        org.mockito.ArgumentMatchers.eq(id),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any());
+        try (var coordinator =
+                new ToolExecutionCoordinator(
+                        views,
+                        mock(LocalExecutionGuard.class),
+                        processes,
+                        new ToolFailureSanitizer(json))) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                            () ->
+                                    coordinator.executeModelInvocationTools(
+                                            run, 1L, List.of(invocation)))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("archive failed");
+            verify(tool)
+                    .execute(
+                            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        }
+    }
+
     private record EchoTool(JsonMapper json) implements AgentTool {
         @Override
         public String name() {

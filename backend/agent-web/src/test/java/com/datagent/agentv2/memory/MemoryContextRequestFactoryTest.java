@@ -2,30 +2,55 @@ package com.datagent.agentv2.memory;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
-import com.datagent.agentv2.conversation.context.*;
+import com.datagent.agentv2.conversation.context.ContextBudget;
+import com.datagent.agentv2.conversation.context.ContextModelBudgetProvider;
+import com.datagent.agentv2.conversation.context.ContextModelMessageMapper;
+import com.datagent.agentv2.conversation.context.ConversationContextRequest;
+import com.datagent.agentv2.conversation.context.ConversationContextRequestFactory;
+import com.datagent.agentv2.conversation.context.ConversationContextStrategyResolver;
+import com.datagent.agentv2.conversation.context.PreparedConversationContext;
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
 import com.datagent.agentv2.conversation.exception.ToolBusinessException;
-import com.datagent.agentv2.conversation.model.api.*;
-import com.datagent.agentv2.conversation.react.*;
-import com.datagent.agentv2.conversation.runtime.*;
-import com.datagent.agentv2.conversation.tool.*;
-import com.datagent.agentv2.conversation.tool.runtime.*;
+import com.datagent.agentv2.conversation.model.api.AgentModelGateway;
+import com.datagent.agentv2.conversation.model.api.ModelInvocationResult;
+import com.datagent.agentv2.conversation.model.api.ModelToolDefinition;
+import com.datagent.agentv2.conversation.react.ModelInputMessage;
+import com.datagent.agentv2.conversation.react.ModelInvocationCoordinator;
+import com.datagent.agentv2.conversation.react.ReactExecutionEngine;
+import com.datagent.agentv2.conversation.react.ReactLimitsProperties;
+import com.datagent.agentv2.conversation.react.ToolModelDefinitionMapper;
+import com.datagent.agentv2.conversation.runtime.LocalAgentExecution;
+import com.datagent.agentv2.conversation.runtime.LocalExecutionGuard;
+import com.datagent.agentv2.conversation.tool.AgentTool;
+import com.datagent.agentv2.conversation.tool.ToolExecutionCoordinator;
+import com.datagent.agentv2.conversation.tool.runtime.ExecutionToolViews;
+import com.datagent.agentv2.conversation.tool.runtime.ToolPolicyProperties;
 import com.datagent.agentv2.conversation.tool.supply.ToolSupplyRegistry;
 import com.datagent.agentv2.memory.config.MemoryProperties;
 import com.datagent.agentv2.memory.context.MemoryContextRenderer;
 import com.datagent.agentv2.memory.observability.MemoryMetrics;
-import com.datagent.agentv2.memory.tool.*;
+import com.datagent.agentv2.memory.tool.MemoryInvocationRegistry;
+import com.datagent.agentv2.memory.tool.MemoryTool;
+import com.datagent.agentv2.memory.tool.MemoryToolDispatcher;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
 import com.datagent.agentv2.platform.context.OperatorContext;
-import com.datagent.agentv2.skill.runtime.*;
+import com.datagent.agentv2.skill.runtime.ExecutionSkillView;
+import com.datagent.agentv2.skill.runtime.ExecutionSkillViews;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
-import java.util.*;
-import org.junit.jupiter.api.*;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -59,7 +84,8 @@ class MemoryContextRequestFactoryTest {
                     evidence,
                     registry,
                     new MemoryContextRenderer(new MemoryProperties()),
-                    new MemoryMetrics(metrics));
+                    new MemoryMetrics(metrics),
+                    List.of());
 
     @Test
     void actualReadFailureRecordsOneSafeMetric() {
@@ -128,7 +154,8 @@ class MemoryContextRequestFactoryTest {
                         adapter,
                         registry,
                         new MemoryContextRenderer(new MemoryProperties()),
-                        new MemoryMetrics(metrics));
+                        new MemoryMetrics(metrics),
+                        List.of());
         var execution =
                 AgentExecution.running(
                         "new-execution",

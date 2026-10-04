@@ -1,5 +1,8 @@
 package com.datagent.agentv2.context.hierarchical.planning;
 
+import com.datagent.agentv2.context.hierarchical.domain.ContextStepCursor;
+import com.datagent.agentv2.context.hierarchical.domain.ContextStepCursor.PositionKind;
+import com.datagent.agentv2.context.hierarchical.domain.ContextStepGroup;
 import com.datagent.agentv2.context.hierarchical.domain.ConversationTurn;
 import com.datagent.agentv2.conversation.context.ContextExecutionRef;
 import com.datagent.agentv2.conversation.context.ContextMessage;
@@ -12,10 +15,14 @@ import com.datagent.agentv2.conversation.domain.ModelThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessItem;
 import com.datagent.agentv2.conversation.domain.ThinkingProcessStatus;
 import com.datagent.agentv2.conversation.domain.ToolThinkingProcessItem;
+import com.datagent.agentv2.conversation.enums.ExecutionStatus;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.ConversationMessageService;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,12 +30,16 @@ import java.util.Objects;
 import java.util.TreeMap;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
 
 /** 从真实会话消息和 thinking process 重建原子问答历史。 */
 public final class HierarchicalConversationHistoryLoader {
 
     /** thinking-only 和 tool-call assistant 消息使用的空正文。 */
     private static final String EMPTY_CONTENT = "";
+
+    /** 来源摘要算法，不把整个可增长的 assistant 消息作为摘要输入。 */
+    private static final String DIGEST_ALGORITHM = "SHA-256";
 
     /** execution 查询缺失时的稳定错误。 */
     private static final String ERROR_EXECUTION_NOT_FOUND = "Agent execution was not found";
@@ -45,6 +56,8 @@ public final class HierarchicalConversationHistoryLoader {
             "Tool process item does not match its execution row";
 
     /** 截断载荷预览正文的协议字段名。 */
+    private static final String KEY_REFERENCE = "reference";
+
     private static final String KEY_PREVIEW = "preview";
 
     /** 截断载荷标记的协议字段名。 */
@@ -127,6 +140,143 @@ public final class HierarchicalConversationHistoryLoader {
         return grouper.groupSources(sources);
     }
 
+    /** 从真实来源冻结完整步骤；运行中的尾组保留协议但没有压缩资格。 */
+    public List<ContextStepGroup> loadSteps(String conversationSessionId) {
+        List<ConversationMessage> rows =
+                messages.findByConversationSessionId(conversationSessionId);
+        List<ContextStepGroup> groups = new ArrayList<>();
+        ContextStepCursor previous = ContextStepCursor.ORIGIN;
+        long lastMessage = 0;
+        for (ConversationMessage row : rows) {
+            if (!conversationSessionId.equals(row.getConversationSessionId())
+                    || row.getConversationMessageSequence() <= lastMessage) {
+                throw new IllegalStateException(ERROR_INVALID_HISTORY);
+            }
+            long sequence = row.getConversationMessageSequence();
+            lastMessage = sequence;
+            if (row.getRole() == MessageRole.USER) {
+                var end = new ContextStepCursor(sequence, PositionKind.MESSAGE_END, 0);
+                groups.add(
+                        new ContextStepGroup(
+                                previous,
+                                end,
+                                List.of(ContextMessage.user(row.getContent())),
+                                digest(List.of(row.getConversationMessageId(), row.getContent())),
+                                true));
+                previous = end;
+                continue;
+            }
+            AgentExecution owner = agentExecutions.findByExecutionId(row.getExecutionId());
+            if (owner == null || !conversationSessionId.equals(owner.getConversationSessionId())) {
+                throw new IllegalStateException(ERROR_INVALID_HISTORY);
+            }
+            boolean sealed = owner.getStatus() != ExecutionStatus.RUNNING;
+            TreeMap<Long, List<ThinkingProcessItem>> invocations = new TreeMap<>();
+            row.getThinkingProcess().stream()
+                    .sorted(Comparator.comparingLong(ThinkingProcessItem::sequence))
+                    .forEach(
+                            item ->
+                                    invocations
+                                            .computeIfAbsent(
+                                                    invocationSequence(item),
+                                                    ignored -> new ArrayList<>())
+                                            .add(item));
+            for (var entry : invocations.entrySet()) {
+                List<ContextMessage> rebuilt = new ArrayList<>();
+                List<ToolThinkingProcessItem> tools =
+                        entry.getValue().stream()
+                                .filter(ToolThinkingProcessItem.class::isInstance)
+                                .map(ToolThinkingProcessItem.class::cast)
+                                .toList();
+                String thinking =
+                        entry.getValue().stream()
+                                .filter(ModelThinkingProcessItem.class::isInstance)
+                                .map(ModelThinkingProcessItem.class::cast)
+                                .map(ModelThinkingProcessItem::content)
+                                .reduce(EMPTY_CONTENT, String::concat);
+                boolean complete =
+                        entry.getValue().stream().allMatch(item -> isTerminal(item.status()));
+                if (!tools.isEmpty()) {
+                    appendToolInvocation(
+                            tools, thinking.isEmpty() ? null : thinking, rebuilt, false);
+                } else {
+                    // 没有工具的最后一次调用须等待消息封口，避免工具节点尚未归档就提前覆盖。
+                    complete &= sealed || entry.getKey() < invocations.lastKey();
+                    if (!thinking.isBlank()) {
+                        rebuilt.add(ContextMessage.assistant(EMPTY_CONTENT, thinking));
+                    }
+                }
+                var end =
+                        new ContextStepCursor(
+                                sequence, PositionKind.INVOCATION_END, entry.getKey());
+                var references =
+                        new LinkedHashMap<
+                                String,
+                                com.datagent.agentv2.context.hierarchical.domain
+                                        .ContextPayloadReference>();
+                for (var tool : tools) {
+                    if (tool.input().reference() != null) {
+                        references.put(
+                                ContextStepGroup.payloadKey(
+                                        tool.toolCallId(),
+                                        com.datagent.agentv2.context.hierarchical.domain
+                                                .ContextPayloadReference.Direction.INPUT),
+                                tool.input().reference());
+                    }
+                    if (tool.output() != null && tool.output().reference() != null) {
+                        references.put(
+                                ContextStepGroup.payloadKey(
+                                        tool.toolCallId(),
+                                        com.datagent.agentv2.context.hierarchical.domain
+                                                .ContextPayloadReference.Direction.OUTPUT),
+                                tool.output().reference());
+                    }
+                }
+                groups.add(
+                        new ContextStepGroup(
+                                previous,
+                                end,
+                                rebuilt,
+                                digest(entry.getValue()),
+                                complete,
+                                references));
+                previous = end;
+            }
+            if (sealed) {
+                var end = new ContextStepCursor(sequence, PositionKind.MESSAGE_END, 0);
+                List<ContextMessage> content =
+                        row.getContent().isBlank()
+                                ? List.of()
+                                : List.of(ContextMessage.assistant(row.getContent(), null));
+                groups.add(
+                        new ContextStepGroup(
+                                previous,
+                                end,
+                                content,
+                                digest(List.of(row.getConversationMessageId(), row.getContent())),
+                                sealed));
+                previous = end;
+            }
+        }
+        return List.copyOf(groups);
+    }
+
+    // JSON 对象字段顺序不是业务内容；排序防止 JVM 重启或 JSONB 重排导致已冻结来源失效。
+    private String digest(Object source) {
+        try {
+            return HexFormat.of()
+                    .formatHex(
+                            MessageDigest.getInstance(DIGEST_ALGORITHM)
+                                    .digest(
+                                            json.writer(
+                                                            SerializationFeature
+                                                                    .ORDER_MAP_ENTRIES_BY_KEYS)
+                                                    .writeValueAsBytes(source)));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("Required digest algorithm is unavailable", impossible);
+        }
+    }
+
     private static void validateRows(
             ContextExecutionRef reference, List<ConversationMessage> rows) {
         Objects.requireNonNull(rows, "rows");
@@ -191,11 +341,21 @@ public final class HierarchicalConversationHistoryLoader {
 
     private void appendToolInvocation(
             List<ToolThinkingProcessItem> items, String thinking, List<ContextMessage> result) {
+        appendToolInvocation(items, thinking, result, true);
+    }
+
+    private void appendToolInvocation(
+            List<ToolThinkingProcessItem> items,
+            String thinking,
+            List<ContextMessage> result,
+            boolean requireTerminal) {
         List<ContextToolCall> calls = new ArrayList<>(items.size());
 
         // 同一 invocation 先形成完整 assistant tool_calls，再依节点顺序追加 terminal observations。
         for (ToolThinkingProcessItem item : items) {
-            validateToolItem(item);
+            if (requireTerminal) {
+                validateToolItem(item);
+            }
             calls.add(
                     new ContextToolCall(
                             item.toolCallId(), item.toolName(), inputArguments(item.input())));
@@ -268,6 +428,9 @@ public final class HierarchicalConversationHistoryLoader {
     private static Map<String, Object> payloadPreview(BoundedProcessPayload payload) {
         Map<String, Object> preview = new LinkedHashMap<>();
         preview.put(KEY_PREVIEW, payload.preview());
+        if (payload.reference() != null) {
+            preview.put(KEY_REFERENCE, payload.reference());
+        }
         preview.put(KEY_TRUNCATED, true);
         preview.put(KEY_ORIGINAL_SIZE_BYTES, payload.originalSizeBytes());
         preview.put(KEY_SHA256, payload.sha256());

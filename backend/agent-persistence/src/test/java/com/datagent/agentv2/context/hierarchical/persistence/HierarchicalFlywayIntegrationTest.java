@@ -61,7 +61,9 @@ class HierarchicalFlywayIntegrationTest {
                 .contains(
                         INITIAL_MIGRATION_SCRIPT,
                         REMOVE_SINGLE_VALUE_FIELDS_SCRIPT,
-                        RESET_LEGACY_CONTEXT_SCRIPT);
+                        RESET_LEGACY_CONTEXT_SCRIPT,
+                        "V4__add_step_summary_cursors.sql",
+                        "V5__create_context_payload.sql");
     }
 
     @Test
@@ -71,7 +73,9 @@ class HierarchicalFlywayIntegrationTest {
                         "<< Flyway Baseline >>",
                         INITIAL_MIGRATION_SCRIPT,
                         REMOVE_SINGLE_VALUE_FIELDS_SCRIPT,
-                        RESET_LEGACY_CONTEXT_SCRIPT);
+                        RESET_LEGACY_CONTEXT_SCRIPT,
+                        "V4__add_step_summary_cursors.sql",
+                        "V5__create_context_payload.sql");
     }
 
     @Test

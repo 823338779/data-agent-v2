@@ -27,9 +27,43 @@ public record HierarchicalCold(
         int targetRenderedTokens,
         String modelProvider,
         String modelName,
-        String sourceContentSha256) {
+        String sourceContentSha256,
+        /** 摘要 JSON 的独立协议版本。 */
+        int schemaVersion,
+        /** V3 步骤覆盖；V2 为空，原 coverage 继续保留审计语义。 */
+        StepSummaryCoverage stepCoverage) {
+    public HierarchicalCold(
+            String coldId,
+            String conversationSessionId,
+            EventSummaryCoverage coverage,
+            String summaryDocument,
+            int persistedTokenCount,
+            int renderedTokenCount,
+            int targetRenderedTokens,
+            String modelProvider,
+            String modelName,
+            String sourceContentSha256) {
+        this(
+                coldId,
+                conversationSessionId,
+                coverage,
+                summaryDocument,
+                persistedTokenCount,
+                renderedTokenCount,
+                targetRenderedTokens,
+                modelProvider,
+                modelName,
+                sourceContentSha256,
+                2,
+                null);
+    }
 
     public HierarchicalCold {
+        if ((schemaVersion != 2 && schemaVersion != 3)
+                || (schemaVersion == 3) != (stepCoverage != null)) {
+            throw new IllegalArgumentException("Invalid hierarchical Cold schema version");
+        }
+
         requireText(coldId, "coldId");
         requireText(conversationSessionId, "conversationSessionId");
         coverage = Objects.requireNonNull(coverage, "coverage");

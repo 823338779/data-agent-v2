@@ -78,4 +78,10 @@ public final class HierarchicalColdEntity {
 
     /** 乐观锁版本。 */
     @Version private Long version;
+
+    /** 摘要协议版本。 */
+    private Integer schemaVersion;
+
+    /** V3 范围与来源摘要 JSON，V2 为空。 */
+    private String stepCoverageJson;
 }

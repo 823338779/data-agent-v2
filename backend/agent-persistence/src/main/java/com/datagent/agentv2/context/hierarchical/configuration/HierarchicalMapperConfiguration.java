@@ -22,6 +22,13 @@ import org.springframework.context.annotation.Configuration;
         annotationClass = Mapper.class)
 public class HierarchicalMapperConfiguration {
     @Bean
+    com.datagent.agentv2.context.hierarchical.persistence.repository.ContextPayloadRepository
+            contextPayloadRepository() {
+        return new com.datagent.agentv2.context.hierarchical.persistence.repository
+                .ContextPayloadRepository();
+    }
+
+    @Bean
     HierarchicalCheckpointRepository hierarchicalCheckpointRepository(
             HierarchicalPersistenceMapper models) {
         return new HierarchicalCheckpointRepository(models);

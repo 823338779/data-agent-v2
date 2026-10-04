@@ -4,9 +4,17 @@ import com.datagent.agentv2.context.common.summary.EventContextSummaryRenderer;
 import com.datagent.agentv2.context.common.summary.EventContextSummaryValidator;
 import com.datagent.agentv2.context.hierarchical.observability.HierarchicalContextMetrics;
 import com.datagent.agentv2.context.hierarchical.persistence.json.HierarchicalDocumentCodec;
-import com.datagent.agentv2.context.hierarchical.persistence.repository.*;
-import com.datagent.agentv2.context.hierarchical.planning.*;
-import com.datagent.agentv2.context.hierarchical.runtime.*;
+import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalCheckpointRepository;
+import com.datagent.agentv2.context.hierarchical.persistence.repository.HierarchicalColdRepository;
+import com.datagent.agentv2.context.hierarchical.planning.ConversationTokenEstimator;
+import com.datagent.agentv2.context.hierarchical.planning.ConversationTurnGrouper;
+import com.datagent.agentv2.context.hierarchical.planning.HierarchicalConversationHistoryLoader;
+import com.datagent.agentv2.context.hierarchical.planning.HierarchicalStepBudgetPlanner;
+import com.datagent.agentv2.context.hierarchical.planning.RollingColdCompactionPlanner;
+import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalCompactionCoordinator;
+import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalConversationContextAssembler;
+import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalStepContextEngine;
+import com.datagent.agentv2.context.hierarchical.runtime.HierarchicalStepPublisher;
 import com.datagent.agentv2.context.hierarchical.strategy.HierarchicalConversationContextStrategy;
 import com.datagent.agentv2.context.hierarchical.summary.HierarchicalColdKeyFactory;
 import com.datagent.agentv2.context.hierarchical.summary.RollingColdSummaryGenerator;
@@ -33,7 +41,10 @@ import tools.jackson.databind.ObjectMapper;
         prefix = "data-agent.context",
         name = "strategy",
         havingValue = "hierarchical")
-@EnableConfigurationProperties(HierarchicalContextProperties.class)
+@EnableConfigurationProperties({
+    HierarchicalContextProperties.class,
+    StepCompactionProperties.class
+})
 @Import({HierarchicalMapperConfiguration.class, HierarchicalFlywayMigrator.class})
 public class HierarchicalContextAutoConfiguration {
     private static final String FLYWAY = "hierarchicalContextFlyway";
@@ -140,8 +151,48 @@ public class HierarchicalContextAutoConfiguration {
             HierarchicalContextMetrics metrics,
             ContextSummaryModelPort model,
             IdGenerator ids,
-            HierarchicalContextProperties properties) {
+            HierarchicalContextProperties properties,
+            HierarchicalStepContextEngine stepEngine) {
         return new HierarchicalConversationContextStrategy(
-                checkpoints, assembler, coordinator, metrics, model, ids, properties);
+                checkpoints, assembler, coordinator, metrics, model, ids, properties, stepEngine);
+    }
+
+    @Bean
+    HierarchicalStepPublisher hierarchicalStepPublisher(
+            HierarchicalConversationHistoryLoader history,
+            HierarchicalColdRepository colds,
+            HierarchicalCheckpointRepository checkpoints,
+            ContextExecutionControlPort control) {
+        return new HierarchicalStepPublisher(history, colds, checkpoints, control);
+    }
+
+    @Bean
+    HierarchicalStepContextEngine hierarchicalStepContextEngine(
+            HierarchicalConversationHistoryLoader history,
+            HierarchicalCheckpointRepository checkpoints,
+            HierarchicalColdRepository colds,
+            StepCompactionProperties properties,
+            ConversationTokenEstimator estimator,
+            ContextSummaryModelPort model,
+            ContextExecutionControlPort control,
+            HierarchicalStepPublisher publisher,
+            HierarchicalContextMetrics metrics) {
+        var protocol =
+                new com.datagent.agentv2.context.hierarchical.summary
+                        .HierarchicalStepSummaryProtocol();
+        return new HierarchicalStepContextEngine(
+                history,
+                checkpoints,
+                colds,
+                properties,
+                estimator,
+                protocol,
+                new HierarchicalStepBudgetPlanner(estimator, properties),
+                new com.datagent.agentv2.context.hierarchical.summary
+                        .HierarchicalStepSummaryGenerator(model, protocol, estimator),
+                publisher,
+                control,
+                model,
+                metrics);
     }
 }

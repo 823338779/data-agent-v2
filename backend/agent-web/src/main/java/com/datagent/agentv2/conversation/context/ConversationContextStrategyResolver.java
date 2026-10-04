@@ -32,6 +32,10 @@ public class ConversationContextStrategyResolver {
         }
     }
 
+    public void closeExecution(String executionId) {
+        selected.closeExecution(executionId);
+    }
+
     public PreparedConversationContext prepare(ConversationContextRequest request) {
         return selected.prepare(request);
     }

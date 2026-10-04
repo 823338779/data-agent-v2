@@ -1,8 +1,8 @@
 data-agent:
   tool:
     # 联网 Tool 默认隐藏；只有读取 web-research Skill 后才在本次 execution 激活。
-    maximum: [system_timezone, current_time, skill_read, web_search, web_fetch, memory]
-    initial: [system_timezone, current_time, skill_read, memory]
+    maximum: [system_timezone, current_time, skill_read, web_search, web_fetch, memory, context_result_read]
+    initial: [system_timezone, current_time, skill_read, memory, context_result_read]
     web-search:
       provider: tavily
       # 凭据仅从服务端环境变量注入，不进入 Tool 参数或日志。
@@ -32,11 +32,16 @@ data-agent:
     compaction:
       fanout: ${DATA_AGENT_CONTEXT_COMPACTION_FANOUT:5}
       max-level: ${DATA_AGENT_CONTEXT_COMPACTION_MAX_LEVEL:4}
-    # 以下参数仅在 strategy=hierarchical 时生效：超过 75% 触发压缩，目标压缩至 70%。
+    # 旧 V2 参数仅保留兼容；V3 的 step-compaction 使用独立可用输入预算比例。
     hierarchical:
       trigger-ratio: ${DATA_AGENT_CONTEXT_HIERARCHICAL_TRIGGER_RATIO:0.75}
       target-ratio: ${DATA_AGENT_CONTEXT_HIERARCHICAL_TARGET_RATIO:0.70}
-      # 算法固定原样保护按 user 消息划分的最后 10 个轮次。
+      step-compaction:
+        trigger-ratio: ${DATA_AGENT_CONTEXT_HIERARCHICAL_STEP_TRIGGER_RATIO:0.70}
+        target-ratio: ${DATA_AGENT_CONTEXT_HIERARCHICAL_STEP_TARGET_RATIO:0.55}
+        retained-completed-groups: ${DATA_AGENT_CONTEXT_HIERARCHICAL_STEP_RETAINED_GROUPS:2}
+        payload-max-bytes: ${DATA_AGENT_CONTEXT_HIERARCHICAL_STEP_PAYLOAD_MAX_BYTES:1048576}
+        result-page-max-bytes: ${DATA_AGENT_CONTEXT_HIERARCHICAL_STEP_RESULT_PAGE_MAX_BYTES:4096}
   model:
     provider: ${DATA_AGENT_MODEL_PROVIDER:codex}
     codex:

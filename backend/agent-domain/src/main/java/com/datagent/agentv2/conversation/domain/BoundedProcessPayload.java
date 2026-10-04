@@ -16,7 +16,28 @@ public record BoundedProcessPayload(
         /** 安全处理后完整规范 JSON 的 SHA-256。 */
         String sha256,
         /** 载荷内容类型，首版固定为 application/json。 */
-        String contentType) {
+        String contentType,
+        /** 新策略完整安全原文的引用；旧数据与未启用策略时为空。 */
+        @com.fasterxml.jackson.annotation.JsonInclude(
+                        com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+                com.datagent.agentv2.context.hierarchical.domain.ContextPayloadReference
+                        reference) {
+    public BoundedProcessPayload(
+            Object value,
+            String preview,
+            boolean truncated,
+            long originalSizeBytes,
+            String sha256,
+            String contentType) {
+        this(value, preview, truncated, originalSizeBytes, sha256, contentType, null);
+    }
+
+    /** 原预览和完整值保持不变，只追加已归档凭据。 */
+    public BoundedProcessPayload withReference(
+            com.datagent.agentv2.context.hierarchical.domain.ContextPayloadReference reference) {
+        return new BoundedProcessPayload(
+                value, preview, truncated, originalSizeBytes, sha256, contentType, reference);
+    }
 
     private static final Pattern SHA256_PATTERN = Pattern.compile("^[0-9a-f]{64}$");
 

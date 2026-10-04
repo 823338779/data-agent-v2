@@ -11,6 +11,9 @@ public final class ExecutionSkillView {
     private final BundledSkillCatalog catalog;
     private final Map<String, Snapshot> snapshots;
 
+    /** 本次执行已经成功读取的冻结正文，防止摘要后丢失必要指令。 */
+    private final Map<ReadKey, ReadResult> readResources = new LinkedHashMap<>();
+
     ExecutionSkillView(BundledSkillCatalog catalog) {
         this.catalog = catalog;
         Map<String, Snapshot> frozen = new LinkedHashMap<>();
@@ -40,7 +43,7 @@ public final class ExecutionSkillView {
     }
 
     /** 校验目录快照未漂移后读取内存资源。 */
-    public ReadResult read(String logicalId, String path) {
+    public synchronized ReadResult read(String logicalId, String path) {
         Snapshot snapshot = snapshots.get(logicalId);
         if (snapshot == null) {
             throw new IllegalArgumentException("Unknown skill: " + logicalId);
@@ -49,9 +52,23 @@ public final class ExecutionSkillView {
         if (!snapshot.digest().equals(current.digest())) {
             throw new IllegalStateException("Skill digest changed during execution");
         }
-        return new ReadResult(
-                snapshot.descriptor(), snapshot.digest(), path, current.readText(path));
+        var key = new ReadKey(logicalId, snapshot.digest(), path);
+        return readResources.computeIfAbsent(
+                key,
+                ignored ->
+                        new ReadResult(
+                                snapshot.descriptor(),
+                                snapshot.digest(),
+                                path,
+                                current.readText(path)));
     }
+
+    /** 只返回成功读取过的资源，保持原始来源身份与读取顺序。 */
+    public synchronized java.util.List<ReadResult> readConstraints() {
+        return java.util.List.copyOf(readResources.values());
+    }
+
+    private record ReadKey(String logicalId, String digest, String path) {}
 
     private record Snapshot(SkillDescriptor descriptor, String digest) {}
 

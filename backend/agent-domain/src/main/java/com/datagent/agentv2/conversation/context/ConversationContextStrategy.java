@@ -5,5 +5,8 @@ public interface ConversationContextStrategy {
 
     String strategyId();
 
+    /** 清理一次执行的临时失败指纹；不删除已发布记忆。 */
+    default void closeExecution(String executionId) {}
+
     PreparedConversationContext prepare(ConversationContextRequest request);
 }

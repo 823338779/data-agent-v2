@@ -2,7 +2,8 @@ package com.datagent.agentv2.conversation.process;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.datagent.agentv2.conversation.domain.AgentExecution;
 import com.datagent.agentv2.conversation.domain.ConversationMessage;
@@ -66,7 +67,8 @@ class ThinkingStreamSanitizationTest {
                                 new ProcessPayloadSanitizer(json),
                                 new ProcessPayloadLimiter(json),
                                 new ConversationProcessProperties(16384, 32768, 65536),
-                                events);
+                                events,
+                                java.util.List.of());
                 var run = new LocalAgentExecution("tenant", "session", "run", 2);
                 var item =
                         coordinator.startThinking(

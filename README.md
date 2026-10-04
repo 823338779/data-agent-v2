@@ -54,10 +54,22 @@ Data Agent V2 是面向单实例部署的对话 Agent 工程，包含后端 Mave
 | `DATA_AGENT_CONTEXT_STRATEGY` | `hierarchical` | `raw`、`lsm`、`hierarchical` | 选择服务实例唯一使用的会话上下文策略；取值区分大小写。 |
 | `DATA_AGENT_CONTEXT_COMPACTION_FANOUT` | `5` | `3`～`10` | LSM 同层普通节点达到该数量时执行层级合并；仅在 `lsm` 策略下校验和生效。 |
 | `DATA_AGENT_CONTEXT_COMPACTION_MAX_LEVEL` | `4` | `1`～`8` | LSM 摘要树的配置顶层，顶层 ROOT 始终最多保留一个活动节点；仅在 `lsm` 策略下校验和生效。 |
-| `DATA_AGENT_CONTEXT_HIERARCHICAL_TRIGGER_RATIO` | `0.75` | `0 < target < trigger < 1` | hierarchical 触发压缩的上下文窗口比例。 |
-| `DATA_AGENT_CONTEXT_HIERARCHICAL_TARGET_RATIO` | `0.70` | `0 < target < trigger < 1` | hierarchical 压缩后争取达到的上下文窗口比例。 |
+| `DATA_AGENT_CONTEXT_HIERARCHICAL_TRIGGER_RATIO` | `0.75` | `0 < target < trigger < 1` | 旧 V2 参数，保留兼容；V3 不使用该比例。 |
+| `DATA_AGENT_CONTEXT_HIERARCHICAL_TARGET_RATIO` | `0.70` | `0 < target < trigger < 1` | 旧 V2 参数，保留兼容；V3 不使用该比例。 |
 
-LSM 默认在输入超过窗口的 75% 时触发并争取压缩至 65%；hierarchical 默认在超过 75% 时触发并争取压缩至 70%。Hierarchical 固定原样保护按 user 消息划分的最后 10 个轮次；更早的连续前缀按需滚入 Cold 摘要。失败或取消留下的空 assistant 不改变轮次边界。压缩在当前请求的本机执行流程中同步完成，不创建后台压缩任务。
+| `DATA_AGENT_CONTEXT_HIERARCHICAL_STEP_TRIGGER_RATIO` | `0.70` | `0 < target < trigger < 1` | V3 相对于可用输入预算 H 的触发比例。 |
+| `DATA_AGENT_CONTEXT_HIERARCHICAL_STEP_TARGET_RATIO` | `0.55` | 同上 | V3 压缩后的目标比例。 |
+| `DATA_AGENT_CONTEXT_HIERARCHICAL_STEP_RETAINED_GROUPS` | `2` | 非负整数 | 最近完整步骤组的软保留数，预算不足可减到 0。 |
+| `DATA_AGENT_CONTEXT_HIERARCHICAL_STEP_PAYLOAD_MAX_BYTES` | `1048576` | 正整数 | 一份脱敏工具原文的保存上限，单位字节。 |
+| `DATA_AGENT_CONTEXT_HIERARCHICAL_STEP_RESULT_PAGE_MAX_BYTES` | `4096` | 正整数 | 安全原文读取页上限，单位字节。 |
+
+V3 的 `H = contextWindowTokens - maxOutputTokens - safetyReserveTokens`。每次业务模型调用前估算完整输入，在 `0.70H` 触发同步压缩，争取降到 `0.55H`；最近两组只作软保留。单个用户请求中的完整 ReAct 步骤也能进入同一份滚动 Cold，当前用户原文只保留一次，未完成的工具组不得拆分或压缩。LSM 仍采用原有 75%/65% 窗口策略，旧 V2 的固定十轮保护仅用于历史协议兼容。
+
+工具输入和结果经现有 sanitizer 后归档；模型只接收有界视图，必要时通过 `context_result_read` 在当前执行所属会话内分页读取。单载荷视图及包含元数据的读取页受 `min(4096, floor(0.10H))` 预算约束；超过存储上限或缺失的历史原文明确标记不可恢复。载荷随会话删除，读取不接受路径、URL 或模型指定的会话身份。
+
+摘要生成自身的提示、schema、旧摘要和新来源同样受预算约束，每批最多两次格式尝试，且必须净缩减。相同失败输入不会反复生成；仍低于 H 时沿用已有视图，超过 H 则在下一次业务模型调用前失败。压缩不重置 ReAct 累计次数或 deadline，不重放已执行工具，也不代替 push 的显式确认。
+
+V4/V5 插件迁移增量添加 V3 游标和安全载荷表，不删除 V2 摘要。仅来源可验证的旧覆盖范围可转换，否则从保留的真实历史重建；缺失材料时明确失败。部署必须统一升级所有写入实例，禁止 V2/V3 混写。回退旧二进制需要恢复匹配的数据快照；仅切换 `raw` 不需要删除或倒退迁移。
 
 需要回滚到原始上下文行为时，应在所有实例中统一设置：
 
@@ -65,9 +77,9 @@ LSM 默认在输入超过窗口的 75% 时触发并争取压缩至 65%；hierarc
 $env:DATA_AGENT_CONTEXT_STRATEGY = 'raw'
 ```
 
-随后重启后端进程。`raw` 模式不会装载压缩插件策略、不会运行插件 Flyway，也不会读取或写入 `conversation_context_lsm_*` 或 `conversation_context_hierarchical_*` 表。切换策略不会删除已有的摘要、checkpoint 或 manifest，可供问题分析或后续重新启用相应插件使用。
+随后重启后端进程。`raw` 模式不会装载压缩插件策略、不会运行插件 Flyway，也不会读取或写入 `conversation_context_lsm_*` 、`conversation_context_hierarchical_*` 或 `conversation_context_payload` 表。切换策略不会删除已有的摘要、checkpoint 或 manifest，可供问题分析或后续重新启用相应插件使用。
 
-上下文 Entity、Mapper、存储服务和迁移资源统一位于 `agent-persistence`，策略模块只负责规划、生成和运行编排。选择 `lsm` 时，持久化模块从 `classpath:db/agent-context-lsm/migration` 迁移，并使用独立历史表 `flyway_agent_context_lsm_schema_history`。选择 `hierarchical` 时，插件从 `classpath:db/agent-context-hierarchical/migration` 迁移，并使用独立历史表 `flyway_agent_context_hierarchical_schema_history`。主 Flyway 始终先完成通用迁移；条件迁移分别只管理 `conversation_context_lsm_*` 或 `conversation_context_hierarchical_*` 对象，不污染主 Flyway 历史。
+上下文 Entity、Mapper、存储服务和迁移资源统一位于 `agent-persistence`，策略模块只负责规划、生成和运行编排。选择 `lsm` 时，持久化模块从 `classpath:db/agent-context-lsm/migration` 迁移，并使用独立历史表 `flyway_agent_context_lsm_schema_history`。选择 `hierarchical` 时，插件从 `classpath:db/agent-context-hierarchical/migration` 迁移，并使用独立历史表 `flyway_agent_context_hierarchical_schema_history`。主 Flyway 始终先完成通用迁移；条件迁移分别只管理 `conversation_context_lsm_*` 或 Hierarchical 的 `conversation_context_hierarchical_*`、`conversation_context_payload` 对象，不污染主 Flyway 历史。
 
 Hierarchical 上下文验证命令：
 
@@ -76,6 +88,29 @@ Hierarchical 上下文验证命令：
   '-Dsurefire.failIfNoSpecifiedTests=false' `
   '-Dtest=*Hierarchical*Test' test
 ```
+
+单请求压缩验收使用真实 HTTP、ReAct、工具和 PostgreSQL，只替换模型端口。覆盖一条请求四十个工具步骤、至少两次发布及复用摘要、连续三轮同会话，以及压缩后累计限制仍生效：
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am `
+  '-Dsurefire.failIfNoSpecifiedTests=false' `
+  '-Dtest=HierarchicalLongReactIntegrationTest' test
+```
+
+替身验收证明流程与协议，不代表真实模型摘要质量；真实模型需另用脱敏业务样本检查目标、约束、身份、错误及待办保留。
+
+已登录本机 Codex 后可显式执行真实摘要质量探针（默认模型与应用一致，可通过 `DATA_AGENT_MODEL_CODEX_MODEL` 覆盖），输出脱敏结果到 `backend/agent-server/target/real-summary-quality.json`：
+
+```powershell
+$env:RUN_REAL_CONTEXT_QUALITY = 'true'
+try {
+  .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am `
+    '-Dsurefire.failIfNoSpecifiedTests=false' '-Dtest=HierarchicalRealSummaryQualityTest' test
+} finally {
+  Remove-Item Env:RUN_REAL_CONTEXT_QUALITY
+}
+```
+
 
 LSM 上下文验证命令：
 

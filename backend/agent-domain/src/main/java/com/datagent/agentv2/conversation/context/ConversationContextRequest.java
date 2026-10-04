@@ -9,9 +9,27 @@ public record ConversationContextRequest(
         ContextBudget budget,
         List<ContextMessage> fixedSystemMessages,
         List<ContextToolDefinition> toolDefinitions,
-        RuntimeContextInput runtimeInput) {
+        RuntimeContextInput runtimeInput,
+        /** 新 Hierarchical 使用的可信业务事实，其他策略为空。 */
+        com.datagent.agentv2.context.hierarchical.domain.ContextExecutionFacts executionFacts) {
+
+    public ConversationContextRequest(
+            ContextExecutionRef execution,
+            ContextBudget budget,
+            List<ContextMessage> fixedSystemMessages,
+            List<ContextToolDefinition> toolDefinitions,
+            RuntimeContextInput runtimeInput) {
+        this(
+                execution,
+                budget,
+                fixedSystemMessages,
+                toolDefinitions,
+                runtimeInput,
+                com.datagent.agentv2.context.hierarchical.domain.ContextExecutionFacts.empty());
+    }
 
     public ConversationContextRequest {
+        Objects.requireNonNull(executionFacts, "executionFacts");
         Objects.requireNonNull(execution, "execution");
         Objects.requireNonNull(budget, "budget");
         fixedSystemMessages = List.copyOf(fixedSystemMessages);

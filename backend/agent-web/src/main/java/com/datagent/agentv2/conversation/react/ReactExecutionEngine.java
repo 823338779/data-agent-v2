@@ -74,6 +74,14 @@ public final class ReactExecutionEngine {
      * @param run 当前进程正在运行的执行
      */
     public void execute(LocalAgentExecution run) {
+        try {
+            executeLoop(run);
+        } finally {
+            contexts.closeExecution(run.executionId());
+        }
+    }
+
+    private void executeLoop(LocalAgentExecution run) {
         // 两个计数器覆盖本次 worker 生命周期内的循环推进，防止模型或工具无限递归。
         int modelInvocationCount = 0;
         int toolCallCount = 0;
