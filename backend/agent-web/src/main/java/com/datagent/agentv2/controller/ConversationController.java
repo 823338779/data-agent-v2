@@ -39,6 +39,10 @@ public class ConversationController {
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 
     private final ConversationApplicationService conversations;
+
+    /** 原子创建固定开发绑定，普通会话沿用原有路径。 */
+    private final com.datagent.agentv2.development.DevelopmentSessionCreationService creation;
+
     private final ConversationTitleService titles;
     private final AgentExecutionControlService controls;
     private final ConversationEventStreamFacade eventStreams;
@@ -54,7 +58,8 @@ public class ConversationController {
     ResponseEntity<ConversationView> create(
             @Valid @RequestBody CreateConversationSessionRequest request) {
         ConversationView created =
-                conversations.create(request.title(), request.tag(), request.projectId());
+                creation.create(
+                        request.title(), request.tag(), request.projectId(), request.development());
         return ResponseEntity.created(
                         URI.create("/api/v1/agent-sessions/" + created.conversationSessionId()))
                 .body(created);
@@ -115,10 +120,7 @@ public class ConversationController {
         return ResponseEntity.accepted()
                 .body(
                         conversations.submitMessage(
-                                conversationSessionId,
-                                request.content(),
-                                idempotencyKey,
-                                request.workspaceId()));
+                                conversationSessionId, request.content(), idempotencyKey));
     }
 
     @PostMapping("/{conversationSessionId}/executions/{executionId}:cancel")
@@ -135,7 +137,11 @@ public class ConversationController {
     record CreateConversationSessionRequest(
             @Size(max = 120) String title,
             @Size(max = 120) String tag,
-            @Size(min = 1, max = 64) String projectId) {}
+            @Size(min = 1, max = 64) String projectId,
+            /** 可选，创建后固定项目及分支。 */
+            com.datagent.agentv2.development.model.DevelopmentContracts.DevelopmentSelection
+                    development)
+            implements com.datagent.agentv2.development.model.StrictDevelopmentRequest {}
 
     /** projectId 必须出现但允许 null，禁止缺失字段被解释为移出项目。 */
     record SetOrganizationRequest(
@@ -148,7 +154,6 @@ public class ConversationController {
             @NotBlank @Size(max = 120) String title, @Min(0) long expectedVersion) {}
 
     /** 向指定对话会话提交用户消息的请求。 */
-    /** workspaceId 只固定本次执行，为空表示普通聊天或线上分析。 */
-    record SubmitConversationMessageRequest(
-            @NotBlank @Size(max = 8000) String content, @Size(max = 128) String workspaceId) {}
+    record SubmitConversationMessageRequest(@NotBlank @Size(max = 8000) String content)
+            implements com.datagent.agentv2.development.model.StrictDevelopmentRequest {}
 }

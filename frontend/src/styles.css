@@ -1671,46 +1671,61 @@ pre {
   }
 }
 
-/* 开发上下文独立于消息输入，窄屏下允许字段和提交 SHA 换行。 */
-.git-workspace-selector {
+/* 开发状态与源码区域可单独滚动，始终保留会话输入框空间。 */
+.development-context {
+  width: min(860px, 100%);
   margin: 0 auto 8px;
-  max-width: 860px;
-  font-size: 12px;
-}
-.git-workspace-selector > small {
-  margin-left: 12px;
-}
-.git-workspace-controls {
-  display: grid;
-  gap: 8px;
+  padding: 12px;
   max-height: 45vh;
   overflow: auto;
-  padding: 12px;
   border: 1px solid #d8d8d8;
   border-radius: 8px;
-}
-.git-workspace-controls fieldset {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-.git-workspace-controls label {
-  display: grid;
-  gap: 4px;
-}
-.git-workspace-controls input,
-.git-workspace-controls select {
-  width: 100%;
-  min-width: 0;
-}
-.git-workspace-controls p,
-.git-branch-preview {
+  font-size: 12px;
+  flex-shrink: 0;
   overflow-wrap: anywhere;
 }
-.git-branch-preview {
-  padding-block: 12px;
-  border-top: 1px solid #d8d8d8;
+.development-states {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
 }
-.git-branch-preview button {
-  margin-left: 8px;
+.development-states dd {
+  margin: 4px 0;
+}
+.development-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 10px;
+}
+.development-context label,
+.development-creator label {
+  display: grid;
+  gap: 4px;
+  margin-block: 8px;
+}
+.development-context input,
+.development-context textarea,
+.development-creator select,
+.development-creator input {
+  max-width: 100%;
+  min-width: 0;
+}
+.development-context pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.development-review {
+  border-block: 1px solid #d8d8d8;
+  padding-block: 12px;
+}
+.development-creator {
+  padding: 8px 12px;
+  overflow: auto;
+  flex-shrink: 0;
+  max-height: 45vh;
+}
+.development-editor textarea {
+  width: 100%;
+  font-family: monospace;
 }

@@ -13,10 +13,16 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
 
 class ConversationOrganizationServiceTest {
+    private final com.datagent.agentv2.persistence.service.development
+                    .DevelopmentContextPersistenceService
+            development =
+                    mock(
+                            com.datagent.agentv2.persistence.service.development
+                                    .DevelopmentContextPersistenceService.class);
     private final ConversationProjectService projects = mock(ConversationProjectService.class);
     private final ConversationSessionService sessions = mock(ConversationSessionService.class);
     private final ConversationOrganizationService service =
-            new ConversationOrganizationService(projects, sessions);
+            new ConversationOrganizationService(projects, sessions, development);
 
     @Test
     void movingPinnedSessionLocksDestinationFirstAndPreservesPinTime() {
@@ -34,7 +40,7 @@ class ConversationOrganizationServiceTest {
         when(sessions.updateOrganization("s1", "p1", at, 0)).thenReturn(true);
         when(sessions.findByUuid("s1")).thenReturn(session);
         assertThat(service.setOrganization("s1", "p1", true, 0)).isSameAs(session);
-        var order = inOrder(projects, sessions);
+        var order = inOrder(projects, sessions, development);
         order.verify(projects).lockByProjectId("p1");
         order.verify(sessions).lockById("s1");
         order.verify(sessions).updateOrganization("s1", "p1", at, 0);
@@ -51,6 +57,23 @@ class ConversationOrganizationServiceTest {
                         ResponseStatusException.class,
                         e -> assertThat(e.getStatusCode().value()).isEqualTo(409));
         verifyNoInteractions(projects);
+    }
+
+    @Test
+    void boundSessionCannotMoveToAnotherProject() {
+        var session = ConversationSession.create("s1", "test", null, Instant.now());
+        var binding =
+                new com.datagent.agentv2.persistence.entity.development.DevelopmentSessionEntity();
+        binding.setProjectId("original");
+        when(development.session("s1")).thenReturn(binding);
+        when(sessions.lockById("s1")).thenReturn(session);
+        when(projects.lockByProjectId("another"))
+                .thenReturn(ConversationProject.create("another", "Another"));
+        assertThatThrownBy(() -> service.setOrganization("s1", "another", false, 0))
+                .isInstanceOfSatisfying(
+                        ResponseStatusException.class,
+                        e -> assertThat(e.getStatusCode().value()).isEqualTo(409));
+        verify(sessions, never()).updateOrganization(anyString(), any(), any(), anyLong());
     }
 
     @Test

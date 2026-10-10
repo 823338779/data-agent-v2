@@ -61,6 +61,35 @@ class HierarchicalStepProjectionTest {
     }
 
     @Test
+    void projectionKeepsSeparateBuildAndDeploymentFacts() {
+        String body =
+                "{\"operationId\":\"operation-1\",\"buildId\":\"build-1\",\"buildStatus\":\"SUCCEEDED\",\"deploymentStatus\":\"FAILED\",\"body\":\""
+                        + LONG
+                        + "\"}";
+        var source =
+                new ContextStepGroup(
+                        ContextStepCursor.ORIGIN,
+                        new ContextStepCursor(2, ContextStepCursor.PositionKind.INVOCATION_END, 1),
+                        List.of(ContextMessage.tool(body, ID, TOOL)),
+                        HASH,
+                        true);
+        var content =
+                new HierarchicalStepProjection()
+                        .project(source, 512)
+                        .messages()
+                        .getFirst()
+                        .content();
+        assertThat(content)
+                .contains(
+                        "operation-1",
+                        "build-1",
+                        "buildStatus",
+                        "SUCCEEDED",
+                        "deploymentStatus",
+                        "FAILED");
+    }
+
+    @Test
     void pollFoldKeepsTransitionsErrorsAndBranchIdentity() {
         var projector = new HierarchicalStepProjection();
         var polls =
@@ -96,7 +125,7 @@ class HierarchicalStepProjectionTest {
                                         new ContextToolCall(
                                                 call,
                                                 name,
-                                                Map.of("queryId", ID, "branchId", branch)))),
+                                                Map.of("queryId", ID, "buildId", branch)))),
                         ContextMessage.tool(
                                 "{\"queryId\":\"call\",\"status\":\"" + status + "\"}",
                                 call,

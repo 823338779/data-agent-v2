@@ -2,9 +2,11 @@ package com.datagent.agentv2.dbt.client;
 
 import com.datagent.agentv2.conversation.exception.ToolBusinessException;
 import com.datagent.agentv2.dbt.config.DbtProperties;
+import com.datagent.agentv2.dbt.model.DbtContracts.*;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.util.Set;
+import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.*;
 import lombok.RequiredArgsConstructor;
 import org.apache.hc.client5.http.classic.methods.HttpUriRequestBase;
@@ -18,263 +20,288 @@ import org.apache.hc.core5.util.Timeout;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-/** 有界同步 HTTP 调用；虚拟线程总超时防止慢速正文无限占用工具执行。 */
+/** 固定v3服务基址，禁止重定向及隐式重试；总截止时间覆盖完整响应读取。 */
 @RequiredArgsConstructor
 public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseable {
     private static final int MAX_BYTES = 8 * 1024 * 1024;
-    private static final String GET = "GET", POST = "POST", JSON = "application/json";
+    private static final String GET = "GET",
+            POST = "POST",
+            JSON = "application/json",
+            ACCEPT = "Accept";
     private static final String UNAVAILABLE = "DBT_UNAVAILABLE", INVALID = "DBT_PROTOCOL_INVALID";
-    private static final String BRANCHES = "/branches";
-    private static final String REGISTER_BRANCH = BRANCHES + ":register";
-    private static final String BRANCH_PREFIX = BRANCHES + "/";
-    private static final String DELETE = "DELETE";
-    private static final String EXPECTED_VERSION = "?expectedVersion=";
-    private static final String AUTHORIZATION = "Authorization";
-    private static final String BEARER = "Bearer ";
-    private static final String BRANCH_NOT_CONFIGURED = "DBT_BRANCH_NOT_CONFIGURED";
-    private static final String VALIDATIONS = "/validations";
-    private static final String RELEASES = "/releases";
+    private static final String V3 = "/v3",
+            BUILDS = "/builds",
+            DEPLOYMENTS = "/deployments",
+            CURRENT = "/current";
+    private static final String CATALOG = "/catalog",
+            RESOURCES = "/resources/",
+            SOURCE = "/source",
+            LINEAGE = "/lineage",
+            NATIVE = "/native-details";
+    private static final String OPTIONS = "/query-options",
+            QUERIES = "/queries",
+            STATUS = "/status",
+            RESULTS = "/results";
+    private static final String AUTHORIZATION = "Authorization",
+            BEARER = "Bearer ",
+            SLASH = "/",
+            ERROR_FIELD = "error",
+            CODE = "code";
+    private static final String REPOSITORY = "repository",
+            ENVIRONMENT = "environment",
+            BRANCH = "branchName",
+            CURSOR = "cursor",
+            LIMIT = "limit",
+            Q = "q",
+            KIND = "kind",
+            OFFSET = "offset";
+    private static final String QUESTION = "?",
+            AMP = "&",
+            EQUALS = "=",
+            EMPTY = "",
+            PLUS = "+",
+            SPACE = "%20",
+            TRAILING_SLASH = "/+$";
+
+    /** 固定部署配置，凭据不进入任何响应。 */
     private final DbtProperties properties;
+
+    /** 统一协议序列化器。 */
     private final ObjectMapper json;
+
+    /** 每个请求的完整读取在可取消虚拟线程内进行。 */
     private final ExecutorService requests = Executors.newVirtualThreadPerTaskExecutor();
 
     @Override
-    public JsonNode releases(String branchId) throws Exception {
-        var result = call(GET, BRANCH_PREFIX + part(branchId) + RELEASES, null);
-        for (var release : result) {
-            if (!branchId.equals(release.path("branchId").asString())) throw protocolError();
-        }
+    public BuildView submitBuild(BuildRequest body) throws Exception {
+        BuildView result = call(POST, BUILDS, body, BuildView.class);
+        if (result.buildId() == null
+                || result.buildStatus() == null
+                || !Objects.equals(body.repository(), result.repository())
+                || !Objects.equals(body.branchName(), result.branchName())
+                || body.environment() != result.environment()
+                || !Objects.equals(body.executionBinding(), result.executionBinding())
+                || !Objects.equals(body.configVersion(), result.configVersion())
+                || !Objects.equals(body.commitSha(), result.requestedCommitSha()))
+            throw protocolError();
         return result;
     }
 
     @Override
-    public JsonNode release(String branchId, String releaseId) throws Exception {
-        return branchCall(branchId, GET, RELEASES + "/" + part(releaseId), null, false);
-    }
-
-    @Override
-    public JsonNode branches() throws Exception {
-        return call(GET, BRANCHES, null);
-    }
-
-    @Override
-    public JsonNode branch(String branchId) throws Exception {
-        return call(GET, BRANCH_PREFIX + part(branchId), null);
-    }
-
-    @Override
-    public JsonNode createBranch(JsonNode request) throws Exception {
-        return call(POST, BRANCHES, request, true);
-    }
-
-    @Override
-    public JsonNode registerBranch(JsonNode request) throws Exception {
-        return call(POST, REGISTER_BRANCH, request, true);
-    }
-
-    @Override
-    public JsonNode deleteBranch(String branchId, long expectedVersion) throws Exception {
-        return call(
-                DELETE,
-                BRANCH_PREFIX + part(branchId) + EXPECTED_VERSION + expectedVersion,
-                null,
-                true);
-    }
-
-    public JsonNode project() throws Exception {
-        return call(GET, "/publication", null);
-    }
-
-    public JsonNode catalog(String r, String q, int page, int size) throws Exception {
-        return call(
-                GET,
-                "/releases/"
-                        + part(r)
-                        + "/catalog?q="
-                        + part(q)
-                        + "&page="
-                        + page
-                        + "&size="
-                        + size,
-                null);
-    }
-
-    public JsonNode resource(String r, String id, String view) throws Exception {
-        if (!Set.of("detail", "source", "lineage", "native-details").contains(view))
-            throw new IllegalArgumentException("未知资源视图");
-        return call(
-                GET,
-                "/releases/"
-                        + part(r)
-                        + "/resources/"
-                        + part(id)
-                        + (view.equals("detail") ? "" : "/" + view),
-                null);
-    }
-
-    public JsonNode submitOptions(JsonNode body) throws Exception {
-        return call(POST, "/query-option-jobs", body);
-    }
-
-    public JsonNode getOptions(String id) throws Exception {
-        return call(GET, "/query-option-jobs/" + part(id), null);
-    }
-
-    public JsonNode submitQuery(JsonNode body) throws Exception {
-        return call(POST, "/queries", body);
-    }
-
-    public JsonNode queryStatus(String id) throws Exception {
-        return call(GET, "/queries/" + part(id) + "/status", null);
-    }
-
-    public JsonNode queryPage(String id, int offset, int limit) throws Exception {
-        return call(
-                GET,
-                "/queries/" + part(id) + "/results?offset=" + offset + "&limit=" + limit,
-                null);
-    }
-
-    public JsonNode submitValidation(JsonNode body) throws Exception {
-        return call(POST, "/validations", body);
-    }
-
-    public JsonNode getValidation(String id) throws Exception {
-        return call(GET, "/validations/" + part(id), null);
-    }
-
-    // 所有分支调用使用路径隔离，并验证响应仍属于原分支实例。
-    @Override
-    public JsonNode project(String branchId) throws Exception {
-        if (branchId == null) return project();
-        return branchCall(branchId, GET, "/publication", null, false);
-    }
-
-    @Override
-    public JsonNode catalog(String branchId, String r, String q, int page, int size)
-            throws Exception {
-        if (branchId == null) return catalog(r, q, page, size);
-        return branchCall(
-                branchId,
-                GET,
-                "/releases/"
-                        + part(r)
-                        + "/catalog?q="
-                        + part(q)
-                        + "&page="
-                        + page
-                        + "&size="
-                        + size,
-                null,
-                false);
-    }
-
-    @Override
-    public JsonNode resource(String branchId, String r, String id, String view) throws Exception {
-        if (branchId == null) return resource(r, id, view);
-        if (!Set.of("detail", "source", "lineage", "native-details").contains(view))
-            throw new IllegalArgumentException("未知资源视图");
-        return branchCall(
-                branchId,
-                GET,
-                "/releases/"
-                        + part(r)
-                        + "/resources/"
-                        + part(id)
-                        + (view.equals("detail") ? "" : "/" + view),
-                null,
-                false);
-    }
-
-    @Override
-    public JsonNode submitOptions(String branchId, JsonNode body) throws Exception {
-        if (branchId == null) return submitOptions(body);
-        return branchCall(branchId, POST, "/query-option-jobs", body, false);
-    }
-
-    @Override
-    public JsonNode getOptions(String branchId, String id) throws Exception {
-        if (branchId == null) return getOptions(id);
-        return branchCall(branchId, GET, "/query-option-jobs/" + part(id), null, false);
-    }
-
-    @Override
-    public JsonNode submitQuery(String branchId, JsonNode body) throws Exception {
-        if (branchId == null) return submitQuery(body);
-        return branchCall(branchId, POST, "/queries", body, false);
-    }
-
-    @Override
-    public JsonNode queryStatus(String branchId, String id) throws Exception {
-        if (branchId == null) return queryStatus(id);
-        return branchCall(branchId, GET, "/queries/" + part(id) + "/status", null, false);
-    }
-
-    @Override
-    public JsonNode queryPage(String branchId, String id, int offset, int limit) throws Exception {
-        if (branchId == null) return queryPage(id, offset, limit);
-        return branchCall(
-                branchId,
-                GET,
-                "/queries/" + part(id) + "/results?offset=" + offset + "&limit=" + limit,
-                null,
-                false);
-    }
-
-    @Override
-    public JsonNode submitValidation(String branchId, JsonNode body) throws Exception {
-        if (branchId == null) return submitValidation(body);
-        // 服务回执仅包含任务 ID/状态；随后的固定分支 GET 核对完整归属和摘要。
-        return call(POST, BRANCH_PREFIX + part(branchId) + VALIDATIONS, body, true);
-    }
-
-    @Override
-    public JsonNode getValidation(String branchId, String id) throws Exception {
-        if (branchId == null) return getValidation(id);
-        return branchCall(branchId, GET, "/validations/" + part(id), null, false);
-    }
-
-    private JsonNode branchCall(
-            String branchId, String method, String suffix, JsonNode body, boolean mutation)
-            throws Exception {
-        var result = call(method, BRANCH_PREFIX + part(branchId) + suffix, body, mutation);
-        if (!branchId.equals(result.path("branchId").asString())) throw protocolError();
+    public BuildView getBuild(UUID id) throws Exception {
+        BuildView result = call(GET, BUILDS + SLASH + id, null, BuildView.class);
+        same(id, result.buildId());
+        if (result.buildStatus() == null) throw protocolError();
         return result;
+    }
+
+    @Override
+    public DeploymentTargetView currentDeployment(DeploymentKey key) throws Exception {
+        DeploymentTargetView result =
+                call(
+                        GET,
+                        DEPLOYMENTS
+                                + CURRENT
+                                + query(
+                                        REPOSITORY,
+                                        key.repository(),
+                                        ENVIRONMENT,
+                                        key.environment(),
+                                        BRANCH,
+                                        key.branchName()),
+                        null,
+                        DeploymentTargetView.class);
+        if (!Objects.equals(key.repository(), result.repository())
+                || key.environment() != result.environment()
+                || !Objects.equals(key.branchName(), result.branchName())) throw protocolError();
+        return result;
+    }
+
+    @Override
+    public DeploymentPage listDeployments(DeploymentFilter f) throws Exception {
+        pageLimit(f.limit());
+        return call(
+                GET,
+                DEPLOYMENTS
+                        + query(
+                                REPOSITORY,
+                                f.repository(),
+                                ENVIRONMENT,
+                                f.environment(),
+                                BRANCH,
+                                f.branchName(),
+                                CURSOR,
+                                f.cursor(),
+                                LIMIT,
+                                f.limit()),
+                null,
+                DeploymentPage.class);
+    }
+
+    @Override
+    public CatalogPage catalog(UUID id, CatalogFilter f) throws Exception {
+        pageLimit(f.limit());
+        CatalogPage result =
+                call(
+                        GET,
+                        BUILDS
+                                + SLASH
+                                + id
+                                + CATALOG
+                                + query(
+                                        Q,
+                                        f.q(),
+                                        KIND,
+                                        f.kind(),
+                                        CURSOR,
+                                        f.cursor(),
+                                        LIMIT,
+                                        f.limit()),
+                        null,
+                        CatalogPage.class);
+        same(id, result.buildId());
+        return result;
+    }
+
+    @Override
+    public ResourceView resource(UUID id, String resource) throws Exception {
+        ResourceView result = call(GET, resourcePath(id, resource), null, ResourceView.class);
+        same(id, result.buildId());
+        same(resource, result.resourceId());
+        return result;
+    }
+
+    @Override
+    public ResourceSourceView resourceSource(UUID id, String resource) throws Exception {
+        ResourceSourceView result =
+                call(GET, resourcePath(id, resource) + SOURCE, null, ResourceSourceView.class);
+        same(id, result.buildId());
+        same(resource, result.resourceId());
+        return result;
+    }
+
+    @Override
+    public ResourceLineageView resourceLineage(UUID id, String resource) throws Exception {
+        ResourceLineageView result =
+                call(GET, resourcePath(id, resource) + LINEAGE, null, ResourceLineageView.class);
+        same(id, result.buildId());
+        same(resource, result.resourceId());
+        return result;
+    }
+
+    @Override
+    public ResourceNativeView resourceNative(UUID id, String resource) throws Exception {
+        ResourceNativeView result =
+                call(GET, resourcePath(id, resource) + NATIVE, null, ResourceNativeView.class);
+        same(id, result.buildId());
+        same(resource, result.resourceId());
+        return result;
+    }
+
+    @Override
+    public OptionsTaskView submitOptions(UUID id, OptionsRequest body) throws Exception {
+        OptionsTaskView result =
+                call(POST, BUILDS + SLASH + id + OPTIONS, body, OptionsTaskView.class);
+        same(id, result.buildId());
+        validTask(result.optionsTaskId(), result.buildId(), result.state());
+        return result;
+    }
+
+    @Override
+    public OptionsTaskView getOptions(UUID id) throws Exception {
+        OptionsTaskView result = call(GET, OPTIONS + SLASH + id, null, OptionsTaskView.class);
+        same(id, result.optionsTaskId());
+        validTask(result.optionsTaskId(), result.buildId(), result.state());
+        return result;
+    }
+
+    @Override
+    public QueryView submitQuery(UUID id, QueryRequest body) throws Exception {
+        QueryView result = call(POST, BUILDS + SLASH + id + QUERIES, body, QueryView.class);
+        same(id, result.buildId());
+        validTask(result.queryId(), result.buildId(), result.state());
+        return result;
+    }
+
+    @Override
+    public QueryView queryStatus(UUID id) throws Exception {
+        QueryView result = call(GET, QUERIES + SLASH + id + STATUS, null, QueryView.class);
+        same(id, result.queryId());
+        validTask(result.queryId(), result.buildId(), result.state());
+        return result;
+    }
+
+    @Override
+    public ResultPage queryResults(UUID id, int offset, int limit) throws Exception {
+        pageLimit(limit);
+        if (offset < 0) throw new IllegalArgumentException("结果偏移不能为负数");
+        ResultPage result =
+                call(
+                        GET,
+                        QUERIES + SLASH + id + RESULTS + query(OFFSET, offset, LIMIT, limit),
+                        null,
+                        ResultPage.class);
+        same(id, result.queryId());
+        validTask(result.queryId(), result.buildId(), result.state());
+        if (result.offset() != offset
+                || result.rows() == null
+                || result.returnedRows() != result.rows().size()
+                || result.returnedRows() > limit
+                || result.nextOffset() != null
+                        && result.nextOffset() != offset + result.returnedRows())
+            throw protocolError();
+        return result;
+    }
+
+    private static void same(Object expected, Object actual) throws ToolBusinessException {
+        if (expected == null || !expected.equals(actual)) throw protocolError();
+    }
+
+    private static void validTask(UUID id, UUID build, BuildStatus state)
+            throws ToolBusinessException {
+        if (id == null || build == null || state == null) throw protocolError();
+    }
+
+    private static void pageLimit(int limit) {
+        if (limit < 1 || limit > 200) throw new IllegalArgumentException("分页范围必须为1至200");
+    }
+
+    private static String resourcePath(UUID id, String resource) {
+        return BUILDS + SLASH + id + RESOURCES + part(resource);
     }
 
     private static String part(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace(PLUS, SPACE);
     }
 
-    private JsonNode call(String method, String suffix, JsonNode body) throws Exception {
-        return call(method, suffix, body, false);
+    private static String query(Object... entries) {
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < entries.length; i += 2) {
+            if (entries[i + 1] == null) continue;
+            result.append(result.isEmpty() ? QUESTION : AMP)
+                    .append(entries[i])
+                    .append(EQUALS)
+                    .append(part(entries[i + 1].toString()));
+        }
+        return result.toString();
     }
 
-    private JsonNode call(String method, String suffix, JsonNode body, boolean branchMutation)
+    private <T> T call(String method, String suffix, Object body, Class<T> responseType)
             throws Exception {
-        boolean collection =
-                GET.equals(method)
-                        && (BRANCHES.equals(suffix)
-                                || suffix.startsWith(BRANCH_PREFIX) && suffix.endsWith(RELEASES));
-        String base = properties.baseUrl().toString().replaceAll("/+$", "");
-        var request =
-                new HttpUriRequestBase(
-                        method,
-                        java.net.URI.create(
-                                base + "/v2/projects/" + part(properties.projectId()) + suffix));
-        request.setHeader("Accept", JSON);
-        // 凭据只添加到受控基址的分支写调用；禁用重定向，不能随响应泄露到其他地址。
-        if (branchMutation) {
-            String token = properties.branchServiceToken();
-            if (token == null || token.isBlank()) {
-                throw new ToolBusinessException(BRANCH_NOT_CONFIGURED, "未配置分支服务部署凭据");
-            }
+        String base = properties.baseUrl().toString().replaceAll(TRAILING_SLASH, EMPTY);
+        var request = new HttpUriRequestBase(method, java.net.URI.create(base + V3 + suffix));
+        request.setHeader(ACCEPT, JSON);
+        // 所有受理写入均需要服务凭据；禁用重定向以免跨来源携带凭据。
+        if (POST.equals(method)) {
+            String token = properties.serviceToken();
+            if (token == null || token.isBlank())
+                throw new ToolBusinessException("DBT_SERVICE_NOT_CONFIGURED", "未配置dbt服务写入凭据");
             request.setHeader(AUTHORIZATION, BEARER + token);
         }
         if (body != null) {
             byte[] bytes = json.writeValueAsBytes(body);
             if (bytes.length > MAX_BYTES)
-                throw new ToolBusinessException("DBT_REQUEST_TOO_LARGE", "请求超限，请减少修改文件或查询参数");
+                throw new ToolBusinessException("DBT_REQUEST_TOO_LARGE", "请求超过8MiB上限");
             request.setEntity(new ByteArrayEntity(bytes, ContentType.APPLICATION_JSON));
         }
         var connections =
@@ -293,7 +320,7 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
                         .disableContentCompression()
                         .disableCookieManagement()
                         .build();
-        Future<JsonNode> pending = null;
+        Future<T> pending = null;
         try {
             pending =
                     requests.submit(
@@ -310,7 +337,9 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
                                                     entity.getContent().readNBytes(MAX_BYTES + 1);
                                             if (raw.length <= MAX_BYTES) {
                                                 try {
-                                                    detail = json.readTree(raw).path("detail");
+                                                    detail = json.readTree(raw);
+                                                    if (detail.has(ERROR_FIELD))
+                                                        detail = detail.path(ERROR_FIELD);
                                                 } catch (RuntimeException ignored) {
                                                     /* 非协议错误正文只按 HTTP 状态解释。 */
                                                 }
@@ -322,17 +351,13 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
                                         throw protocolError();
                                     byte[] raw = entity.getContent().readNBytes(MAX_BYTES + 1);
                                     if (raw.length > MAX_BYTES) throw protocolError();
-                                    JsonNode result;
                                     try {
-                                        result = json.readTree(raw);
-                                    } catch (RuntimeException invalid) {
+                                        JsonNode tree = json.readTree(raw);
+                                        if (tree == null || !tree.isObject()) throw protocolError();
+                                        return json.treeToValue(tree, responseType);
+                                    } catch (RuntimeException malformed) {
                                         throw protocolError();
                                     }
-                                    if (result == null
-                                            || (collection
-                                                    ? !result.isArray()
-                                                    : !result.isObject())) throw protocolError();
-                                    return result;
                                 } finally {
                                     request.cancel();
                                 }
@@ -351,62 +376,14 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
     }
 
     private static ToolBusinessException protocolError() {
-        return new ToolBusinessException(INVALID, "dbt-service 响应不符合协议或超过大小限制");
+        return new ToolBusinessException(INVALID, "dbt-service响应不符合v3协议或超过大小限制");
     }
 
-    private static ToolBusinessException mapped(int status, JsonNode detail) {
-        var fallback =
-                switch (status) {
-                    case 404 -> new ToolBusinessException("DBT_NOT_FOUND", "项目、资源或任务不存在，请重新读取目录");
-                    case 409 -> new ToolBusinessException("DBT_CONFLICT", "请求冲突或结果尚未就绪，请读取原任务状态");
-                    case 410 -> new ToolBusinessException("DBT_RELEASE_GONE", "发布已替代，请重新读取目录及查询选项");
-                    case 422 ->
-                            new ToolBusinessException("DBT_INVALID_SELECTION", "参数无效，请重新核对定义或查询选项");
-                    default ->
-                            new ToolBusinessException(UNAVAILABLE, "dbt-service 暂不可用，保留原任务身份后重试");
-                };
-        if (detail == null || !detail.isObject()) return fallback;
-        String reason = detail.path("reason").asString("");
-        String recovery = detail.path("recovery").asString("");
-        String field = detail.path("field").asString("");
-        if (!Set.of(
-                                "invalid_dimension_option",
-                                "invalid_filter_option",
-                                "invalid_metric_resource",
-                                "invalid_mode_fields",
-                                "invalid_preview_fields",
-                                "invalid_order_field",
-                                "invalid_time_range",
-                                "result_not_ready",
-                                "result_row_too_large",
-                                "release_gone",
-                                "idempotency_conflict",
-                                "not_found",
-                                "invalid_page")
-                        .contains(reason)
-                || !Set.of(
-                                "reload_query_options",
-                                "reload_catalog",
-                                "fix_query_selection",
-                                "fix_request",
-                                "poll_query",
-                                "reduce_query",
-                                "fix_pagination",
-                                "retry_same_key")
-                        .contains(recovery)) return fallback;
-        // 路径只允许已知查询字段和数组索引，不能利用错误字段携带任意文本。
-        if (!field.matches(
-                "(?:groupBy|filters|orderBy)(?:\\[[0-9]{1,3}\\])?(?:\\.(?:optionId|operator|fieldId|grain))?|metricResourceIds|mode|datasetResourceId|startTime|endTime|offset/limit|"))
-            field = "";
-        return new ToolBusinessException(
-                fallback.code(),
-                fallback.getMessage()
-                        + "；reason="
-                        + reason
-                        + "，field="
-                        + field
-                        + "，recovery="
-                        + recovery);
+    private static ToolBusinessException mapped(int status, JsonNode error) {
+        // 保留服务稳定错误码，原始message可能含执行详情，不直接进入模型。
+        String code = error == null ? EMPTY : error.path(CODE).asString(EMPTY);
+        if (!code.matches("[A-Z][A-Z0-9_]{0,127}")) code = UNAVAILABLE;
+        return new ToolBusinessException(code, "dbt-service请求失败，HTTP状态：" + status);
     }
 
     @Override

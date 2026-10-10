@@ -58,13 +58,14 @@ public final class HierarchicalStepContextEngine {
     private static final String FIELD_SEPARATOR = ".";
     private static final Set<String> OPERATION_TOOLS =
             Set.of(
-                    "dbt_validation_submit",
-                    "dbt_validation_get",
+                    "development_save",
+                    "development_status",
                     "dbt_query_submit",
                     "dbt_query_get",
-                    "git_change_prepare",
-                    "git_change_get");
-    private static final Set<String> OPERATION_IDS = Set.of("validationId", "queryId", "changeId");
+                    "development_preview",
+                    "development_deliver",
+                    "dbt_build_get");
+    private static final Set<String> OPERATION_IDS = Set.of("operationId", "queryId", "buildId");
     private static final String STATUS = "status", STATE = "state";
     private static final Set<String> TERMINAL_STATES =
             Set.of(

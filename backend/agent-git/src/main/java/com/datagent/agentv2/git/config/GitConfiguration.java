@@ -5,7 +5,6 @@ import com.datagent.agentv2.git.local.*;
 import com.datagent.agentv2.git.model.GitException;
 import com.datagent.agentv2.git.port.GitBranchRegistry;
 import com.datagent.agentv2.git.port.GitCandidateValidation;
-import com.datagent.agentv2.git.port.GitChangeCardPublisher;
 import com.datagent.agentv2.persistence.service.git.*;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -19,9 +18,6 @@ import org.springframework.context.annotation.*;
 public class GitConfiguration {
     @Bean
     GitProperties gitProperties(GitSettings s) {
-        if (s.remoteUri() == null || s.remoteUri().isBlank()) {
-            throw new GitException("GIT_NOT_CONFIGURED", "启用 Git 前必须配置远端仓库");
-        }
         return new GitProperties(
                 s.executable(),
                 s.remoteUri(),
@@ -76,20 +72,13 @@ public class GitConfiguration {
     }
 
     @Bean
-    GitWorkspaceSyncService gitWorkspaceSyncService(
-            GitWorkspaceService workspaces, GitRepositoryClient git) {
-        return new GitWorkspaceSyncService(workspaces, git);
-    }
-
-    @Bean
     GitChangeService gitChangeService(
             GitWorkspaceService w,
             GitChangePersistenceService c,
             GitSnapshotStore snapshots,
             GitRepositoryClient git,
             GitApplicationProperties a,
-            ObjectProvider<GitCandidateValidation> validations,
-            GitChangeCardPublisher publisher) {
+            ObjectProvider<GitCandidateValidation> validations) {
         return new GitChangeService(
                 w,
                 c,
@@ -97,6 +86,8 @@ public class GitConfiguration {
                 git,
                 a,
                 validations.getIfAvailable(() -> (session, snapshot) -> null),
-                publisher);
+                (execution, candidate) -> {
+                    throw new GitException("GIT_LEGACY_WRITE_RETIRED", "旧候选写入已退役");
+                });
     }
 }

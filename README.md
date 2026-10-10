@@ -169,44 +169,44 @@ cd .\frontend
 npm.cmd run build
 ```
 
-## Git 仓库维护
+## 开发会话与 dbt-service
 
-Git 能力默认关闭。启用后在“开发工作区”选择或创建分支草稿，通过会话工具编辑与冻结候选，在 Git 卡片审阅完整差异并确认；失败后可按状态重试或核实。“已推送”表示候选固定分支已接受提交，预览构建状态单独展示。会话和工作区是多对多关联，切换选择只影响下一次执行。
+`agent-development` 编排保存、预览、交付与恢复；`agent-git` 提供受控完整工程文件和 Git 原语；`agent-dbt` 只封装 dbt-service `/v3` 引擎契约。持久事实统一位于 `agent-persistence`，HTTP 和模型工具调用同一组用例。三个产品各自构建，通过 HTTP 协作。
 
-- [Agent Git 运行配置与接口](docs/agent-git-runtime.md)
-- [独立 Git 仓库接入与运维](docs/git-repository-setup.md)
+开启 Git 后，在创建会话时选择 Agent 项目和真实 Git 分支。项目通过 `/api/v1/agent-projects/{projectId}/development-config` 配置 repository、previewBinding/previewConfigVersion、productionBinding/productionConfigVersion；项目一旦存在开发会话便不能更换仓库。会话目标不可更换，普通会话保持独立。编辑支持受控目录内完整 dbt 工程，包括宏、seed、项目配置与原始 YAML 字节。
 
-## dbt-service 接入
-
-agent 通过独立 `agent-dbt` 模块直接访问 dbt-service 的 `/v2/projects`，不经过 Metric Platform。默认关闭；仅开启 dbt 即可查询已发布数据，不需要 Git。
+- 保存仅提交并核实 Git push，不做 YAML 或 dbt 预校验。未推送的本地文件不会写入数据库；Pod 丢失本地文件时明确报告 `LOCAL_INPUT_LOST`。
+- 开发预览先保存，再以实际 pushed SHA 创建 PREVIEW 构建，等待该构建自身的初始部署意图。
+- 交付要求本地已保存，并确认整个共享分支相对 main 的差异、两端 SHA 及配置摘要；合并后以实际 merge SHA 创建独立 PRODUCTION 构建。预览不能直接提升为正式版本。
+- 动作返回持久 operationId。后台独立恢复，同幂等键必须保持相同输入；未知结果重放原候选和请求键。明确失败的构建可通过 expectedVersion 和恢复幂等键增加一次尝试，仍使用原 SHA。
+- 状态分别展示本地修订、远端来源、构建与部署；构建成功并不等于部署成功。构建页面和历史查询固定 buildId。
 
 ```powershell
+$env:DATA_AGENT_GIT_ENABLED='true'
 $env:DATA_AGENT_DBT_ENABLED='true'
 $env:DATA_AGENT_DBT_BASE_URL='http://127.0.0.1:8000'
-$env:DATA_AGENT_DBT_PROJECT_ID='sample'
-$env:DATA_AGENT_DBT_PROJECT_DIRECTORY='.'
+# DATA_AGENT_DBT_SERVICE_TOKEN 由本地安全环境注入，与目标服务的 SERVICE_TOKEN 匹配。
 ```
 
-地址和项目只能由服务配置，不能由模型覆盖。子目录必须与 dbt-service 的 `projectSubdir` 一致。建连默认 5 秒、请求默认 20 秒（最大 20 秒，覆盖正文读取）；应用启动不访问远端，首次使用核对 `agent-dbt-v1` 能力声明。数据分析 Skill 提供目录、资源、异步查询选项、查询提交和结果分页。
+仅开启 dbt 时，普通分析会话可由服务端 `DATA_AGENT_DBT_ANALYSIS_BUILD_ID` 固定分析构建。开发会话首次从自身 PREVIEW 部署解析并固定 buildId，未部署时明确失败，不回退 main。模型不能覆盖仓库、分支或可信会话身份。数据分析提供构建、目录、原生资源、异步查询选项、四种查询模式和结果分页，不进行发布编排。
 
-多步建模和查询默认允许单次执行最多 32 次模型调用、32 次工具调用，执行时限仍为 10 分钟；可用 `DATA_AGENT_REACT_MAX_MODEL_INVOCATIONS`、`DATA_AGENT_REACT_MAX_TOOL_CALLS` 调整。异步校验和查询的轮询也计入调用次数。
+HTTP 开发入口为 `/api/v1/agent-sessions/{sessionId}/development` 及 save、preview、deliver、operations 子路径；项目 branches 入口枚举及显式创建真实 Git 分支。`/api/v1/development/contract` 暴露与打包 OpenAPI 同源的运维契约。旧工作区写接口、validation 和旧 dbt 路由已退出。旧 Git 卡片只供历史审计。
 
-非 Ollama provider 的上下文预算可用 `DATA_AGENT_CONTEXT_WINDOW_TOKENS` 设置，默认 65536。当前估算按 UTF-8 字节保守计量，并原样保护近期 10 个用户轮次；连续建模、查询和复查可能触及硬上限。应先核实实际模型容量再调整本地预算，例如已确认模型支持 272000 时可保守设为 131072；不要超过所用模型容量或关闭硬上限保护。
+前端可设置 `VITE_METRIC_PLATFORM_URL`，构建链接始终使用 `/dbt/builds/{buildId}/catalog`。查询保留服务端时间解释和高精度结果，分页只用实际 nextOffset；resultTruncated 时不能宣称结果完整。
 
-维护分支时还需开启 Git，并指向与服务绑定一致的仓库。配置 `DATA_AGENT_DBT_BRANCH_SERVICE_TOKEN` 与服务端 `BRANCH_SERVICE_TOKEN` 一致。服务必须支持 `branch-development-v1` 和 `draft-validation-v2`，分支 publication 必须返回当前 configVersion/toolchainVersion。流程为：选择独立工作区 → 冻结修订 → dbt 定义验证 → 确认卡片 → 用户点击确认 → 固定分支 push。支持 `models/`、`tests/` 下的 SQL/YAML，禁止宏和项目配置变更；实际 SQL 支持范围由服务验证。
+升级必须先停旧写入并备份，再部署 `/v3` 服务、执行 V15 开发上下文迁移、启动配套 Agent 和平台。旧多仓库项目必须显式给出 repositoryId 到仓库地址的映射；有歧义时禁用新开发操作并逐项报告，旧历史保留。不得让旧发布器和新动作同时写入；恢复使用匹配备份或前向修复。
 
-定义验证包含 YAML/重复键、模板、dbt parse/compile、SQL 定义和语义引用检查；`SUCCEEDED` 且 `valid=true` 才可准备候选，不证明物理字段或构建成功。编辑、同步及服务配置变化使旧证据失效。共享分支远端推进时需先同步、重新验证及确认。查询固定分支的已发布版本，预览未就绪会明确失败。仅开启 dbt 时保留原线上分析；同时开启 Git 时分析也需要选择开发工作区。
-
-前端构建时可设置 `VITE_METRIC_PLATFORM_URL` 为指标平台地址。推送卡片按原提交 SHA 查找预览，并链接到固定 branchId/releaseId；未配置时仍显示预览状态。工作区使用方式、迁移和恢复限制见 [运行说明](docs/agent-git-runtime.md)。
-
-升级先部署支持本协议的 dbt-service，再部署 agent（Flyway 自动增加 V11/V12），最后启用开关。超时保留原受理键或任务 ID 重试；发布过期重新取目录及选项；校验 FAILED 可对同一草稿重新发起尝试，valid=false 则先修正定义。
-
-时间使用带 offset 的 ISO 输入，服务按发布固定业务时区解释；历史无 offset 平台调用保持原行为。查询结果最多每页 200 行，agent 按完整行裁剪到 20000 字符。始终用实际 `nextOffset` 继续；`availableRows` 仅表示已保存行数，`resultTruncated=true` 时不能宣称结果完整。
-
-当前时间边界遵循 MetricFlow 的包含结束时间及粒度对齐规则，不是左闭右开区间。整月查询应以月末最后一秒为 `endTime`，不能传下月首日；`normalizedTimeRange` 是时区转换后的输入，不能当作引擎实际对齐边界。
-
-接入验证（临时 Git 裸仓库及 Testcontainers PostgreSQL，需要 Docker）：
+接入验证使用临时真实 Git 仓库和 Testcontainers PostgreSQL，需要 Docker：
 
 ```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am '-Dtest=Dbt*Test,GitLifecycleTest,GitChangeControllerTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-development -am '-Dtest=Development*Test,SourceSaveIntegrationTest,PreviewBuildIntegrationTest,DeliveryIntegrationTest,GitDevelopmentRepositoryTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am '-Dtest=Dbt*Test,Development*Test' '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+更多接口和恢复限制见 [开发运行说明](docs/agent-git-runtime.md)。
+
+历史开发上下文迁移使用一次性入口。先停止旧写入与发布任务，备份数据库和本地工程；先以新版本完成 schema 升级并显式配置项目，再停服务执行以下命令。输入 JSON 仅包含 `projectId` 和 `repositoryMappings`（旧 repositoryId 到明确仓库地址的映射），不包含凭据。默认 dry-run 会执行相同转换并回滚；确认报告无来源冲突后，再将最后一个参数改为 `false`。命令完成后进程退出，重复执行保留已经迁移的会话标识与来源 SHA。未推送文件不参与迁移，也不会被删除。
+
+```powershell
+java -jar .\backend\agent-server\target\agent-server-0.1.0-SNAPSHOT.jar --spring.main.web-application-type=none --data-agent.git.enabled=false --data-agent.dbt.enabled=false --data-agent.development.migration.enabled=true --data-agent.development.migration.input=C:/secure-local/development-migration.json --data-agent.development.migration.dry-run=true
 ```

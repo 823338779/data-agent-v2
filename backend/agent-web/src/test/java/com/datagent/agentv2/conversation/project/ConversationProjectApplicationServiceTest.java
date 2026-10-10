@@ -12,11 +12,17 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
 
 class ConversationProjectApplicationServiceTest {
+    private final com.datagent.agentv2.persistence.service.development
+                    .DevelopmentContextPersistenceService
+            development =
+                    mock(
+                            com.datagent.agentv2.persistence.service.development
+                                    .DevelopmentContextPersistenceService.class);
     private final ConversationProjectService projects = mock(ConversationProjectService.class);
     private final ConversationSessionService sessions = mock(ConversationSessionService.class);
     private final IdGenerator ids = mock(IdGenerator.class);
     private final ConversationProjectApplicationService service =
-            new ConversationProjectApplicationService(projects, sessions, ids);
+            new ConversationProjectApplicationService(projects, sessions, ids, development);
 
     @Test
     void deletionValidatesVersionBeforeDetachingSessions() {

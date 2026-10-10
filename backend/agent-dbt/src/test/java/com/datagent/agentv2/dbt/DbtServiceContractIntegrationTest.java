@@ -2,86 +2,54 @@ package com.datagent.agentv2.dbt;
 
 import static org.assertj.core.api.Assertions.*;
 
-import com.datagent.agentv2.conversation.tool.AgentTool.InvocationContext;
-import com.datagent.agentv2.dbt.client.HttpDbtServiceClient;
-import com.datagent.agentv2.dbt.config.DbtProperties;
-import com.datagent.agentv2.dbt.tool.DbtAnalysisTool;
-import com.sun.net.httpserver.HttpServer;
-import java.net.*;
-import java.security.MessageDigest;
-import java.time.Duration;
-import java.util.HexFormat;
+import com.datagent.agentv2.dbt.model.DbtContracts;
+import com.datagent.agentv2.dbt.model.DbtContracts.*;
+import java.util.Arrays;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-/** 独立构建消费与 Python 相同的版本化样例，并校验传输和数值精度。 */
+/** 消费服务权威fixture，每个协议模型必须逐字段无损往返。 */
 class DbtServiceContractIntegrationTest {
+    static final JsonMapper JSON = new JsonMapper();
+
+    static JsonNode fixture(String name) throws Exception {
+        try (var input =
+                DbtServiceContractIntegrationTest.class.getResourceAsStream("/contracts/v3.json")) {
+            for (JsonNode sample : JSON.readTree(input).path("examples"))
+                if (name.equals(sample.path("name").asString())) return sample.path("value");
+        }
+        throw new IllegalArgumentException(name);
+    }
+
     @Test
-    void fixturesHaveMatchingHashesAndFlowThroughRealHttp() throws Exception {
-        var json = new JsonMapper();
-        var manifest = json.readTree(getClass().getResourceAsStream("/dbt-contract/manifest.json"));
-        for (String name : manifest.path("sha256").propertyNames()) {
-            try (var stream = getClass().getResourceAsStream("/dbt-contract/" + name)) {
-                assertThat(
-                                HexFormat.of()
-                                        .formatHex(
-                                                MessageDigest.getInstance("SHA-256")
-                                                        .digest(stream.readAllBytes())))
-                        .isEqualTo(manifest.path("sha256").path(name).asString());
+    void allServiceModelsRoundTripWithoutRenamingOrLosingPrecision() throws Exception {
+        try (var input = getClass().getResourceAsStream("/contracts/v3.json")) {
+            var fixture = JSON.readTree(input);
+            assertThat(fixture.path("protocolVersion").asString()).isEqualTo("build-deployment-v3");
+            for (JsonNode example : fixture.path("examples")) {
+                String name = example.path("model").asString();
+                Class<?> model =
+                        Arrays.stream(DbtContracts.class.getDeclaredClasses())
+                                .filter(type -> type.getSimpleName().equals(name))
+                                .findFirst()
+                                .orElseThrow();
+                JsonNode value = example.path("value");
+                assertThat(JSON.readTree(JSON.writeValueAsString(JSON.treeToValue(value, model))))
+                        .as(example.path("name").asString())
+                        .isEqualTo(value);
             }
         }
-        var fixture =
-                json.readTree(getClass().getResourceAsStream("/dbt-contract/protocol-v1.json"));
-        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext(
-                "/",
-                exchange -> {
-                    String path = exchange.getRequestURI().getPath();
-                    String key =
-                            path.endsWith("/publication")
-                                    ? "project"
-                                    : path.endsWith("/status")
-                                            ? "status"
-                                            : path.endsWith("/results")
-                                                    ? "page"
-                                                    : path.contains("/validations/")
-                                                            ? "validation"
-                                                            : "options";
-                    byte[] body = json.writeValueAsBytes(fixture.path(key));
-                    exchange.sendResponseHeaders(200, body.length);
-                    exchange.getResponseBody().write(body);
-                    exchange.close();
-                });
-        server.start();
-        try (var client =
-                new HttpDbtServiceClient(
-                        new DbtProperties(
-                                true,
-                                URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
-                                "sample",
-                                ".",
-                                Duration.ofSeconds(5),
-                                Duration.ofSeconds(20)),
-                        json)) {
-            var tool = new DbtAnalysisTool(DbtAnalysisTool.Kind.GET, client, json);
-            var page =
-                    tool.execute(
-                            json.createObjectNode()
-                                    .put(
-                                            "queryId",
-                                            fixture.path("page").path("queryId").asString()),
-                            new InvocationContext("t", "e", 1, "call", "key"));
-            assertThat(page).isEqualTo(fixture.path("page"));
-            assertThat(page.path("rows").get(0).get(0).asString())
-                    .isEqualTo("12345678901234567890.123456789");
-            assertThat(client.getOptions(fixture.path("options").path("optionsJobId").asString()))
-                    .isEqualTo(fixture.path("options"));
-            assertThat(
-                            client.getValidation(
-                                    fixture.path("validation").path("validationId").asString()))
-                    .isEqualTo(fixture.path("validation"));
-        } finally {
-            server.stop(0);
-        }
+    }
+
+    @Test
+    void timeAndDecimalStringsRemainOpaque() throws Exception {
+        ResultPage result = JSON.treeToValue(fixture("precision-result"), ResultPage.class);
+        assertThat(result.rows().getFirst().getFirst().asString())
+                .isEqualTo("12345678901234567890.123456789");
+        assertThat(result.rows().getFirst().get(1).isNull()).isTrue();
+        assertThat(result.businessTimezone()).isEqualTo("Asia/Shanghai");
+        assertThat(result.normalizedTimeRange().path("startTime").asString())
+                .isEqualTo("2026-10-01T00:00:00");
     }
 }

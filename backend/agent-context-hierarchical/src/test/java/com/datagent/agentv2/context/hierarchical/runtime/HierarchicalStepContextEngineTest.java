@@ -224,7 +224,7 @@ class HierarchicalStepContextEngineTest {
         }
         var source = groups.get(1);
         String output =
-                "{\"validationId\":\"validation-42\",\"status\":\"SUCCEEDED\",\"body\":\""
+                "{\"operationId\":\"operation-42\",\"status\":\"SUCCEEDED\",\"body\":\""
                         + ID.repeat(1200)
                         + "\"}";
         groups.set(
@@ -236,8 +236,8 @@ class HierarchicalStepContextEngineTest {
                                 ContextMessage.assistantToolCalls(
                                         List.of(
                                                 new ContextToolCall(
-                                                        ID, "dbt_validation_get", Map.of()))),
-                                ContextMessage.tool(output, ID, "dbt_validation_get")),
+                                                        ID, "development_status", Map.of()))),
+                                ContextMessage.tool(output, ID, "development_status")),
                         HASH,
                         true));
         var prepared = engine.prepare(request);
@@ -247,9 +247,9 @@ class HierarchicalStepContextEngineTest {
                         stored.get(checkpoint.get().activeColdId()).summaryDocument(),
                         HierarchicalStepSummaryDocument.class);
         assertThat(doc.executionFacts().values())
-                .containsEntry("validationId:validation-42.status", "SUCCEEDED");
+                .containsEntry("operationId:operation-42.status", "SUCCEEDED");
         assertThat(prepared.messages())
-                .anyMatch(message -> message.content().contains("validation-42"));
+                .anyMatch(message -> message.content().contains("operation-42"));
     }
 
     @Test

@@ -1,6 +1,6 @@
 package com.datagent.agentv2.skill.builtin;
 
-import com.datagent.agentv2.dbt.tool.DbtValidationTool;
+import com.datagent.agentv2.development.tool.*;
 import com.datagent.agentv2.skill.SkillDefinition;
 import java.util.ArrayList;
 import java.util.List;
@@ -18,13 +18,17 @@ public final class DbtYamlMaintenanceSkillDefinition implements SkillDefinition 
 
     @Override
     public String description() {
-        return "维护 dbt 指标、语义模型或 sources 的 YAML，并校验后生成 Git 确认卡片时使用。";
+        return "维护 dbt 指标、语义模型或 sources 的 YAML，并通过保存、预览部署及合并发布推进开发时使用。";
     }
 
     @Override
     public List<String> requiredTools() {
         var tools = new ArrayList<>(new GitRepositoryMaintenanceSkillDefinition().requiredTools());
-        tools.addAll(DbtValidationTool.TOOL_IDS);
+        tools.addAll(
+                List.of(
+                        DevelopmentPreviewTool.TOOL_ID,
+                        DevelopmentDeliverTool.TOOL_ID,
+                        DevelopmentStatusTool.TOOL_ID));
         return List.copyOf(tools);
     }
 }

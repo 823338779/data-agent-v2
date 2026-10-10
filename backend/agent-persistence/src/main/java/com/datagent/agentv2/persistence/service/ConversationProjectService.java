@@ -42,6 +42,21 @@ public class ConversationProjectService
                 .toList();
     }
 
+    /** 稳定业务ID游标，最多读取一页加一行，不依赖会随重命名变化的展示字段。 */
+    public List<ConversationProject> pageAfter(String cursor, int limit) {
+        if (limit < 1 || limit > 201) throw new IllegalArgumentException("项目分页范围无效");
+        return lambdaQuery()
+                .gt(cursor != null, ConversationProjectEntity::getProjectId, cursor)
+                .orderByAsc(ConversationProjectEntity::getProjectId)
+                .page(
+                        new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(
+                                1, limit, false))
+                .getRecords()
+                .stream()
+                .map(models::toModel)
+                .toList();
+    }
+
     public boolean renameProject(String projectId, String name, long expectedVersion) {
         return baseMapper.update(
                         ConversationProjectEntity.forUpdate(),

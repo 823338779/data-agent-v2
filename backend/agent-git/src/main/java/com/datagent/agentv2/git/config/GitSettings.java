@@ -8,10 +8,10 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 /**
  * 服务端固定 Git 配置；仅在 enabled=true 时绑定并验证，不接受模型覆盖。
  *
- * @param repositoryId 固定仓库业务标识，同一部署所有会话共用，不应在有未完成候选时更换
+ * @param repositoryId 历史仓库业务标识，不作为新开发会话默认值
  * @param authorName 候选创建时冻结的提交作者名称
  * @param authorEmail 候选创建时冻结的提交作者邮箱
- * @param remoteUri 全会话共用远端，仅使用服务端部署凭据
+ * @param remoteUri 可选历史仓库地址；新开发目标由项目配置固定
  * @param workspaceRoot 私有草稿与候选根目录，不对用户公开
  * @param commandTimeout 单条子进程截止时间
  * @param maxCommandOutputBytes 单次 stdout/stderr 字节上限

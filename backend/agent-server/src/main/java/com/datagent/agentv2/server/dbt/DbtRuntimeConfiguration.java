@@ -15,8 +15,6 @@ public class DbtRuntimeConfiguration {
     @Bean
     static BeanPostProcessor dbtToolAllowance(Environment environment) {
         var tools = new ArrayList<>(DbtAnalysisTool.TOOL_IDS);
-        if (environment.getProperty("data-agent.git.enabled", Boolean.class, false))
-            tools.addAll(DbtValidationTool.TOOL_IDS);
         return new BeanPostProcessor() {
             @Override
             public Object postProcessAfterInitialization(Object bean, String name) {

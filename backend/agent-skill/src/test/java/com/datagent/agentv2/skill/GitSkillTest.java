@@ -37,8 +37,9 @@ class GitSkillTest {
                                             catalog.require("git-repository-maintenance")
                                                     .descriptor()
                                                     .requiredTools())
-                                    .hasSize(7)
-                                    .contains("git_change_prepare")
+                                    .hasSize(6)
+                                    .contains("development_save")
+                                    .doesNotContain("git_change_prepare", "git_workspace_prepare")
                                     .doesNotContain("git_confirm");
                         });
     }

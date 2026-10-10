@@ -25,7 +25,7 @@ class ContractPathsTest {
 
         assertThat(api.path("openapi").asText()).isEqualTo("3.1.0");
         assertThat(paths.size()).isEqualTo(REQUIRED.size());
-        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(34);
+        assertThat(REQUIRED.values().stream().mapToInt(Set::size).sum()).isEqualTo(32);
         assertThat(REQUIRED)
                 .allSatisfy(
                         (path, methods) -> {
@@ -94,7 +94,7 @@ class ContractPathsTest {
         Map<String, Set<String>> required = new LinkedHashMap<>();
         required.put("/api/v1/agent-sessions", Set.of("get", "post"));
         required.put("/api/v1/agent-sidebar", Set.of("get"));
-        required.put("/api/v1/agent-projects", Set.of("post"));
+        required.put("/api/v1/agent-projects", Set.of("get", "post"));
         required.put("/api/v1/agent-projects/{projectId}", Set.of("patch", "delete"));
         required.put(SESSION_PATH + "/organization", Set.of("put"));
         required.put("/api/v1/agent-sessions/summary-events", Set.of("get"));
@@ -106,21 +106,19 @@ class ContractPathsTest {
         required.put(gitPath, Set.of("get"));
         required.put(gitPath + "/files", Set.of("get"));
         required.put(gitPath + "/diff", Set.of("get"));
-        for (String action : java.util.List.of("confirm", "cancel", "retry", "reconcile"))
-            required.put(gitPath + "/" + action, Set.of("post"));
-        // 保留全部既有操作，精确加入本次分支工作区契约；不放宽路径或方法检查。
-        required.put("/api/v1/git-workspaces", Set.of("get", "post"));
-        required.put("/api/v1/git-workspaces/{workspaceId}", Set.of("get"));
-        required.put("/api/v1/git-workspaces/{workspaceId}/sync", Set.of("post"));
-        required.put("/api/v1/git-workspaces/{workspaceId}/restart", Set.of("post"));
-        required.put("/api/v1/git-workspaces/{workspaceId}/sync/resolve", Set.of("post"));
-        required.put(
-                "/api/v1/agent-sessions/{sessionId}/git-workspaces/{workspaceId}", Set.of("put"));
-        required.put("/api/v1/metric-branches", Set.of("get", "post"));
-        required.put("/api/v1/metric-branches/register", Set.of("post"));
-        required.put("/api/v1/metric-branches/{branchId}", Set.of("get", "delete"));
-        required.put("/api/v1/metric-branches/{branchId}/releases", Set.of("get"));
-        required.put("/api/v1/metric-branches/{branchId}/releases/{releaseId}", Set.of("get"));
+        // v3仅保留历史只读入口，开发操作固定到Agent项目和会话。
+        required.put("/api/v1/agent-projects/{projectId}/development-config", Set.of("get", "put"));
+        required.put("/api/v1/agent-projects/{projectId}/branches", Set.of("get", "post"));
+        String development = "/api/v1/agent-sessions/{sessionId}/development";
+        required.put(development, Set.of("get"));
+        for (String action : java.util.List.of("save", "preview", "deliver"))
+            required.put(development + "/" + action, Set.of("post"));
+        required.put(development + "/operations/{operationId}", Set.of("get"));
+        required.put(development + "/operations/{operationId}/recover", Set.of("post"));
+        required.put(development + "/files", Set.of("get", "post"));
+        required.put(development + "/file", Set.of("get"));
+        required.put(development + "/diff", Set.of("get"));
+        required.put("/api/v1/development/contract", Set.of("get"));
         return required;
     }
 }

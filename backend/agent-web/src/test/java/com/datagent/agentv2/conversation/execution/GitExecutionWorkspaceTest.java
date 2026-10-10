@@ -7,35 +7,24 @@ import static org.mockito.Mockito.*;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-/** 受理摘要包含工作区，旧无 Git 请求保持历史摘要与重放接口。 */
+/** 会话目标不再作为模型消息参数；同一内容仍保持原幂等摘要。 */
 class GitExecutionWorkspaceTest {
-    private static final String SESSION = "session";
-    private static final String CONTENT = "同一条开发指令";
-    private static final String KEY = "request";
-    private static final String A = "workspace-a";
-    private static final String B = "workspace-b";
-
     @Test
-    void workspaceIsPartOfIdempotencyHash() {
+    void messagesUseOnlyTrustedSessionAndStableContentHash() {
         var transactions = mock(AgentExecutionSubmissionTransactionService.class);
         var service = new AgentExecutionSubmissionService(transactions);
-        service.submit(SESSION, CONTENT, KEY, A);
-        service.submit(SESSION, CONTENT, KEY, B);
+        service.submit("session", "开发指标", "key");
+        service.submit("session", "开发指标", "key");
         var hashes = ArgumentCaptor.forClass(String.class);
         verify(transactions, times(2))
-                .createOrReplay(eq(SESSION), eq(CONTENT), eq(KEY), hashes.capture(), anyString());
-        assertThat(hashes.getAllValues().get(0)).isNotEqualTo(hashes.getAllValues().get(1));
+                .createOrReplay(eq("session"), eq("开发指标"), eq("key"), hashes.capture());
+        assertThat(hashes.getAllValues())
+                .containsOnly(AgentExecutionSubmissionService.payloadHash("开发指标"));
     }
 
     @Test
-    void absentWorkspaceKeepsLegacyPayloadHash() {
-        var transactions = mock(AgentExecutionSubmissionTransactionService.class);
-        new AgentExecutionSubmissionService(transactions).submit(SESSION, CONTENT, KEY, null);
-        verify(transactions)
-                .createOrReplay(
-                        SESSION,
-                        CONTENT,
-                        KEY,
-                        AgentExecutionSubmissionService.payloadHash(CONTENT));
+    void distinctContentCannotReusePayloadIdentity() {
+        assertThat(AgentExecutionSubmissionService.payloadHash("first"))
+                .isNotEqualTo(AgentExecutionSubmissionService.payloadHash("second"));
     }
 }

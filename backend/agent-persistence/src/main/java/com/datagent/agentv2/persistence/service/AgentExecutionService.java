@@ -138,4 +138,30 @@ public class AgentExecutionService extends ServiceImpl<AgentExecutionMapper, Age
                         .orderByDesc(AgentExecutionEntity::getCreatedAt)
                         .list());
     }
+
+    /** 与会话同时匹配，禁止复用其他会话execution取得分析构建。 */
+    public java.util.UUID analysisBuild(String executionId, String sessionId) {
+        var row =
+                lambdaQuery()
+                        .eq(AgentExecutionEntity::getExecutionId, executionId)
+                        .eq(AgentExecutionEntity::getConversationSessionId, sessionId)
+                        .one();
+        if (row == null) throw new IllegalStateException("可信执行不属于当前会话");
+        return row.getAnalysisBuildId() == null
+                ? null
+                : java.util.UUID.fromString(row.getAnalysisBuildId());
+    }
+
+    /** 仅首次写入；不推进执行版本，避免独立分析选择与取消/完成状态CAS竞争。 */
+    @org.springframework.transaction.annotation.Transactional
+    public java.util.UUID selectAnalysisBuildIfAbsent(
+            String executionId, String sessionId, java.util.UUID buildId) {
+        lambdaUpdate()
+                .eq(AgentExecutionEntity::getExecutionId, executionId)
+                .eq(AgentExecutionEntity::getConversationSessionId, sessionId)
+                .isNull(AgentExecutionEntity::getAnalysisBuildId)
+                .set(AgentExecutionEntity::getAnalysisBuildId, buildId.toString())
+                .update();
+        return analysisBuild(executionId, sessionId);
+    }
 }

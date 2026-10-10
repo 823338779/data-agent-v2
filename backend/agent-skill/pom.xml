@@ -5,7 +5,7 @@
   <artifactId>agent-skill</artifactId>
   <dependencies>
     <dependency><groupId>com.datagent</groupId><artifactId>agent-dbt</artifactId><version>${project.version}</version></dependency>
-    <dependency><groupId>com.datagent</groupId><artifactId>agent-git</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>com.datagent</groupId><artifactId>agent-development</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>com.datagent</groupId><artifactId>agent-tool</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.springframework</groupId><artifactId>spring-context</artifactId></dependency>
     <dependency><groupId>org.springframework</groupId><artifactId>spring-core</artifactId></dependency>

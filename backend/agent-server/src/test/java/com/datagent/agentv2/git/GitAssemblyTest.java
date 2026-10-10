@@ -4,56 +4,60 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import com.datagent.agentv2.conversation.tool.runtime.ToolPolicyProperties;
+import com.datagent.agentv2.development.application.DevelopmentRecoveryRunner;
 import com.datagent.agentv2.git.application.*;
-import com.datagent.agentv2.git.port.GitChangeCardPublisher;
-import com.datagent.agentv2.persistence.entity.git.GitChangeEntity;
 import com.datagent.agentv2.persistence.service.git.*;
+import com.datagent.agentv2.server.development.DevelopmentRuntimeConfiguration;
 import java.nio.file.Path;
-import java.time.Clock;
 import java.util.List;
 import java.util.concurrent.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
-import org.springframework.boot.ApplicationRunner;
-import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.boot.test.system.CapturedOutput;
-import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.boot.test.system.*;
 import org.springframework.context.annotation.*;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
+/** 迁移原运行时装配保障：延迟初始化、工具白名单、独立恢复与安全错误。 */
 class GitAssemblyTest {
     @TempDir Path temp;
 
     @Configuration(proxyBeanMethods = false)
-    @ComponentScan(
-            basePackages = {"com.datagent.agentv2.git.config", "com.datagent.agentv2.server.git"})
+    @Import({
+        com.datagent.agentv2.git.config.GitConfiguration.class,
+        DevelopmentRuntimeConfiguration.class
+    })
     static class Scan {}
+
+    final DevelopmentRecoveryRunner recovery = mock(DevelopmentRecoveryRunner.class);
 
     ApplicationContextRunner runner(boolean enabled) {
         return new ApplicationContextRunner()
                 .withUserConfiguration(Scan.class)
                 .withPropertyValues(
                         "data-agent.git.enabled=" + enabled,
-                        "data-agent.git.remote-uri=unused",
-                        "data-agent.git.workspace-root=" + temp.resolve("workspaces"))
+                        "data-agent.git.workspace-root=" + temp.resolve("workspaces"),
+                        "data-agent.development.recovery-delay-ms=60000")
                 .withInitializer(
-                        ctx -> {
-                            ctx.getBeanFactory()
-                                    .registerSingleton(
-                                            "workspaceRecords",
-                                            mock(GitWorkspacePersistenceService.class));
-                            ctx.getBeanFactory()
-                                    .registerSingleton(
-                                            "changeRecords",
-                                            mock(GitChangePersistenceService.class));
-                            ctx.getBeanFactory()
-                                    .registerSingleton(
-                                            "sessionWorkspaces",
-                                            mock(GitSessionWorkspaceService.class));
-                        })
-                .withBean(GitChangeCardPublisher.class, () -> mock(GitChangeCardPublisher.class))
-                .withBean(Clock.class, Clock::systemUTC)
+                        ctx ->
+                                ctx.getBeanFactory()
+                                        .registerSingleton(
+                                                "GitWorkspacePersistenceService",
+                                                mock(GitWorkspacePersistenceService.class)))
+                .withInitializer(
+                        ctx ->
+                                ctx.getBeanFactory()
+                                        .registerSingleton(
+                                                "GitChangePersistenceService",
+                                                mock(GitChangePersistenceService.class)))
+                .withInitializer(
+                        ctx ->
+                                ctx.getBeanFactory()
+                                        .registerSingleton(
+                                                "GitSessionWorkspaceService",
+                                                mock(GitSessionWorkspaceService.class)))
+                .withBean(DevelopmentRecoveryRunner.class, () -> recovery)
                 .withBean(
                         ToolPolicyProperties.class,
                         () ->
@@ -73,8 +77,16 @@ class GitAssemblyTest {
                             var policy = ctx.getBean(ToolPolicyProperties.class);
                             assertThat(policy.maximum())
                                     .contains(
+                                            "git_files_apply",
+                                            "development_save",
+                                            "development_preview",
+                                            "development_deliver",
+                                            "development_status",
+                                            "dbt_build_get",
+                                            "dbt_query_submit")
+                                    .doesNotContain(
                                             "git_change_prepare",
-                                            "dbt_query_submit",
+                                            "git_workspace_prepare",
                                             "dbt_validation_submit");
                             assertThat(policy.initial()).containsExactly("current_time");
                         });
@@ -83,141 +95,78 @@ class GitAssemblyTest {
     @Test
     @ExtendWith(OutputCaptureExtension.class)
     void backgroundRecoveryFailureIsObservableWithoutExceptionDetails(CapturedOutput output) {
-        var records = mock(GitChangePersistenceService.class);
-        var submissions = mock(GitSubmissionService.class);
-        var legacy = new GitChangeEntity();
-        legacy.setConversationSessionId("session");
-        legacy.setChangeId("change");
-        when(records.unfinished()).thenReturn(List.of(legacy));
-        when(submissions.reconcile("session", "change"))
-                .thenThrow(new IllegalStateException("secret-token /private/path stderr"));
-        var recovery = new GitRecoveryRunner(records, submissions);
+        doThrow(new IllegalStateException("secret-token /private/path stderr"))
+                .when(recovery)
+                .tick();
         runner(true)
-                .withBean(
-                        "failedRecovery",
-                        GitRecoveryRunner.class,
-                        () -> recovery,
-                        definition -> definition.setPrimary(true))
                 .run(
                         ctx -> {
-                            ctx.getBean(ApplicationRunner.class)
-                                    .run(
-                                            new org.springframework.boot
-                                                    .DefaultApplicationArguments());
-                            ((ExecutorService) ctx.getBean("gitSubmissionExecutor"))
-                                    .submit(() -> {})
-                                    .get(5, TimeUnit.SECONDS);
+                            ctx.getBean(DevelopmentRuntimeConfiguration.class).recover();
                             assertThat(output.getAll())
-                                    .contains("Git 启动恢复失败，请通过卡片核实遗留提交")
+                                    .contains("开发操作恢复扫描暂未完成")
                                     .doesNotContain("secret-token", "/private/path", "stderr");
                         });
     }
 
     @Test
-    @ExtendWith(OutputCaptureExtension.class)
-    void startupCaptureFailureIsObservableWithoutExceptionDetails(CapturedOutput output) {
-        var records = mock(GitChangePersistenceService.class);
-        when(records.unfinished())
-                .thenThrow(new IllegalStateException("secret-token /private/path stderr"));
-        var recovery = new GitRecoveryRunner(records, mock(GitSubmissionService.class));
-        runner(true)
-                .withBean(
-                        "failedCapture",
-                        GitRecoveryRunner.class,
-                        () -> recovery,
-                        definition -> definition.setPrimary(true))
-                .run(
-                        ctx -> {
-                            ctx.getBean(ApplicationRunner.class)
-                                    .run(new DefaultApplicationArguments());
-                            ((ExecutorService) ctx.getBean("gitSubmissionExecutor"))
-                                    .submit(() -> {})
-                                    .get(5, TimeUnit.SECONDS);
-                            assertThat(output.getAll())
-                                    .contains("Git 启动恢复失败，请通过卡片核实遗留提交")
-                                    .doesNotContain("secret-token", "/private/path", "stderr");
-                        });
-    }
-
-    @Test
-    void startupReturnsWhileLegacyVerificationRemainsBlocked() throws Exception {
+    void startupReturnsWhileRecoveryRemainsBlocked() throws Exception {
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
-        var records = mock(GitChangePersistenceService.class);
-        var submissions = mock(GitSubmissionService.class);
-        var legacy = new GitChangeEntity();
-        legacy.setConversationSessionId("session");
-        legacy.setChangeId("change");
-        when(records.unfinished()).thenReturn(List.of(legacy));
-        when(submissions.reconcile("session", "change"))
-                .thenAnswer(
+        doAnswer(
                         call -> {
                             entered.countDown();
                             release.await();
                             return null;
+                        })
+                .when(recovery)
+                .tick();
+        runner(true)
+                .run(
+                        ctx -> {
+                            try {
+                                assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                                assertThat(ctx).hasNotFailed();
+                                assertThat(release.getCount()).isOne();
+                            } finally {
+                                release.countDown();
+                            }
                         });
-        try (var startup = Executors.newSingleThreadExecutor()) {
-            runner(true)
-                    .withBean(
-                            "blockingRecovery",
-                            GitRecoveryRunner.class,
-                            () -> new GitRecoveryRunner(records, submissions),
-                            definition -> definition.setPrimary(true))
-                    .run(
-                            ctx -> {
-                                var returned =
-                                        startup.submit(
-                                                () -> {
-                                                    ctx.getBean(ApplicationRunner.class)
-                                                            .run(new DefaultApplicationArguments());
-                                                    return true;
-                                                });
-                                try {
-                                    assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-                                    assertThat(returned.get(1, TimeUnit.SECONDS)).isTrue();
-                                    assertThat(release.getCount()).isOne();
-                                } finally {
-                                    release.countDown();
-                                }
-                            });
-        }
     }
 
     @Test
     void enabledAssemblyAddsLazyToolsAndClosesAsyncWorker() {
-        ExecutorService[] captured = new ExecutorService[1];
+        ThreadPoolTaskScheduler[] captured = new ThreadPoolTaskScheduler[1];
         runner(true)
                 .run(
                         ctx -> {
                             assertThat(ctx)
                                     .hasNotFailed()
                                     .hasSingleBean(GitWorkspaceService.class)
-                                    .hasSingleBean(GitSubmissionService.class)
-                                    .hasSingleBean(GitRecoveryRunner.class);
-                            var policy = ctx.getBean(ToolPolicyProperties.class);
-                            assertThat(policy.maximum()).contains("git_change_prepare");
-                            assertThat(policy.initial()).containsExactly("current_time");
-                            captured[0] = (ExecutorService) ctx.getBean("gitSubmissionExecutor");
-                            long callingThread = Thread.currentThread().threadId();
+                                    .doesNotHaveBean(GitSubmissionService.class)
+                                    .doesNotHaveBean(GitRecoveryRunner.class);
+                            assertThat(ctx.getBean(ToolPolicyProperties.class).maximum())
+                                    .contains("development_save");
+                            captured[0] = ctx.getBean(ThreadPoolTaskScheduler.class);
+                            long caller = Thread.currentThread().threadId();
                             assertThat(
                                             captured[0]
                                                     .submit(() -> Thread.currentThread().threadId())
                                                     .get(5, TimeUnit.SECONDS))
-                                    .isNotEqualTo(callingThread);
+                                    .isNotEqualTo(caller);
                             assertThat(temp.resolve("workspaces")).doesNotExist();
                         });
-        assertThat(captured[0].isShutdown()).isTrue();
+        assertThat(captured[0].getScheduledThreadPoolExecutor().isShutdown()).isTrue();
     }
 
     @Test
-    void disabledAssemblyCreatesNoWorkspaceServicesOrToolAllowance() {
+    void disabledAssemblyCreatesNoWorkspaceOrAllowance() {
         runner(false)
                 .run(
                         ctx -> {
                             assertThat(ctx)
                                     .hasNotFailed()
                                     .doesNotHaveBean(GitWorkspaceService.class)
-                                    .doesNotHaveBean(GitSubmissionService.class);
+                                    .doesNotHaveBean(ThreadPoolTaskScheduler.class);
                             assertThat(ctx.getBean(ToolPolicyProperties.class).maximum())
                                     .containsExactly("current_time");
                             assertThat(temp.resolve("workspaces")).doesNotExist();
@@ -225,9 +174,16 @@ class GitAssemblyTest {
     }
 
     @Test
-    void enabledWithoutRemoteFailsBeforeServingRequests() {
-        runner(true)
-                .withPropertyValues("data-agent.git.remote-uri=")
+    void initialCannotBypassSkillActivation() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(DevelopmentRuntimeConfiguration.class)
+                .withPropertyValues("data-agent.git.enabled=true")
+                .withBean(DevelopmentRecoveryRunner.class, () -> recovery)
+                .withBean(
+                        ToolPolicyProperties.class,
+                        () ->
+                                new ToolPolicyProperties(
+                                        List.of("development_save"), List.of("development_save")))
                 .run(ctx -> assertThat(ctx).hasFailed());
     }
 }

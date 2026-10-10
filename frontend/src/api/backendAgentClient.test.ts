@@ -19,16 +19,23 @@ const session = {
 };
 
 describe('backend agent client', () => {
-  it('freezes the selected workspace in message submission without changing ordinary chat payloads', async () => {
+  it('创建开发会话固定分支，消息不再携带 workspaceId', async () => {
     const fetchImpl = vi
       .fn()
       .mockImplementation(async () => ({ ok: true, json: async () => session }));
     const client = createFetchAgentBackendClient({ fetchImpl });
-    await client.submitMessage('session_1', '修改指标', 'workspace-a');
-    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
-      content: '修改指标',
-      workspaceId: 'workspace-a',
+    await client.createSession('开发', '', 'p1', {
+      projectId: 'p1',
+      branchName: 'feature/revenue',
     });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      title: '开发',
+      tag: '',
+      projectId: 'p1',
+      development: { projectId: 'p1', branchName: 'feature/revenue' },
+    });
+    await client.submitMessage('session_1', '修改指标');
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({ content: '修改指标' });
   });
   it('uses only the implemented session endpoints', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => session });

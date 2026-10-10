@@ -1,139 +1,356 @@
 package com.datagent.agentv2.dbt;
 
+import static com.datagent.agentv2.dbt.DbtServiceContractIntegrationTest.*;
 import static org.assertj.core.api.Assertions.*;
 
 import com.datagent.agentv2.conversation.exception.ToolBusinessException;
 import com.datagent.agentv2.dbt.client.HttpDbtServiceClient;
 import com.datagent.agentv2.dbt.config.DbtProperties;
+import com.datagent.agentv2.dbt.model.DbtContracts.*;
+import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.*;
+import java.util.concurrent.atomic.*;
 import org.junit.jupiter.api.Test;
-import tools.jackson.databind.json.JsonMapper;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
-/** HTTP 边界用真实本地服务验证，不能向模型泄露服务异常正文。 */
+/** 本地真实HTTP验证v3路由、凭据、边界及无隐式重试。 */
 class DbtServiceClientTest {
-    @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.CsvSource({
-        "404,DBT_NOT_FOUND",
-        "409,DBT_CONFLICT",
-        "410,DBT_RELEASE_GONE",
-        "422,DBT_INVALID_SELECTION",
-        "503,DBT_UNAVAILABLE"
-    })
-    void statusMatrix(int status, String code) throws Exception {
-        response(
-                status,
-                "{\"detail\":{\"reason\":\"invalid_dimension_option\",\"field\":\"groupBy[0].optionId\",\"recovery\":\"reload_query_options\",\"message\":\"private\"}}",
-                Duration.ofSeconds(2),
-                0,
-                code,
-                true);
+    static final UUID BUILD = UUID.fromString("12345678-1234-4234-8234-123456789abc");
+
+    interface Handler {
+        void handle(HttpExchange exchange) throws Exception;
     }
 
-    @Test
-    void malformedAndOversizedBodiesAreRejected() throws Exception {
-        response(200, "not json", Duration.ofSeconds(2), 0, "DBT_PROTOCOL_INVALID", false);
-        response(
-                200,
-                "x".repeat(8 * 1024 * 1024 + 1),
-                Duration.ofSeconds(2),
-                0,
-                "DBT_PROTOCOL_INVALID",
-                false);
-    }
-
-    @Test
-    void requestHasTotalDeadline() throws Exception {
-        response(200, "{}", Duration.ofMillis(100), 500, "DBT_TIMEOUT", false);
-    }
-
-    private void response(
-            int status, String body, Duration timeout, long delay, String code, boolean detail)
-            throws Exception {
+    static HttpServer server(Handler handler) throws Exception {
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor());
         server.createContext(
                 "/",
                 exchange -> {
                     try {
-                        Thread.sleep(delay);
-                        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-                        exchange.sendResponseHeaders(status, bytes.length);
-                        exchange.getResponseBody().write(bytes);
-                    } catch (InterruptedException interrupted) {
-                        Thread.currentThread().interrupt();
+                        handler.handle(exchange);
+                    } catch (Exception ignored) {
+                        /* 取消响应时客户端已断开。 */
                     } finally {
                         exchange.close();
                     }
                 });
         server.start();
-        try (var client =
-                new HttpDbtServiceClient(
-                        new DbtProperties(
-                                true,
-                                URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
-                                "sample",
-                                ".",
-                                Duration.ofMillis(50),
-                                timeout),
-                        new JsonMapper())) {
-            assertThatThrownBy(client::project)
-                    .isInstanceOfSatisfying(
-                            ToolBusinessException.class,
-                            error -> {
-                                assertThat(error.code()).isEqualTo(code);
-                                assertThat(error.getMessage()).doesNotContain("private");
-                                if (detail)
-                                    assertThat(error.getMessage())
-                                            .contains(
-                                                    "invalid_dimension_option",
-                                                    "groupBy[0].optionId",
-                                                    "reload_query_options");
-                            });
+        return server;
+    }
+
+    static HttpDbtServiceClient client(HttpServer server, Duration timeout, String token) {
+        return new HttpDbtServiceClient(
+                new DbtProperties(
+                        true,
+                        URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
+                        Duration.ofMillis(50),
+                        timeout,
+                        token),
+                JSON);
+    }
+
+    static void response(HttpExchange exchange, int status, String body) throws Exception {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.sendResponseHeaders(status, bytes.length);
+        exchange.getResponseBody().write(bytes);
+    }
+
+    @Test
+    void buildRetryKeepsKeyAndOrigin() throws Exception {
+        List<String> bodies = Collections.synchronizedList(new ArrayList<>());
+        AtomicInteger accepted = new AtomicInteger();
+        var server =
+                server(
+                        exchange -> {
+                            bodies.add(
+                                    new String(
+                                            exchange.getRequestBody().readAllBytes(),
+                                            StandardCharsets.UTF_8));
+                            if (accepted.incrementAndGet() == 1) {
+                                exchange.close();
+                                return;
+                            }
+                            response(exchange, 202, fixture("failed-build").toString());
+                        });
+        try (var client = client(server, Duration.ofSeconds(2), "secret")) {
+            var request = JSON.treeToValue(fixture("build"), BuildRequest.class);
+            request =
+                    new BuildRequest(
+                            request.repository(),
+                            request.branchName(),
+                            request.commitSha(),
+                            request.environment(),
+                            request.executionBinding(),
+                            request.configVersion(),
+                            request.deploymentPolicy(),
+                            request.idempotencyKey(),
+                            new Origin("session", "operation"));
+            BuildRequest fixed = request;
+            assertThatThrownBy(() -> client.submitBuild(fixed))
+                    .isInstanceOf(ToolBusinessException.class);
+            assertThat(accepted).hasValue(1);
+            assertThat(client.submitBuild(fixed).buildId()).isEqualTo(BUILD);
+            assertThat(bodies).hasSize(2);
+            assertThat(bodies.get(0)).isEqualTo(bodies.get(1));
+            assertThat(
+                            JSON.readTree(bodies.getFirst())
+                                    .path("origin")
+                                    .path("operationId")
+                                    .asString())
+                    .isEqualTo("operation");
         } finally {
             server.stop(0);
         }
     }
 
     @Test
-    void fixedProjectRoutesAndSafeErrorMapping() throws Exception {
-        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        var path = new AtomicReference<String>();
-        server.createContext(
-                "/",
-                exchange -> {
-                    path.set(exchange.getRequestURI().getPath());
-                    byte[] content =
-                            "{\"detail\":{\"code\":\"release_gone\",\"message\":\"secret\"}}"
-                                    .getBytes(StandardCharsets.UTF_8);
-                    exchange.sendResponseHeaders(410, content.length);
-                    exchange.getResponseBody().write(content);
-                    exchange.close();
-                });
-        server.start();
-        try (var client =
-                new HttpDbtServiceClient(
-                        new DbtProperties(
-                                true,
-                                URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
-                                "sample",
-                                ".",
-                                Duration.ofSeconds(5),
-                                Duration.ofSeconds(20)),
-                        new JsonMapper())) {
-            assertThatThrownBy(client::project)
-                    .isInstanceOfSatisfying(
-                            ToolBusinessException.class,
-                            error -> {
-                                assertThat(error.code()).isEqualTo("DBT_RELEASE_GONE");
-                                assertThat(error.getMessage()).doesNotContain("secret");
-                            });
-            assertThat(path.get()).isEqualTo("/v2/projects/sample/publication");
+    void writeRequestsUseServiceCredential() throws Exception {
+        List<String> paths = new ArrayList<>();
+        List<String> credentials = new ArrayList<>();
+        var server =
+                server(
+                        exchange -> {
+                            paths.add(exchange.getRequestURI().getPath());
+                            credentials.add(exchange.getRequestHeaders().getFirst("Authorization"));
+                            String example =
+                                    paths.getLast().endsWith("query-options")
+                                            ? "options-queued"
+                                            : paths.getLast().endsWith("queries")
+                                                    ? "query-status"
+                                                    : "failed-build";
+                            response(exchange, 202, fixture(example).toString());
+                        });
+        try (var client = client(server, Duration.ofSeconds(2), "secret")) {
+            client.submitBuild(JSON.treeToValue(fixture("build"), BuildRequest.class));
+            client.submitOptions(
+                    BUILD, JSON.treeToValue(fixture("options-request"), OptionsRequest.class));
+            client.submitQuery(BUILD, JSON.treeToValue(fixture("query"), QueryRequest.class));
+            assertThat(paths)
+                    .containsExactly(
+                            "/v3/builds",
+                            "/v3/builds/" + BUILD + "/query-options",
+                            "/v3/builds/" + BUILD + "/queries");
+            assertThat(credentials)
+                    .containsExactly("Bearer secret", "Bearer secret", "Bearer secret");
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void noCredentialRejectsWritesBeforeNetwork() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        var server = server(exchange -> calls.incrementAndGet());
+        try (var client = client(server, Duration.ofSeconds(2), null)) {
+            assertCode(
+                    () ->
+                            client.submitOptions(
+                                    BUILD,
+                                    JSON.treeToValue(
+                                            fixture("options-request"), OptionsRequest.class)),
+                    "DBT_SERVICE_NOT_CONFIGURED");
+            assertThat(calls).hasValue(0);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "410,PHYSICAL_OBJECTS_REMOVED",
+        "422,INVALID_DIMENSION_OPTION",
+        "503,EXECUTION_ENVIRONMENT_UNAVAILABLE",
+        "409,IDEMPOTENCY_CONFLICT"
+    })
+    void newEndpointFailureNeverCallsLegacyRoute(int status, String code) throws Exception {
+        List<String> paths = new ArrayList<>();
+        var server =
+                server(
+                        exchange -> {
+                            paths.add(exchange.getRequestURI().getPath());
+                            response(
+                                    exchange,
+                                    status,
+                                    "{\"error\":{\"code\":\""
+                                            + code
+                                            + "\",\"message\":\"private credential\"}}");
+                        });
+        try (var client = client(server, Duration.ofSeconds(2), "secret")) {
+            assertCode(() -> client.getBuild(BUILD), code);
+            assertThat(paths).containsExactly("/v3/builds/" + BUILD);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void redirectsNeverReceiveServiceCredential() throws Exception {
+        AtomicInteger forwarded = new AtomicInteger();
+        var other = server(exchange -> forwarded.incrementAndGet());
+        var origin =
+                server(
+                        exchange -> {
+                            exchange.getResponseHeaders()
+                                    .add(
+                                            "Location",
+                                            "http://127.0.0.1:"
+                                                    + other.getAddress().getPort()
+                                                    + "/steal");
+                            response(exchange, 307, "{}");
+                        });
+        try (var client = client(origin, Duration.ofSeconds(2), "secret")) {
+            assertCode(
+                    () ->
+                            client.submitBuild(
+                                    JSON.treeToValue(fixture("build"), BuildRequest.class)),
+                    "DBT_UNAVAILABLE");
+            assertThat(forwarded).hasValue(0);
+        } finally {
+            origin.stop(0);
+            other.stop(0);
+        }
+    }
+
+    @Test
+    void malformedOversizedAndUnknownStatesFailClosed() throws Exception {
+        for (String body :
+                List.of(
+                        "not json",
+                        "x".repeat(8 * 1024 * 1024 + 1),
+                        fixture("failed-build").toString().replace("FAILED", "UNKNOWN"))) {
+            var server = server(exchange -> response(exchange, 200, body));
+            try (var client = client(server, Duration.ofSeconds(2), null)) {
+                assertCode(() -> client.getBuild(BUILD), "DBT_PROTOCOL_INVALID");
+            } finally {
+                server.stop(0);
+            }
+        }
+    }
+
+    @Test
+    void requestDeadlineIncludesSlowResponseBody() throws Exception {
+        var server =
+                server(
+                        exchange -> {
+                            exchange.sendResponseHeaders(200, 0);
+                            for (int i = 0; i < 100; i++) {
+                                exchange.getResponseBody().write(' ');
+                                exchange.getResponseBody().flush();
+                                Thread.sleep(25);
+                            }
+                        });
+        long start = System.nanoTime();
+        try (var client = client(server, Duration.ofMillis(120), null)) {
+            assertCode(() -> client.getBuild(BUILD), "DBT_TIMEOUT");
+            assertThat(Duration.ofNanos(System.nanoTime() - start))
+                    .isLessThan(Duration.ofSeconds(1));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void typedReadRoutesPreserveFiltersAndResultMetadata() throws Exception {
+        List<String> paths = new ArrayList<>();
+        var server =
+                server(
+                        exchange -> {
+                            String path = exchange.getRequestURI().getPath();
+                            paths.add(exchange.getRequestURI().toString());
+                            String name =
+                                    path.endsWith("/catalog")
+                                            ? "catalog"
+                                            : path.endsWith("/source")
+                                                    ? "source"
+                                                    : path.endsWith("/lineage")
+                                                            ? "lineage"
+                                                            : path.endsWith("/native-details")
+                                                                    ? "native-details"
+                                                                    : path.contains("/resources/")
+                                                                            ? "resource"
+                                                                            : path.endsWith(
+                                                                                            "/results")
+                                                                                    ? "precision-result"
+                                                                                    : path.endsWith(
+                                                                                                    "/status")
+                                                                                            ? "query-status"
+                                                                                            : path
+                                                                                                            .contains(
+                                                                                                                    "/query-options/")
+                                                                                                    ? "options-queued"
+                                                                                                    : path
+                                                                                                                    .endsWith(
+                                                                                                                            "/current")
+                                                                                                            ? "empty-target"
+                                                                                                            : "waiting-intent";
+                            response(
+                                    exchange,
+                                    200,
+                                    path.equals("/v3/deployments")
+                                            ? "{\"items\":["
+                                                    + fixture(name)
+                                                    + "],\"nextCursor\":null}"
+                                            : fixture(name).toString());
+                        });
+        try (var client = client(server, Duration.ofSeconds(2), null)) {
+            String repo = "https://git.example.com/metrics.git";
+            client.currentDeployment(
+                    new DeploymentKey(repo, Environment.PREVIEW, "feature/revenue"));
+            assertThat(
+                            client.listDeployments(
+                                            new DeploymentFilter(
+                                                    repo, null, "feature/revenue", null, 50))
+                                    .items())
+                    .hasSize(1);
+            assertThat(
+                            client.catalog(
+                                            BUILD,
+                                            new CatalogFilter("收 入", "METRIC", "next+token", 50))
+                                    .items())
+                    .hasSize(5);
+            client.resource(BUILD, "metric.revenue");
+            client.resourceSource(BUILD, "metric.revenue");
+            client.resourceLineage(BUILD, "metric.revenue");
+            client.resourceNative(BUILD, "metric.revenue");
+            client.getOptions(BUILD);
+            client.queryStatus(BUILD);
+            assertThat(client.queryResults(BUILD, 0, 100).rows().getFirst().getFirst().asString())
+                    .isEqualTo("12345678901234567890.123456789");
+            assertThat(paths)
+                    .anyMatch(path -> path.contains("branchName=feature%2Frevenue"))
+                    .anyMatch(path -> path.contains("cursor=next%2Btoken"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void responseBelongingToAnotherBuildIsRejected() throws Exception {
+        var server = server(exchange -> response(exchange, 200, fixture("catalog").toString()));
+        try (var client = client(server, Duration.ofSeconds(2), null)) {
+            assertCode(
+                    () -> client.catalog(UUID.randomUUID(), new CatalogFilter("", null, null, 20)),
+                    "DBT_PROTOCOL_INVALID");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    static void assertCode(
+            org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String code) {
+        assertThatThrownBy(action)
+                .isInstanceOfSatisfying(
+                        ToolBusinessException.class,
+                        error -> {
+                            assertThat(error.code()).isEqualTo(code);
+                            assertThat(error.getMessage()).doesNotContain("private credential");
+                        });
     }
 }

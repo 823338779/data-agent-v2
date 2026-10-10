@@ -70,8 +70,8 @@ class GitChangeControllerTest {
     }
 
     @Test
-    void confirmReturnsAcceptedAndFileSummaryWithoutDiff() {
-        when(submissions.confirm("s1", "c1", 1)).thenReturn(view());
+    void historicalDetailReturnsFileSummaryWithoutDiff() {
+        when(changes.detail("s1", "c1")).thenReturn(view());
         when(changes.files("s1", "c1"))
                 .thenReturn(
                         List.of(new GitSnapshotStore.SnapshotFile("0", "M", "metrics.yml", null)));
@@ -83,11 +83,8 @@ class GitChangeControllerTest {
                                                     .values()
                                                     .toArray())
                                     .build();
-                    mvc.perform(
-                                    post(base + "/confirm")
-                                            .contentType("application/json")
-                                            .content("{\"version\":1}"))
-                            .andExpect(status().isAccepted())
+                    mvc.perform(get(base))
+                            .andExpect(status().isOk())
                             .andExpect(jsonPath("$.changeId").value("c1"))
                             .andExpect(jsonPath("$.reviewAvailable").value(true))
                             .andExpect(jsonPath("$.files[0].path").value("metrics.yml"))
@@ -96,7 +93,27 @@ class GitChangeControllerTest {
     }
 
     @Test
-    void fileDiffUsesRegisteredIdAndRequestVersionIsRequired() {
+    void missingHistoricalMaterialKeepsMetadataAndDoesNotInventEmptyDiff() {
+        when(changes.detail("s1", "c1")).thenReturn(view());
+        when(changes.files("s1", "c1"))
+                .thenThrow(new GitException("GIT_SNAPSHOT_CORRUPT", "missing"));
+        runner.run(
+                ctx -> {
+                    var mvc =
+                            MockMvcBuilders.standaloneSetup(ctx.getBean(GitChangeController.class))
+                                    .build();
+                    mvc.perform(get(base))
+                            .andExpect(status().isOk())
+                            .andExpect(jsonPath("$.changeId").value("c1"))
+                            .andExpect(jsonPath("$.reviewAvailable").value(false))
+                            .andExpect(jsonPath("$.status").value("SUBMITTING"))
+                            .andExpect(jsonPath("$.files").isEmpty());
+                    verifyNoInteractions(submissions);
+                });
+    }
+
+    @Test
+    void fileDiffUsesRegisteredIdAndRetiredWritesAreUnavailable() {
         when(changes.diff("s1", "c1", "0")).thenReturn("-old\n+new");
         runner.run(
                 ctx -> {
@@ -113,7 +130,7 @@ class GitChangeControllerTest {
                                     post(base + "/confirm")
                                             .contentType("application/json")
                                             .content("{}"))
-                            .andExpect(status().isBadRequest());
+                            .andExpect(status().isNotFound());
                     verifyNoInteractions(submissions);
                 });
     }

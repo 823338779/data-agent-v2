@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentBackendClient, BackendApiError } from './api/backendAgentClient';
 import { MemoryClient } from './api/memoryClient';
 import App from './App';
@@ -114,6 +114,18 @@ async function openSession(title: string) {
   await act(async () => fireEvent.click(button));
 }
 
+// 普通会话没有开发绑定，新 BFF 明确返回 404。
+beforeEach(() =>
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockImplementation(
+        async () =>
+          new Response(JSON.stringify({ code: 'DEVELOPMENT_NOT_BOUND' }), { status: 404 }),
+      ),
+  ),
+);
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();

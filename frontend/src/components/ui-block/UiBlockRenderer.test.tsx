@@ -1,8 +1,27 @@
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { UiBlockRenderer } from './UiBlockRenderer';
 
 afterEach(cleanup);
+
+vi.mock('./DevelopmentOperationCard', () => ({
+  DevelopmentOperationCard: ({ operationId }: { operationId: string }) => <div>{operationId}</div>,
+}));
+
+it('新操作卡片仅接受服务器投影的会话与操作身份', () => {
+  render(
+    <UiBlockRenderer
+      block={{
+        blockId: 'op',
+        type: 'development-operation',
+        schemaVersion: 1,
+        variant: 'default',
+        payload: { sessionId: 's1', operationId: 'op1' },
+      }}
+    />,
+  );
+  expect(screen.getByText('op1')).toBeInTheDocument();
+});
 
 describe('UiBlockRenderer', () => {
   it('falls back for unknown type and version', () => {

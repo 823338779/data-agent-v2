@@ -3,22 +3,23 @@ package com.datagent.agentv2.dbt.tool;
 import com.datagent.agentv2.conversation.exception.ToolBusinessException;
 import com.datagent.agentv2.conversation.tool.AgentTool;
 import com.datagent.agentv2.dbt.client.DbtServiceClient;
+import com.datagent.agentv2.dbt.model.DbtContracts.*;
 import com.datagent.agentv2.dbt.model.DbtToolOutput;
-import com.datagent.agentv2.git.port.GitWorkspaceResolver;
+import com.datagent.agentv2.dbt.port.AnalysisSessionResolver;
+import com.datagent.agentv2.dbt.port.BuildContextResolver;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.time.OffsetDateTime;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
-/** 六种固定用途共用严格参数边界；模型无法提供 URL、projectId、SQL 或幂等键。 */
+/** 分析目标仅取可信会话，目录、选项、查询及结果全程固定同一构建。 */
 @RequiredArgsConstructor
 public final class DbtAnalysisTool implements AgentTool {
     public enum Kind {
-        PROJECT,
+        BUILD,
         CATALOG,
         RESOURCE,
         OPTIONS,
@@ -28,53 +29,66 @@ public final class DbtAnalysisTool implements AgentTool {
 
     public static final List<String> TOOL_IDS =
             List.of(
-                    "dbt_project_get",
+                    "dbt_build_get",
                     "dbt_catalog_search",
                     "dbt_resource_get",
                     "dbt_query_options",
                     "dbt_query_submit",
                     "dbt_query_get");
-    private static final String RELEASE = "releaseId",
-            RESOURCE = "resourceId",
+    private static final String RESOURCE = "resourceId",
             VIEW = "view",
             QUERY = "queryId",
-            OPTIONS = "optionsJobId";
-    private static final String METRICS = "metricResourceIds",
+            OPTIONS = "optionsTaskId",
+            METRICS = "metricResourceIds",
             KEY = "idempotencyKey",
-            CONTENT = "content";
+            CONTENT = "content",
+            BUILD = "buildId";
     private static final String OBJECT = "object",
             ARRAY = "array",
             STRING = "string",
-            INTEGER = "integer";
-    private static final String PROPERTIES = "properties", REQUIRED = "required", TYPE = "type";
-    private static final String DEFAULT_RESOURCE_VIEW = "detail";
-    private static final List<String> RESOURCE_VIEWS =
-            List.of(DEFAULT_RESOURCE_VIEW, "source", "lineage", "native-details");
+            INTEGER = "integer",
+            PROPERTIES = "properties",
+            REQUIRED = "required",
+            TYPE = "type";
+    private static final String DETAIL = "detail",
+            SOURCE = "source",
+            LINEAGE = "lineage",
+            NATIVE = "native-details",
+            CURSOR = "cursor",
+            LIMIT = "limit",
+            OFFSET = "offset",
+            KIND = "kind",
+            Q = "query";
+    private static final List<String> RESOURCE_VIEWS = List.of(DETAIL, SOURCE, LINEAGE, NATIVE);
     private static final int MAX_RESULT_PAGE_SIZE = 200, MAX_QUERY_ROWS = 10000;
     private static final String QUERY_SCHEMA =
             """
-        {"type":"object","additionalProperties":false,"required":["releaseId","mode"],"properties":{
-          "releaseId":{"type":"string","minLength":1,"maxLength":64},
-          "mode":{"type":"string","enum":["QUERY","EXPLAIN","DIMENSION_VALUES","PREVIEW"]},
-          "metricResourceIds":{"type":"array","maxItems":100,"items":{"type":"string","maxLength":512}},
-          "groupBy":{"type":"array","maxItems":100,"items":{"type":"object","required":["optionId"],"properties":{"optionId":{"type":"string","maxLength":128},"grain":{"type":"string","maxLength":32}}}},
-          "filters":{"type":"array","maxItems":100,"items":{"type":"object","required":["optionId","operator","value"],"properties":{"optionId":{"type":"string","maxLength":128},"operator":{"type":"string","maxLength":32},"value":{}}}},
-          "orderBy":{"type":"array","maxItems":100,"items":{"type":"object","required":["fieldId","direction"],"properties":{"fieldId":{"type":"string","maxLength":512},"direction":{"type":"string","enum":["ASC","DESC"]}}}},
-          "startTime":{"type":"string","maxLength":64},"endTime":{"type":"string","maxLength":64},
-          "limit":{"type":"integer","minimum":1,"maximum":10000},
-          "datasetResourceId":{"type":"string","maxLength":512},"dimensionOptionId":{"type":"string","maxLength":128}
-        }}
-        """;
+            {"type":"object","additionalProperties":false,"required":["mode"],"properties":{
+              "mode":{"type":"string","enum":["QUERY","EXPLAIN","DIMENSION_VALUES","PREVIEW"]},
+              "metricResourceIds":{"type":"array","maxItems":100,"items":{"type":"string","maxLength":512}},
+              "groupBy":{"type":"array","maxItems":100,"items":{"type":"object","required":["optionId"],"properties":{"optionId":{"type":"string","maxLength":128},"grain":{"type":"string","maxLength":32}}}},
+              "filters":{"type":"array","maxItems":100,"items":{"type":"object","required":["optionId","operator","value"],"properties":{"optionId":{"type":"string","maxLength":128},"operator":{"type":"string","maxLength":32},"value":{}}}},
+              "orderBy":{"type":"array","maxItems":100,"items":{"type":"object","required":["fieldId","direction"],"properties":{"fieldId":{"type":"string","maxLength":512},"direction":{"type":"string","enum":["ASC","DESC"]}}}},
+              "startTime":{"type":"string","maxLength":64},"endTime":{"type":"string","maxLength":64},
+              "limit":{"type":"integer","minimum":1,"maximum":10000},
+              "datasetResourceId":{"type":"string","maxLength":512},"dimensionOptionId":{"type":"string","maxLength":128}
+            }}
+            """;
+
+    /** 固定工具用途。 */
     private final Kind kind;
+
+    /** 唯一v3客户端。 */
     private final DbtServiceClient client;
+
+    /** 统一序列化器。 */
     private final ObjectMapper json;
 
-    /** Git 启用时解析执行固定目标；无 Git 装配为空，保留线上分析。 */
-    private final GitWorkspaceResolver workspaces;
+    /** 服务端持久分析选择解析器。 */
+    private final BuildContextResolver builds;
 
-    public DbtAnalysisTool(Kind kind, DbtServiceClient client, ObjectMapper json) {
-        this(kind, client, json, null);
-    }
+    /** 执行到可信会话的归属检查。 */
+    private final AnalysisSessionResolver sessions;
 
     @Override
     public String name() {
@@ -86,7 +100,6 @@ public final class DbtAnalysisTool implements AgentTool {
         return true;
     }
 
-    // 查询读取最多三个有界 HTTP 调用（能力、状态、结果），不在工具内长轮询。
     @Override
     public java.time.Duration timeout() {
         return java.time.Duration.ofSeconds(75);
@@ -95,12 +108,12 @@ public final class DbtAnalysisTool implements AgentTool {
     @Override
     public String description() {
         return switch (kind) {
-            case PROJECT -> "查看固定 dbt 项目、活动发布与服务能力；草稿不改变活动发布。";
-            case CATALOG -> "按名称或口径搜索已发布资源，返回分页目录。";
-            case RESOURCE -> "读取固定发布资源详情、源码或依赖；源码按字符分页。";
-            case OPTIONS -> "获取指标集合的合法查询选项，或用 optionsJobId 继续轮询。";
-            case SUBMIT -> "提交固定发布的指标查询、解释、维度值或数据集预览，不接收 SQL。";
-            case GET -> "读取查询状态及结果页；每页最多 200 行，较大的 limit 自动封顶；按返回 nextOffset 继续，不重新执行 SQL。";
+            case BUILD -> "读取当前会话固定build的状态和能力；构建成功不表示已部署。";
+            case CATALOG -> "搜索当前固定build的封存目录，以游标分页。";
+            case RESOURCE -> "读取固定build资源详情、源码或血缘；源码按字符分页。";
+            case OPTIONS -> "提交固定build的异步查询选项，或用optionsTaskId轮询。";
+            case SUBMIT -> "提交固定build查询、解释、维度值或预览，不接收SQL或目标覆盖参数。";
+            case GET -> "读取固定build的查询状态及结果，最多200行，按nextOffset继续。";
         };
     }
 
@@ -112,29 +125,25 @@ public final class DbtAnalysisTool implements AgentTool {
         var p = schema.putObject(PROPERTIES);
         var required = schema.putArray(REQUIRED);
         switch (kind) {
-            case PROJECT -> {}
+            case BUILD -> {}
             case CATALOG -> {
-                text(p, RELEASE, 64);
-                required.add(RELEASE);
-                text(p, "query", 1000);
-                number(p, "page", 1, 100000);
-                number(p, "size", 1, 50);
+                text(p, Q, 1000);
+                text(p, KIND, 64);
+                text(p, CURSOR, 4096);
+                number(p, LIMIT, 1, 200);
             }
             case RESOURCE -> {
-                text(p, RELEASE, 64);
                 text(p, RESOURCE, 512);
-                required.add(RELEASE).add(RESOURCE);
+                required.add(RESOURCE);
                 text(p, VIEW, 32);
-                // 将客户端实际支持的视图暴露给模型，避免猜测 DETAIL 等无法路由的枚举值。
                 var view = (ObjectNode) p.path(VIEW);
-                view.put("default", DEFAULT_RESOURCE_VIEW);
+                view.put("default", DETAIL);
                 var views = view.putArray("enum");
                 RESOURCE_VIEWS.forEach(views::add);
-                number(p, "offset", 0, 10000000);
-                number(p, "limit", 1, 10000);
+                number(p, OFFSET, 0, 10000000);
+                number(p, LIMIT, 1, 10000);
             }
             case OPTIONS -> {
-                text(p, RELEASE, 64);
                 text(p, OPTIONS, 64);
                 var items =
                         p.putObject(METRICS)
@@ -146,8 +155,8 @@ public final class DbtAnalysisTool implements AgentTool {
             case GET -> {
                 text(p, QUERY, 64);
                 required.add(QUERY);
-                number(p, "offset", 0, 10000);
-                number(p, "limit", 1, MAX_QUERY_ROWS);
+                number(p, OFFSET, 0, 10000);
+                number(p, LIMIT, 1, MAX_QUERY_ROWS);
             }
             default -> throw new IllegalStateException();
         }
@@ -167,108 +176,112 @@ public final class DbtAnalysisTool implements AgentTool {
         validate(args, parametersSchema());
         if (context == null || context.executionId() == null || context.executionId().isBlank())
             throw new IllegalArgumentException("缺少可信执行身份");
-        String branchId = workspaces == null ? null : workspaces.resolve(context).branchId();
-        JsonNode project = branchId == null ? client.project() : client.project(branchId);
-        if (!project.path("protocolVersion").asString().equals("agent-dbt-v1")) throw unsupported();
-        Set<String> capabilities = new HashSet<>();
-        project.path("capabilities").forEach(item -> capabilities.add(item.asString()));
-        if (branchId != null
-                && (!capabilities.contains("branch-development-v1")
-                        || !branchId.equals(project.path("branchId").asString())))
-            throw unsupported();
-        if (!capabilities.containsAll(
-                Set.of("query-options-async-v1", "query-results-page-v1", "query-time-v1")))
-            throw unsupported();
-        JsonNode result =
+        // 每次调用只解析一次；解析器持久固定选择，不因新部署而改变本分析流程。
+        UUID build = builds.resolve(sessions.resolveSession(context), context.executionId());
+        if (build == null)
+            throw new ToolBusinessException("DBT_BUILD_NOT_SELECTED", "会话未选择可用构建，不能回退到正式版本");
+        Object value =
                 switch (kind) {
-                    case PROJECT -> project;
-                    case CATALOG -> catalog(args, branchId);
-                    case RESOURCE -> resource(args, branchId);
+                    case BUILD -> client.getBuild(build);
+                    case CATALOG ->
+                            client.catalog(
+                                    build,
+                                    new CatalogFilter(
+                                            args.path(Q).asString(""),
+                                            optional(args, KIND),
+                                            optional(args, CURSOR),
+                                            args.path(LIMIT).asInt(20)));
+                    case RESOURCE -> resource(args, build);
                     case OPTIONS -> {
                         if (args.has(OPTIONS)) {
-                            if (args.has(RELEASE) || args.has(METRICS))
-                                throw new IllegalArgumentException("轮询选项只需 optionsJobId");
-                            yield branchId == null
-                                    ? client.getOptions(args.path(OPTIONS).asString())
-                                    : client.getOptions(branchId, args.path(OPTIONS).asString());
+                            if (args.has(METRICS))
+                                throw new IllegalArgumentException("轮询只允许optionsTaskId");
+                            UUID id = UUID.fromString(args.path(OPTIONS).asString());
+                            var result = client.getOptions(id);
+                            same(id, result.optionsTaskId());
+                            yield result;
                         }
-                        if (!args.has(RELEASE) || !args.has(METRICS))
-                            throw new IllegalArgumentException("查询选项必须提供发布和指标集合");
-                        yield branchId == null
-                                ? client.submitOptions(args)
-                                : client.submitOptions(branchId, args);
+                        if (!args.has(METRICS)) throw new IllegalArgumentException("选项提交必须提供指标集合");
+                        List<String> selected = new ArrayList<>();
+                        args.path(METRICS).forEach(item -> selected.add(item.asString()));
+                        yield client.submitOptions(
+                                build, new OptionsRequest(key(context, args, build), selected));
                     }
                     case SUBMIT -> {
                         ObjectNode request = (ObjectNode) args.deepCopy();
-                        request.put(KEY, queryKey(context.executionId(), request, json));
-                        yield branchId == null
-                                ? client.submitQuery(request)
-                                : client.submitQuery(branchId, request);
+                        request.put(KEY, key(context, args, build));
+                        if (!request.has(LIMIT)) request.put(LIMIT, 1000);
+                        for (String field : List.of(METRICS, "groupBy", "filters", "orderBy"))
+                            if (!request.has(field)) request.putArray(field);
+                        yield client.submitQuery(
+                                build, json.treeToValue(request, QueryRequest.class));
                     }
                     case GET -> {
-                        String id = args.path(QUERY).asString();
-                        JsonNode status =
-                                branchId == null
-                                        ? client.queryStatus(id)
-                                        : client.queryStatus(branchId, id);
-                        checkTask(status, QUERY, id);
-                        // 模型常沿用提交查询的行数上限；只封顶传输页大小，保留服务实际游标避免漏行。
-                        int pageSize =
-                                Math.min(args.path("limit").asInt(100), MAX_RESULT_PAGE_SIZE);
-                        if (!status.path("resultAvailable").asBoolean(false)) yield status;
-                        int offset = args.path("offset").asInt(0);
-                        yield branchId == null
-                                ? client.queryPage(id, offset, pageSize)
-                                : client.queryPage(branchId, id, offset, pageSize);
+                        UUID id = UUID.fromString(args.path(QUERY).asString());
+                        var status = client.queryStatus(id);
+                        same(id, status.queryId());
+                        same(build, status.buildId());
+                        if (status.state() == null) throw invalid();
+                        if (!status.resultAvailable()) yield status;
+                        var result =
+                                client.queryResults(
+                                        id,
+                                        args.path(OFFSET).asInt(0),
+                                        Math.min(
+                                                args.path(LIMIT).asInt(100), MAX_RESULT_PAGE_SIZE));
+                        same(id, result.queryId());
+                        yield result;
                     }
                 };
-        if (kind == Kind.OPTIONS)
-            checkTask(result, OPTIONS, args.has(OPTIONS) ? args.path(OPTIONS).asString() : null);
-        if (kind == Kind.SUBMIT || kind == Kind.GET)
-            checkTask(result, QUERY, kind == Kind.GET ? args.path(QUERY).asString() : null);
+        JsonNode result = value instanceof JsonNode node ? node : json.valueToTree(value);
+        // 全局任务ID路由必须再次核实build归属，避免跨会话查询ID被模型混用。
+        same(build, UUID.fromString(result.path(BUILD).asString()));
+        if ((kind == Kind.OPTIONS || kind == Kind.SUBMIT || kind == Kind.GET)
+                && result.path("state").isNull()) throw invalid();
         return DbtToolOutput.bounded(result, json);
     }
 
-    private static void checkTask(JsonNode result, String identity, String expected)
-            throws ToolBusinessException {
-        String id = result.path(identity).asString("");
-        if (id.isBlank()
-                || expected != null && !expected.equals(id)
-                || !Set.of("QUEUED", "RUNNING", "READY", "FAILED", "CANCELLED")
-                        .contains(result.path("state").asString(""))) {
-            throw new ToolBusinessException("DBT_PROTOCOL_INVALID", "任务响应缺少身份或包含未知状态，请检查服务协议版本");
-        }
+    private String key(InvocationContext context, JsonNode args, UUID build) {
+        ObjectNode input = (ObjectNode) args.deepCopy();
+        input.put(BUILD, build.toString());
+        return queryKey(context.executionId(), input, json);
     }
 
-    private JsonNode catalog(JsonNode args, String branchId) throws Exception {
-        String release = args.path(RELEASE).asString();
-        String query = args.path("query").asString("");
-        int page = args.path("page").asInt(1), size = args.path("size").asInt(20);
-        return branchId == null
-                ? client.catalog(release, query, page, size)
-                : client.catalog(branchId, release, query, page, size);
+    private static String optional(JsonNode node, String field) {
+        return node.has(field) ? node.path(field).asString() : null;
     }
 
-    private JsonNode resource(JsonNode args, String branchId) throws Exception {
-        String release = args.path(RELEASE).asString(), id = args.path(RESOURCE).asString();
-        String view = args.path(VIEW).asString(DEFAULT_RESOURCE_VIEW);
-        ObjectNode resource =
-                (ObjectNode)
-                        (branchId == null
-                                        ? client.resource(release, id, view)
-                                        : client.resource(branchId, release, id, view))
-                                .deepCopy();
-        if (resource.has(CONTENT)) {
-            String content = resource.path(CONTENT).asString();
-            int start = Math.min(args.path("offset").asInt(0), content.length());
-            int end = Math.min(start + args.path("limit").asInt(8000), content.length());
-            resource.put(CONTENT, content.substring(start, end))
-                    .put("offset", start)
+    private static void same(UUID expected, UUID actual) throws ToolBusinessException {
+        if (!expected.equals(actual)) throw invalid();
+    }
+
+    private static ToolBusinessException invalid() {
+        return new ToolBusinessException("DBT_PROTOCOL_INVALID", "任务响应缺少身份、状态或不属于当前固定构建");
+    }
+
+    private JsonNode resource(JsonNode args, UUID build) throws Exception {
+        String resource = args.path(RESOURCE).asString();
+        String view = args.path(VIEW).asString(DETAIL);
+        Object value =
+                switch (view) {
+                    case DETAIL -> client.resource(build, resource);
+                    case SOURCE -> client.resourceSource(build, resource);
+                    case LINEAGE -> client.resourceLineage(build, resource);
+                    case NATIVE -> client.resourceNative(build, resource);
+                    default -> throw new IllegalArgumentException("未知资源视图");
+                };
+        ObjectNode result = json.valueToTree(value);
+        if (result.has(CONTENT)) {
+            String content = result.path(CONTENT).asString();
+            int start = Math.min(args.path(OFFSET).asInt(0), content.length());
+            int end = Math.min(start + args.path(LIMIT).asInt(8000), content.length());
+            result.put(CONTENT, content.substring(start, end))
+                    .put(OFFSET, start)
                     .put("totalCharacters", content.length());
-            if (end < content.length()) resource.put("nextOffset", end);
-            else resource.putNull("nextOffset");
+            if (end < content.length()) result.put("nextOffset", end);
+            else result.putNull("nextOffset");
         }
-        return resource;
+        return result;
     }
 
     public static String queryKey(String execution, JsonNode args, ObjectMapper json) {
@@ -277,14 +290,6 @@ public final class DbtAnalysisTool implements AgentTool {
         if (!canonical.has("limit")) canonical.put("limit", 1000);
         for (String field : List.of(METRICS, "groupBy", "filters", "orderBy"))
             if (!canonical.has(field)) canonical.putArray(field);
-        for (String field : List.of("startTime", "endTime"))
-            if (canonical.has(field)) {
-                canonical.put(
-                        field,
-                        OffsetDateTime.parse(canonical.path(field).asString())
-                                .toInstant()
-                                .toString());
-            }
         if (canonical.path(METRICS).isArray()) {
             SortedSet<String> selected = new TreeSet<>();
             canonical.path(METRICS).forEach(item -> selected.add(item.asString()));
@@ -315,11 +320,6 @@ public final class DbtAnalysisTool implements AgentTool {
             return array;
         }
         return value;
-    }
-
-    private static ToolBusinessException unsupported() {
-        return new ToolBusinessException(
-                "DBT_CAPABILITY_UNSUPPORTED", "dbt-service 版本缺少所需能力，请升级服务");
     }
 
     /** JSON Schema 和运行时双重校验；任意 JSON 筛选值仅交由服务执行类型检查。 */

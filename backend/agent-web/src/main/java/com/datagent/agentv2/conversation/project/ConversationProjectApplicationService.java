@@ -17,6 +17,9 @@ public class ConversationProjectApplicationService {
     private final ConversationProjectService projects;
     private final ConversationSessionService sessions;
     private final IdGenerator ids;
+    private final com.datagent.agentv2.persistence.service.development
+                    .DevelopmentContextPersistenceService
+            development;
 
     @Transactional
     public ConversationProject create(String name) {
@@ -48,6 +51,7 @@ public class ConversationProjectApplicationService {
     @Transactional
     public void delete(String projectId, long expectedVersion) {
         lockExpected(projectId, expectedVersion);
+        development.disable(projectId);
         // 在项目锁内先清关联再逻辑删除；后续失败会回滚两步，置顶和运行状态始终保留。
         sessions.detachProject(projectId);
         if (!projects.deleteProject(projectId, expectedVersion)) {

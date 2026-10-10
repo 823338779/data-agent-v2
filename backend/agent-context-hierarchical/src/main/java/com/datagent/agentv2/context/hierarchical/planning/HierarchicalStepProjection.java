@@ -24,15 +24,25 @@ public final class HierarchicalStepProjection {
     private static final String EMPTY = "";
     private static final String STATUS = "status",
             STATE = "state",
-            VALIDATION_ID = "validationId",
+            BUILD_ID = "buildId",
             QUERY_ID = "queryId";
-    private static final Set<String> POLL_TOOLS = Set.of("dbt_validation_get", "dbt_query_get");
+    private static final Set<String> POLL_TOOLS = Set.of("dbt_build_get", "dbt_query_get");
     private static final Set<String> ACTIVE_STATUSES =
             Set.of("RUNNING", "PENDING", "QUEUED", "ACCEPTED");
 
     /** 业务身份与已观察状态优先于长正文，不能由自由摘要替换。 */
     private static final Set<String> IDENTITY_FIELDS =
             Set.of(
+                    "operationId",
+                    "buildId",
+                    "optionsTaskId",
+                    "repository",
+                    "branchName",
+                    "pushedSha",
+                    "mergeSha",
+                    "buildStatus",
+                    "deploymentStatus",
+                    "phase",
                     "workspaceId",
                     "projectId",
                     "branchId",
@@ -146,7 +156,7 @@ public final class HierarchicalStepProjection {
         }
         var call = first.toolCalls().getFirst();
         if (!POLL_TOOLS.contains(call.name())
-                || !(call.arguments().containsKey(VALIDATION_ID)
+                || !(call.arguments().containsKey(BUILD_ID)
                         || call.arguments().containsKey(QUERY_ID))) {
             return null;
         }

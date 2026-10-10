@@ -30,6 +30,9 @@ public final class AgentExecutionEntity extends TenantAuditedEntity {
     /** 规范化请求负载的 SHA-256。 */
     private String requestPayloadHash;
 
+    /** 本次分析首次固定的dbt构建；会话后续预览不能改变运行中执行的目标。 */
+    private String analysisBuildId;
+
     /** 失败分类码；未失败时为空。 */
     private String failureCode;
 

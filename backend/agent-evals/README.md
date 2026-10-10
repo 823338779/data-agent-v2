@@ -163,3 +163,13 @@ Judge 使用本机 Codex 登录态；运行前应确保 `codex exec` 可用。�
 运行 `mvn -f backend/pom.xml -pl agent-evals -Dtest=MemoryEvalCorpusTest test` 仅校验JSONL结构与分类，不调用模型，不产生语义准确率。
 真实模型需按[个人长记忆使用与验收](../../docs/个人长记忆使用与验收.md)在隔离测试部署逐案准备前态、对话、核对工具和保存结果，再人工标注。
 同义重复必须记录是否复用既有ID；未执行/未标注不计算准确率。本次真实模型评测未执行。此模块不成为运行时依赖。
+
+## 开发动作行为评测
+
+`development-eval/cases.json`覆盖保存、非法YAML保存、预览、确认交付、未确认交付、已保存不等于已部署、未知push结果以及本地输入丢失。确定性测试检查语料和评判器，不调用模型，也不把结果报告成模型准确率。
+
+```powershell
+.\backend\mvnw.cmd -f .\backend\pom.xml -pl agent-evals -Dtest=DevelopmentBehaviorEvalTest test
+```
+
+真实评测应在隔离会话准备每案initialFacts，发送prompt，保存实际toolCalls及原始回答；按rubric人工标注回答中的事实声明为claims。将包含caseId、toolCalls（name/arguments）与claims的JSON数组路径放入 `DEVELOPMENT_EVAL_TRANSCRIPT`，同一测试会检查全部案例、动作禁止项、目标覆盖和无证据成功声明。未提供该文件时真实轨迹测试明确跳过；人工标注不能由预期答案生成。原始回答和标注依据应与轨迹一起保留供复核。

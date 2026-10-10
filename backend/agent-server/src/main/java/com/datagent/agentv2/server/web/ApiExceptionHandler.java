@@ -37,6 +37,41 @@ public final class ApiExceptionHandler {
     private static final String CLIENT_DISCONNECTED_MESSAGE =
             "Client disconnected from an asynchronous response";
 
+    /** 开发操作的稳定状态和安全诊断直接沿用领域用例。 */
+    @ExceptionHandler(com.datagent.agentv2.development.model.DevelopmentException.class)
+    ResponseEntity<ProblemDetail> handleDevelopment(
+            com.datagent.agentv2.development.model.DevelopmentException failure,
+            HttpServletRequest request) {
+        return problem(
+                HttpStatus.valueOf(failure.getStatus()),
+                DEVELOPMENT_PROBLEM_TYPE,
+                DEVELOPMENT_PROBLEM_TITLE,
+                failure.getCode(),
+                failure.getMessage(),
+                request);
+    }
+
+    private static final String DEVELOPMENT_PROBLEM_TYPE = "urn:data-agent:problem:development";
+    private static final String DEVELOPMENT_PROBLEM_TITLE = "Development operation failed";
+
+    private static final String NOT_FOUND_TYPE = "urn:data-agent:problem:not-found";
+    private static final String NOT_FOUND_CODE = "NOT_FOUND";
+
+    /** 退役接口没有MVC映射时保持404，不被通用异常处理器误报为500。 */
+    @ExceptionHandler({
+        org.springframework.web.servlet.resource.NoResourceFoundException.class,
+        org.springframework.web.servlet.NoHandlerFoundException.class
+    })
+    ResponseEntity<ProblemDetail> handleNotFound(Exception failure, HttpServletRequest request) {
+        return problem(
+                HttpStatus.NOT_FOUND,
+                NOT_FOUND_TYPE,
+                HttpStatus.NOT_FOUND.getReasonPhrase(),
+                NOT_FOUND_CODE,
+                "Requested endpoint does not exist",
+                request);
+    }
+
     /** 记忆稳定业务码决定 HTTP 状态；响应仅使用领域层已审定的安全消息。 */
     @ExceptionHandler(MemoryException.class)
     ResponseEntity<ProblemDetail> handleMemory(
@@ -187,6 +222,7 @@ public final class ApiExceptionHandler {
      */
     @ExceptionHandler({
         MethodArgumentNotValidException.class,
+        IllegalArgumentException.class,
         org.springframework.http.converter.HttpMessageNotReadableException.class,
         org.springframework.web.bind.MissingServletRequestParameterException.class,
         org.springframework.web.method.annotation.HandlerMethodValidationException.class,

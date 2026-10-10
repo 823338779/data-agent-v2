@@ -5,255 +5,6 @@ info:
   description: 单实例本地执行模式下的会话 REST 与 SSE 契约。
 
 paths:
-  /api/v1/git-workspaces:
-    get:
-      operationId: listGitWorkspaces
-      parameters:
-        - { in: query, name: sessionId, required: true, schema: { type: string } }
-      responses:
-        '200':
-          description: 会话已关联的独立工作区
-          content:
-            application/json:
-              schema: { type: array, items: { $ref: '#/components/schemas/GitWorkspace' } }
-        '404': { description: 会话不存在 }
-    post:
-      operationId: createGitWorkspace
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/CreateGitWorkspaceRequest' }
-      responses:
-        '200':
-          description: 已创建或重放原工作区；MUTATING/BROKEN 不代表可执行
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/GitWorkspace' }
-        '400': { description: 输入无效或包含远端、路径等未知参数 }
-        '404': { description: 会话或分支不存在 }
-        '409': { description: 同键输入变化或目标分支不可开发 }
-        '503': { description: 分支服务未配置或暂不可用 }
-  /api/v1/git-workspaces/{workspaceId}:
-    parameters:
-      - { in: path, name: workspaceId, required: true, schema: { type: string } }
-    get:
-      operationId: getGitWorkspace
-      responses:
-        '200':
-          description: 固定分支与草稿状态，不返回本地存储路径
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/GitWorkspace' }
-        '404': { description: 工作区不存在 }
-  /api/v1/git-workspaces/{workspaceId}/sync:
-    parameters:
-      - { in: path, name: workspaceId, required: true, schema: { type: string } }
-    post:
-      operationId: syncGitWorkspace
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [expectedRevision]
-              properties:
-                expectedRevision: { type: integer, minimum: 0, description: 当前草稿修订号 }
-      responses:
-        '200':
-          description: 返回同步结果；冲突保留原草稿与材料，不推进修订
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [workspaceId, baseCommitSha, remoteCommitSha, draftRevision, status, conflictPaths]
-                properties:
-                  workspaceId: { type: string }
-                  baseCommitSha: { type: string }
-                  remoteCommitSha: { type: string }
-                  draftRevision: { type: integer, minimum: 0 }
-                  status: { type: string, enum: [UNCHANGED, MERGED, CONFLICT] }
-                  conflictPaths: { type: array, items: { type: string } }
-                  conflicts:
-                    type: array
-                    description: 固定三方正文，完整有界；null 表示文件不存在
-                    items:
-                      type: object
-                      required: [path, baseContent, localContent, remoteContent]
-                      properties:
-                        path: { type: string }
-                        baseContent: { type: [string, 'null'] }
-                        localContent: { type: [string, 'null'] }
-                        remoteContent: { type: [string, 'null'] }
-        '400': { description: 输入无效 }
-        '404': { description: 工作区不存在 }
-        '409': { description: 草稿、分支或候选状态变化 }
-        '503': { description: 远端或分支服务不可用 }
-  /api/v1/git-workspaces/{workspaceId}/restart:
-    parameters:
-      - { in: path, name: workspaceId, required: true, schema: { type: string } }
-    post:
-      operationId: restartGitWorkspace
-      description: 显式保留旧材料并从原基线重建草稿；无需先受理执行，未决提交时拒绝
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [expectedRevision]
-              properties:
-                expectedRevision: { type: integer, minimum: 0 }
-      responses:
-        '200':
-          description: 同一工作区的新草稿，修订递增
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/GitWorkspace' }
-        '400': { description: 输入无效 }
-        '404': { description: 工作区不存在 }
-        '409': { description: 修订过期、原分支不可用或提交未决 }
-  /api/v1/git-workspaces/{workspaceId}/sync/resolve:
-    parameters:
-      - { in: path, name: workspaceId, required: true, schema: { type: string } }
-    post:
-      operationId: resolveGitWorkspaceConflict
-      description: 对固定三方输入应用人工决议，成功后推进基线和修订并撤销旧候选
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [expectedRevision, remoteCommitSha, resolutions]
-              properties:
-                expectedRevision: { type: integer, minimum: 0 }
-                remoteCommitSha: { type: string, pattern: '^[0-9a-f]{40}$' }
-                resolutions:
-                  type: object
-                  minProperties: 1
-                  maxProperties: 100
-                  additionalProperties: { type: [string, 'null'] }
-                  description: 必须恰好覆盖全部冲突路径，null 明确删除，其余为完整 UTF-8 正文
-      responses:
-        '200': { description: 同 sync 成功结果，重新验证后才能生成确认候选 }
-        '400': { description: 输入无效 }
-        '404': { description: 工作区不存在 }
-        '409': { description: 修订或远端推进，必须重新读取冲突 }
-  /api/v1/agent-sessions/{sessionId}/git-workspaces/{workspaceId}:
-    parameters:
-      - { in: path, name: sessionId, required: true, schema: { type: string } }
-      - { in: path, name: workspaceId, required: true, schema: { type: string } }
-    put:
-      operationId: attachGitWorkspace
-      responses:
-        '200':
-          description: 幂等关联可选上下文，不转移所有权、不改变已受理执行
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/GitWorkspace' }
-        '404': { description: 会话或工作区不存在 }
-        '409': { description: 历史生产工作区不能关联新开发 }
-  /api/v1/metric-branches:
-    get:
-      operationId: listMetricBranches
-      responses:
-        '200':
-          description: dbt 服务固定项目的分支目录
-          content:
-            application/json:
-              schema: { type: array, items: { type: object, additionalProperties: true } }
-        '503': { description: 分支服务暂不可用 }
-    post:
-      operationId: createMetricBranch
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/CreateMetricBranchRequest' }
-      responses:
-        '200':
-          description: 返回 dbt 服务登记的分支身份及状态
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-        '400': { description: 输入无效 }
-        '409': { description: 分支或幂等键冲突 }
-        '503': { description: 分支服务能力或部署凭据未配置 }
-  /api/v1/metric-branches/register:
-    post:
-      operationId: registerMetricBranch
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/RegisterMetricBranchRequest' }
-      responses:
-        '200':
-          description: 已核实并登记的远端分支
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-        '400': { description: 输入无效 }
-        '409': { description: 基线、远端或幂等键冲突 }
-        '503': { description: 分支服务能力或部署凭据未配置 }
-  /api/v1/metric-branches/{branchId}:
-    parameters:
-      - { in: path, name: branchId, required: true, schema: { type: string } }
-    get:
-      operationId: getMetricBranch
-      responses:
-        '200':
-          description: dbt 服务的分支详情
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-        '404': { description: 分支不存在 }
-    delete:
-      operationId: deleteMetricBranch
-      parameters:
-        - { in: query, name: expectedVersion, required: true, schema: { type: integer, minimum: 0 } }
-      responses:
-        '200':
-          description: dbt 服务的删除状态；不会自动删除会话草稿材料
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-        '400': { description: 输入无效 }
-        '404': { description: 分支不存在 }
-        '409': { description: 版本变化或生产分支禁止删除 }
-        '503': { description: 分支服务能力或部署凭据未配置 }
-  /api/v1/metric-branches/{branchId}/releases:
-    parameters:
-      - { in: path, name: branchId, required: true, schema: { type: string } }
-    get:
-      operationId: listMetricBranchReleases
-      responses:
-        '200':
-          description: 原分支的构建版本列表，按 sourceSha 查找卡片提交
-          content:
-            application/json:
-              schema: { type: array, items: { type: object, additionalProperties: true } }
-        '404': { description: 分支不存在 }
-        '503': { description: 预览服务暂不可用 }
-  /api/v1/metric-branches/{branchId}/releases/{releaseId}:
-    parameters:
-      - { in: path, name: branchId, required: true, schema: { type: string } }
-      - { in: path, name: releaseId, required: true, schema: { type: string } }
-    get:
-      operationId: getMetricBranchRelease
-      responses:
-        '200':
-          description: 固定版本的构建状态和安全验证摘要；不触发构建
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-        '404': { description: 分支或版本不存在 }
-        '503': { description: 预览服务暂不可用 }
   /api/v1/agent-sidebar:
     get:
       operationId: getConversationSidebar
@@ -264,6 +15,29 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ConversationSidebar' }
   /api/v1/agent-projects:
+    get:
+      operationId: listDevelopmentProjects
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentProjectPage'
+      parameters:
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
     post:
       operationId: createConversationProject
       requestBody:
@@ -539,147 +313,309 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/ProblemDetail' }
-  /api/v1/agent-sessions/{sessionId}/git-changes/{changeId}/confirm:
-    post:
-      operationId: confirmGitChange
-      parameters:
-        - { name: sessionId, in: path, required: true, schema: { type: string, minLength: 1 } }
-        - { name: changeId, in: path, required: true, schema: { type: string, minLength: 1 } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/GitChangeVersionRequest' }
-      responses:
-        '202':
-          description: 确认当前版本并异步提交；重复确认不重复排队
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/GitChange' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '413':
-          description: GIT_LIMIT_EXCEEDED 等资源上限错误
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/ProblemDetail' }
-        '503':
-          description: Git 未配置、远端暂不可达或执行不可用
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/ProblemDetail' }
-        '504':
-          description: Git 子进程超时
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/ProblemDetail' }
-  /api/v1/agent-sessions/{sessionId}/git-changes/{changeId}/cancel:
-    post:
-      operationId: cancelGitChange
-      parameters:
-        - { name: sessionId, in: path, required: true, schema: { type: string, minLength: 1 } }
-        - { name: changeId, in: path, required: true, schema: { type: string, minLength: 1 } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/GitChangeVersionRequest' }
+  /api/v1/agent-projects/{projectId}/development-config:
+    get:
+      operationId: getDevelopmentConfig
       responses:
         '200':
-          description: 取消待确认候选，保留草稿
+          description: 成功
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/GitChange' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '413':
-          description: GIT_LIMIT_EXCEEDED 等资源上限错误
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/ProblemDetail' }
-        '503':
-          description: Git 未配置、远端暂不可达或执行不可用
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/ProblemDetail' }
-        '504':
-          description: Git 子进程超时
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/ProblemDetail' }
-  /api/v1/agent-sessions/{sessionId}/git-changes/{changeId}/retry:
-    post:
-      operationId: retryGitChange
+              schema:
+                $ref: '#/components/schemas/DevelopmentConfig'
       parameters:
-        - { name: sessionId, in: path, required: true, schema: { type: string, minLength: 1 } }
-        - { name: changeId, in: path, required: true, schema: { type: string, minLength: 1 } }
-      requestBody:
+      - name: projectId
+        in: path
         required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/GitChangeVersionRequest' }
-      responses:
-        '202':
-          description: 重试已确认的失败候选，复用冻结提交元信息
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/GitChange' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '413':
-          description: GIT_LIMIT_EXCEEDED 等资源上限错误
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/ProblemDetail' }
-        '503':
-          description: Git 未配置、远端暂不可达或执行不可用
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/ProblemDetail' }
-        '504':
-          description: Git 子进程超时
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/ProblemDetail' }
-  /api/v1/agent-sessions/{sessionId}/git-changes/{changeId}/reconcile:
-    post:
-      operationId: reconcileGitChange
-      parameters:
-        - { name: sessionId, in: path, required: true, schema: { type: string, minLength: 1 } }
-        - { name: changeId, in: path, required: true, schema: { type: string, minLength: 1 } }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/GitChangeVersionRequest' }
+        schema:
+          type: string
+    put:
+      operationId: configureDevelopment
       responses:
         '200':
-          description: 只读核实已确认提交的远端结果，不生成提交、不推送
+          description: 成功
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/GitChange' }
-        '400': { $ref: '#/components/responses/ValidationFailed' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '413':
-          description: GIT_LIMIT_EXCEEDED 等资源上限错误
+              schema:
+                $ref: '#/components/schemas/DevelopmentConfig'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevelopmentConfigRequest'
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/agent-projects/{projectId}/branches:
+    get:
+      operationId: listDevelopmentBranches
+      responses:
+        '200':
+          description: 成功
           content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/ProblemDetail' }
-        '503':
-          description: Git 未配置、远端暂不可达或执行不可用
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentBranchPage'
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      operationId: createDevelopmentBranch
+      responses:
+        '202':
+          description: 请求已受理
           content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/ProblemDetail' }
-        '504':
-          description: Git 子进程超时
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentOperation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevelopmentBranchRequest'
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/agent-sessions/{sessionId}/development:
+    get:
+      operationId: getDevelopmentOverview
+      responses:
+        '200':
+          description: 成功
           content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/ProblemDetail' }
-
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentOverview'
+      parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/agent-sessions/{sessionId}/development/save:
+    post:
+      operationId: saveDevelopment
+      responses:
+        '202':
+          description: 请求已受理
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentOperation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevelopmentSaveRequest'
+      parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/agent-sessions/{sessionId}/development/preview:
+    post:
+      operationId: previewDevelopment
+      responses:
+        '202':
+          description: 请求已受理
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentOperation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevelopmentPreviewRequest'
+      parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/agent-sessions/{sessionId}/development/deliver:
+    post:
+      operationId: deliverDevelopment
+      responses:
+        '202':
+          description: 请求已受理
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentOperation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevelopmentDeliverRequest'
+      parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/agent-sessions/{sessionId}/development/operations/{operationId}:
+    get:
+      operationId: getDevelopmentOperation
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentOperation'
+      parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: operationId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/agent-sessions/{sessionId}/development/operations/{operationId}/recover:
+    post:
+      operationId: recoverDevelopmentOperation
+      responses:
+        '202':
+          description: 请求已受理
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentOperation'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevelopmentRecoverRequest'
+      parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: operationId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/agent-sessions/{sessionId}/development/files:
+    get:
+      operationId: listDevelopmentFiles
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentFiles'
+      parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: directory
+        in: query
+        required: false
+        schema:
+          type: string
+    post:
+      operationId: writeDevelopmentFiles
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentRevision'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevelopmentFileRequest'
+      parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/agent-sessions/{sessionId}/development/file:
+    get:
+      operationId: readDevelopmentFile
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentFile'
+      parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+  /api/v1/agent-sessions/{sessionId}/development/diff:
+    get:
+      operationId: getDevelopmentDiff
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentDiff'
+      parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/development/contract:
+    get:
+      operationId: getDevelopmentContract
+      responses:
+        '200':
+          description: 当前构建打包的唯一API契约
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - protocolVersion
+                - paths
+                properties:
+                  protocolVersion:
+                    type: string
+                    const: build-deployment-v3
+                  paths:
+                    type: object
 components:
   parameters:
     ProjectId:
@@ -726,142 +662,800 @@ components:
           example:
             code: IDEMPOTENCY_KEY_REUSED
   schemas:
+    DevelopmentSelection:
+      type: object
+      additionalProperties: false
+      required:
+      - projectId
+      - branchName
+      properties:
+        projectId:
+          type: string
+        branchName:
+          type: string
+    DevelopmentConfig:
+      type: object
+      additionalProperties: false
+      required:
+      - repository
+      - previewBinding
+      - previewConfigVersion
+      - productionBinding
+      - productionConfigVersion
+      - version
+      properties:
+        repository:
+          type: string
+        previewBinding:
+          type: string
+        previewConfigVersion:
+          type: string
+        productionBinding:
+          type: string
+        productionConfigVersion:
+          type: string
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+    DevelopmentConfigRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - repository
+      - previewBinding
+      - previewConfigVersion
+      - productionBinding
+      - productionConfigVersion
+      - expectedVersion
+      properties:
+        repository:
+          type: string
+        previewBinding:
+          type: string
+        previewConfigVersion:
+          type: string
+        productionBinding:
+          type: string
+        productionConfigVersion:
+          type: string
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 0
+    DevelopmentProject:
+      type: object
+      additionalProperties: false
+      required:
+      - projectId
+      - name
+      - version
+      - developmentConfigured
+      - repository
+      properties:
+        projectId:
+          type: string
+        name:
+          type: string
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        developmentConfigured:
+          type: boolean
+        repository:
+          type:
+          - string
+          - 'null'
+    DevelopmentProjectPage:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DevelopmentProject'
+        nextCursor:
+          type:
+          - string
+          - 'null'
+    DevelopmentBranchRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - branchName
+      - idempotencyKey
+      properties:
+        branchName:
+          type: string
+        idempotencyKey:
+          type: string
+          minLength: 1
+          maxLength: 256
+    DevelopmentBranchPage:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - branchName
+            - headSha
+            properties:
+              branchName:
+                type: string
+              headSha:
+                type: string
+    DevelopmentSaveRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - idempotencyKey
+      - expectedRevision
+      - commitMessage
+      properties:
+        idempotencyKey:
+          type: string
+        expectedRevision:
+          type: integer
+          format: int64
+          minimum: 0
+        commitMessage:
+          type: string
+          minLength: 1
+    DevelopmentPreviewRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - idempotencyKey
+      - expectedRevision
+      properties:
+        idempotencyKey:
+          type: string
+        expectedRevision:
+          type: integer
+          format: int64
+          minimum: 0
+        commitMessage:
+          type:
+          - string
+          - 'null'
+    DevelopmentDeliverRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - idempotencyKey
+      - expectedSourceSha
+      - expectedMainSha
+      - confirmedScopeDigest
+      properties:
+        idempotencyKey:
+          type: string
+        expectedSourceSha:
+          type: string
+        expectedMainSha:
+          type: string
+        confirmedScopeDigest:
+          type: string
+    DevelopmentRecoverRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - expectedVersion
+      - idempotencyKey
+      properties:
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 0
+        idempotencyKey:
+          type: string
+    DevelopmentOperation:
+      type: object
+      additionalProperties: false
+      required:
+      - operationId
+      - type
+      - phase
+      - status
+      - version
+      - pushedSha
+      - mergeSha
+      - buildIds
+      - error
+      properties:
+        operationId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum:
+          - SAVE
+          - PREVIEW
+          - DELIVER
+          - CREATE_BRANCH
+        phase:
+          type: string
+          enum:
+          - PREPARING
+          - RECONCILING_REMOTE
+          - PUSHING
+          - VERIFYING
+          - PUSHED
+          - SAVING
+          - BUILD_SUBMITTING
+          - BUILD_RUNNING
+          - DEPLOYMENT_PENDING
+          - DEPLOYED
+          - PRECHECK
+          - MERGING
+          - MERGED
+          - RELEASE_SUBMITTING
+          - RELEASING
+          - RELEASED
+        status:
+          type: string
+          enum:
+          - PENDING
+          - RUNNING
+          - SUCCEEDED
+          - BLOCKED
+          - RESULT_UNKNOWN
+          - FAILED
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        pushedSha:
+          type:
+          - string
+          - 'null'
+        mergeSha:
+          type:
+          - string
+          - 'null'
+        buildIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        error:
+          anyOf:
+          - type: object
+            additionalProperties: false
+            required:
+            - code
+            - message
+            - retryable
+            properties:
+              code:
+                type: string
+              message:
+                type: string
+              retryable:
+                type: boolean
+          - type: 'null'
+    DevelopmentContext:
+      type: object
+      additionalProperties: false
+      required:
+      - sessionId
+      - projectId
+      - repository
+      - branchName
+      - baselineSha
+      - configSnapshot
+      properties:
+        sessionId:
+          type: string
+        projectId:
+          type: string
+        repository:
+          type: string
+        branchName:
+          type: string
+        baselineSha:
+          type: string
+        configSnapshot:
+          $ref: '#/components/schemas/DevelopmentConfig'
+    DevelopmentFiles:
+      type: object
+      additionalProperties: false
+      required:
+      - files
+      - revision
+      properties:
+        files:
+          type: array
+          items:
+            type: string
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+    DevelopmentFile:
+      type: object
+      additionalProperties: false
+      required:
+      - path
+      - content
+      - sha256
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+        sha256:
+          type: string
+    DevelopmentFileRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - expectedRevision
+      - operations
+      properties:
+        expectedRevision:
+          type: integer
+          format: int64
+          minimum: 0
+        operations:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - type
+            - path
+            properties:
+              type:
+                type: string
+                enum:
+                - CREATE
+                - UPDATE
+                - DELETE
+              path:
+                type: string
+              expectedSha256:
+                type:
+                - string
+                - 'null'
+              content:
+                type:
+                - string
+                - 'null'
+    DevelopmentRevision:
+      type: object
+      additionalProperties: false
+      required:
+      - revision
+      properties:
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+    DevelopmentDiff:
+      type: object
+      additionalProperties: false
+      required:
+      - diff
+      - revision
+      properties:
+        diff:
+          type: string
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+    DevelopmentOverview:
+      type: object
+      additionalProperties: false
+      required:
+      - context
+      - local
+      - remote
+      - latestBuild
+      - currentDeployment
+      - deliveryScope
+      - operations
+      properties:
+        context:
+          $ref: '#/components/schemas/DevelopmentContext'
+        local:
+          type: object
+          additionalProperties: false
+          required:
+          - state
+          - revision
+          - pushedSha
+          properties:
+            state:
+              type: string
+              enum:
+              - UNINITIALIZED
+              - READY
+              - DIRTY
+              - MUTATING
+              - LOCAL_INPUT_LOST
+            revision:
+              type: integer
+              format: int64
+              minimum: 0
+            pushedSha:
+              type:
+              - string
+              - 'null'
+        remote:
+          type: object
+          additionalProperties: false
+          required:
+          - headSha
+          - mainSha
+          - observedAt
+          - errorCode
+          properties:
+            headSha:
+              type:
+              - string
+              - 'null'
+            mainSha:
+              type:
+              - string
+              - 'null'
+            observedAt:
+              type:
+              - string
+              - 'null'
+            errorCode:
+              type:
+              - string
+              - 'null'
+        latestBuild:
+          anyOf:
+          - $ref: '#/components/schemas/DbtBuildView'
+          - type: 'null'
+        currentDeployment:
+          anyOf:
+          - $ref: '#/components/schemas/DbtDeploymentTarget'
+          - type: 'null'
+        deliveryScope:
+          anyOf:
+          - type: object
+            additionalProperties: false
+            required:
+            - expectedSourceSha
+            - expectedMainSha
+            - confirmedScopeDigest
+            - diff
+            properties:
+              expectedSourceSha:
+                type: string
+              expectedMainSha:
+                type: string
+              confirmedScopeDigest:
+                type: string
+              diff:
+                type: string
+          - type: 'null'
+        operations:
+          type: array
+          items:
+            $ref: '#/components/schemas/DevelopmentOperation'
     ConversationProject:
       type: object
-      required: [projectId, name, version, createdAt, updatedAt]
+      required:
+      - projectId
+      - name
+      - version
+      - createdAt
+      - updatedAt
       properties:
-        projectId: { type: string }
-        name: { type: string }
-        version: { type: integer, format: int64, minimum: 0 }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
+        projectId:
+          type: string
+        name:
+          type: string
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     ConversationSidebar:
       type: object
-      required: [projects, sessions]
+      required:
+      - projects
+      - sessions
       properties:
         projects:
           type: array
-          items: { $ref: '#/components/schemas/ConversationProject' }
+          items:
+            $ref: '#/components/schemas/ConversationProject'
         sessions:
           type: array
-          items: { $ref: '#/components/schemas/ConversationSessionSummary' }
+          items:
+            $ref: '#/components/schemas/ConversationSessionSummary'
     CreateConversationProjectRequest:
       type: object
       additionalProperties: false
-      required: [name]
+      required:
+      - name
       properties:
-        name: { type: string, description: 去除首尾空白后为1至60个UTF-16代码单元 }
+        name:
+          type: string
+          description: 去除首尾空白后为1至60个UTF-16代码单元
     RenameConversationProjectRequest:
       type: object
       additionalProperties: false
-      required: [name, expectedVersion]
+      required:
+      - name
+      - expectedVersion
       properties:
-        name: { type: string, description: 去除首尾空白后为1至60个UTF-16代码单元 }
-        expectedVersion: { type: integer, format: int64, minimum: 0 }
+        name:
+          type: string
+          description: 去除首尾空白后为1至60个UTF-16代码单元
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 0
     SetConversationOrganizationRequest:
       type: object
       additionalProperties: false
-      required: [projectId, pinned, expectedVersion]
+      required:
+      - projectId
+      - pinned
+      - expectedVersion
       properties:
-        projectId: { type: [string, 'null'], minLength: 1, maxLength: 64 }
-        pinned: { type: boolean }
-        expectedVersion: { type: integer, format: int64, minimum: 0 }
+        projectId:
+          type:
+          - string
+          - 'null'
+          minLength: 1
+          maxLength: 64
+        pinned:
+          type: boolean
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 0
     CreateConversationSessionRequest:
       type: object
       additionalProperties: false
       properties:
-        title: { type: [string, 'null'], maxLength: 120 }
-        tag: { type: [string, 'null'], maxLength: 120 }
-        projectId: { type: [string, 'null'], minLength: 1, maxLength: 64 }
+        title:
+          type:
+          - string
+          - 'null'
+          maxLength: 120
+        tag:
+          type:
+          - string
+          - 'null'
+          maxLength: 120
+        projectId:
+          type:
+          - string
+          - 'null'
+          minLength: 1
+          maxLength: 64
+        development:
+          anyOf:
+          - $ref: '#/components/schemas/DevelopmentSelection'
+          - type: 'null'
     RenameConversationSessionRequest:
       type: object
       additionalProperties: false
-      required: [title, expectedVersion]
+      required:
+      - title
+      - expectedVersion
       properties:
-        title: { type: string, minLength: 1, maxLength: 120 }
-        expectedVersion: { type: integer, format: int64, minimum: 0 }
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        expectedVersion:
+          type: integer
+          format: int64
+          minimum: 0
     SubmitConversationMessageRequest:
       type: object
       additionalProperties: false
-      required: [content]
+      required:
+      - content
       properties:
-        content: { type: string, minLength: 1, maxLength: 8000 }
-        workspaceId:
-          type: [string, 'null']
-          maxLength: 128
-          description: 本次执行固定的已关联工作区；为空时不提供 Git 开发上下文。
+        content:
+          type: string
+          minLength: 1
+          maxLength: 8000
     ConversationSession:
       type: object
-      required: [conversationSessionId, title, tag, projectId, pinnedAt, createdAt, updatedAt, version, messages]
+      required:
+      - conversationSessionId
+      - title
+      - tag
+      - projectId
+      - pinnedAt
+      - createdAt
+      - updatedAt
+      - version
+      - messages
       properties:
-        conversationSessionId: { type: string }
-        title: { type: string }
-        tag: { type: string }
-        projectId: { type: [string, 'null'] }
-        pinnedAt: { type: [string, 'null'], format: date-time }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-        version: { type: integer, format: int64 }
+        conversationSessionId:
+          type: string
+        title:
+          type: string
+        tag:
+          type: string
+        projectId:
+          type:
+          - string
+          - 'null'
+        pinnedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
         messages:
           type: array
-          items: { $ref: '#/components/schemas/ConversationMessage' }
+          items:
+            $ref: '#/components/schemas/ConversationMessage'
         execution:
           oneOf:
-            - { $ref: '#/components/schemas/AgentExecution' }
-            - { type: 'null' }
+          - $ref: '#/components/schemas/AgentExecution'
+          - type: 'null'
     ConversationSessionSummary:
       type: object
-      required: [conversationSessionId, title, tag, projectId, pinnedAt, createdAt, updatedAt, version, status]
+      required:
+      - conversationSessionId
+      - title
+      - tag
+      - projectId
+      - pinnedAt
+      - createdAt
+      - updatedAt
+      - version
+      - status
       properties:
-        conversationSessionId: { type: string }
-        title: { type: string }
-        tag: { type: string }
-        projectId: { type: [string, 'null'] }
-        pinnedAt: { type: [string, 'null'], format: date-time }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-        version: { type: integer, format: int64 }
-        status: { type: string, enum: [idle, running, done, cancelled, failed] }
+        conversationSessionId:
+          type: string
+        title:
+          type: string
+        tag:
+          type: string
+        projectId:
+          type:
+          - string
+          - 'null'
+        pinnedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum:
+          - idle
+          - running
+          - done
+          - cancelled
+          - failed
     ConversationSummaryStreamItem:
       type: object
-      required: [conversationSessionId, status, updatedAt]
+      required:
+      - conversationSessionId
+      - status
+      - updatedAt
       properties:
-        conversationSessionId: { type: string }
-        status: { type: string, enum: [idle, running, done, cancelled, failed] }
-        updatedAt: { type: string, format: date-time }
+        conversationSessionId:
+          type: string
+        status:
+          type: string
+          enum:
+          - idle
+          - running
+          - done
+          - cancelled
+          - failed
+        updatedAt:
+          type: string
+          format: date-time
     ConversationSummarySnapshot:
       type: object
-      required: [type, sessions, snapshotAt]
+      required:
+      - type
+      - sessions
+      - snapshotAt
       properties:
-        type: { type: string, const: conversation_summary_snapshot }
+        type:
+          type: string
+          const: conversation_summary_snapshot
         sessions:
           type: array
-          items: { $ref: '#/components/schemas/ConversationSummaryStreamItem' }
-        snapshotAt: { type: string, format: date-time }
+          items:
+            $ref: '#/components/schemas/ConversationSummaryStreamItem'
+        snapshotAt:
+          type: string
+          format: date-time
     ConversationMessage:
       type: object
-      required: [conversationMessageId, executionId, role, author, content, version, thinkingProcess, uiBlocks, createdAt]
+      required:
+      - conversationMessageId
+      - executionId
+      - role
+      - author
+      - content
+      - version
+      - thinkingProcess
+      - uiBlocks
+      - createdAt
       properties:
-        conversationMessageId: { type: string }
-        executionId: { type: [string, 'null'] }
-        role: { type: string, enum: [user, assistant] }
-        author: { type: string }
-        content: { type: string }
-        version: { type: integer, format: int64, minimum: 0 }
+        conversationMessageId:
+          type: string
+        executionId:
+          type:
+          - string
+          - 'null'
+        role:
+          type: string
+          enum:
+          - user
+          - assistant
+        author:
+          type: string
+        content:
+          type: string
+        version:
+          type: integer
+          format: int64
+          minimum: 0
         thinkingProcess:
           type: array
-          items: { type: object, additionalProperties: true }
+          items:
+            type: object
+            additionalProperties: true
         uiBlocks:
           type: array
-          items: { $ref: '#/components/schemas/MessageUiBlockView' }
-        createdAt: { type: string, format: date-time }
+          items:
+            $ref: '#/components/schemas/MessageUiBlockView'
+        createdAt:
+          type: string
+          format: date-time
         execution:
           oneOf:
-            - { $ref: '#/components/schemas/AgentExecution' }
-            - { type: 'null' }
+          - $ref: '#/components/schemas/AgentExecution'
+          - type: 'null'
     MessageUiBlockView:
       oneOf:
-        - { $ref: '#/components/schemas/GitChangeCardUiBlock' }
+      - $ref: '#/components/schemas/GitChangeCardUiBlock'
       discriminator:
         propertyName: type
         mapping:
@@ -869,227 +1463,663 @@ components:
     GitChangeCardUiBlock:
       type: object
       additionalProperties: false
-      required: [blockId, type, schemaVersion, variant, payload, displayOrder]
+      required:
+      - blockId
+      - type
+      - schemaVersion
+      - variant
+      - payload
+      - displayOrder
       properties:
-        blockId: { type: string }
-        type: { type: string, const: git-change-card }
-        schemaVersion: { type: integer, const: 1 }
-        variant: { type: string }
+        blockId:
+          type: string
+        type:
+          type: string
+          const: git-change-card
+        schemaVersion:
+          type: integer
+          const: 1
+        variant:
+          type: string
         payload:
           type: object
           additionalProperties: false
-          required: [changeId, sessionId]
+          required:
+          - changeId
+          - sessionId
           properties:
-            changeId: { type: string, minLength: 1 }
-            sessionId: { type: string, minLength: 1 }
-        displayOrder: { type: integer, minimum: 0 }
-    GitWorkspace:
-      type: object
-      required: [workspaceId, baseCommit, draftRevision, status, activeChangeId, projectId, branchId, gitRef]
-      properties:
-        workspaceId: { type: string, description: 独立草稿的稳定标识 }
-        baseCommit: { type: [string, 'null'], description: 当前草稿基线 SHA }
-        draftRevision: { type: integer, minimum: 0, description: 草稿内容修订号 }
-        status: { type: string, enum: [READY, MUTATING, BROKEN] }
-        activeChangeId: { type: [string, 'null'], description: 当前候选卡片标识 }
-        projectId: { type: [string, 'null'], description: 固定项目，历史草稿为空 }
-        branchId: { type: [string, 'null'], description: 固定分支实例，历史草稿为空 }
-        gitRef: { type: [string, 'null'], description: 完整远端引用 }
-    CreateGitWorkspaceRequest:
-      type: object
-      additionalProperties: false
-      required: [sessionId, branchId, baseCommitSha, idempotencyKey]
-      properties:
-        sessionId: { type: string, minLength: 1, maxLength: 128 }
-        branchId: { type: string, minLength: 1, maxLength: 128 }
-        baseCommitSha: { type: string, pattern: '^[0-9a-f]{40}$' }
-        idempotencyKey: { type: string, minLength: 1, maxLength: 128 }
-    CreateMetricBranchRequest:
-      type: object
-      additionalProperties: false
-      required: [name, sourceBranchId, sourceCommitSha, idempotencyKey]
-      properties:
-        name: { type: string, minLength: 1, maxLength: 200 }
-        sourceBranchId: { type: string, minLength: 1, maxLength: 128 }
-        sourceCommitSha: { type: string, pattern: '^[0-9a-f]{40}$' }
-        idempotencyKey: { type: string, minLength: 1, maxLength: 128 }
-    RegisterMetricBranchRequest:
-      type: object
-      additionalProperties: false
-      required: [name, baseCommitSha, idempotencyKey]
-      properties:
-        name: { type: string, minLength: 1, maxLength: 200 }
-        baseCommitSha: { type: string, pattern: '^[0-9a-f]{40}$' }
-        idempotencyKey: { type: string, minLength: 1, maxLength: 128 }
-    GitChangeVersionRequest:
-      type: object
-      additionalProperties: false
-      required: [version]
-      properties:
-        version: { type: integer, format: int64, minimum: 0 }
+            changeId:
+              type: string
+              minLength: 1
+            sessionId:
+              type: string
+              minLength: 1
+        displayOrder:
+          type: integer
+          minimum: 0
     GitChangeFile:
       type: object
       additionalProperties: false
-      required: [fileId, status, path]
+      required:
+      - fileId
+      - status
+      - path
       properties:
-        fileId: { type: string, description: 当前候选内稳定文件标识，不是文件系统路径 }
-        status: { type: string, description: Git 文件状态码 }
-        path: { type: string, description: 仓库相对路径 }
+        fileId:
+          type: string
+          description: 当前候选内稳定文件标识，不是文件系统路径
+        status:
+          type: string
+          description: Git 文件状态码
+        path:
+          type: string
+          description: 仓库相对路径
     GitChangeDiff:
       type: object
       additionalProperties: false
-      required: [fileId, diff]
+      required:
+      - fileId
+      - diff
       properties:
-        fileId: { type: string }
-        diff: { type: string, description: 登记文件的完整冻结 diff，受服务端候选字节上限约束 }
+        fileId:
+          type: string
+        diff:
+          type: string
+          description: 登记文件的完整冻结 diff，受服务端候选字节上限约束
     GitChange:
       type: object
       additionalProperties: false
-      required: [changeId, version, status, branch, baseCommit, summary, commitMessage, commitId, reviewAvailable, files, errorCode, errorSummary]
+      required:
+      - changeId
+      - version
+      - status
+      - branch
+      - baseCommit
+      - summary
+      - commitMessage
+      - commitId
+      - reviewAvailable
+      - files
+      - errorCode
+      - errorSummary
       properties:
-        workspaceId: { type: string, description: 冻结工作区，不随页面当前选择变化 }
-        projectId: { type: [string, 'null'], description: 冻结项目，历史候选为空 }
-        branchId: { type: [string, 'null'], description: 冻结分支实例，历史候选为空 }
-        gitRef: { type: [string, 'null'], description: 冻结完整远端引用，历史候选为空 }
-        changeId: { type: string }
-        version: { type: integer, format: int64, minimum: 0 }
-        status: { type: string, enum: [PENDING_CONFIRMATION, SUBMITTING, VERIFYING, PUSHED, RECONFIRM_REQUIRED, INVALIDATED, CANCELLED, FAILED] }
-        branch: { type: string, const: main }
-        baseCommit: { type: string }
-        summary: { type: string }
-        commitMessage: { type: string }
-        commitId: { type: [string, 'null'] }
-        reviewAvailable: { type: boolean, description: 本次冻结审阅材料是否完整可用，false 时禁止确认和重试，不改变持久化提交阶段 }
+        workspaceId:
+          type: string
+          description: 冻结工作区，不随页面当前选择变化
+        projectId:
+          type:
+          - string
+          - 'null'
+          description: 冻结项目，历史候选为空
+        branchId:
+          type:
+          - string
+          - 'null'
+          description: 冻结分支实例，历史候选为空
+        gitRef:
+          type:
+          - string
+          - 'null'
+          description: 冻结完整远端引用，历史候选为空
+        changeId:
+          type: string
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        status:
+          type: string
+          enum:
+          - PENDING_CONFIRMATION
+          - SUBMITTING
+          - VERIFYING
+          - PUSHED
+          - RECONFIRM_REQUIRED
+          - INVALIDATED
+          - CANCELLED
+          - FAILED
+        branch:
+          type: string
+          const: main
+        baseCommit:
+          type: string
+        summary:
+          type: string
+        commitMessage:
+          type: string
+        commitId:
+          type:
+          - string
+          - 'null'
+        reviewAvailable:
+          type: boolean
+          description: 本次冻结审阅材料是否完整可用，false 时禁止确认和重试，不改变持久化提交阶段
         files:
           description: 审阅材料不可用时为 null，不代表空变更
-          type: [array, 'null']
-          items: { $ref: '#/components/schemas/GitChangeFile' }
-        errorCode: { type: [string, 'null'] }
-        errorSummary: { type: [string, 'null'], description: 稳定错误码的安全说明，不返回 Git stderr }
+          type:
+          - array
+          - 'null'
+          items:
+            $ref: '#/components/schemas/GitChangeFile'
+        errorCode:
+          type:
+          - string
+          - 'null'
+        errorSummary:
+          type:
+          - string
+          - 'null'
+          description: 稳定错误码的安全说明，不返回 Git stderr
         validation:
           description: 已冻结候选绑定的 dbt 定义验证证据；历史或非 dbt 候选可为空，不代表构建或发布成功
-          type: [object, 'null']
+          type:
+          - object
+          - 'null'
           additionalProperties: false
-          required: [status, baseCommitSha, validatedAt, checkedLevels]
+          required:
+          - status
+          - baseCommitSha
+          - validatedAt
+          - checkedLevels
           properties:
-            status: { type: string, const: SUCCEEDED }
-            baseCommitSha: { type: string, description: 验证使用的 Git 基线提交 }
-            validatedAt: { type: string, description: 服务记录的验证完成时间，ISO 8601 }
+            status:
+              type: string
+              const: SUCCEEDED
+            baseCommitSha:
+              type: string
+              description: 验证使用的 Git 基线提交
+            validatedAt:
+              type: string
+              description: 服务记录的验证完成时间，ISO 8601
             checkedLevels:
               type: array
-              items: { type: string, enum: [YAML, TEMPLATE, DBT_PARSE, SQL_DEFINITION, SEMANTIC] }
+              items:
+                type: string
+                enum:
+                - YAML
+                - TEMPLATE
+                - DBT_PARSE
+                - SQL_DEFINITION
+                - SEMANTIC
     AgentExecution:
       type: object
-      required: [executionId, status, progress, objective, events]
+      required:
+      - executionId
+      - status
+      - progress
+      - objective
+      - events
       properties:
-        executionId: { type: string }
-        status: { type: string, enum: [running, done, cancelled, failed] }
-        progress: { type: integer, minimum: 0, maximum: 100 }
-        objective: { type: string }
+        executionId:
+          type: string
+        status:
+          type: string
+          enum:
+          - running
+          - done
+          - cancelled
+          - failed
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        objective:
+          type: string
         events:
           type: array
-          items: { $ref: '#/components/schemas/AgentExecutionEvent' }
+          items:
+            $ref: '#/components/schemas/AgentExecutionEvent'
         streamCheckpoint:
           oneOf:
-            - { $ref: '#/components/schemas/AgentExecutionStreamCheckpoint' }
-            - { type: 'null' }
+          - $ref: '#/components/schemas/AgentExecutionStreamCheckpoint'
+          - type: 'null'
     AgentExecutionState:
       type: object
-      required: [executionId, status, progress, objective]
+      required:
+      - executionId
+      - status
+      - progress
+      - objective
       properties:
-        executionId: { type: string }
-        status: { type: string, enum: [running, done, cancelled, failed] }
-        progress: { type: integer, minimum: 0, maximum: 100 }
-        objective: { type: string }
+        executionId:
+          type: string
+        status:
+          type: string
+          enum:
+          - running
+          - done
+          - cancelled
+          - failed
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        objective:
+          type: string
         streamCheckpoint:
           oneOf:
-            - { $ref: '#/components/schemas/AgentExecutionStreamCheckpoint' }
-            - { type: 'null' }
+          - $ref: '#/components/schemas/AgentExecutionStreamCheckpoint'
+          - type: 'null'
     AgentExecutionEvent:
       type: object
-      required: [executionEventId, executionEventSequence, type, occurredAt, executionId, status]
+      required:
+      - executionEventId
+      - executionEventSequence
+      - type
+      - occurredAt
+      - executionId
+      - status
       properties:
-        executionEventId: { type: string }
-        executionEventSequence: { type: integer, format: int64 }
-        type: { type: string }
-        occurredAt: { type: string, format: date-time }
-        executionId: { type: string }
-        status: { type: string, enum: [running, done, cancelled, failed] }
+        executionEventId:
+          type: string
+        executionEventSequence:
+          type: integer
+          format: int64
+        type:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        executionId:
+          type: string
+        status:
+          type: string
+          enum:
+          - running
+          - done
+          - cancelled
+          - failed
     AgentExecutionStreamCheckpoint:
       type: object
-      required: [modelInvocationSequence, phase, outputDeltaSequence, answer]
+      required:
+      - modelInvocationSequence
+      - phase
+      - outputDeltaSequence
+      - answer
       properties:
-        modelInvocationSequence: { type: integer, format: int64, minimum: 0 }
+        modelInvocationSequence:
+          type: integer
+          format: int64
+          minimum: 0
         phase:
           type: string
-          enum: [RECEIVED, PREPARING_CONTEXT, CONNECTING_MODEL, ANSWERING, PERSISTING, COMPLETED]
-        outputDeltaSequence: { type: integer, format: int64, minimum: 0 }
-        answer: { type: string }
+          enum:
+          - RECEIVED
+          - PREPARING_CONTEXT
+          - CONNECTING_MODEL
+          - ANSWERING
+          - PERSISTING
+          - COMPLETED
+        outputDeltaSequence:
+          type: integer
+          format: int64
+          minimum: 0
+        answer:
+          type: string
     ConversationSessionSnapshotEvent:
       type: object
-      required: [type, conversationSessionId, session, occurredAt]
+      required:
+      - type
+      - conversationSessionId
+      - session
+      - occurredAt
       properties:
-        type: { type: string, const: session_snapshot }
-        conversationSessionId: { type: string }
-        session: { $ref: '#/components/schemas/ConversationSession' }
-        occurredAt: { type: string, format: date-time }
+        type:
+          type: string
+          const: session_snapshot
+        conversationSessionId:
+          type: string
+        session:
+          $ref: '#/components/schemas/ConversationSession'
+        occurredAt:
+          type: string
+          format: date-time
     ConversationExecutionUpdateEvent:
       type: object
-      required: [type, conversationSessionId, execution, event, messages]
+      required:
+      - type
+      - conversationSessionId
+      - execution
+      - event
+      - messages
       properties:
-        type: { type: string, const: execution_update }
-        conversationSessionId: { type: string }
-        execution: { $ref: '#/components/schemas/AgentExecutionState' }
-        event: { $ref: '#/components/schemas/AgentExecutionEvent' }
+        type:
+          type: string
+          const: execution_update
+        conversationSessionId:
+          type: string
+        execution:
+          $ref: '#/components/schemas/AgentExecutionState'
+        event:
+          $ref: '#/components/schemas/AgentExecutionEvent'
         messages:
           type: array
-          items: { $ref: '#/components/schemas/ConversationMessage' }
+          items:
+            $ref: '#/components/schemas/ConversationMessage'
     ConversationMessageUpdateEvent:
       type: object
-      required: [type, conversationSessionId, message, occurredAt]
+      required:
+      - type
+      - conversationSessionId
+      - message
+      - occurredAt
       properties:
-        type: { type: string, const: message_update }
-        conversationSessionId: { type: string }
-        message: { $ref: '#/components/schemas/ConversationMessage' }
-        occurredAt: { type: string, format: date-time }
+        type:
+          type: string
+          const: message_update
+        conversationSessionId:
+          type: string
+        message:
+          $ref: '#/components/schemas/ConversationMessage'
+        occurredAt:
+          type: string
+          format: date-time
     AgentExecutionStreamSnapshotEvent:
       type: object
-      required: [type, conversationSessionId, executionId, modelInvocationSequence, outputDeltaSequence, phase, answer, occurredAt]
+      required:
+      - type
+      - conversationSessionId
+      - executionId
+      - modelInvocationSequence
+      - outputDeltaSequence
+      - phase
+      - answer
+      - occurredAt
       properties:
-        type: { type: string, const: stream_snapshot }
-        conversationSessionId: { type: string }
-        executionId: { type: string }
-        modelInvocationSequence: { type: integer, minimum: 0 }
-        outputDeltaSequence: { type: integer, format: int64, minimum: 0 }
-        phase: { type: string }
-        answer: { type: string }
-        occurredAt: { type: string, format: date-time }
+        type:
+          type: string
+          const: stream_snapshot
+        conversationSessionId:
+          type: string
+        executionId:
+          type: string
+        modelInvocationSequence:
+          type: integer
+          minimum: 0
+        outputDeltaSequence:
+          type: integer
+          format: int64
+          minimum: 0
+        phase:
+          type: string
+        answer:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
     AssistantDeltaEvent:
       type: object
-      required: [type, conversationSessionId, executionId, modelInvocationSequence, outputDeltaSequence, delta, occurredAt]
+      required:
+      - type
+      - conversationSessionId
+      - executionId
+      - modelInvocationSequence
+      - outputDeltaSequence
+      - delta
+      - occurredAt
       properties:
-        type: { type: string, const: assistant_delta }
-        conversationSessionId: { type: string }
-        executionId: { type: string }
-        modelInvocationSequence: { type: integer, minimum: 0 }
-        outputDeltaSequence: { type: integer, format: int64, minimum: 0 }
-        delta: { type: string }
-        occurredAt: { type: string, format: date-time }
+        type:
+          type: string
+          const: assistant_delta
+        conversationSessionId:
+          type: string
+        executionId:
+          type: string
+        modelInvocationSequence:
+          type: integer
+          minimum: 0
+        outputDeltaSequence:
+          type: integer
+          format: int64
+          minimum: 0
+        delta:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
     ProblemDetail:
       type: object
-      required: [title, status, detail, code]
+      required:
+      - title
+      - status
+      - detail
+      - code
       properties:
-        type: { type: string }
-        title: { type: string }
-        status: { type: integer }
-        detail: { type: string }
-        instance: { type: string }
-        code: { type: string }
-        requestId: { type: string }
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        code:
+          type: string
+        requestId:
+          type: string
         errors:
           type: array
           items:
             type: object
             properties:
-              field: { type: string }
-              message: { type: string }
+              field:
+                type: string
+              message:
+                type: string
+    DbtError:
+      type: object
+      additionalProperties: false
+      required:
+      - code
+      - message
+      - retryable
+      - phase
+      - buildId
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        retryable:
+          type: boolean
+        phase:
+          anyOf:
+          - type: string
+          - type: 'null'
+        buildId:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+    DbtDeploymentAttempt:
+      type: object
+      additionalProperties: false
+      required:
+      - repository
+      - environment
+      - branchName
+      - generation
+      - buildId
+      - deploymentStatus
+      - reason
+      - createdAt
+      - deployedAt
+      properties:
+        repository:
+          type: string
+        environment:
+          type: string
+          enum:
+          - PREVIEW
+          - PRODUCTION
+        branchName:
+          type: string
+        generation:
+          type: integer
+          format: int64
+          minimum: 0
+        buildId:
+          type: string
+          format: uuid
+        deploymentStatus:
+          type: string
+          enum:
+          - WAITING_FOR_BUILD
+          - PENDING
+          - CHECKING
+          - DEPLOYED
+          - STALE
+          - FAILED
+          - CANCELLED
+        reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+        createdAt:
+          type: string
+        deployedAt:
+          anyOf:
+          - type: string
+          - type: 'null'
+    DbtBuildView:
+      type: object
+      additionalProperties: false
+      required:
+      - buildId
+      - repository
+      - branchName
+      - requestedCommitSha
+      - commitSha
+      - executionBinding
+      - configVersion
+      - toolchainVersion
+      - phase
+      - createdAt
+      - updatedAt
+      - environment
+      - buildStatus
+      - finishedAt
+      - cancelRequested
+      - catalogAvailable
+      - queryAvailable
+      - queryUnavailableReason
+      - error
+      - initialDeployment
+      properties:
+        buildId:
+          type: string
+          format: uuid
+        repository:
+          type: string
+        branchName:
+          type: string
+        requestedCommitSha:
+          type: string
+        commitSha:
+          type: string
+        executionBinding:
+          type: string
+        configVersion:
+          type: string
+        toolchainVersion:
+          type: string
+        phase:
+          type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        environment:
+          type: string
+          enum:
+          - PREVIEW
+          - PRODUCTION
+        buildStatus:
+          type: string
+          enum:
+          - QUEUED
+          - RUNNING
+          - SUCCEEDED
+          - FAILED
+          - CANCELLED
+          - OUTCOME_UNKNOWN
+        finishedAt:
+          anyOf:
+          - type: string
+          - type: 'null'
+        cancelRequested:
+          type: boolean
+        catalogAvailable:
+          type: boolean
+        queryAvailable:
+          type: boolean
+        queryUnavailableReason:
+          anyOf:
+          - type: string
+          - type: 'null'
+        error:
+          anyOf:
+          - $ref: '#/components/schemas/DbtError'
+          - type: 'null'
+        initialDeployment:
+          anyOf:
+          - $ref: '#/components/schemas/DbtDeploymentAttempt'
+          - type: 'null'
+    DbtDeploymentTarget:
+      type: object
+      additionalProperties: false
+      required:
+      - repository
+      - environment
+      - branchName
+      - version
+      - desiredGeneration
+      - activeBuildId
+      - activeCommitSha
+      - latestAttempt
+      - observedHeadSha
+      - headObservedAt
+      - sourceState
+      properties:
+        repository:
+          type: string
+        environment:
+          type: string
+          enum:
+          - PREVIEW
+          - PRODUCTION
+        branchName:
+          type: string
+        version:
+          type: integer
+          format: int64
+          minimum: 0
+        desiredGeneration:
+          type: integer
+          format: int64
+          minimum: 0
+        activeBuildId:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+        activeCommitSha:
+          anyOf:
+          - type: string
+          - type: 'null'
+        latestAttempt:
+          anyOf:
+          - $ref: '#/components/schemas/DbtDeploymentAttempt'
+          - type: 'null'
+        observedHeadSha:
+          anyOf:
+          - type: string
+          - type: 'null'
+        headObservedAt:
+          anyOf:
+          - type: string
+          - type: 'null'
+        sourceState:
+          type: string

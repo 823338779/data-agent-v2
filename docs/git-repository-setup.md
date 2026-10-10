@@ -8,7 +8,9 @@
 
 ```text
 DATA_AGENT_GIT_ENABLED=true
-DATA_AGENT_GIT_REMOTE_URI=ssh://git@agent-metrics-git/agent-admin/metrics.git
+
+# 仓库地址在 Agent 项目的 development-config 中配置：
+# ssh://git@agent-metrics-git/agent-admin/metrics.git
 DATA_AGENT_GIT_WORKSPACE_ROOT=/var/lib/data-agent/git
 ```
 
@@ -16,14 +18,14 @@ DATA_AGENT_GIT_WORKSPACE_ROOT=/var/lib/data-agent/git
 
 ## 独立裸仓库服务器
 
-Git 也可使用现有托管服务，或单独部署 SSH 加裸仓库。所有会话共享一个远端 `main`，Agent 只创建候选并在用户点击卡片后推送；“已推送”仅表示远端已接受提交。下游指标平台的拉取、校验和发布由运维负责。以下 `/srv/git/metrics.git` 仅属于这种独立服务器部署，不是本地 Forgejo 的容器路径。
+Git 也可使用现有托管服务，或单独部署 SSH 加裸仓库。每个开发会话固定一个 Agent 项目和真实 Git 分支，维护独立本地目录。保存推送功能分支，不做推送前 dbt 校验；预览构建并部署已推送 SHA，正式交付确认完整共享分支范围后创建真实 merge commit，再构建和部署 main。以下 `/srv/git/metrics.git` 仅属于这种独立服务器部署，不是本地 Forgejo 的容器路径。
 
 以下路径、域名、公钥和身份均为示例，需要替换为部署环境配置，不能把真实私钥、令牌或连接信息提交到源码。假定运维已安装 Git、OpenSSH，创建专用 `git` 服务用户并准备好它拥有的 `/srv/git` 持久卷。该用户仅开放 Git SSH 命令，仓库访问范围由托管服务权限或运维维护的受限命令入口控制。
 
 必须持久化并备份：
 
 - Git 服务端的 `/srv/git/metrics.git`：对象、引用、保护配置与 hook。
-- Agent 服务端工作根目录（`DATA_AGENT_GIT_WORKSPACE_ROOT`）及 PostgreSQL：草稿、冻结候选与确认记录成对备份，单实例运行。
+- Agent 服务端工作根目录（`DATA_AGENT_GIT_WORKSPACE_ROOT`）及 PostgreSQL：本地目录与持久开发操作记录成对备份；数据库不保存未推送正文，单实例运行。
 - SSH 主机密钥和访问授权配置：独立于容器生命周期管理；密钥轮换不能通过关闭主机校验解决。
 
 ### 初始化 main
@@ -45,7 +47,7 @@ sudo -u git git --git-dir=/srv/git/metrics.git rev-parse --verify refs/heads/mai
 
 最后一个命令必须返回有效提交 ID。真实业务文件可以由维护者正常提交；仓库内容不会被 Agent 当脚本执行。初始化目录与 Agent 工作目录用途不同，后续按运维流程归档即可。
 
-`receive.denyNonFastForwards=true` 拒绝历史改写，`receive.denyDeletes=true` 拒绝分支删除。使用托管服务时，对 `main` 设置等价保护：允许 Agent 身份正常快进推送，禁止强制推送和删除；不要配置与当前直接确认推送流程冲突的“必须 PR”规则。服务端管理员仍可绕过文件级保护，因此管理员权限与备份恢复流程需要独立管理。
+`receive.denyNonFastForwards=true` 拒绝历史改写，`receive.denyDeletes=true` 拒绝分支删除。使用托管服务时，对 `main` 设置等价保护：允许 Agent 身份正常快进推送，禁止强制推送和删除；不要配置与当前显式合并交付流程冲突的“必须 PR”规则。服务端管理员仍可绕过文件级保护，因此管理员权限与备份恢复流程需要独立管理。
 
 ### SSH 凭据引用
 
@@ -68,7 +70,8 @@ Host agent-metrics-git
 
 ```text
 DATA_AGENT_GIT_ENABLED=true
-DATA_AGENT_GIT_REMOTE_URI=ssh://git@agent-metrics-git/srv/git/metrics.git
+# 仓库地址在 Agent 项目的 development-config 中配置：
+# ssh://git@agent-metrics-git/srv/git/metrics.git
 DATA_AGENT_GIT_WORKSPACE_ROOT=/var/lib/data-agent/git
 ```
 
@@ -88,8 +91,9 @@ Git 推送响应仍需等待服务端协议结束，hook 并非天然异步；�
 
 1. 核对 `main` 已存在、裸仓库和 Agent 目录为持久卷、数据库可用、仅一个 Agent 实例。
 2. 核对专用身份可读取和正常快进推送，服务端拒绝非快进与删除；在测试仓库进行拒绝场景验证。
-3. 启用 Agent 后准备草稿、生成卡片，核对摘要和完整差异，再点击确认。卡片应显示“已推送”，远端 `main` 只增加一次提交；重复确认不重复新增提交。
-4. 验证 `SUBMITTING` / `VERIFYING` 会在短时自动查询后停止；网络恢复后点击“核实结果”。需要重新准备的错误应生成新草稿与新卡片，不能对已失效内容重试。
-5. 验证运维 hook 快速返回并由异步 worker 更新下游，检查投递、重试及告警；这不改变 Agent 的成功终点。
+3. 配置项目受控仓库及两套执行绑定，创建功能分支，再创建固定分支的开发会话；编辑完整工程并保存，确认只有功能分支增加一次提交，同键重试不新增提交。
+4. 启用 dbt v3 后验证预览实际部署成功；确认共享分支完整差异，再正式交付，核对 main 新增真实合并提交且部署对应合并 SHA。构建失败不能报告已交付。
+5. 中断服务或模拟响应丢失，确认恢复查询原输入和原操作；丢失未推送目录时明确显示 LOCAL_INPUT_LOST。关闭聊天连接不应取消已受理的后台动作。
+6. 如果同时使用运维 hook，hook 只负责通知或异步入队，不得与 Agent 的构建发布重复执行。
 
-仓库测试 `GitWebIntegrationTest` 使用独立本地裸仓库与 PostgreSQL，覆盖真实 Tool 准备、文件修改、候选、最终回答保留卡片、HTTP 确认、唯一提交推送；不依赖或调用指标平台。生产 SSH、持久卷、访问权限及运维队列需要部署现场验收。
+仓库测试使用独立本地裸 Git 与 PostgreSQL，覆盖固定会话目标、文件修订保护、保存、预览、合并交付与恢复。生产 SSH、持久卷和分支保护仍需部署现场验收。接口与运行语义见 [Git 开发运行配置与接口](agent-git-runtime.md)。

@@ -14,6 +14,7 @@
   <artifactId>agent-server</artifactId>
 
   <dependencies>
+    <dependency><groupId>com.datagent</groupId><artifactId>agent-development</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>com.datagent</groupId><artifactId>agent-dbt</artifactId><version>${project.version}</version></dependency>
     <dependency>
       <groupId>com.datagent</groupId>

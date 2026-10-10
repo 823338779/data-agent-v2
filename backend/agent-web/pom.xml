@@ -14,6 +14,8 @@
   <artifactId>agent-web</artifactId>
 
   <dependencies>
+    <dependency><groupId>org.yaml</groupId><artifactId>snakeyaml</artifactId></dependency>
+    <dependency><groupId>com.datagent</groupId><artifactId>agent-development</artifactId><version>${project.version}</version></dependency>
     <dependency>
       <groupId>com.datagent</groupId>
       <artifactId>agent-memory</artifactId>
@@ -94,4 +96,8 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+  <build><resources>
+    <resource><directory>src/main/resources</directory></resource>
+    <resource><directory>${project.basedir}/../../contracts</directory><targetPath>contracts</targetPath><includes><include>openapi.yaml</include></includes></resource>
+  </resources></build>
 </project>

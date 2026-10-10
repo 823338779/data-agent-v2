@@ -34,6 +34,12 @@ class DbtSkillTest {
         if (dbt && git)
             assertThat(catalog.require("dbt-yaml-maintenance").descriptor().requiredTools())
                     .hasSize(9)
-                    .contains("git_change_prepare", "dbt_validation_submit", "dbt_validation_get");
+                    .contains(
+                            "development_save",
+                            "development_preview",
+                            "development_deliver",
+                            "development_status")
+                    .doesNotContain(
+                            "git_change_prepare", "dbt_validation_submit", "dbt_validation_get");
     }
 }

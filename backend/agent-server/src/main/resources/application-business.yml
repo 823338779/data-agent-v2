@@ -59,11 +59,9 @@ data-agent:
       max-model-invocations: ${DATA_AGENT_REACT_MAX_MODEL_INVOCATIONS:32}
       max-tool-calls: ${DATA_AGENT_REACT_MAX_TOOL_CALLS:32}
   git:
-    # 关闭时不装配 Git Tool、Skill、应用服务和工作目录；开启时 maximum 自动加入七个草稿工具。
+    # 关闭时不装配 Git Tool、Skill、应用服务和工作目录；开启时 maximum 自动加入五个文件工具及 development_save。
     # initial 不允许包含 Git 工具，读取 git-repository-maintenance Skill 才激活。
     enabled: ${DATA_AGENT_GIT_ENABLED:false}
-    remote-uri: ${DATA_AGENT_GIT_REMOTE_URI:}
-    repository-id: ${DATA_AGENT_GIT_REPOSITORY_ID:metrics}
     workspace-root: ${DATA_AGENT_GIT_WORKSPACE_ROOT:./data/git}
     executable: ${DATA_AGENT_GIT_EXECUTABLE:git}
     author-name: ${DATA_AGENT_GIT_AUTHOR_NAME:Data Agent}
@@ -76,12 +74,11 @@ data-agent:
     max-candidate-bytes: ${DATA_AGENT_GIT_MAX_CANDIDATE_BYTES:5242880}
     max-diff-bytes: ${DATA_AGENT_GIT_MAX_DIFF_BYTES:2097152}
   dbt:
-    # 分析独立于 Git；两个开关同时开启才装配分支 SQL/YAML 维护及候选验证。
+    # 分析独立于 Git；开发动作固定会话目标，构建只读取已推送 SHA。
     enabled: ${DATA_AGENT_DBT_ENABLED:false}
     base-url: ${DATA_AGENT_DBT_BASE_URL:}
-    project-id: ${DATA_AGENT_DBT_PROJECT_ID:}
-    project-directory: ${DATA_AGENT_DBT_PROJECT_DIRECTORY:.}
-    # 仅服务端发送给 dbt-service 的分支写入凭据，不进入模型上下文。
-    branch-service-token: ${DATA_AGENT_DBT_BRANCH_SERVICE_TOKEN:}
+    analysis-build-id: ${DATA_AGENT_DBT_ANALYSIS_BUILD_ID:}
+    # 仅向对应 dbt-service 发送的凭据，不进入模型上下文。
+    service-token: ${DATA_AGENT_DBT_SERVICE_TOKEN:}
     connect-timeout: ${DATA_AGENT_DBT_CONNECT_TIMEOUT:5s}
     request-timeout: ${DATA_AGENT_DBT_REQUEST_TIMEOUT:20s}

@@ -23,6 +23,8 @@ import tools.jackson.databind.ObjectMapper;
 /** 通过完整 HTTP 受理验证目标摘要、原子绑定与同键冲突。 */
 @SpringBootTest
 @AutoConfigureMockMvc
+@org.springframework.test.annotation.DirtiesContext
+@org.junit.jupiter.api.TestInstance(org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS)
 class GitExecutionWorkspaceIntegrationTest {
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:17-alpine"));
@@ -30,21 +32,10 @@ class GitExecutionWorkspaceIntegrationTest {
     private static final String MESSAGES = SESSIONS + "/{session}/messages";
     private static final String KEY_HEADER = "Idempotency-Key";
     private static final String KEY = "workspace-request";
-    private static final String A = "wa";
-    private static final String FIRST = "{\"content\":\"开发指标\",\"workspaceId\":\"wa\"}";
-    private static final String SECOND = "{\"content\":\"开发指标\",\"workspaceId\":\"wb\"}";
-    private static final String WORKSPACES =
-            """
-            insert into git_workspace(workspace_id,conversation_session_id,repository_id,status,project_id,branch_id,git_ref)
-            values ('wa',?,'repo','READY','p','a','refs/heads/a'),
-                   ('wb',?,'repo','READY','p','b','refs/heads/b')
-            """;
-    private static final String LINKS =
-            """
-            insert into git_session_workspace(conversation_session_id,workspace_id) values (?,'wa'),(?,'wb')
-            """;
+    private static final String FIRST = "{\"content\":\"开发指标\"}";
+    private static final String SECOND = "{\"content\":\"不同内容\"}";
     private static final String BINDING =
-            "select workspace_id from git_execution_workspace where execution_id=?";
+            "select count(*) from git_execution_workspace where execution_id=?";
     private static final String COUNT =
             "select count(*) from agent_execution where conversation_session_id=?";
     private static final String SESSION_ID = "conversationSessionId";
@@ -62,8 +53,17 @@ class GitExecutionWorkspaceIntegrationTest {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
     }
 
+    @Autowired org.springframework.context.ConfigurableApplicationContext application;
+
     @AfterAll
-    static void stop() {
+    void stop() {
+        application
+                .getBeansOfType(
+                        org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler.class)
+                .values()
+                .forEach(
+                        org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler
+                                ::shutdown);
         POSTGRES.stop();
     }
 
@@ -73,7 +73,7 @@ class GitExecutionWorkspaceIntegrationTest {
     @MockitoBean private ReactExecutionEngine executionEngine;
 
     @Test
-    void sameKeyDifferentWorkspaceIsConflictAndOriginalBindingSurvives() throws Exception {
+    void retiredTargetOverrideIsRejectedAndOrdinaryMessagesRemainIdempotent() throws Exception {
         String created =
                 mvc.perform(
                                 post(SESSIONS)
@@ -84,8 +84,12 @@ class GitExecutionWorkspaceIntegrationTest {
                         .getResponse()
                         .getContentAsString();
         String session = json.readTree(created).path(SESSION_ID).asString();
-        jdbc.update(WORKSPACES, session, session);
-        jdbc.update(LINKS, session, session);
+        mvc.perform(
+                        post(MESSAGES, session)
+                                .header(KEY_HEADER, KEY)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"content\":\"开发指标\",\"workspaceId\":\"attacker\"}"))
+                .andExpect(status().isBadRequest());
         String accepted =
                 mvc.perform(
                                 post(MESSAGES, session)
@@ -115,7 +119,7 @@ class GitExecutionWorkspaceIntegrationTest {
                         .getContentAsString();
         assertThat(json.readTree(replay).path(EXECUTION).path(EXECUTION_ID).asString())
                 .isEqualTo(execution);
-        assertThat(jdbc.queryForObject(BINDING, String.class, execution)).isEqualTo(A);
+        assertThat(jdbc.queryForObject(BINDING, Integer.class, execution)).isZero();
         assertThat(jdbc.queryForObject(COUNT, Integer.class, session)).isEqualTo(1);
     }
 }

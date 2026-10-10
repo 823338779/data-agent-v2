@@ -9,6 +9,12 @@ package com.datagent.agentv2.git.model;
  * @param content CREATE/UPDATE 的完整 UTF-8 文本，空字符串表示空文件；DELETE 必须为 null
  */
 public record FileOperation(Type type, String path, String expectedSha256, String content) {
+    /** HTTP与工具均不得通过嵌套文件参数覆盖目标或执行选项。 */
+    @com.fasterxml.jackson.annotation.JsonAnySetter
+    public void rejectUnknown(String key, Object value) {
+        throw new IllegalArgumentException("文件操作包含未知字段");
+    }
+
     public enum Type {
         CREATE,
         UPDATE,

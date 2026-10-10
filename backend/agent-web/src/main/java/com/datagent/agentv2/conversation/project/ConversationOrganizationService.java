@@ -17,6 +17,9 @@ import org.springframework.web.server.ResponseStatusException;
 public class ConversationOrganizationService {
     private final ConversationProjectService projects;
     private final ConversationSessionService sessions;
+    private final com.datagent.agentv2.persistence.service.development
+                    .DevelopmentContextPersistenceService
+            development;
 
     @Transactional
     public ConversationSession setOrganization(
@@ -38,6 +41,10 @@ public class ConversationOrganizationService {
         if (session.getVersion() != expectedVersion) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT, "Conversation session version is stale");
+        }
+        var bound = development.session(sessionId);
+        if (bound != null && !Objects.equals(projectId, bound.getProjectId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "开发会话已固定项目，换项目请新建会话");
         }
         Instant targetPin =
                 pinned

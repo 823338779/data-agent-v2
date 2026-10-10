@@ -14,6 +14,16 @@ public record ContextPayloadReference(
         java.util.Map<String, String> observedFacts) {
     public static final java.util.Set<String> OBSERVED_FIELDS =
             java.util.Set.of(
+                    "operationId",
+                    "buildId",
+                    "optionsTaskId",
+                    "repository",
+                    "branchName",
+                    "pushedSha",
+                    "mergeSha",
+                    "buildStatus",
+                    "deploymentStatus",
+                    "phase",
                     "validationId",
                     "queryId",
                     "changeId",

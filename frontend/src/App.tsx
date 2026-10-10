@@ -23,8 +23,9 @@ import { ConversationStatus } from './components/ConversationStatus';
 import { RunStreamPanel } from './components/RunStreamPanel';
 import { PersonalMemoryPanel } from './components/memory/PersonalMemoryPanel';
 import { MessageComposer } from './components/MessageComposer';
-import { GitWorkspaceSelector } from './components/GitWorkspaceSelector';
-import type { GitWorkspaceClient } from './api/gitWorkspaceClient';
+import { DevelopmentContextBar } from './components/DevelopmentContextBar';
+import { DevelopmentSessionCreator } from './components/DevelopmentSessionCreator';
+import type { DevelopmentClient, DevelopmentSelection } from './api/developmentClient';
 import { CopyButton } from './components/CopyButton';
 import { parseAgentUiPlaceholders } from './components/ui-block/parseAgentUiPlaceholders';
 import { useConversationScroll } from './app/useConversationScroll';
@@ -34,7 +35,7 @@ import { ConversationSession, formatTimestamp, isProcessingStatus } from './doma
 interface AppProps {
   client?: AgentBackendClient;
   memoryClient?: MemoryClient;
-  gitWorkspaceClient?: GitWorkspaceClient;
+  developmentClient?: DevelopmentClient;
 }
 
 const narrowScreenQuery = '(max-width: 820px)';
@@ -57,7 +58,7 @@ function isCompletedStreamEvent(event: ConversationStreamEvent): boolean {
   return event.type === 'execution_update' && event.execution.status === 'done';
 }
 
-export default function App({ client, memoryClient, gitWorkspaceClient }: AppProps) {
+export default function App({ client, memoryClient, developmentClient }: AppProps) {
   const backend = useMemo(() => client ?? createFetchAgentBackendClient(), [client]);
   const memories = useMemo(() => memoryClient ?? createFetchMemoryClient(), [memoryClient]);
   const sidebar = useConversationSidebar(backend);
@@ -80,13 +81,8 @@ export default function App({ client, memoryClient, gitWorkspaceClient }: AppPro
   );
   // 草稿仅存于当前页面，按会话隔离；异步发送只能清理它自己的草稿。
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  // 页面默认选择按会话保存；执行受理后由后端固定，不回写既有执行或卡片。
-  const [workspaceSelections, setWorkspaceSelections] = useState<Record<string, string | null>>({});
-  const [workspaceUsability, setWorkspaceUsability] = useState<Record<string, boolean>>({});
   const draftKey = route.kind === 'session' ? route.conversationSessionId : 'home';
   const prompt = drafts[draftKey] ?? '';
-  const selectedWorkspaceId = workspaceSelections[draftKey] ?? null;
-  const workspaceUnavailable = Boolean(selectedWorkspaceId && !workspaceUsability[draftKey]);
   const setPrompt = (value: string) => setDrafts((current) => ({ ...current, [draftKey]: value }));
   const sendLocked = useRef(false);
   const loading = sidebar.loading;
@@ -302,18 +298,24 @@ export default function App({ client, memoryClient, gitWorkspaceClient }: AppPro
     }
   }
 
+  // 新分支创建新会话，既有会话从不接收客户端覆盖的开发目标。
+  async function createDevelopmentSession(development: DevelopmentSelection) {
+    const session = await backend.createSession('开发会话', '', development.projectId, development);
+    replaceSession(session);
+    navigateWorkspace({ kind: 'session', conversationSessionId: session.conversationSessionId });
+    await sidebar.refresh();
+  }
+
   async function sendPrompt() {
     if (
       sendLocked.current ||
       creating ||
       activeIsProcessing ||
-      workspaceUnavailable ||
       !prompt.trim() ||
       (route.kind === 'session' && !active)
     )
       return;
     const content = prompt.trim();
-    const workspaceId = selectedWorkspaceId;
     let target = active;
     let targetKey = draftKey;
     sendLocked.current = true;
@@ -337,9 +339,7 @@ export default function App({ client, memoryClient, gitWorkspaceClient }: AppPro
         if (!created.session) throw new Error('会话未创建');
         target = created.session;
       }
-      const session = workspaceId
-        ? await backend.submitMessage(target.conversationSessionId, content, workspaceId)
-        : await backend.submitMessage(target.conversationSessionId, content);
+      const session = await backend.submitMessage(target.conversationSessionId, content);
       // 先前启动的详情读取不能覆盖本次提交的最新快照。
       if (
         parseWorkspaceRoute().kind === 'session' &&
@@ -438,6 +438,10 @@ export default function App({ client, memoryClient, gitWorkspaceClient }: AppPro
               <PanelLeftClose size={17} />
             </button>
           </div>
+          <DevelopmentSessionCreator
+            client={developmentClient}
+            onCreate={createDevelopmentSession}
+          />
           <ConversationSidebar
             key={backend.getSidebarStorageKey()}
             snapshot={sidebarSnapshot}
@@ -587,18 +591,10 @@ export default function App({ client, memoryClient, gitWorkspaceClient }: AppPro
               回到最新
             </button>
           )}
-          <GitWorkspaceSelector
+          <DevelopmentContextBar
+            key={active.conversationSessionId}
             sessionId={active.conversationSessionId}
-            workspaceId={selectedWorkspaceId}
-            client={gitWorkspaceClient}
-            onChange={(workspaceId) =>
-              setWorkspaceSelections((current) => ({ ...current, [draftKey]: workspaceId }))
-            }
-            onUsableChange={(usable) =>
-              setWorkspaceUsability((current) =>
-                current[draftKey] === usable ? current : { ...current, [draftKey]: usable },
-              )
-            }
+            client={developmentClient}
           />
           <MessageComposer
             value={prompt}
@@ -606,7 +602,7 @@ export default function App({ client, memoryClient, gitWorkspaceClient }: AppPro
             onSend={() => void sendPrompt()}
             busy={sending}
             running={activeIsProcessing}
-            disabled={detailLoading || workspaceUnavailable}
+            disabled={detailLoading}
           />
         </section>
       )}

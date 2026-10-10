@@ -1,3 +1,4 @@
+import type { DevelopmentSelection } from './developmentClient';
 import {
   AgentExecution,
   AgentExecutionStatus,
@@ -197,6 +198,7 @@ export interface AgentBackendClient {
     title: string,
     tag: string,
     projectId?: string | null,
+    development?: DevelopmentSelection,
   ): Promise<ConversationSession>;
   getSession(conversationSessionId: string): Promise<ConversationSession>;
   renameSession(
@@ -204,11 +206,7 @@ export interface AgentBackendClient {
     title: string,
     expectedVersion: number,
   ): Promise<ConversationSession>;
-  submitMessage(
-    conversationSessionId: string,
-    content: string,
-    workspaceId?: string,
-  ): Promise<ConversationSession>;
+  submitMessage(conversationSessionId: string, content: string): Promise<ConversationSession>;
   cancelExecution(conversationSessionId: string, executionId: string): Promise<AgentExecution>;
   subscribeSessionEvents(
     conversationSessionId: string,
@@ -537,10 +535,10 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
     async listSessions() {
       return (await json<BackendSessionSummary[]>(await fetchResponse(''))).map(toSession);
     },
-    createSession(title, tag, projectId) {
+    createSession(title, tag, projectId, development) {
       return sessionRequest('', {
         method: 'POST',
-        body: JSON.stringify({ title, tag, projectId }),
+        body: JSON.stringify({ title, tag, projectId, development }),
       });
     },
     getSession(conversationSessionId) {
@@ -552,14 +550,14 @@ export function createFetchAgentBackendClient(options: ClientOptions = {}): Agen
         body: JSON.stringify({ title, expectedVersion }),
       });
     },
-    submitMessage(conversationSessionId, content, workspaceId) {
+    submitMessage(conversationSessionId, content) {
       const idempotencyKey = createIdempotencyKey();
       return sessionRequest(
         `/${encodeURIComponent(conversationSessionId)}/messages`,
         {
           method: 'POST',
           headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
-          body: JSON.stringify({ content, ...(workspaceId ? { workspaceId } : {}) }),
+          body: JSON.stringify({ content }),
         },
         true,
       );

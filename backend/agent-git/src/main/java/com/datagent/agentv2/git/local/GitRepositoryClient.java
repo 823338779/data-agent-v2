@@ -46,6 +46,264 @@ public final class GitRepositoryClient {
     private final GitProperties properties;
     private final GitCommandRunner runner;
 
+    /** 项目仓库由可信配置提供；限制参数仍复用部署配置。 */
+    public GitRepositoryClient forRepository(String repository) {
+        return new GitRepositoryClient(
+                new GitProperties(
+                        properties.executable(),
+                        repository,
+                        properties.workspaceRoot(),
+                        properties.commandTimeout(),
+                        properties.maxCommandOutputBytes(),
+                        properties.maxFileBytes(),
+                        properties.maxFilesPerOperation(),
+                        properties.maxCandidateFiles(),
+                        properties.maxCandidateBytes(),
+                        properties.maxDiffBytes()));
+    }
+
+    private static final String LS_REMOTE = "ls-remote";
+    private static final String HEADS = "--heads";
+    private static final String WORK_PREFIX = "development-";
+    private static final String MAIN = "main";
+    private static final String PARENT = "-p";
+    private static final String MESSAGE = "-m";
+    private static final String COMMIT_TREE = "commit-tree";
+    private static final String MERGE_MESSAGE = "Merge confirmed development branch";
+    private static final String REV_LIST = "rev-list";
+    private static final String PARENTS = "--parents";
+    private static final String ONE = "-1";
+    private static final String WHITESPACE = "\\s+";
+    private static final String NEWLINE = "\\R";
+    // 开发流程新增的Git命令与范围参数集中定义，避免命令拼装散落字面量。
+    private static final String CAT_FILE = "cat-file";
+    private static final String OBJECT_EXISTS = "-e";
+    private static final String DIFF = "diff";
+    private static final String NO_EXTERNAL_DIFF = "--no-ext-diff";
+    private static final String NO_COLOR = "--no-color";
+    private static final String FULL_INDEX = "--full-index";
+    private static final String MERGE_BASE_RANGE = "...";
+
+    public List<BranchInfo> listBranches(String repository) {
+        var client = forRepository(repository);
+        Path directory = client.workRoot();
+        String output =
+                client.runner
+                        .run(directory, List.of(LS_REMOTE, HEADS, END_OPTIONS, repository))
+                        .output();
+        return output.lines()
+                .filter(line -> !line.isBlank())
+                .map(
+                        line -> {
+                            String[] fields = line.split(WHITESPACE, 2);
+                            requireSha(fields[0]);
+                            return new BranchInfo(
+                                    fields[1].substring(HEADS_PREFIX.length()), fields[0]);
+                        })
+                .sorted(Comparator.comparing(BranchInfo::branchName))
+                .toList();
+    }
+
+    /** 创建要求目标不存在；空 lease 是缺失引用 CAS，不允许替换现有分支。 */
+    public BranchInfo createBranch(String repository, String branchName, String expectedMainSha) {
+        requireSha(expectedMainSha);
+        var client = forRepository(repository);
+        client.validateBranch(client.workRoot(), HEADS_PREFIX + branchName);
+        Path directory = client.newWorkspace();
+        try {
+            client.cloneRepository(directory, MAIN_REF, expectedMainSha);
+            client.runner.run(
+                    directory,
+                    List.of(
+                            PUSH,
+                            LEASE_PREFIX + HEADS_PREFIX + branchName + REF_SEPARATOR,
+                            ORIGIN,
+                            expectedMainSha + REF_SEPARATOR + HEADS_PREFIX + branchName));
+            return new BranchInfo(branchName, expectedMainSha);
+        } finally {
+            removeOwnedWorkspace(directory);
+        }
+    }
+
+    public PushEvidence verifyPush(String repository, String branchName, String candidateSha) {
+        requireSha(candidateSha);
+        var client = forRepository(repository);
+        Path directory = client.newWorkspace();
+        try {
+            client.cloneRepository(directory, HEADS_PREFIX + branchName, null);
+            String observed = client.fetchBranch(directory, HEADS_PREFIX + branchName);
+            // 候选尚未接收时，新clone没有该对象；这是未核实，不是对账命令故障。
+            var exists =
+                    client.runner.runAllowFailure(
+                            directory, List.of(CAT_FILE, OBJECT_EXISTS, candidateSha), Map.of());
+            if (exists.exitCode() != 0) return new PushEvidence(candidateSha, observed, false);
+            return new PushEvidence(
+                    candidateSha,
+                    observed,
+                    client.containsCommit(directory, HEADS_PREFIX + branchName, candidateSha));
+        } finally {
+            removeOwnedWorkspace(directory);
+        }
+    }
+
+    /** 生成双亲合并提交，不触碰远端；冲突或两端变化均要求新的确认。 */
+    public MergeCandidate prepareMerge(
+            String repository,
+            String branchName,
+            String expectedSourceSha,
+            String expectedMainSha) {
+        requireSha(expectedSourceSha);
+        requireSha(expectedMainSha);
+        var client = forRepository(repository);
+        Path directory = client.newWorkspace();
+        boolean retained = false;
+        try {
+            client.cloneRepository(directory, HEADS_PREFIX + branchName, expectedSourceSha);
+            if (!client.fetchMain(directory).equals(expectedMainSha)
+                    || !client.fetchBranch(directory, HEADS_PREFIX + branchName)
+                            .equals(expectedSourceSha)) {
+                throw new GitException("GIT_CONFIRMATION_STALE", "合并两端已变化，需要重新确认");
+            }
+            var merge =
+                    client.runner.runAllowFailure(
+                            directory,
+                            List.of(MERGE_TREE, WRITE_TREE, expectedMainSha, expectedSourceSha),
+                            Map.of());
+            if (merge.exitCode() != 0) throw new GitException("GIT_MERGE_CONFLICT", "共享分支无法自动合并");
+            String tree = merge.output().split(NEWLINE, 2)[0];
+            requireSha(tree);
+            Map<String, String> identity =
+                    Map.of(
+                            "GIT_AUTHOR_NAME",
+                            SYNC_AUTHOR,
+                            "GIT_AUTHOR_EMAIL",
+                            SYNC_EMAIL,
+                            "GIT_COMMITTER_NAME",
+                            SYNC_AUTHOR,
+                            "GIT_COMMITTER_EMAIL",
+                            SYNC_EMAIL);
+            String candidate =
+                    text(
+                            client.runner.run(
+                                    directory,
+                                    List.of(
+                                            COMMIT_TREE,
+                                            tree,
+                                            PARENT,
+                                            expectedMainSha,
+                                            PARENT,
+                                            expectedSourceSha,
+                                            MESSAGE,
+                                            MERGE_MESSAGE),
+                                    identity));
+            client.runner.run(directory, List.of(UPDATE_REF, HEAD, candidate));
+            retained = true;
+            return new MergeCandidate(
+                    repository,
+                    branchName,
+                    expectedSourceSha,
+                    expectedMainSha,
+                    candidate,
+                    directory);
+        } finally {
+            if (!retained) removeOwnedWorkspace(directory);
+        }
+    }
+
+    public MergeEvidence pushMerge(MergeCandidate candidate) {
+        var client = forRepository(candidate.repository());
+        if (!client.fetchBranch(candidate.workspace(), HEADS_PREFIX + candidate.branchName())
+                .equals(candidate.sourceSha())) {
+            throw new GitException("GIT_CONFIRMATION_STALE", "源分支已变化，需要重新确认");
+        }
+        client.pushCommit(
+                candidate.workspace(), MAIN_REF, candidate.mainSha(), candidate.candidateSha());
+        return verifyMerge(
+                candidate.repository(),
+                candidate.sourceSha(),
+                candidate.mainSha(),
+                candidate.candidateSha());
+    }
+
+    /** 整个共享分支相对 main 的内容差异，超限时拒绝确认而不是截断范围。 */
+    public BranchDiff describeBranch(String repository, String branchName) {
+        var client = forRepository(repository);
+        Path directory = client.newWorkspace();
+        try {
+            client.cloneRepository(directory, HEADS_PREFIX + branchName, null);
+            String source = client.head(directory), main = client.fetchMain(directory);
+            String diff =
+                    client.runner
+                            .run(
+                                    directory,
+                                    List.of(
+                                            DIFF,
+                                            NO_EXTERNAL_DIFF,
+                                            NO_COLOR,
+                                            FULL_INDEX,
+                                            main + MERGE_BASE_RANGE + source,
+                                            END_OPTIONS))
+                            .output();
+            if (diff.getBytes(StandardCharsets.UTF_8).length > properties.maxDiffBytes()) {
+                throw new GitException("GIT_LIMIT_EXCEEDED", "共享分支完整差异超过确认上限");
+            }
+            return new BranchDiff(source, main, diff);
+        } finally {
+            removeOwnedWorkspace(directory);
+        }
+    }
+
+    public MergeEvidence verifyMerge(
+            String repository,
+            String expectedSourceSha,
+            String expectedMainSha,
+            String candidateMergeSha) {
+        requireSha(expectedSourceSha);
+        requireSha(expectedMainSha);
+        requireSha(candidateMergeSha);
+        var client = forRepository(repository);
+        Path directory = client.newWorkspace();
+        try {
+            client.cloneRepository(directory);
+            String remote = client.head(directory);
+            if (!remote.equals(candidateMergeSha))
+                return new MergeEvidence(candidateMergeSha, remote, false);
+            String[] commits =
+                    text(client.runner.run(directory, List.of(REV_LIST, PARENTS, ONE, remote)))
+                            .split(WHITESPACE);
+            boolean verified =
+                    commits.length == 3
+                            && commits[1].equals(expectedMainSha)
+                            && commits[2].equals(expectedSourceSha);
+            return new MergeEvidence(candidateMergeSha, remote, verified);
+        } finally {
+            removeOwnedWorkspace(directory);
+        }
+    }
+
+    private Path workRoot() {
+        try {
+            return Files.createDirectories(properties.workspaceRoot());
+        } catch (java.io.IOException error) {
+            throw new GitException("GIT_WORKSPACE_INVALID", "不能创建 Git 工作目录", error);
+        }
+    }
+
+    private Path newWorkspace() {
+        return workRoot().resolve(WORK_PREFIX + UUID.randomUUID());
+    }
+
+    private static void removeOwnedWorkspace(Path directory) {
+        // 只清理本方法新生成且未交给调用方的目录，不接收外部路径。
+        if (!Files.exists(directory)) return;
+        try (var paths = Files.walk(directory)) {
+            for (Path path : paths.sorted(Comparator.reverseOrder()).toList())
+                Files.deleteIfExists(path);
+        } catch (java.io.IOException ignored) {
+            /* 清理失败不改变远端操作结果。 */
+        }
+    }
+
     public GitRepositoryClient(GitProperties properties) {
         this.properties = properties;
         this.runner = new GitCommandRunner(properties);

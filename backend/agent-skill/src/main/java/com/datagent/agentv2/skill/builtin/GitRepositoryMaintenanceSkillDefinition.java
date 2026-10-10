@@ -1,12 +1,12 @@
 package com.datagent.agentv2.skill.builtin;
 
-import com.datagent.agentv2.git.tool.*;
+import com.datagent.agentv2.development.tool.*;
 import com.datagent.agentv2.skill.SkillDefinition;
 import java.util.List;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-/** 仓库维护指令仅在 Git 能力启用时供给；用户确认始终保留在 HTTP 卡片按钮。 */
+/** 仓库维护指令仅在 Git 能力启用时供给；授权完整动作后由持久开发用例执行。 */
 @Component
 @ConditionalOnProperty(prefix = "data-agent.git", name = "enabled", havingValue = "true")
 public final class GitRepositoryMaintenanceSkillDefinition implements SkillDefinition {
@@ -17,18 +17,17 @@ public final class GitRepositoryMaintenanceSkillDefinition implements SkillDefin
 
     @Override
     public String description() {
-        return "维护指标 Git 仓库、修改文件并生成待用户确认的提交卡片时使用。";
+        return "维护受控Git工程、修改文件并保存到会话固定分支时使用。";
     }
 
     @Override
     public List<String> requiredTools() {
         return List.of(
-                GitWorkspacePrepareTool.TOOL_ID,
-                GitFilesListTool.TOOL_ID,
-                GitFilesSearchTool.TOOL_ID,
-                GitFileReadTool.TOOL_ID,
-                GitFilesApplyTool.TOOL_ID,
-                GitDiffTool.TOOL_ID,
-                GitChangePrepareTool.TOOL_ID);
+                DevelopmentFilesListTool.TOOL_ID,
+                DevelopmentFilesSearchTool.TOOL_ID,
+                DevelopmentFileReadTool.TOOL_ID,
+                DevelopmentFilesApplyTool.TOOL_ID,
+                DevelopmentDiffTool.TOOL_ID,
+                DevelopmentSaveTool.TOOL_ID);
     }
 }
