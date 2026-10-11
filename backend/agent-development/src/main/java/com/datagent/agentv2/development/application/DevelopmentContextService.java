@@ -29,6 +29,7 @@ public class DevelopmentContextService {
     @Transactional
     public DevelopmentConfig configure(
             String projectId, DevelopmentConfig request, long expectedVersion) {
+        request.requireSchemas();
         if (projects.lockByProjectId(projectId) == null)
             throw new DevelopmentException(NOT_FOUND, "项目不存在", 404);
         var row = new DevelopmentProjectEntity();

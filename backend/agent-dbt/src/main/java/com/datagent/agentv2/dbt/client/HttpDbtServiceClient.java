@@ -38,10 +38,9 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
             SOURCE = "/source",
             LINEAGE = "/lineage",
             NATIVE = "/native-details";
-    private static final String OPTIONS = "/query-options",
-            QUERIES = "/queries",
-            STATUS = "/status",
-            RESULTS = "/results";
+    private static final String OPTIONS = "/query/available-dimensions",
+            QUERY = "/query",
+            BUILD_ID = "build_id";
     private static final String AUTHORIZATION = "Authorization",
             BEARER = "Bearer ",
             SLASH = "/",
@@ -53,8 +52,7 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
             CURSOR = "cursor",
             LIMIT = "limit",
             Q = "q",
-            KIND = "kind",
-            OFFSET = "offset";
+            KIND = "kind";
     private static final String QUESTION = "?",
             AMP = "&",
             EQUALS = "=",
@@ -199,67 +197,28 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
     }
 
     @Override
-    public OptionsTaskView submitOptions(UUID id, OptionsRequest body) throws Exception {
-        OptionsTaskView result =
-                call(POST, BUILDS + SLASH + id + OPTIONS, body, OptionsTaskView.class);
+    public AvailableDimensionsView submitOptions(UUID id, AvailableDimensionsRequest body)
+            throws Exception {
+        AvailableDimensionsView result =
+                call(POST, OPTIONS + query(BUILD_ID, id), body, AvailableDimensionsView.class);
         same(id, result.buildId());
-        validTask(result.optionsTaskId(), result.buildId(), result.state());
+        if (result.metricResourceIds() == null || result.dimensions() == null)
+            throw protocolError();
         return result;
     }
 
     @Override
-    public OptionsTaskView getOptions(UUID id) throws Exception {
-        OptionsTaskView result = call(GET, OPTIONS + SLASH + id, null, OptionsTaskView.class);
-        same(id, result.optionsTaskId());
-        validTask(result.optionsTaskId(), result.buildId(), result.state());
-        return result;
-    }
-
-    @Override
-    public QueryView submitQuery(UUID id, QueryRequest body) throws Exception {
-        QueryView result = call(POST, BUILDS + SLASH + id + QUERIES, body, QueryView.class);
+    public QueryResult submitQuery(UUID id, QueryRequest body) throws Exception {
+        QueryResult result = call(POST, QUERY + query(BUILD_ID, id), body, QueryResult.class);
         same(id, result.buildId());
-        validTask(result.queryId(), result.buildId(), result.state());
-        return result;
-    }
-
-    @Override
-    public QueryView queryStatus(UUID id) throws Exception {
-        QueryView result = call(GET, QUERIES + SLASH + id + STATUS, null, QueryView.class);
-        same(id, result.queryId());
-        validTask(result.queryId(), result.buildId(), result.state());
-        return result;
-    }
-
-    @Override
-    public ResultPage queryResults(UUID id, int offset, int limit) throws Exception {
-        pageLimit(limit);
-        if (offset < 0) throw new IllegalArgumentException("结果偏移不能为负数");
-        ResultPage result =
-                call(
-                        GET,
-                        QUERIES + SLASH + id + RESULTS + query(OFFSET, offset, LIMIT, limit),
-                        null,
-                        ResultPage.class);
-        same(id, result.queryId());
-        validTask(result.queryId(), result.buildId(), result.state());
-        if (result.offset() != offset
-                || result.rows() == null
-                || result.returnedRows() != result.rows().size()
-                || result.returnedRows() > limit
-                || result.nextOffset() != null
-                        && result.nextOffset() != offset + result.returnedRows())
+        // 同步响应没有任务身份和分页；校验固定构建、模式与完整结果结构。
+        if (result.mode() != body.mode() || result.columns() == null || result.rows() == null)
             throw protocolError();
         return result;
     }
 
     private static void same(Object expected, Object actual) throws ToolBusinessException {
         if (expected == null || !expected.equals(actual)) throw protocolError();
-    }
-
-    private static void validTask(UUID id, UUID build, BuildStatus state)
-            throws ToolBusinessException {
-        if (id == null || build == null || state == null) throw protocolError();
     }
 
     private static void pageLimit(int limit) {
@@ -364,10 +323,10 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
                             });
             return pending.get(properties.requestTimeout().toNanos(), TimeUnit.NANOSECONDS);
         } catch (TimeoutException timeout) {
-            throw new ToolBusinessException("DBT_TIMEOUT", "dbt-service 请求超时，重试须使用原任务身份");
+            throw new ToolBusinessException("DBT_TIMEOUT", "dbt-service 请求超时；构建重试保留幂等键，查询重试会重新执行");
         } catch (ExecutionException failure) {
             if (failure.getCause() instanceof ToolBusinessException business) throw business;
-            throw new ToolBusinessException(UNAVAILABLE, "dbt-service 暂不可用，保留原任务身份后重试");
+            throw new ToolBusinessException(UNAVAILABLE, "dbt-service 暂不可用；构建重试保留幂等键，查询重试会重新执行");
         } finally {
             request.cancel();
             if (pending != null) pending.cancel(true);

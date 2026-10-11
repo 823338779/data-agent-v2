@@ -30,6 +30,8 @@ import tools.jackson.databind.ObjectMapper;
         classes = SourceSaveIntegrationTest.Config.class,
         properties = "data-agent.context.strategy=none")
 class SourceSaveIntegrationTest {
+    static final String PREVIEW_SCHEMA = "preview_metrics",
+            PRODUCTION_SCHEMA = "production_metrics";
     static final PostgreSQLContainer DB = new PostgreSQLContainer("postgres:17-alpine");
 
     static {
@@ -102,7 +104,16 @@ class SourceSaveIntegrationTest {
         git = new GitRepositoryClient(properties);
         git.createBranch(repository, "feature/shared", base);
         project = UUID.randomUUID().toString();
-        var config = new DevelopmentConfig(repository, "preview", "1", "production", "1", 1);
+        var config =
+                new DevelopmentConfig(
+                        repository,
+                        "preview",
+                        "1",
+                        PREVIEW_SCHEMA,
+                        "production",
+                        "1",
+                        PRODUCTION_SCHEMA,
+                        1);
         var row = new DevelopmentProjectEntity();
         row.setProjectId(project);
         row.setRepository(repository);
@@ -126,7 +137,16 @@ class SourceSaveIntegrationTest {
 
     String session() {
         String id = UUID.randomUUID().toString();
-        var config = new DevelopmentConfig(repository, "preview", "1", "production", "1", 1);
+        var config =
+                new DevelopmentConfig(
+                        repository,
+                        "preview",
+                        "1",
+                        PREVIEW_SCHEMA,
+                        "production",
+                        "1",
+                        PRODUCTION_SCHEMA,
+                        1);
         var c = new DevelopmentContext(id, project, repository, "feature/shared", base, config);
         when(context.get(id)).thenReturn(c);
         when(context.forNewOperation(id)).thenReturn(c);

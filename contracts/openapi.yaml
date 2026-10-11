@@ -690,10 +690,18 @@ components:
           type: string
         previewConfigVersion:
           type: string
+        previewSchemaName:
+          type: [string, 'null']
+          pattern: '^[a-z][a-z0-9_]{0,255}$'
+          description: 预览构建目标 schema；旧配置未补全时为 null，不能启动新构建。
         productionBinding:
           type: string
         productionConfigVersion:
           type: string
+        productionSchemaName:
+          type: [string, 'null']
+          pattern: '^[a-z][a-z0-9_]{0,255}$'
+          description: 正式构建目标 schema；旧配置未补全时为 null，不能启动新构建。
         version:
           type: integer
           format: int64
@@ -705,8 +713,10 @@ components:
       - repository
       - previewBinding
       - previewConfigVersion
+      - previewSchemaName
       - productionBinding
       - productionConfigVersion
+      - productionSchemaName
       - expectedVersion
       properties:
         repository:
@@ -715,10 +725,18 @@ components:
           type: string
         previewConfigVersion:
           type: string
+        previewSchemaName:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,255}$'
+          description: 用户显式指定的预览构建目标 schema。
         productionBinding:
           type: string
         productionConfigVersion:
           type: string
+        productionSchemaName:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,255}$'
+          description: 用户显式指定的正式构建目标 schema。
         expectedVersion:
           type: integer
           format: int64

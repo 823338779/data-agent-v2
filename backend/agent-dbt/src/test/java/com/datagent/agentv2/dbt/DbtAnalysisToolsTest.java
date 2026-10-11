@@ -16,7 +16,7 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-/** v3分析迁移仍保障固定身份、时间语义、稳定重试键与有界完整行。 */
+/** v3分析迁移仍保障固定身份、时间语义、无状态查询与有界完整结果。 */
 class DbtAnalysisToolsTest {
     private final DbtServiceClient client = mock(DbtServiceClient.class);
     private final BuildContextResolver builds = mock(BuildContextResolver.class);
@@ -26,7 +26,34 @@ class DbtAnalysisToolsTest {
 
     private DbtAnalysisTool tool(DbtAnalysisTool.Kind kind) throws Exception {
         when(builds.resolve("session", "execution")).thenReturn(BUILD);
-        return new DbtAnalysisTool(kind, client, JSON, builds, sessions);
+        return new DbtAnalysisTool(
+                kind, client, JSON, builds, sessions, java.time.Duration.ofSeconds(1860));
+    }
+
+    @Test
+    void optionsRejectPollingAndRequireMetrics() throws Exception {
+        var options = tool(DbtAnalysisTool.Kind.OPTIONS);
+        for (var args :
+                List.of(
+                        JSON.readTree("{}"),
+                        JSON.createObjectNode().put("optionsTaskId", BUILD.toString()))) {
+            assertThatThrownBy(() -> options.execute(args, context))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void toolBudgetExceedsConfiguredSynchronousRequestBudget() throws Exception {
+        var properties =
+                new com.datagent.agentv2.dbt.config.DbtProperties(
+                        true,
+                        java.net.URI.create("http://127.0.0.1:8000"),
+                        java.time.Duration.ofSeconds(5),
+                        java.time.Duration.ofSeconds(1860),
+                        null);
+        assertThat(tool(DbtAnalysisTool.Kind.SUBMIT).timeout())
+                .isEqualTo(properties.requestTimeout().plusSeconds(15));
     }
 
     @Test
@@ -45,74 +72,61 @@ class DbtAnalysisToolsTest {
         when(client.catalog(eq(BUILD), any()))
                 .thenReturn(JSON.treeToValue(fixture("catalog"), CatalogPage.class));
         when(client.submitOptions(eq(BUILD), any()))
-                .thenReturn(JSON.treeToValue(fixture("options-queued"), OptionsTaskView.class));
-        when(client.getOptions(BUILD))
-                .thenReturn(JSON.treeToValue(fixture("options-queued"), OptionsTaskView.class));
+                .thenReturn(
+                        JSON.treeToValue(
+                                fixture("available-dimensions-result"),
+                                AvailableDimensionsView.class));
         when(client.submitQuery(eq(BUILD), any()))
-                .thenReturn(JSON.treeToValue(fixture("query-status"), QueryView.class));
-        when(client.queryStatus(BUILD))
-                .thenReturn(JSON.treeToValue(fixture("query-status"), QueryView.class));
-        when(client.queryResults(BUILD, 0, 100))
-                .thenReturn(JSON.treeToValue(fixture("precision-result"), ResultPage.class));
+                .thenReturn(JSON.treeToValue(fixture("precision-result"), QueryResult.class));
         tool(DbtAnalysisTool.Kind.CATALOG).execute(JSON.readTree("{}"), context);
         tool(DbtAnalysisTool.Kind.OPTIONS)
                 .execute(JSON.readTree("{\"metricResourceIds\":[\"metric.revenue\"]}"), context);
-        tool(DbtAnalysisTool.Kind.OPTIONS)
-                .execute(JSON.readTree("{\"optionsTaskId\":\"" + BUILD + "\"}"), context);
-        tool(DbtAnalysisTool.Kind.SUBMIT)
-                .execute(
-                        JSON.readTree(
-                                "{\"mode\":\"QUERY\",\"metricResourceIds\":[\"metric.revenue\"]}"),
-                        context);
         var result =
-                tool(DbtAnalysisTool.Kind.GET)
-                        .execute(JSON.readTree("{\"queryId\":\"" + BUILD + "\"}"), context);
+                tool(DbtAnalysisTool.Kind.SUBMIT)
+                        .execute(
+                                JSON.readTree(
+                                        "{\"mode\":\"QUERY\",\"metricResourceIds\":[\"metric.revenue\"]}"),
+                                context);
         assertThat(result.path("buildId").asString()).isEqualTo(BUILD.toString());
-        verify(builds, times(5)).resolve("session", "execution");
+        verify(builds, times(3)).resolve("session", "execution");
         verify(client, never()).currentDeployment(any());
     }
 
     @Test
-    void largeRequestedPageIsCappedWithoutSkippingTheServerCursor() throws Exception {
-        when(client.queryStatus(BUILD))
-                .thenReturn(JSON.treeToValue(fixture("query-status"), QueryView.class));
-        when(client.queryResults(BUILD, 0, 200))
-                .thenReturn(JSON.treeToValue(fixture("precision-result"), ResultPage.class));
-        var result =
-                tool(DbtAnalysisTool.Kind.GET)
-                        .execute(
-                                JSON.readTree("{\"queryId\":\"" + BUILD + "\",\"limit\":10000}"),
-                                context);
-        verify(client).queryResults(BUILD, 0, 200);
-        assertThat(result.path("returnedRows").asInt()).isEqualTo(1);
-        assertThat(result.path("nextOffset").isNull()).isTrue();
-    }
-
-    @Test
-    void pollingRejectsTaskFromDifferentBuildBeforeFetchingResults() throws Exception {
-        var node = fixture("query-status").deepCopy();
-        ((tools.jackson.databind.node.ObjectNode) node)
-                .put("buildId", UUID.randomUUID().toString());
-        when(client.queryStatus(BUILD)).thenReturn(JSON.treeToValue(node, QueryView.class));
+    void synchronousQueryRejectsDifferentBuild() throws Exception {
+        var node = (tools.jackson.databind.node.ObjectNode) fixture("precision-result").deepCopy();
+        node.put("buildId", UUID.randomUUID().toString());
+        when(client.submitQuery(eq(BUILD), any()))
+                .thenReturn(JSON.treeToValue(node, QueryResult.class));
         assertCode(
                 () ->
-                        tool(DbtAnalysisTool.Kind.GET)
-                                .execute(JSON.readTree("{\"queryId\":\"" + BUILD + "\"}"), context),
+                        tool(DbtAnalysisTool.Kind.SUBMIT)
+                                .execute(JSON.readTree("{\"mode\":\"QUERY\"}"), context),
                 "DBT_PROTOCOL_INVALID");
-        verify(client, never()).queryResults(any(), anyInt(), anyInt());
     }
 
     @Test
-    void optionsPollingRejectsAnotherBuild() throws Exception {
-        var node = fixture("options-queued").deepCopy();
+    void thousandSmallRowsAreReturnedWithoutLegacyPageLimit() throws Exception {
+        var value = JSON.createObjectNode();
+        var rows = value.putArray("rows");
+        for (int i = 0; i < 1000; i++) rows.addArray().add(i);
+        assertThat(DbtToolOutput.bounded(value, JSON)).isEqualTo(value);
+        assertThat(value.path("rows").size()).isEqualTo(1000);
+    }
+
+    @Test
+    void synchronousOptionsRejectAnotherBuild() throws Exception {
+        var node = fixture("available-dimensions-result").deepCopy();
         ((tools.jackson.databind.node.ObjectNode) node)
                 .put("buildId", UUID.randomUUID().toString());
-        when(client.getOptions(BUILD)).thenReturn(JSON.treeToValue(node, OptionsTaskView.class));
+        when(client.submitOptions(eq(BUILD), any()))
+                .thenReturn(JSON.treeToValue(node, AvailableDimensionsView.class));
         assertCode(
                 () ->
                         tool(DbtAnalysisTool.Kind.OPTIONS)
                                 .execute(
-                                        JSON.readTree("{\"optionsTaskId\":\"" + BUILD + "\"}"),
+                                        JSON.readTree(
+                                                "{\"metricResourceIds\":[\"metric.revenue\"]}"),
                                         context),
                 "DBT_PROTOCOL_INVALID");
     }
@@ -146,9 +160,9 @@ class DbtAnalysisToolsTest {
     }
 
     @Test
-    void submitPreservesTimeInputAndStableKeyOnRetry() throws Exception {
+    void submitPreservesTimeInputWithoutAddingServiceIdempotencyKey() throws Exception {
         when(client.submitQuery(eq(BUILD), any()))
-                .thenReturn(JSON.treeToValue(fixture("query-status"), QueryView.class));
+                .thenReturn(JSON.treeToValue(fixture("precision-result"), QueryResult.class));
         var args =
                 JSON.readTree(
                         "{\"mode\":\"QUERY\",\"metricResourceIds\":[\"metric.revenue\"],\"startTime\":\"2026-10-01T00:00:00\",\"endTime\":\"2026-10-02T08:00:00+08:00\"}");
@@ -164,21 +178,22 @@ class DbtAnalysisToolsTest {
         assertThat(captor.getAllValues().getLast()).isEqualTo(first);
         assertThat(first.startTime()).isEqualTo("2026-10-01T00:00:00");
         assertThat(first.endTime()).isEqualTo("2026-10-02T08:00:00+08:00");
+        assertThat(JSON.valueToTree(first).propertyNames())
+                .doesNotContain("idempotencyKey", "offset");
     }
 
     @Test
-    void stableKeyIgnoresJsonPropertyOrderAndDefaultArrays() throws Exception {
-        var one = JSON.readTree("{\"mode\":\"QUERY\",\"metricResourceIds\":[\"b\",\"a\"]}");
-        var two =
-                JSON.readTree(
-                        "{\"metricResourceIds\":[\"a\",\"b\"],\"mode\":\"QUERY\",\"limit\":1000,\"filters\":[],\"groupBy\":[],\"orderBy\":[]}");
-        assertThat(DbtAnalysisTool.queryKey("execution", one, JSON))
-                .isEqualTo(DbtAnalysisTool.queryKey("execution", two, JSON))
-                .isNotEqualTo(DbtAnalysisTool.queryKey("another", one, JSON));
+    void modelCannotSendRemovedQueryParameters() throws Exception {
+        for (String field : List.of("idempotencyKey", "offset", "queryId")) {
+            var args = JSON.createObjectNode().put("mode", "QUERY").put(field, "removed");
+            assertThatThrownBy(() -> tool(DbtAnalysisTool.Kind.SUBMIT).execute(args, context))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        verifyNoInteractions(client);
     }
 
     @Test
-    void localCroppingNeverSkipsRows() throws Exception {
+    void oversizedStatelessResultFailsWithoutDroppingRows() throws Exception {
         var value =
                 JSON.createObjectNode()
                         .put("offset", 37)
@@ -186,11 +201,8 @@ class DbtAnalysisToolsTest {
                         .put("returnedRows", 300);
         var rows = value.putArray("rows");
         for (int i = 0; i < 300; i++) rows.addArray().add(i).add("x".repeat(100));
-        var result = DbtToolOutput.bounded(value, JSON);
-        assertThat(result.path("rows").size()).isLessThanOrEqualTo(200);
-        assertThat(result.path("nextOffset").asInt()).isEqualTo(37 + result.path("rows").size());
-        assertThat(result.path("returnedRows").asInt()).isEqualTo(result.path("rows").size());
-        assertThat(result.path("localTruncated").asBoolean()).isTrue();
+        assertCode(() -> DbtToolOutput.bounded(value, JSON), "DBT_OUTPUT_TOO_LARGE");
+        assertThat(value.path("rows").size()).isEqualTo(300);
     }
 
     @Test

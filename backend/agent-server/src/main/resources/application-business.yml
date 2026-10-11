@@ -51,7 +51,7 @@ data-agent:
       timeout: ${DATA_AGENT_MODEL_CODEX_TIMEOUT:5m}
       working-directory: ${DATA_AGENT_MODEL_CODEX_WORKING_DIRECTORY:}
   execution:
-    deadline: ${DATA_AGENT_EXECUTION_DEADLINE:10m}
+    deadline: ${DATA_AGENT_EXECUTION_DEADLINE:35m}
   react:
     limits:
       # dbt 建模与分析包含能力加载、文件分页和异步任务轮询；12 轮可能在生成卡片后阻断最终回答。
@@ -81,4 +81,4 @@ data-agent:
     # 仅向对应 dbt-service 发送的凭据，不进入模型上下文。
     service-token: ${DATA_AGENT_DBT_SERVICE_TOKEN:}
     connect-timeout: ${DATA_AGENT_DBT_CONNECT_TIMEOUT:5s}
-    request-timeout: ${DATA_AGENT_DBT_REQUEST_TIMEOUT:20s}
+    request-timeout: ${DATA_AGENT_DBT_REQUEST_TIMEOUT:1860s}

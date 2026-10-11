@@ -35,7 +35,6 @@ public final class HierarchicalStepProjection {
             Set.of(
                     "operationId",
                     "buildId",
-                    "optionsTaskId",
                     "repository",
                     "branchName",
                     "pushedSha",

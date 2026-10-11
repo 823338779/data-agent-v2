@@ -10,8 +10,12 @@ export interface DevelopmentConfig {
   repository: string;
   previewBinding: string;
   previewConfigVersion: string;
+  /** 预览目标 schema；升级前的旧配置尚未填写时为 null。 */
+  previewSchemaName: string | null;
   productionBinding: string;
   productionConfigVersion: string;
+  /** 正式目标 schema；升级前的旧配置尚未填写时为 null。 */
+  productionSchemaName: string | null;
   /** 配置乐观锁版本。 */
   version: number;
 }

@@ -44,7 +44,7 @@ class DbtServiceContractIntegrationTest {
 
     @Test
     void timeAndDecimalStringsRemainOpaque() throws Exception {
-        ResultPage result = JSON.treeToValue(fixture("precision-result"), ResultPage.class);
+        QueryResult result = JSON.treeToValue(fixture("precision-result"), QueryResult.class);
         assertThat(result.rows().getFirst().getFirst().asString())
                 .isEqualTo("12345678901234567890.123456789");
         assertThat(result.rows().getFirst().get(1).isNull()).isTrue();

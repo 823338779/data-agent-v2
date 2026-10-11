@@ -30,7 +30,8 @@ class DbtSkillTest {
         assertThat(catalog.bundlesInOrder()).hasSize(count);
         if (dbt)
             assertThat(catalog.require("dbt-data-analysis").descriptor().requiredTools())
-                    .hasSize(6);
+                    .hasSize(5)
+                    .doesNotContain("dbt_query_get");
         if (dbt && git)
             assertThat(catalog.require("dbt-yaml-maintenance").descriptor().requiredTools())
                     .hasSize(9)

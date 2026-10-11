@@ -95,6 +95,7 @@ class DeliveryIntegrationTest extends PreviewBuildIntegrationTest {
         verify(client).submitBuild(captured.capture());
         assertThat(captured.getValue().commitSha()).isEqualTo(candidate);
         assertThat(captured.getValue().environment()).isEqualTo(Environment.PRODUCTION);
+        assertThat(captured.getValue().schemaName()).isEqualTo(PRODUCTION_SCHEMA);
         assertThat(captured.getValue().branchName()).isEqualTo("main");
     }
 

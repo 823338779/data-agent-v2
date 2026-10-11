@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /** 本地真实HTTP验证v3路由、凭据、边界及无隐式重试。 */
 class DbtServiceClientTest {
@@ -63,6 +64,30 @@ class DbtServiceClientTest {
     }
 
     @Test
+    void queryUsesCurrentStatelessWireContract() throws Exception {
+        var path = new AtomicReference<String>();
+        var body = new AtomicReference<String>();
+        var server =
+                server(
+                        exchange -> {
+                            path.set(exchange.getRequestURI().toString());
+                            body.set(
+                                    new String(
+                                            exchange.getRequestBody().readAllBytes(),
+                                            StandardCharsets.UTF_8));
+                            response(exchange, 200, fixture("precision-result").toString());
+                        });
+        try (var client = client(server, Duration.ofSeconds(2), "secret")) {
+            client.submitQuery(BUILD, JSON.treeToValue(fixture("query"), QueryRequest.class));
+            assertThat(path.get()).isEqualTo("/v3/query?build_id=" + BUILD);
+            assertThat(JSON.readTree(body.get()).propertyNames())
+                    .doesNotContain("idempotencyKey", "offset");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void buildRetryKeepsKeyAndOrigin() throws Exception {
         List<String> bodies = Collections.synchronizedList(new ArrayList<>());
         AtomicInteger accepted = new AtomicInteger();
@@ -89,6 +114,7 @@ class DbtServiceClientTest {
                             request.environment(),
                             request.executionBinding(),
                             request.configVersion(),
+                            request.schemaName(),
                             request.deploymentPolicy(),
                             request.idempotencyKey(),
                             new Origin("session", "operation"));
@@ -99,12 +125,106 @@ class DbtServiceClientTest {
             assertThat(client.submitBuild(fixed).buildId()).isEqualTo(BUILD);
             assertThat(bodies).hasSize(2);
             assertThat(bodies.get(0)).isEqualTo(bodies.get(1));
+            assertThat(JSON.readTree(bodies.getFirst()).path("schemaName").asString())
+                    .isEqualTo("analytics");
             assertThat(
                             JSON.readTree(bodies.getFirst())
                                     .path("origin")
                                     .path("operationId")
                                     .asString())
                     .isEqualTo("operation");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"query", "explain", "preview", "dimension_values"})
+    void synchronousQueryReturnsRowsInThePostResponse(String example) throws Exception {
+        var request = JSON.treeToValue(fixture(example), QueryRequest.class);
+        var page = (tools.jackson.databind.node.ObjectNode) fixture("precision-result").deepCopy();
+        page.put("mode", request.mode().name());
+        var wireBody = new AtomicReference<String>();
+        var wirePath = new AtomicReference<String>();
+        var server =
+                server(
+                        exchange -> {
+                            wirePath.set(exchange.getRequestURI().toString());
+                            wireBody.set(
+                                    new String(
+                                            exchange.getRequestBody().readAllBytes(),
+                                            StandardCharsets.UTF_8));
+                            response(exchange, 200, page.toString());
+                        });
+        try (var client = client(server, Duration.ofSeconds(2), "secret")) {
+            var result = JSON.valueToTree(client.submitQuery(BUILD, request));
+            assertThat(result.path("rows").size()).isEqualTo(1);
+            assertThat(result.path("mode").asString()).isEqualTo(request.mode().name());
+            assertThat(result.path("rows").get(0).get(0).asString())
+                    .isEqualTo("12345678901234567890.123456789");
+            assertThat(wirePath.get()).isEqualTo("/v3/query?build_id=" + BUILD);
+            assertThat(JSON.readTree(wireBody.get())).isEqualTo(fixture(example));
+            assertThat(result.propertyNames()).doesNotContain("queryId", "state", "nextOffset");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void synchronousOptionsOnlySendMetricsAndReturnOptions() throws Exception {
+        var body = new AtomicReference<String>();
+        var server =
+                server(
+                        exchange -> {
+                            body.set(
+                                    new String(
+                                            exchange.getRequestBody().readAllBytes(),
+                                            StandardCharsets.UTF_8));
+                            response(
+                                    exchange,
+                                    200,
+                                    fixture("available-dimensions-result").toString());
+                        });
+        try (var client = client(server, Duration.ofSeconds(2), "secret")) {
+            var options =
+                    client.submitOptions(
+                            BUILD, new AvailableDimensionsRequest(List.of("metric.revenue")));
+            assertThat(options.buildId()).isEqualTo(BUILD);
+            assertThat(options.dimensions()).isNotNull();
+            assertThat(JSON.readTree(body.get()).propertyNames())
+                    .containsExactly("metricResourceIds");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void synchronousQueryFailurePreservesStructuredErrorCode() throws Exception {
+        var server = server(exchange -> response(exchange, 422, fixture("422").toString()));
+        try (var client = client(server, Duration.ofSeconds(2), "secret")) {
+            assertCode(
+                    () ->
+                            client.submitQuery(
+                                    BUILD, JSON.treeToValue(fixture("query"), QueryRequest.class)),
+                    fixture("422").path("code").asString());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void synchronousQueryRejectsAcceptedTaskWithoutQueryResult() throws Exception {
+        // 模拟已退出的任务受理响应：即使状态成功，缺失结果页也不能作为同步成功返回。
+        var incomplete =
+                (tools.jackson.databind.node.ObjectNode) fixture("query-result").deepCopy();
+        incomplete.remove("rows");
+        var server = server(exchange -> response(exchange, 202, incomplete.toString()));
+        try (var client = client(server, Duration.ofSeconds(2), "secret")) {
+            assertCode(
+                    () ->
+                            client.submitQuery(
+                                    BUILD, JSON.treeToValue(fixture("query"), QueryRequest.class)),
+                    "DBT_PROTOCOL_INVALID");
         } finally {
             server.stop(0);
         }
@@ -117,26 +237,32 @@ class DbtServiceClientTest {
         var server =
                 server(
                         exchange -> {
-                            paths.add(exchange.getRequestURI().getPath());
+                            paths.add(exchange.getRequestURI().toString());
                             credentials.add(exchange.getRequestHeaders().getFirst("Authorization"));
                             String example =
-                                    paths.getLast().endsWith("query-options")
-                                            ? "options-queued"
-                                            : paths.getLast().endsWith("queries")
-                                                    ? "query-status"
+                                    paths.getLast().startsWith("/v3/query/available-dimensions?")
+                                            ? "available-dimensions-result"
+                                            : paths.getLast().startsWith("/v3/query?")
+                                                    ? "precision-result"
                                                     : "failed-build";
-                            response(exchange, 202, fixture(example).toString());
+                            response(
+                                    exchange,
+                                    example.equals("failed-build") ? 202 : 200,
+                                    fixture(example).toString());
                         });
         try (var client = client(server, Duration.ofSeconds(2), "secret")) {
             client.submitBuild(JSON.treeToValue(fixture("build"), BuildRequest.class));
             client.submitOptions(
-                    BUILD, JSON.treeToValue(fixture("options-request"), OptionsRequest.class));
+                    BUILD,
+                    JSON.treeToValue(
+                            fixture("available-dimensions-request"),
+                            AvailableDimensionsRequest.class));
             client.submitQuery(BUILD, JSON.treeToValue(fixture("query"), QueryRequest.class));
             assertThat(paths)
                     .containsExactly(
                             "/v3/builds",
-                            "/v3/builds/" + BUILD + "/query-options",
-                            "/v3/builds/" + BUILD + "/queries");
+                            "/v3/query/available-dimensions?build_id=" + BUILD,
+                            "/v3/query?build_id=" + BUILD);
             assertThat(credentials)
                     .containsExactly("Bearer secret", "Bearer secret", "Bearer secret");
         } finally {
@@ -154,7 +280,8 @@ class DbtServiceClientTest {
                             client.submitOptions(
                                     BUILD,
                                     JSON.treeToValue(
-                                            fixture("options-request"), OptionsRequest.class)),
+                                            fixture("available-dimensions-request"),
+                                            AvailableDimensionsRequest.class)),
                     "DBT_SERVICE_NOT_CONFIGURED");
             assertThat(calls).hasValue(0);
         } finally {
@@ -174,7 +301,7 @@ class DbtServiceClientTest {
         var server =
                 server(
                         exchange -> {
-                            paths.add(exchange.getRequestURI().getPath());
+                            paths.add(exchange.getRequestURI().toString());
                             response(
                                     exchange,
                                     status,
@@ -279,17 +406,9 @@ class DbtServiceClientTest {
                                                                                             "/results")
                                                                                     ? "precision-result"
                                                                                     : path.endsWith(
-                                                                                                    "/status")
-                                                                                            ? "query-status"
-                                                                                            : path
-                                                                                                            .contains(
-                                                                                                                    "/query-options/")
-                                                                                                    ? "options-queued"
-                                                                                                    : path
-                                                                                                                    .endsWith(
-                                                                                                                            "/current")
-                                                                                                            ? "empty-target"
-                                                                                                            : "waiting-intent";
+                                                                                                    "/current")
+                                                                                            ? "empty-target"
+                                                                                            : "waiting-intent";
                             response(
                                     exchange,
                                     200,
@@ -319,10 +438,6 @@ class DbtServiceClientTest {
             client.resourceSource(BUILD, "metric.revenue");
             client.resourceLineage(BUILD, "metric.revenue");
             client.resourceNative(BUILD, "metric.revenue");
-            client.getOptions(BUILD);
-            client.queryStatus(BUILD);
-            assertThat(client.queryResults(BUILD, 0, 100).rows().getFirst().getFirst().asString())
-                    .isEqualTo("12345678901234567890.123456789");
             assertThat(paths)
                     .anyMatch(path -> path.contains("branchName=feature%2Frevenue"))
                     .anyMatch(path -> path.contains("cursor=next%2Btoken"));

@@ -15,8 +15,10 @@ const overview: DevelopmentOverview = {
       repository: 'repo',
       previewBinding: 'dev',
       previewConfigVersion: 'dev-v1',
+      previewSchemaName: 'preview_metrics',
       productionBinding: 'prod',
       productionConfigVersion: 'prod-v2',
+      productionSchemaName: 'production_metrics',
       version: 2,
     },
   },
@@ -69,6 +71,8 @@ describe('固定会话开发上下文', () => {
     fireEvent.click(await screen.findByRole('button', { name: '合并并发布' }));
     expect(await screen.findByText(/other session change/)).toBeInTheDocument();
     expect(screen.getByText('prod-v2')).toBeInTheDocument();
+    expect(screen.getByText('preview_metrics')).toBeInTheDocument();
+    expect(screen.getByText('production_metrics')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '确认完整范围并发布' })).toBeDisabled();
     fireEvent.click(screen.getByRole('checkbox'));
     fireEvent.click(screen.getByRole('button', { name: '确认完整范围并发布' }));

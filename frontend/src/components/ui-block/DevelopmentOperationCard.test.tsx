@@ -19,6 +19,22 @@ const saved: DevelopmentOperation = {
   error: null,
 };
 describe('持久开发操作卡片', () => {
+  it('缺少 schema 的旧操作提示补全配置并且不提供原操作恢复', async () => {
+    const api = {
+      operation: vi.fn().mockResolvedValue({
+        ...saved,
+        status: 'FAILED',
+        error: {
+          code: 'DEVELOPMENT_SCHEMA_REQUIRED',
+          message: '请补全项目开发配置后发起新操作',
+          retryable: false,
+        },
+      }),
+    } as unknown as DevelopmentClient;
+    render(<DevelopmentOperationCard sessionId="s1" operationId="op1" client={api} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('请补全项目开发配置后发起新操作');
+    expect(screen.queryByRole('button', { name: '核对并恢复' })).not.toBeInTheDocument();
+  });
   it('saveIsNotDeploymentSuccess', async () => {
     const api = { operation: vi.fn().mockResolvedValue(saved) } as unknown as DevelopmentClient;
     render(<DevelopmentOperationCard sessionId="s1" operationId="op1" client={api} />);

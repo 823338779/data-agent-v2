@@ -1,5 +1,7 @@
 package com.datagent.agentv2.development.application;
 
+import static com.datagent.agentv2.development.model.DevelopmentContracts.SCHEMA_REQUIRED;
+
 import com.datagent.agentv2.development.model.DevelopmentContracts.*;
 import com.datagent.agentv2.development.model.DevelopmentException;
 import com.datagent.agentv2.persistence.entity.development.DevelopmentOperationEntity;
@@ -54,6 +56,9 @@ public class DevelopmentOperations {
             String key,
             Object request,
             Phase phase) {
+        // 在保存或合并产生外部副作用前验证构建目标，旧配置仍可用于独立保存。
+        if (type == OperationType.PREVIEW || type == OperationType.DELIVER)
+            context.configSnapshot().requireSchemas();
         String session = context.sessionId();
         var row = new DevelopmentOperationEntity();
         row.setOperationId(UUID.randomUUID().toString());
@@ -121,7 +126,12 @@ public class DevelopmentOperations {
                 builds,
                 row.getErrorCode() == null
                         ? null
-                        : new OperationError(row.getErrorCode(), row.getErrorCode(), true));
+                        : new OperationError(
+                                row.getErrorCode(),
+                                SCHEMA_REQUIRED.equals(row.getErrorCode())
+                                        ? "请补全项目 previewSchemaName 和 productionSchemaName 后发起新操作；原操作保留旧配置快照"
+                                        : row.getErrorCode(),
+                                !SCHEMA_REQUIRED.equals(row.getErrorCode())));
     }
 
     /** 失败归属于调用时的版本；不能把另一个恢复者已推进的状态覆盖为失败。 */

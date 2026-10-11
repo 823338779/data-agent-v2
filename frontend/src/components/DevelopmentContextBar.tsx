@@ -32,6 +32,9 @@ const LABELS = {
   commit: '提交说明',
   scope: '完整共享分支交付范围',
   config: '固定配置摘要',
+  previewSchema: '预览目标 schema',
+  productionSchema: '正式目标 schema',
+  missingSchema: '尚未配置，请补全项目开发配置后发起新操作',
   edit: '编辑工程文件',
   close: '关闭文件编辑',
   changed: '当前有效部署已更新；已有操作卡片仍固定原构建版本。',
@@ -280,8 +283,12 @@ export function DevelopmentContextBar({
             <dd>{config.repository}</dd>
             <dd>{config.previewBinding}</dd>
             <dd>{config.previewConfigVersion}</dd>
+            <dt>{LABELS.previewSchema}</dt>
+            <dd>{config.previewSchemaName ?? LABELS.missingSchema}</dd>
             <dd>{config.productionBinding}</dd>
             <dd>{config.productionConfigVersion}</dd>
+            <dt>{LABELS.productionSchema}</dt>
+            <dd>{config.productionSchemaName ?? LABELS.missingSchema}</dd>
           </dl>
           <pre>{deliveryScope.diff}</pre>
           <code>{deliveryScope.confirmedScopeDigest}</code>

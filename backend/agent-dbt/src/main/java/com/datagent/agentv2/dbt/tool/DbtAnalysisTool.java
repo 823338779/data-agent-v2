@@ -7,8 +7,6 @@ import com.datagent.agentv2.dbt.model.DbtContracts.*;
 import com.datagent.agentv2.dbt.model.DbtToolOutput;
 import com.datagent.agentv2.dbt.port.AnalysisSessionResolver;
 import com.datagent.agentv2.dbt.port.BuildContextResolver;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
 import tools.jackson.databind.JsonNode;
@@ -23,8 +21,7 @@ public final class DbtAnalysisTool implements AgentTool {
         CATALOG,
         RESOURCE,
         OPTIONS,
-        SUBMIT,
-        GET
+        SUBMIT
     }
 
     public static final List<String> TOOL_IDS =
@@ -33,14 +30,10 @@ public final class DbtAnalysisTool implements AgentTool {
                     "dbt_catalog_search",
                     "dbt_resource_get",
                     "dbt_query_options",
-                    "dbt_query_submit",
-                    "dbt_query_get");
+                    "dbt_query_submit");
     private static final String RESOURCE = "resourceId",
             VIEW = "view",
-            QUERY = "queryId",
-            OPTIONS = "optionsTaskId",
             METRICS = "metricResourceIds",
-            KEY = "idempotencyKey",
             CONTENT = "content",
             BUILD = "buildId";
     private static final String OBJECT = "object",
@@ -60,7 +53,6 @@ public final class DbtAnalysisTool implements AgentTool {
             KIND = "kind",
             Q = "query";
     private static final List<String> RESOURCE_VIEWS = List.of(DETAIL, SOURCE, LINEAGE, NATIVE);
-    private static final int MAX_RESULT_PAGE_SIZE = 200, MAX_QUERY_ROWS = 10000;
     private static final String QUERY_SCHEMA =
             """
             {"type":"object","additionalProperties":false,"required":["mode"],"properties":{
@@ -90,6 +82,9 @@ public final class DbtAnalysisTool implements AgentTool {
     /** 执行到可信会话的归属检查。 */
     private final AnalysisSessionResolver sessions;
 
+    /** HTTP 总期限；工具预算另留上下文解析和结果组装余量。 */
+    private final java.time.Duration requestTimeout;
+
     @Override
     public String name() {
         return TOOL_IDS.get(kind.ordinal());
@@ -102,7 +97,7 @@ public final class DbtAnalysisTool implements AgentTool {
 
     @Override
     public java.time.Duration timeout() {
-        return java.time.Duration.ofSeconds(75);
+        return requestTimeout.plusSeconds(15);
     }
 
     @Override
@@ -111,9 +106,8 @@ public final class DbtAnalysisTool implements AgentTool {
             case BUILD -> "读取当前会话固定build的状态和能力；构建成功不表示已部署。";
             case CATALOG -> "搜索当前固定build的封存目录，以游标分页。";
             case RESOURCE -> "读取固定build资源详情、源码或血缘；源码按字符分页。";
-            case OPTIONS -> "提交固定build的异步查询选项，或用optionsTaskId轮询。";
-            case SUBMIT -> "提交固定build查询、解释、维度值或预览，不接收SQL或目标覆盖参数。";
-            case GET -> "读取固定build的查询状态及结果，最多200行，按nextOffset继续。";
+            case OPTIONS -> "同步读取固定build和指标集合的合法查询选项。";
+            case SUBMIT -> "同步执行固定build查询、解释、维度值或预览，直接返回本次结果；不接收SQL或目标覆盖参数。";
         };
     }
 
@@ -144,19 +138,13 @@ public final class DbtAnalysisTool implements AgentTool {
                 number(p, LIMIT, 1, 10000);
             }
             case OPTIONS -> {
-                text(p, OPTIONS, 64);
+                required.add(METRICS);
                 var items =
                         p.putObject(METRICS)
                                 .put(TYPE, ARRAY)
                                 .put("minItems", 1)
                                 .put("maxItems", 100);
                 items.putObject("items").put(TYPE, STRING).put("maxLength", 512);
-            }
-            case GET -> {
-                text(p, QUERY, 64);
-                required.add(QUERY);
-                number(p, OFFSET, 0, 10000);
-                number(p, LIMIT, 1, MAX_QUERY_ROWS);
             }
             default -> throw new IllegalStateException();
         }
@@ -193,58 +181,25 @@ public final class DbtAnalysisTool implements AgentTool {
                                             args.path(LIMIT).asInt(20)));
                     case RESOURCE -> resource(args, build);
                     case OPTIONS -> {
-                        if (args.has(OPTIONS)) {
-                            if (args.has(METRICS))
-                                throw new IllegalArgumentException("轮询只允许optionsTaskId");
-                            UUID id = UUID.fromString(args.path(OPTIONS).asString());
-                            var result = client.getOptions(id);
-                            same(id, result.optionsTaskId());
-                            yield result;
-                        }
-                        if (!args.has(METRICS)) throw new IllegalArgumentException("选项提交必须提供指标集合");
+                        // 选项读取同步完成，只传指标集合，不创建任务或生成幂等键。
                         List<String> selected = new ArrayList<>();
                         args.path(METRICS).forEach(item -> selected.add(item.asString()));
-                        yield client.submitOptions(
-                                build, new OptionsRequest(key(context, args, build), selected));
+                        yield client.submitOptions(build, new AvailableDimensionsRequest(selected));
                     }
                     case SUBMIT -> {
+                        // 同步查询只补协议默认值，不再注入任务幂等键或结果分页参数。
                         ObjectNode request = (ObjectNode) args.deepCopy();
-                        request.put(KEY, key(context, args, build));
                         if (!request.has(LIMIT)) request.put(LIMIT, 1000);
                         for (String field : List.of(METRICS, "groupBy", "filters", "orderBy"))
                             if (!request.has(field)) request.putArray(field);
                         yield client.submitQuery(
                                 build, json.treeToValue(request, QueryRequest.class));
                     }
-                    case GET -> {
-                        UUID id = UUID.fromString(args.path(QUERY).asString());
-                        var status = client.queryStatus(id);
-                        same(id, status.queryId());
-                        same(build, status.buildId());
-                        if (status.state() == null) throw invalid();
-                        if (!status.resultAvailable()) yield status;
-                        var result =
-                                client.queryResults(
-                                        id,
-                                        args.path(OFFSET).asInt(0),
-                                        Math.min(
-                                                args.path(LIMIT).asInt(100), MAX_RESULT_PAGE_SIZE));
-                        same(id, result.queryId());
-                        yield result;
-                    }
                 };
         JsonNode result = value instanceof JsonNode node ? node : json.valueToTree(value);
-        // 全局任务ID路由必须再次核实build归属，避免跨会话查询ID被模型混用。
+        // 所有分析结果必须再次核实 build 归属，不能接受其他构建的结果。
         same(build, UUID.fromString(result.path(BUILD).asString()));
-        if ((kind == Kind.OPTIONS || kind == Kind.SUBMIT || kind == Kind.GET)
-                && result.path("state").isNull()) throw invalid();
         return DbtToolOutput.bounded(result, json);
-    }
-
-    private String key(InvocationContext context, JsonNode args, UUID build) {
-        ObjectNode input = (ObjectNode) args.deepCopy();
-        input.put(BUILD, build.toString());
-        return queryKey(context.executionId(), input, json);
     }
 
     private static String optional(JsonNode node, String field) {
@@ -256,7 +211,7 @@ public final class DbtAnalysisTool implements AgentTool {
     }
 
     private static ToolBusinessException invalid() {
-        return new ToolBusinessException("DBT_PROTOCOL_INVALID", "任务响应缺少身份、状态或不属于当前固定构建");
+        return new ToolBusinessException("DBT_PROTOCOL_INVALID", "响应不属于当前固定构建");
     }
 
     private JsonNode resource(JsonNode args, UUID build) throws Exception {
@@ -282,44 +237,6 @@ public final class DbtAnalysisTool implements AgentTool {
             else result.putNull("nextOffset");
         }
         return result;
-    }
-
-    public static String queryKey(String execution, JsonNode args, ObjectMapper json) {
-        ObjectNode canonical = (ObjectNode) args.deepCopy();
-        canonical.remove(KEY);
-        if (!canonical.has("limit")) canonical.put("limit", 1000);
-        for (String field : List.of(METRICS, "groupBy", "filters", "orderBy"))
-            if (!canonical.has(field)) canonical.putArray(field);
-        if (canonical.path(METRICS).isArray()) {
-            SortedSet<String> selected = new TreeSet<>();
-            canonical.path(METRICS).forEach(item -> selected.add(item.asString()));
-            var array = canonical.putArray(METRICS);
-            selected.forEach(array::add);
-        }
-        try {
-            byte[] raw =
-                    (execution + "\n" + json.writeValueAsString(sorted(canonical, json)))
-                            .getBytes(StandardCharsets.UTF_8);
-            return "agent-dbt:"
-                    + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw));
-        } catch (java.security.NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException(impossible);
-        }
-    }
-
-    private static JsonNode sorted(JsonNode value, ObjectMapper json) {
-        if (value.isObject()) {
-            var object = json.createObjectNode();
-            new TreeSet<>(value.propertyNames())
-                    .forEach(key -> object.set(key, sorted(value.path(key), json)));
-            return object;
-        }
-        if (value.isArray()) {
-            var array = json.createArrayNode();
-            value.forEach(item -> array.add(sorted(item, json)));
-            return array;
-        }
-        return value;
     }
 
     /** JSON Schema 和运行时双重校验；任意 JSON 筛选值仅交由服务执行类型检查。 */

@@ -65,6 +65,8 @@ public final class DbtContracts {
             String executionBinding,
             /** 不可变配置版本。 */
             String configVersion,
+            /** 本次构建使用的目标 schema，必须由项目执行配置明确指定。 */
+            String schemaName,
             /** 构建成功后的部署策略。 */
             DeploymentPolicy deploymentPolicy,
             /** 持久受理键，重试不可修改。 */
@@ -271,27 +273,19 @@ public final class DbtContracts {
             /** 原生引擎定义。 */
             JsonNode nativeDetails) {}
 
-    /** OptionsRequest 的v3协议字段。 */
-    public record OptionsRequest(
-            /** 本次任务固定键。 */
-            String idempotencyKey,
+    /** AvailableDimensionsRequest 的v3协议字段。 */
+    public record AvailableDimensionsRequest(
             /** 指标集合。 */
             List<String> metricResourceIds) {}
 
-    /** OptionsTaskView 的v3协议字段。 */
-    public record OptionsTaskView(
-            /** 持久选项任务。 */
-            UUID optionsTaskId,
+    /** 同步查询选项的v3协议字段，不创建后台任务。 */
+    public record AvailableDimensionsView(
             /** 固定构建。 */
             UUID buildId,
-            /** 执行状态。 */
-            BuildStatus state,
             /** 规范化指标集合。 */
             List<String> metricResourceIds,
-            /** 原生合法选项，未完成为空。 */
-            List<JsonNode> options,
-            /** 稳定错误。 */
-            ErrorView error) {}
+            /** 当前构建与指标集合的原生合法选项。 */
+            List<JsonNode> dimensions) {}
 
     /** SelectedDimension 的v3协议字段。 */
     public record SelectedDimension(
@@ -318,8 +312,6 @@ public final class DbtContracts {
 
     /** QueryRequest 的v3协议字段。 */
     public record QueryRequest(
-            /** 查询固定键。 */
-            String idempotencyKey,
             /** 引擎查询模式。 */
             QueryMode mode,
             /** 指标集合。 */
@@ -334,7 +326,7 @@ public final class DbtContracts {
             String endTime,
             /** 有序排序。 */
             List<SelectedOrder> orderBy,
-            /** 最多保存1至10000行。 */
+            /** 最多返回1至10000行。 */
             int limit,
             /** PREVIEW数据集。 */
             String datasetResourceId,
@@ -389,14 +381,10 @@ public final class DbtContracts {
             /** 原生属性。 */
             JsonNode attributes) {}
 
-    /** QueryView 的v3协议字段。 */
-    public record QueryView(
-            /** 持久查询身份。 */
-            UUID queryId,
+    /** QueryResult 的v3协议字段。 */
+    public record QueryResult(
             /** 固定构建。 */
             UUID buildId,
-            /** 执行状态。 */
-            BuildStatus state,
             /** 查询模式。 */
             QueryMode mode,
             /** 固定源码。 */
@@ -407,47 +395,12 @@ public final class DbtContracts {
             JsonNode normalizedTimeRange,
             /** 引擎粒度边界策略。 */
             String boundaryPolicy,
-            /** 结果字节可读。 */
-            boolean resultAvailable,
-            /** 稳定错误。 */
-            ErrorView error) {}
-
-    /** ResultPage 的v3协议字段。 */
-    public record ResultPage(
-            /** 持久查询身份。 */
-            UUID queryId,
-            /** 固定构建。 */
-            UUID buildId,
-            /** 执行状态。 */
-            BuildStatus state,
-            /** 查询模式。 */
-            QueryMode mode,
-            /** 固定源码。 */
-            String commitSha,
-            /** 构建业务时区。 */
-            String businessTimezone,
-            /** 引擎归一化时间，不重新解释。 */
-            JsonNode normalizedTimeRange,
-            /** 引擎粒度边界策略。 */
-            String boundaryPolicy,
-            /** 结果字节可读。 */
-            boolean resultAvailable,
-            /** 稳定错误。 */
-            ErrorView error,
             /** EXPLAIN完整编译SQL。 */
             String sql,
             /** 列精度元数据。 */
             List<JsonNode> columns,
             /** 完整行，保留decimal字符串及null。 */
             List<List<JsonNode>> rows,
-            /** 已保存结果偏移。 */
-            int offset,
-            /** 本页行数。 */
-            int returnedRows,
-            /** 后续实际偏移。 */
-            Integer nextOffset,
-            /** 已保存行数，并非源数据总数。 */
-            int availableRows,
             /** 引擎结果是否截断。 */
             boolean resultTruncated) {}
 }

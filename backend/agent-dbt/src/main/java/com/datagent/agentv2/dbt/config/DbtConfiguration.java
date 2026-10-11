@@ -20,37 +20,51 @@ public class DbtConfiguration {
 
     @Bean
     DbtAnalysisTool dbtBuildGet(
-            DbtServiceClient c, ObjectMapper j, BuildContextResolver b, AnalysisSessionResolver s) {
-        return new DbtAnalysisTool(DbtAnalysisTool.Kind.BUILD, c, j, b, s);
+            DbtServiceClient c,
+            ObjectMapper j,
+            BuildContextResolver b,
+            AnalysisSessionResolver s,
+            DbtProperties p) {
+        return new DbtAnalysisTool(DbtAnalysisTool.Kind.BUILD, c, j, b, s, p.requestTimeout());
     }
 
     @Bean
     DbtAnalysisTool dbtCatalogSearch(
-            DbtServiceClient c, ObjectMapper j, BuildContextResolver b, AnalysisSessionResolver s) {
-        return new DbtAnalysisTool(DbtAnalysisTool.Kind.CATALOG, c, j, b, s);
+            DbtServiceClient c,
+            ObjectMapper j,
+            BuildContextResolver b,
+            AnalysisSessionResolver s,
+            DbtProperties p) {
+        return new DbtAnalysisTool(DbtAnalysisTool.Kind.CATALOG, c, j, b, s, p.requestTimeout());
     }
 
     @Bean
     DbtAnalysisTool dbtResourceGet(
-            DbtServiceClient c, ObjectMapper j, BuildContextResolver b, AnalysisSessionResolver s) {
-        return new DbtAnalysisTool(DbtAnalysisTool.Kind.RESOURCE, c, j, b, s);
+            DbtServiceClient c,
+            ObjectMapper j,
+            BuildContextResolver b,
+            AnalysisSessionResolver s,
+            DbtProperties p) {
+        return new DbtAnalysisTool(DbtAnalysisTool.Kind.RESOURCE, c, j, b, s, p.requestTimeout());
     }
 
     @Bean
     DbtAnalysisTool dbtQueryOptions(
-            DbtServiceClient c, ObjectMapper j, BuildContextResolver b, AnalysisSessionResolver s) {
-        return new DbtAnalysisTool(DbtAnalysisTool.Kind.OPTIONS, c, j, b, s);
+            DbtServiceClient c,
+            ObjectMapper j,
+            BuildContextResolver b,
+            AnalysisSessionResolver s,
+            DbtProperties p) {
+        return new DbtAnalysisTool(DbtAnalysisTool.Kind.OPTIONS, c, j, b, s, p.requestTimeout());
     }
 
     @Bean
     DbtAnalysisTool dbtQuerySubmit(
-            DbtServiceClient c, ObjectMapper j, BuildContextResolver b, AnalysisSessionResolver s) {
-        return new DbtAnalysisTool(DbtAnalysisTool.Kind.SUBMIT, c, j, b, s);
-    }
-
-    @Bean
-    DbtAnalysisTool dbtQueryGet(
-            DbtServiceClient c, ObjectMapper j, BuildContextResolver b, AnalysisSessionResolver s) {
-        return new DbtAnalysisTool(DbtAnalysisTool.Kind.GET, c, j, b, s);
+            DbtServiceClient c,
+            ObjectMapper j,
+            BuildContextResolver b,
+            AnalysisSessionResolver s,
+            DbtProperties p) {
+        return new DbtAnalysisTool(DbtAnalysisTool.Kind.SUBMIT, c, j, b, s, p.requestTimeout());
     }
 }

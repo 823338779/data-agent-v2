@@ -14,8 +14,8 @@ public record DbtProperties(
         URI baseUrl,
         /** 连接截止时间。 */
         @DefaultValue("5s") Duration connectTimeout,
-        /** 覆盖完整响应读取的总截止时间。 */
-        @DefaultValue("20s") Duration requestTimeout,
+        /** 覆盖同步引擎执行与完整响应读取的总期限，默认比引擎30分钟多留1分钟。 */
+        @DefaultValue("1860s") Duration requestTimeout,
         /** 所有写接口的服务凭据，不得输出。 */
         String serviceToken) {
     private static final String HTTP = "http", HTTPS = "https", SAFE = "DbtProperties[redacted]";
@@ -37,7 +37,6 @@ public record DbtProperties(
                         || requestTimeout == null
                         || requestTimeout.isNegative()
                         || requestTimeout.isZero()
-                        || requestTimeout.compareTo(Duration.ofSeconds(20)) > 0
                         || connectTimeout.compareTo(requestTimeout) > 0))
             throw new IllegalArgumentException("启用dbt前必须配置合法固定服务地址和超时");
     }

@@ -89,10 +89,14 @@ public class DevelopmentProjectController {
             String previewBinding,
             /** 预览语义版本。 */
             String previewConfigVersion,
+            /** 用户显式指定的预览目标 schema。 */
+            String previewSchemaName,
             /** 正式绑定。 */
             String productionBinding,
             /** 正式语义版本。 */
             String productionConfigVersion,
+            /** 用户显式指定的正式目标 schema。 */
+            String productionSchemaName,
             /** 配置CAS版本。 */
             long expectedVersion)
             implements com.datagent.agentv2.development.model.StrictDevelopmentRequest {
@@ -101,8 +105,10 @@ public class DevelopmentProjectController {
                     repository,
                     previewBinding,
                     previewConfigVersion,
+                    previewSchemaName,
                     productionBinding,
                     productionConfigVersion,
+                    productionSchemaName,
                     expectedVersion);
         }
     }

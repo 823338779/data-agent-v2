@@ -35,6 +35,8 @@ import tools.jackson.databind.ObjectMapper;
 @org.springframework.test.annotation.DirtiesContext
 @org.junit.jupiter.api.TestInstance(org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS)
 class DevelopmentWebIntegrationTest {
+    private static final String PREVIEW_SCHEMA = "preview_metrics",
+            PRODUCTION_SCHEMA = "production_metrics";
     static final PostgreSQLContainer DB = new PostgreSQLContainer("postgres:17-alpine");
     static final Path ROOT;
 
@@ -133,10 +135,14 @@ class DevelopmentWebIntegrationTest {
                         "preview",
                         "previewConfigVersion",
                         "v1",
+                        "previewSchemaName",
+                        PREVIEW_SCHEMA,
                         "productionBinding",
                         "prod",
                         "productionConfigVersion",
                         "v1",
+                        "productionSchemaName",
+                        PRODUCTION_SCHEMA,
                         "expectedVersion",
                         0);
         mvc.perform(
@@ -356,8 +362,10 @@ class DevelopmentWebIntegrationTest {
                         ROOT.resolve("remote.git").toString(),
                         "preview",
                         "v1",
+                        PREVIEW_SCHEMA,
                         "production",
                         "v1",
+                        PRODUCTION_SCHEMA,
                         0);
         contexts.configure(project, original, 0);
         org.mockito.Mockito.doAnswer(
@@ -370,8 +378,10 @@ class DevelopmentWebIntegrationTest {
                                             original.repository(),
                                             "preview-changed",
                                             "v2",
+                                            original.previewSchemaName(),
                                             "production",
                                             "v1",
+                                            original.productionSchemaName(),
                                             1),
                                     1);
                             return result;

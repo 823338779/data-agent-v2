@@ -13,7 +13,14 @@ class DbtBuildQueryContractTest {
         assertThat(
                         Arrays.stream(DbtServiceClient.class.getMethods())
                                 .map(java.lang.reflect.Method::getName))
-                .contains("submitBuild", "getBuild", "currentDeployment", "queryResults")
-                .doesNotContain("project", "submitValidation", "branches", "release");
+                .contains("submitBuild", "getBuild", "currentDeployment", "submitQuery")
+                .doesNotContain(
+                        "project",
+                        "submitValidation",
+                        "branches",
+                        "release",
+                        "getOptions",
+                        "queryStatus",
+                        "queryResults");
     }
 }

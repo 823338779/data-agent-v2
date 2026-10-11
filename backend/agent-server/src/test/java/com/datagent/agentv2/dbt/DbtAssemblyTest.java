@@ -49,7 +49,10 @@ class DbtAssemblyTest {
                 .run(
                         context -> {
                             assertThat(context).hasNotFailed();
-                            assertThat(context.getBeansOfType(AgentTool.class)).hasSize(6);
+                            assertThat(context.getBeansOfType(AgentTool.class).values())
+                                    .hasSize(5)
+                                    .extracting(AgentTool::name)
+                                    .doesNotContain("dbt_query_get");
                         });
     }
 }

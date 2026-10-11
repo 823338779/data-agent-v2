@@ -16,7 +16,6 @@ public record ContextPayloadReference(
             java.util.Set.of(
                     "operationId",
                     "buildId",
-                    "optionsTaskId",
                     "repository",
                     "branchName",
                     "pushedSha",

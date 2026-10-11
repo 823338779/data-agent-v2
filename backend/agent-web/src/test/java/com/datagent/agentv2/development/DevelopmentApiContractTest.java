@@ -20,6 +20,16 @@ import tools.jackson.databind.ObjectMapper;
 
 /** 真实MVC映射与工具共用用例验证，取代已退役的工作区代理测试。 */
 class DevelopmentApiContractTest {
+    private static final String CONFIG_PATH = "/api/v1/agent-projects/p1/development-config";
+    private static final String CONFIG_JSON =
+            """
+            {"repository":"repo","previewBinding":"preview","previewConfigVersion":"1",
+             "previewSchemaName":"preview_metrics","productionBinding":"production",
+             "productionConfigVersion":"2","productionSchemaName":"production_metrics","expectedVersion":3}
+            """;
+    private static final String PROJECT = "p1",
+            PREVIEW_SCHEMA = "preview_metrics",
+            PRODUCTION_SCHEMA = "production_metrics";
     private final SourceSaveService saves = mock(SourceSaveService.class);
     private final PreviewBuildService previews = mock(PreviewBuildService.class);
     private final DeliveryService deliveries = mock(DeliveryService.class);
@@ -53,6 +63,20 @@ class DevelopmentApiContractTest {
                 mock(DevelopmentContextPersistenceService.class),
                 contexts,
                 provider(DevelopmentBranchService.class, branches));
+    }
+
+    @Test
+    void projectConfigurationPreservesBothExplicitSchemaNames() throws Exception {
+        var mvc = MockMvcBuilders.standaloneSetup(projectController()).build();
+        mvc.perform(
+                        put(CONFIG_PATH)
+                                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                                .content(CONFIG_JSON))
+                .andExpect(status().isOk());
+        var captured = org.mockito.ArgumentCaptor.forClass(DevelopmentConfig.class);
+        verify(contexts).configure(eq(PROJECT), captured.capture(), eq(3L));
+        assertThat(captured.getValue().previewSchemaName()).isEqualTo(PREVIEW_SCHEMA);
+        assertThat(captured.getValue().productionSchemaName()).isEqualTo(PRODUCTION_SCHEMA);
     }
 
     @Test

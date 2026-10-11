@@ -3,7 +3,7 @@ package com.datagent.agentv2.dbt.client;
 import com.datagent.agentv2.dbt.model.DbtContracts.*;
 import java.util.UUID;
 
-/** 唯一v3 HTTP端口；调用方冻结输入及幂等键，不隐式重试或降级。 */
+/** 唯一v3 HTTP端口；调用方固定构建与输入，构建写入保留幂等键，不隐式重试或降级。 */
 public interface DbtServiceClient {
     BuildView submitBuild(BuildRequest request) throws Exception;
 
@@ -23,13 +23,8 @@ public interface DbtServiceClient {
 
     ResourceNativeView resourceNative(UUID buildId, String resourceId) throws Exception;
 
-    OptionsTaskView submitOptions(UUID buildId, OptionsRequest request) throws Exception;
+    AvailableDimensionsView submitOptions(UUID buildId, AvailableDimensionsRequest request)
+            throws Exception;
 
-    OptionsTaskView getOptions(UUID optionsTaskId) throws Exception;
-
-    QueryView submitQuery(UUID buildId, QueryRequest request) throws Exception;
-
-    QueryView queryStatus(UUID queryId) throws Exception;
-
-    ResultPage queryResults(UUID queryId, int offset, int limit) throws Exception;
+    QueryResult submitQuery(UUID buildId, QueryRequest request) throws Exception;
 }

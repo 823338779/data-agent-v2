@@ -1,5 +1,7 @@
 package com.datagent.agentv2.development.application;
 
+import static com.datagent.agentv2.development.model.DevelopmentContracts.SCHEMA_REQUIRED;
+
 import com.datagent.agentv2.conversation.exception.ToolBusinessException;
 import com.datagent.agentv2.dbt.client.DbtServiceClient;
 import com.datagent.agentv2.dbt.model.DbtContracts.*;
@@ -21,7 +23,8 @@ public class DevelopmentBuildService {
             SEPARATOR = ":build:",
             PROTOCOL = "DBT_PROTOCOL_INVALID";
     private static final String RESULT_UNKNOWN = "DBT_RESULT_UNKNOWN",
-            BUILD_UNKNOWN = "BUILD_OUTCOME_UNKNOWN";
+            BUILD_UNKNOWN = "BUILD_OUTCOME_UNKNOWN",
+            INVALID_REQUEST = "INVALID_REQUEST";
 
     /** 同一持久动作的受理与CAS推进。 */
     private final DevelopmentOperations operations;
@@ -42,6 +45,10 @@ public class DevelopmentBuildService {
         Phase done = production ? Phase.RELEASED : Phase.DEPLOYED;
         var context = operations.context(row);
         var config = context.configSnapshot();
+        // 升级前受理的快照不能擅自补写目标 schema；释放原操作，要求配置后新建意图。
+        if (row.getBuildId() == null
+                && (config.previewSchemaName() == null || config.productionSchemaName() == null))
+            return operations.fail(row, OperationStatus.FAILED, SCHEMA_REQUIRED);
         String sha = production ? row.getMergeSha() : row.getPushedSha();
         if (sha == null) throw new DevelopmentException(PROTOCOL, "构建前必须核实已推送的固定 SHA", 409);
         var request =
@@ -54,6 +61,7 @@ public class DevelopmentBuildService {
                         production
                                 ? config.productionConfigVersion()
                                 : config.previewConfigVersion(),
+                        production ? config.productionSchemaName() : config.previewSchemaName(),
                         DeploymentPolicy.ON_SUCCESS,
                         row.getOperationId() + SEPARATOR + row.getAttemptNumber(),
                         new Origin(context.sessionId(), row.getOperationId()));
@@ -88,12 +96,14 @@ public class DevelopmentBuildService {
                     unknown instanceof ToolBusinessException business
                             ? business.code()
                             : RESULT_UNKNOWN;
-            // 已受理但丢失响应时保留相同请求键，下一轮submit查询同一受理结果。
+            // 明确的参数拒绝未受理构建；只有响应丢失等不确定结果才继续使用原请求键恢复。
             return operations.view(
                     operations.update(
                             row,
                             row.getBuildId() == null ? submitting : running,
-                            OperationStatus.RESULT_UNKNOWN,
+                            row.getBuildId() == null && INVALID_REQUEST.equals(code)
+                                    ? OperationStatus.FAILED
+                                    : OperationStatus.RESULT_UNKNOWN,
                             code));
         }
         if (build.buildStatus() == BuildStatus.FAILED

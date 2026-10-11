@@ -198,7 +198,8 @@ export function DevelopmentOperationCard({
       )}
       {error && <p role="alert">{error}</p>}
       <p>{LABELS.background}</p>
-      {value && value.status !== SUCCEEDED && (
+      {/* schema 缺失等不可恢复错误必须使用新操作，不能重放旧配置快照。 */}
+      {value && value.status !== SUCCEEDED && value.error?.retryable !== false && (
         <>
           <p>{LABELS.recovery}</p>
           <button type="button" disabled={busy} onClick={() => void recover()}>

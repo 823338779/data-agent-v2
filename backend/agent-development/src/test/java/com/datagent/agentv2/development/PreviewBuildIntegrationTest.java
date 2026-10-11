@@ -21,7 +21,8 @@ class PreviewBuildIntegrationTest extends SourceSaveIntegrationTest {
             RUNNING_BUILD = "RUNNING",
             DEPLOYED = "DEPLOYED",
             SUCCEEDED_BUILD = "SUCCEEDED",
-            DIRTY_STATE = "DIRTY";
+            DIRTY_STATE = "DIRTY",
+            INVALID_REQUEST = "INVALID_REQUEST";
 
     @Test
     void acceptedPreviewAllowsNextEditWithoutChangingBuildInput() throws Exception {
@@ -44,6 +45,7 @@ class PreviewBuildIntegrationTest extends SourceSaveIntegrationTest {
         assertThat(running.buildIds()).containsExactly(build);
         var submitted = ArgumentCaptor.forClass(BuildRequest.class);
         verify(client).submitBuild(submitted.capture());
+        assertThat(submitted.getValue().schemaName()).isEqualTo(PREVIEW_SCHEMA);
         // 已受理构建持有固定SHA，下一批编辑不参与原构建，也不被完成回写覆盖。
         var current = files.read(s, DRAFT_PATH);
         assertThat(
@@ -105,6 +107,7 @@ class PreviewBuildIntegrationTest extends SourceSaveIntegrationTest {
         assertThat(requests.getAllValues().get(0)).isEqualTo(requests.getAllValues().get(1));
         assertThat(requests.getValue().commitSha()).isEqualTo(result.pushedSha());
         assertThat(requests.getValue().environment()).isEqualTo(Environment.PREVIEW);
+        assertThat(requests.getValue().schemaName()).isEqualTo(PREVIEW_SCHEMA);
         assertThat(requests.getValue().deploymentPolicy()).isEqualTo(DeploymentPolicy.ON_SUCCESS);
     }
 
@@ -125,6 +128,30 @@ class PreviewBuildIntegrationTest extends SourceSaveIntegrationTest {
         var accepted = preview.start(s, new PreviewRequest("preview", 0, null));
         assertThat(preview.reconcile(accepted.operationId()).status())
                 .isEqualTo(OperationStatus.BLOCKED);
+    }
+
+    @Test
+    void rejectedBuildRequestIsTerminalInsteadOfUnknown() throws Exception {
+        String session = session();
+        var client = mock(DbtServiceClient.class);
+        when(client.submitBuild(any()))
+                .thenThrow(
+                        new com.datagent.agentv2.conversation.exception.ToolBusinessException(
+                                INVALID_REQUEST, "目标 schema 未被引擎接受"));
+        var preview =
+                new PreviewBuildService(
+                        operations,
+                        files,
+                        saves,
+                        new com.datagent.agentv2.development.application.DevelopmentBuildService(
+                                operations, records, contexts, client));
+        var accepted = preview.start(session, new PreviewRequest(PREVIEW_KEY, 0, null));
+        var result = preview.reconcile(accepted.operationId());
+        assertThat(result.status()).isEqualTo(OperationStatus.FAILED);
+        assertThat(result.error().code()).isEqualTo(INVALID_REQUEST);
+        assertThat(result.buildIds()).isEmpty();
+        preview.reconcile(accepted.operationId());
+        verify(client, times(1)).submitBuild(any());
     }
 
     BuildView buildView(UUID id, BuildRequest request, String status, String deployment) {
