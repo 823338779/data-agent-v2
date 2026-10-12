@@ -194,7 +194,7 @@ $env:DATA_AGENT_DBT_BASE_URL='http://127.0.0.1:8000'
 
 HTTP 开发入口为 `/api/v1/agent-sessions/{sessionId}/development` 及 save、preview、deliver、operations 子路径；项目 branches 入口枚举及显式创建真实 Git 分支。`/api/v1/development/contract` 暴露与打包 OpenAPI 同源的运维契约。旧工作区写接口、validation 和旧 dbt 路由已退出。旧 Git 卡片只供历史审计。
 
-前端可设置 `VITE_METRIC_PLATFORM_URL`，构建链接始终使用 `/dbt/builds/{buildId}/catalog`。查询保留服务端时间解释和高精度结果；resultTruncated 表示引擎限制了结果，不能宣称结果完整。工具结果超过 20000 字符时返回 `DBT_OUTPUT_TOO_LARGE`，应缩小 limit、字段或筛选范围后重新查询。
+Agent 与指标平台不直接交互。前端仅展示操作对应的固定 buildId，不生成指标平台链接。查询保留服务端时间解释和高精度结果；resultTruncated 表示引擎限制了结果，不能宣称结果完整。工具结果超过 20000 字符时返回 `DBT_OUTPUT_TOO_LARGE`，应缩小 limit、字段或筛选范围后重新查询。
 
 升级必须先停旧写入并备份，再部署 `/v3` 服务、执行 V15 开发上下文迁移、启动配套 Agent 和平台。旧多仓库项目必须显式给出 repositoryId 到仓库地址的映射；有歧义时禁用新开发操作并逐项报告，旧历史保留。不得让旧发布器和新动作同时写入；恢复使用匹配备份或前向修复。
 

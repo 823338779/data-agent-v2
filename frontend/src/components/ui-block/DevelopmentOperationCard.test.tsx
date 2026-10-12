@@ -61,7 +61,7 @@ describe('持久开发操作卡片', () => {
     render(<DevelopmentOperationCard sessionId="s1" operationId="op1" client={api} />);
     await waitFor(() => expect(operation).toHaveBeenCalledTimes(1));
   });
-  it('构建成功但部署未完成不显示成功，已有链接固定 buildId', async () => {
+  it('构建成功但部署未完成不显示成功，固定 buildId 只作文本展示，不连接指标平台', async () => {
     vi.stubEnv('VITE_METRIC_PLATFORM_URL', 'https://metrics.example');
     const api = {
       operation: vi.fn().mockResolvedValue({
@@ -75,10 +75,8 @@ describe('持久开发操作卡片', () => {
     } as unknown as DevelopmentClient;
     render(<DevelopmentOperationCard sessionId="s1" operationId="op1" client={api} />);
     expect(await screen.findByText('操作受阻')).toBeInTheDocument();
-    expect(screen.getByRole('link')).toHaveAttribute(
-      'href',
-      'https://metrics.example/dbt/builds/build-original/catalog',
-    );
+    expect(screen.getByText('build-original')).toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
     expect(screen.queryByText('部署成功')).not.toBeInTheDocument();
   });
 });

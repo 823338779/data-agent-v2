@@ -39,22 +39,6 @@ const LABELS = {
 };
 const POLL_INTERVAL = 3000;
 
-/** 仅信任配置中的 HTTP(S) 基址，链接始终固定历史 buildId。 */
-export function buildCatalogLink(buildId: string): string | null {
-  const base = import.meta.env.VITE_METRIC_PLATFORM_URL;
-  if (!base) return null;
-  try {
-    const url = new URL(base);
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
-    url.pathname = `${url.pathname.replace(/\/$/, '')}/dbt/builds/${encodeURIComponent(buildId)}/catalog`;
-    url.search = '';
-    url.hash = '';
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
 /** 保存、构建部署和正式发布分别检查终点，未知状态绝不推断为成功。 */
 function label(value: DevelopmentOperation): string {
   if (value.status === SUCCEEDED && value.phase === END_PHASE[value.type]) {
@@ -176,20 +160,11 @@ export function DevelopmentOperationCard({
         </p>
       )}
       <ul>
-        {value?.buildIds.map((id) => {
-          const href = buildCatalogLink(id);
-          return (
-            <li key={id}>
-              {href ? (
-                <a href={href} target="_blank" rel="noopener noreferrer">
-                  {id}
-                </a>
-              ) : (
-                <code>{id}</code>
-              )}
-            </li>
-          );
-        })}
+        {value?.buildIds.map((id) => (
+          <li key={id}>
+            <code>{id}</code>
+          </li>
+        ))}
       </ul>
       {value?.error && (
         <p role="alert">
