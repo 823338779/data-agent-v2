@@ -6,7 +6,7 @@ spring:
   config:
     import: classpath:application-business.yml
   datasource:
-    url: ${DATA_AGENT_DB_URL:jdbc:postgresql://localhost:5432/data_agent_v2}
+    url: ${DATA_AGENT_DB_URL:jdbc:postgresql://localhost:5432/data_agent}
     username: ${DATA_AGENT_DB_USERNAME:data_agent}
     password: ${DATA_AGENT_DB_PASSWORD:data_agent_local_dev}
     hikari:
