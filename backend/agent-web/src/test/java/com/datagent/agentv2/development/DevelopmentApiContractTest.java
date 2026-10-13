@@ -11,22 +11,23 @@ import com.datagent.agentv2.development.model.DevelopmentContracts.*;
 import com.datagent.agentv2.development.tool.*;
 import com.datagent.agentv2.persistence.service.ConversationProjectService;
 import com.datagent.agentv2.persistence.service.development.DevelopmentContextPersistenceService;
-import java.util.*;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+
 import tools.jackson.databind.ObjectMapper;
+
+import java.util.*;
 
 /** 真实MVC映射与工具共用用例验证，取代已退役的工作区代理测试。 */
 class DevelopmentApiContractTest {
     private static final String CONFIG_PATH = "/api/v1/agent-projects/p1/development-config";
     private static final String CONFIG_JSON =
-            """
-            {"repository":"repo","previewBinding":"preview","previewConfigVersion":"1",
-             "previewSchemaName":"preview_metrics","productionBinding":"production",
-             "productionConfigVersion":"2","productionSchemaName":"production_metrics","expectedVersion":3}
-            """;
+"""
+{"repository": "repo", "previewExecution": {"environmentId": "12345678-1234-4234-8234-000000000001", "configVersion": 1, "connection": {"type": "starrocks", "instanceId": "warehouse", "host": "localhost", "port": 9030, "path": null}, "credentialRef": "warehouse-test", "catalog": "default_catalog", "schema": "preview_metrics", "threads": 2, "businessTimezone": "Asia/Shanghai"}, "productionExecution": {"environmentId": "12345678-1234-4234-8234-000000000002", "configVersion": 1, "connection": {"type": "starrocks", "instanceId": "warehouse", "host": "localhost", "port": 9030, "path": null}, "credentialRef": "warehouse-test", "catalog": "default_catalog", "schema": "production_metrics", "threads": 2, "businessTimezone": "Asia/Shanghai"}, "expectedVersion": 3}
+""";
     private static final String PROJECT = "p1",
             PREVIEW_SCHEMA = "preview_metrics",
             PRODUCTION_SCHEMA = "production_metrics";
@@ -75,8 +76,8 @@ class DevelopmentApiContractTest {
                 .andExpect(status().isOk());
         var captured = org.mockito.ArgumentCaptor.forClass(DevelopmentConfig.class);
         verify(contexts).configure(eq(PROJECT), captured.capture(), eq(3L));
-        assertThat(captured.getValue().previewSchemaName()).isEqualTo(PREVIEW_SCHEMA);
-        assertThat(captured.getValue().productionSchemaName()).isEqualTo(PRODUCTION_SCHEMA);
+        assertThat(captured.getValue().previewExecution().schema()).isEqualTo(PREVIEW_SCHEMA);
+        assertThat(captured.getValue().productionExecution().schema()).isEqualTo(PRODUCTION_SCHEMA);
     }
 
     @Test
@@ -146,7 +147,7 @@ class DevelopmentApiContractTest {
         var response =
                 mvc.perform(get("/api/v1/development/contract"))
                         .andExpect(status().isOk())
-                        .andExpect(jsonPath("$.protocolVersion").value("build-deployment-v3"))
+                        .andExpect(jsonPath("$.protocolVersion").value("execution-snapshot"))
                         .andReturn();
         var paths = json.readTree(response.getResponse().getContentAsString()).path("paths");
         var mappings =

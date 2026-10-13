@@ -171,9 +171,9 @@ npm.cmd run build
 
 ## 开发会话与 dbt-service
 
-`agent-development` 编排保存、预览、交付与恢复；`agent-git` 提供受控完整工程文件和 Git 原语；`agent-dbt` 只封装 dbt-service `/v3` 引擎契约。持久事实统一位于 `agent-persistence`，HTTP 和模型工具调用同一组用例。三个产品各自构建，通过 HTTP 协作。
+`agent-development` 编排保存、预览、交付与恢复；`agent-git` 提供受控完整工程文件和 Git 原语；`agent-dbt` 只封装 dbt-service 无版本号的执行快照契约。持久事实统一位于 `agent-persistence`，HTTP 和模型工具调用同一组用例。三个产品各自构建，通过 HTTP 协作。
 
-开启 Git 后，在创建会话时选择 Agent 项目和真实 Git 分支。项目通过 `/api/v1/agent-projects/{projectId}/development-config` 配置 repository、previewBinding/previewConfigVersion/previewSchemaName、productionBinding/productionConfigVersion/productionSchemaName。两个 schema 都必须由用户显式填写，满足 `[a-z][a-z0-9_]{0,255}`，构建按环境取值并冻结到操作快照；旧配置仍可读取，补全后才能发起新的预览或交付。旧操作不会套用新 schema，需要另建操作。项目一旦存在开发会话便不能更换仓库。会话目标不可更换，普通会话保持独立。编辑支持受控目录内完整 dbt 工程，包括宏、seed、项目配置与原始 YAML 字节。
+开启 Git 后，在创建会话时选择 Agent 项目和真实 Git 分支。项目通过 `/api/v1/agent-projects/{projectId}/development-config` 配置 repository、previewExecution 和 productionExecution。两个快照都必须包含 environmentId、configVersion、connection、credentialRef、catalog、schema、threads、businessTimezone；不完整或旧字段配置直接拒绝。预览与交付在操作受理时冻结所选快照，恢复时继续使用原值。项目一旦存在开发会话便不能更换仓库。会话目标不可更换，普通会话保持独立。编辑支持受控目录内完整 dbt 工程，包括宏、seed、项目配置与原始 YAML 字节。
 
 - 保存仅提交并核实 Git push，不做 YAML 或 dbt 预校验。未推送的本地文件不会写入数据库；Pod 丢失本地文件时明确报告 `LOCAL_INPUT_LOST`。
 - 开发预览先保存，再以实际 pushed SHA 创建 PREVIEW 构建，等待该构建自身的初始部署意图。
@@ -188,7 +188,7 @@ $env:DATA_AGENT_DBT_BASE_URL='http://127.0.0.1:8000'
 # DATA_AGENT_DBT_SERVICE_TOKEN 由本地安全环境注入，与目标服务的 SERVICE_TOKEN 匹配。
 ```
 
-仅开启 dbt 时，普通分析会话可由服务端 `DATA_AGENT_DBT_ANALYSIS_BUILD_ID` 固定分析构建。开发会话首次从自身 PREVIEW 部署解析并固定 buildId，未部署时明确失败，不回退 main。模型不能覆盖仓库、分支或可信会话身份。可用维度通过 `/v3/query/available-dimensions?build_id=…` 获取；QUERY、EXPLAIN、DIMENSION_VALUES、PREVIEW 经 `/v3/query?build_id=…` 同步返回本次结果，不保存历史查询结果，也不支持结果分页。查询不携带 idempotencyKey。构建与发布仍为异步，不由数据分析工具编排。
+仅开启 dbt 时，普通分析会话可由服务端 `DATA_AGENT_DBT_ANALYSIS_BUILD_ID` 固定分析构建。开发会话首次按创建时保存的环境快照解析并固定 buildId（main 使用 productionExecution，其余分支使用 previewExecution），未部署时明确失败。成功预览会更新后续分析的默认 buildId，已运行的分析继续使用原构建。模型不能覆盖仓库、分支或可信会话身份。可用维度通过 `/query/available-dimensions?build_id=…` 获取；QUERY、EXPLAIN、DIMENSION_VALUES、PREVIEW 经 `/query?build_id=…` 同步返回本次结果，不保存历史查询结果，也不支持结果分页。查询不携带 idempotencyKey。构建与发布仍为异步，不由数据分析工具编排。
 
 `DATA_AGENT_DBT_REQUEST_TIMEOUT` 默认 `1860s`，覆盖 dbt-service 默认 `1800s` 命令期限及响应传输；分析工具在该 HTTP 期限上另加 15 秒。`DATA_AGENT_EXECUTION_DEADLINE` 默认 `35m`，为同步查询与模型前后处理保留总预算。调整引擎命令期限时应同时调整 HTTP 与 execution 预算；自定义 execution 总期限仍是整个会话执行的上限。
 
@@ -196,7 +196,7 @@ HTTP 开发入口为 `/api/v1/agent-sessions/{sessionId}/development` 及 save�
 
 Agent 与指标平台不直接交互。前端仅展示操作对应的固定 buildId，不生成指标平台链接。查询保留服务端时间解释和高精度结果；resultTruncated 表示引擎限制了结果，不能宣称结果完整。工具结果超过 20000 字符时返回 `DBT_OUTPUT_TOO_LARGE`，应缩小 limit、字段或筛选范围后重新查询。
 
-升级必须先停旧写入并备份，再部署 `/v3` 服务、执行 V15 开发上下文迁移、启动配套 Agent 和平台。旧多仓库项目必须显式给出 repositoryId 到仓库地址的映射；有歧义时禁用新开发操作并逐项报告，旧历史保留。不得让旧发布器和新动作同时写入；恢复使用匹配备份或前向修复。
+使用全新数据库启动配套 dbt-service、Agent 和平台；不执行旧开发配置或持久化数据的兼容迁移。
 
 接入验证使用临时真实 Git 仓库和 Testcontainers PostgreSQL，需要 Docker：
 
@@ -206,9 +206,3 @@ Agent 与指标平台不直接交互。前端仅展示操作对应的固定 buil
 ```
 
 更多接口和恢复限制见 [开发运行说明](docs/agent-git-runtime.md)。
-
-历史开发上下文迁移使用一次性入口。先停止旧写入与发布任务，备份数据库和本地工程；先以新版本完成 schema 升级并显式配置项目，再停服务执行以下命令。输入 JSON 仅包含 `projectId` 和 `repositoryMappings`（旧 repositoryId 到明确仓库地址的映射），不包含凭据。默认 dry-run 会执行相同转换并回滚；确认报告无来源冲突后，再将最后一个参数改为 `false`。命令完成后进程退出，重复执行保留已经迁移的会话标识与来源 SHA。未推送文件不参与迁移，也不会被删除。
-
-```powershell
-java -jar .\backend\agent-server\target\agent-server-0.1.0-SNAPSHOT.jar --spring.main.web-application-type=none --data-agent.git.enabled=false --data-agent.dbt.enabled=false --data-agent.development.migration.enabled=true --data-agent.development.migration.input=C:/secure-local/development-migration.json --data-agent.development.migration.dry-run=true
-```

@@ -16,7 +16,7 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-/** v3分析迁移仍保障固定身份、时间语义、无状态查询与有界完整结果。 */
+/** 分析工具保障固定身份、时间语义、无状态查询与有界完整结果。 */
 class DbtAnalysisToolsTest {
     private final DbtServiceClient client = mock(DbtServiceClient.class);
     private final BuildContextResolver builds = mock(BuildContextResolver.class);

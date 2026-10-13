@@ -12,9 +12,7 @@ import com.datagent.agentv2.git.model.FileOperation;
 import com.datagent.agentv2.persistence.*;
 import com.datagent.agentv2.persistence.entity.development.*;
 import com.datagent.agentv2.persistence.service.development.*;
-import java.nio.file.*;
-import java.time.Duration;
-import java.util.*;
+
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,7 +21,12 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.*;
 import org.springframework.test.context.*;
 import org.testcontainers.postgresql.PostgreSQLContainer;
+
 import tools.jackson.databind.ObjectMapper;
+
+import java.nio.file.*;
+import java.time.Duration;
+import java.util.*;
 
 /** 真 Git 与真数据库验证：保存不依赖 dbt，重试只恢复原候选。 */
 @SpringBootTest(
@@ -107,12 +110,8 @@ class SourceSaveIntegrationTest {
         var config =
                 new DevelopmentConfig(
                         repository,
-                        "preview",
-                        "1",
-                        PREVIEW_SCHEMA,
-                        "production",
-                        "1",
-                        PRODUCTION_SCHEMA,
+                        ExecutionFixtures.config().previewExecution(),
+                        ExecutionFixtures.config().productionExecution(),
                         1);
         var row = new DevelopmentProjectEntity();
         row.setProjectId(project);
@@ -140,12 +139,8 @@ class SourceSaveIntegrationTest {
         var config =
                 new DevelopmentConfig(
                         repository,
-                        "preview",
-                        "1",
-                        PREVIEW_SCHEMA,
-                        "production",
-                        "1",
-                        PRODUCTION_SCHEMA,
+                        ExecutionFixtures.config().previewExecution(),
+                        ExecutionFixtures.config().productionExecution(),
                         1);
         var c = new DevelopmentContext(id, project, repository, "feature/shared", base, config);
         when(context.get(id)).thenReturn(c);

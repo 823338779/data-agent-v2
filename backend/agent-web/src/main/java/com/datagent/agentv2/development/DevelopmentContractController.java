@@ -1,9 +1,10 @@
 package com.datagent.agentv2.development;
 
-import java.io.IOException;
-import java.util.Map;
 import org.springframework.web.bind.annotation.*;
 import org.yaml.snakeyaml.Yaml;
+
+import java.io.IOException;
+import java.util.Map;
 
 /** 直接提供当前应用打包的OpenAPI路由，跨产品验收无需维护平行契约清单。 */
 @RestController
@@ -11,7 +12,7 @@ public final class DevelopmentContractController {
     private static final String PATH = "/api/v1/development/contract",
             RESOURCE = "/contracts/openapi.yaml",
             PATHS = "paths",
-            PROTOCOL = "build-deployment-v3";
+            PROTOCOL = "execution-snapshot";
 
     /** 随构建固定的只读路由定义。 */
     private final ContractView contract;

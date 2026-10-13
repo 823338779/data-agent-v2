@@ -5,19 +5,28 @@ export interface DevelopmentSelection {
   /** 真实 Git 分支名，不是服务侧登记 ID。 */
   branchName: string;
 }
+/** 受理时冻结的执行目标，不包含凭据值。 */
+export interface ExecutionSnapshot {
+  /** 外部环境稳定身份。 */ environmentId: string;
+  /** 外部环境配置版本。 */ configVersion: number;
+  /** 非敏感物理连接信息。 */ connection: {
+    type: 'starrocks' | 'postgres' | 'duckdb';
+    instanceId: string;
+    host: string | null;
+    port: number | null;
+    path: string | null;
+  };
+  /** 执行服务允许的 secret 引用。 */ credentialRef: string;
+  /** 目标 catalog 或数据库。 */ catalog: string;
+  /** 物理写入 schema。 */ schema: string;
+  /** dbt 并行度。 */ threads: number;
+  /** 查询业务时区。 */ businessTimezone: string;
+}
 export interface DevelopmentConfig {
-  /** 受控仓库标识和两个环境的固定配置版本。 */
-  repository: string;
-  previewBinding: string;
-  previewConfigVersion: string;
-  /** 预览目标 schema；升级前的旧配置尚未填写时为 null。 */
-  previewSchemaName: string | null;
-  productionBinding: string;
-  productionConfigVersion: string;
-  /** 正式目标 schema；升级前的旧配置尚未填写时为 null。 */
-  productionSchemaName: string | null;
-  /** 配置乐观锁版本。 */
-  version: number;
+  /** 受控源码仓库。 */ repository: string;
+  /** 预览动作固定执行快照。 */ previewExecution: ExecutionSnapshot;
+  /** 交付动作固定执行快照。 */ productionExecution: ExecutionSnapshot;
+  /** Agent 项目配置乐观锁版本。 */ version: number;
 }
 export interface DevelopmentOperation {
   /** 可在重新打开会话后继续查询的持久操作身份。 */

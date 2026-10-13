@@ -7,12 +7,15 @@ import com.datagent.agentv2.development.model.DevelopmentOverview.*;
 import com.datagent.agentv2.git.local.GitRepositoryClient;
 import com.datagent.agentv2.git.model.GitException;
 import com.datagent.agentv2.persistence.service.development.*;
-import java.time.Instant;
-import java.util.UUID;
+
 import lombok.RequiredArgsConstructor;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
+
+import java.time.Instant;
+import java.util.UUID;
 
 /** 只聚合可观察事实；轮询与SSE均不驱动动作状态机。 */
 @Service
@@ -57,7 +60,7 @@ public class DevelopmentStatusService {
                         client.currentDeployment(
                                 new DeploymentKey(
                                         context.repository(),
-                                        Environment.PREVIEW,
+                                        context.configSnapshot().previewExecution().environmentId(),
                                         context.branchName()));
             } catch (Exception unavailable) {
                 // 读取失败不能被解释为没有部署；调用方重试概览读取。

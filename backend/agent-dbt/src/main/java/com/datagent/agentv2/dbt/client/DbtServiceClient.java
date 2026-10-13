@@ -1,9 +1,10 @@
 package com.datagent.agentv2.dbt.client;
 
 import com.datagent.agentv2.dbt.model.DbtContracts.*;
+
 import java.util.UUID;
 
-/** 唯一v3 HTTP端口；调用方固定构建与输入，构建写入保留幂等键，不隐式重试或降级。 */
+/** 唯一执行快照 HTTP端口；调用方固定构建与输入，构建写入保留幂等键，不隐式重试或降级。 */
 public interface DbtServiceClient {
     BuildView submitBuild(BuildRequest request) throws Exception;
 

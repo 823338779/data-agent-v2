@@ -34,7 +34,6 @@ const LABELS = {
   config: '固定配置摘要',
   previewSchema: '预览目标 schema',
   productionSchema: '正式目标 schema',
-  missingSchema: '尚未配置，请补全项目开发配置后发起新操作',
   edit: '编辑工程文件',
   close: '关闭文件编辑',
   changed: '当前有效部署已更新；已有操作卡片仍固定原构建版本。',
@@ -281,14 +280,14 @@ export function DevelopmentContextBar({
             <dd>{deliveryScope.expectedMainSha}</dd>
             <dt>{LABELS.config}</dt>
             <dd>{config.repository}</dd>
-            <dd>{config.previewBinding}</dd>
-            <dd>{config.previewConfigVersion}</dd>
+            <dd>{config.previewExecution.environmentId}</dd>
+            <dd>{config.previewExecution.configVersion}</dd>
             <dt>{LABELS.previewSchema}</dt>
-            <dd>{config.previewSchemaName ?? LABELS.missingSchema}</dd>
-            <dd>{config.productionBinding}</dd>
-            <dd>{config.productionConfigVersion}</dd>
+            <dd>{config.previewExecution.schema}</dd>
+            <dd>{config.productionExecution.environmentId}</dd>
+            <dd>{config.productionExecution.configVersion}</dd>
             <dt>{LABELS.productionSchema}</dt>
-            <dd>{config.productionSchemaName ?? LABELS.missingSchema}</dd>
+            <dd>{config.productionExecution.schema}</dd>
           </dl>
           <pre>{deliveryScope.diff}</pre>
           <code>{deliveryScope.confirmedScopeDigest}</code>

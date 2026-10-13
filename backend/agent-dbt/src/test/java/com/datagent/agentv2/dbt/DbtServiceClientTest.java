@@ -1,6 +1,7 @@
 package com.datagent.agentv2.dbt;
 
 import static com.datagent.agentv2.dbt.DbtServiceContractIntegrationTest.*;
+
 import static org.assertj.core.api.Assertions.*;
 
 import com.datagent.agentv2.conversation.exception.ToolBusinessException;
@@ -9,20 +10,35 @@ import com.datagent.agentv2.dbt.config.DbtProperties;
 import com.datagent.agentv2.dbt.model.DbtContracts.*;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
+
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.atomic.*;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.ValueSource;
 
-/** 本地真实HTTP验证v3路由、凭据、边界及无隐式重试。 */
+/** 本地真实HTTP验证执行快照路由、凭据、边界及无隐式重试。 */
 class DbtServiceClientTest {
     static final UUID BUILD = UUID.fromString("12345678-1234-4234-8234-123456789abc");
+
+    @Test
+    void rejectsBuildWithoutExecutionSnapshot() throws Exception {
+        // 成功响应也必须携带完整执行快照，不能将旧形态解释成有效构建。
+        var body = (tools.jackson.databind.node.ObjectNode) fixture("failed-build").deepCopy();
+        body.remove("execution");
+        var server = server(exchange -> response(exchange, 200, body.toString()));
+        try (var client = client(server, Duration.ofSeconds(2), "secret")) {
+            assertCode(() -> client.getBuild(BUILD), "DBT_PROTOCOL_INVALID");
+        } finally {
+            server.stop(0);
+        }
+    }
 
     interface Handler {
         void handle(HttpExchange exchange) throws Exception;
@@ -79,7 +95,7 @@ class DbtServiceClientTest {
                         });
         try (var client = client(server, Duration.ofSeconds(2), "secret")) {
             client.submitQuery(BUILD, JSON.treeToValue(fixture("query"), QueryRequest.class));
-            assertThat(path.get()).isEqualTo("/v3/query?build_id=" + BUILD);
+            assertThat(path.get()).isEqualTo("/query?build_id=" + BUILD);
             assertThat(JSON.readTree(body.get()).propertyNames())
                     .doesNotContain("idempotencyKey", "offset");
         } finally {
@@ -111,10 +127,7 @@ class DbtServiceClientTest {
                             request.repository(),
                             request.branchName(),
                             request.commitSha(),
-                            request.environment(),
-                            request.executionBinding(),
-                            request.configVersion(),
-                            request.schemaName(),
+                            request.execution(),
                             request.deploymentPolicy(),
                             request.idempotencyKey(),
                             new Origin("session", "operation"));
@@ -125,7 +138,7 @@ class DbtServiceClientTest {
             assertThat(client.submitBuild(fixed).buildId()).isEqualTo(BUILD);
             assertThat(bodies).hasSize(2);
             assertThat(bodies.get(0)).isEqualTo(bodies.get(1));
-            assertThat(JSON.readTree(bodies.getFirst()).path("schemaName").asString())
+            assertThat(JSON.readTree(bodies.getFirst()).path("execution").path("schema").asString())
                     .isEqualTo("analytics");
             assertThat(
                             JSON.readTree(bodies.getFirst())
@@ -162,7 +175,7 @@ class DbtServiceClientTest {
             assertThat(result.path("mode").asString()).isEqualTo(request.mode().name());
             assertThat(result.path("rows").get(0).get(0).asString())
                     .isEqualTo("12345678901234567890.123456789");
-            assertThat(wirePath.get()).isEqualTo("/v3/query?build_id=" + BUILD);
+            assertThat(wirePath.get()).isEqualTo("/query?build_id=" + BUILD);
             assertThat(JSON.readTree(wireBody.get())).isEqualTo(fixture(example));
             assertThat(result.propertyNames()).doesNotContain("queryId", "state", "nextOffset");
         } finally {
@@ -240,9 +253,9 @@ class DbtServiceClientTest {
                             paths.add(exchange.getRequestURI().toString());
                             credentials.add(exchange.getRequestHeaders().getFirst("Authorization"));
                             String example =
-                                    paths.getLast().startsWith("/v3/query/available-dimensions?")
+                                    paths.getLast().startsWith("/query/available-dimensions?")
                                             ? "available-dimensions-result"
-                                            : paths.getLast().startsWith("/v3/query?")
+                                            : paths.getLast().startsWith("/query?")
                                                     ? "precision-result"
                                                     : "failed-build";
                             response(
@@ -260,9 +273,9 @@ class DbtServiceClientTest {
             client.submitQuery(BUILD, JSON.treeToValue(fixture("query"), QueryRequest.class));
             assertThat(paths)
                     .containsExactly(
-                            "/v3/builds",
-                            "/v3/query/available-dimensions?build_id=" + BUILD,
-                            "/v3/query?build_id=" + BUILD);
+                            "/builds",
+                            "/query/available-dimensions?build_id=" + BUILD,
+                            "/query?build_id=" + BUILD);
             assertThat(credentials)
                     .containsExactly("Bearer secret", "Bearer secret", "Bearer secret");
         } finally {
@@ -311,7 +324,7 @@ class DbtServiceClientTest {
                         });
         try (var client = client(server, Duration.ofSeconds(2), "secret")) {
             assertCode(() -> client.getBuild(BUILD), code);
-            assertThat(paths).containsExactly("/v3/builds/" + BUILD);
+            assertThat(paths).containsExactly("/builds/" + BUILD);
         } finally {
             server.stop(0);
         }
@@ -412,7 +425,7 @@ class DbtServiceClientTest {
                             response(
                                     exchange,
                                     200,
-                                    path.equals("/v3/deployments")
+                                    path.equals("/deployments")
                                             ? "{\"items\":["
                                                     + fixture(name)
                                                     + "],\"nextCursor\":null}"
@@ -421,7 +434,10 @@ class DbtServiceClientTest {
         try (var client = client(server, Duration.ofSeconds(2), null)) {
             String repo = "https://git.example.com/metrics.git";
             client.currentDeployment(
-                    new DeploymentKey(repo, Environment.PREVIEW, "feature/revenue"));
+                    new DeploymentKey(
+                            repo,
+                            UUID.fromString("12345678-1234-4234-8234-000000000001"),
+                            "feature/revenue"));
             assertThat(
                             client.listDeployments(
                                             new DeploymentFilter(

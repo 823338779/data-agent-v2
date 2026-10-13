@@ -13,12 +13,38 @@ const overview: DevelopmentOverview = {
     baselineSha: 'base',
     configSnapshot: {
       repository: 'repo',
-      previewBinding: 'dev',
-      previewConfigVersion: 'dev-v1',
-      previewSchemaName: 'preview_metrics',
-      productionBinding: 'prod',
-      productionConfigVersion: 'prod-v2',
-      productionSchemaName: 'production_metrics',
+      previewExecution: {
+        environmentId: '12345678-1234-4234-8234-000000000001',
+        configVersion: 1,
+        connection: {
+          type: 'starrocks',
+          instanceId: 'warehouse',
+          host: 'localhost',
+          port: 9030,
+          path: null,
+        },
+        credentialRef: 'warehouse-test',
+        catalog: 'default_catalog',
+        schema: 'preview_metrics',
+        threads: 2,
+        businessTimezone: 'Asia/Shanghai',
+      },
+      productionExecution: {
+        environmentId: '12345678-1234-4234-8234-000000000002',
+        configVersion: 1,
+        connection: {
+          type: 'starrocks',
+          instanceId: 'warehouse',
+          host: 'localhost',
+          port: 9030,
+          path: null,
+        },
+        credentialRef: 'warehouse-test',
+        catalog: 'default_catalog',
+        schema: 'production_metrics',
+        threads: 2,
+        businessTimezone: 'Asia/Shanghai',
+      },
       version: 2,
     },
   },
@@ -70,7 +96,7 @@ describe('固定会话开发上下文', () => {
     render(<DevelopmentContextBar sessionId="s1" client={api} />);
     fireEvent.click(await screen.findByRole('button', { name: '合并并发布' }));
     expect(await screen.findByText(/other session change/)).toBeInTheDocument();
-    expect(screen.getByText('prod-v2')).toBeInTheDocument();
+    expect(screen.getAllByText(1)).toHaveLength(2);
     expect(screen.getByText('preview_metrics')).toBeInTheDocument();
     expect(screen.getByText('production_metrics')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '确认完整范围并发布' })).toBeDisabled();

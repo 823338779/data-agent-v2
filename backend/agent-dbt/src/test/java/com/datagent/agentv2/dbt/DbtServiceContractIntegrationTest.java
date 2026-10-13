@@ -4,10 +4,13 @@ import static org.assertj.core.api.Assertions.*;
 
 import com.datagent.agentv2.dbt.model.DbtContracts;
 import com.datagent.agentv2.dbt.model.DbtContracts.*;
-import java.util.Arrays;
+
 import org.junit.jupiter.api.Test;
+
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+
+import java.util.Arrays;
 
 /** 消费服务权威fixture，每个协议模型必须逐字段无损往返。 */
 class DbtServiceContractIntegrationTest {
@@ -15,7 +18,8 @@ class DbtServiceContractIntegrationTest {
 
     static JsonNode fixture(String name) throws Exception {
         try (var input =
-                DbtServiceContractIntegrationTest.class.getResourceAsStream("/contracts/v3.json")) {
+                DbtServiceContractIntegrationTest.class.getResourceAsStream(
+                        "/contracts/dbt.json")) {
             for (JsonNode sample : JSON.readTree(input).path("examples"))
                 if (name.equals(sample.path("name").asString())) return sample.path("value");
         }
@@ -24,14 +28,19 @@ class DbtServiceContractIntegrationTest {
 
     @Test
     void allServiceModelsRoundTripWithoutRenamingOrLosingPrecision() throws Exception {
-        try (var input = getClass().getResourceAsStream("/contracts/v3.json")) {
+        try (var input = getClass().getResourceAsStream("/contracts/dbt.json")) {
             var fixture = JSON.readTree(input);
-            assertThat(fixture.path("protocolVersion").asString()).isEqualTo("build-deployment-v3");
+            assertThat(fixture.path("protocolVersion").asString()).isEqualTo("execution-snapshot");
             for (JsonNode example : fixture.path("examples")) {
                 String name = example.path("model").asString();
                 Class<?> model =
                         Arrays.stream(DbtContracts.class.getDeclaredClasses())
-                                .filter(type -> type.getSimpleName().equals(name))
+                                .filter(
+                                        type ->
+                                                type.getSimpleName()
+                                                        .equals(
+                                                                name.replace(
+                                                                        "SnapshotBuild", "Build")))
                                 .findFirst()
                                 .orElseThrow();
                 JsonNode value = example.path("value");

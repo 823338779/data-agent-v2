@@ -1,7 +1,5 @@
 package com.datagent.agentv2.development.application;
 
-import static com.datagent.agentv2.development.model.DevelopmentContracts.SCHEMA_REQUIRED;
-
 import com.datagent.agentv2.conversation.exception.ToolBusinessException;
 import com.datagent.agentv2.dbt.client.DbtServiceClient;
 import com.datagent.agentv2.dbt.model.DbtContracts.*;
@@ -9,10 +7,13 @@ import com.datagent.agentv2.development.model.DevelopmentContracts.*;
 import com.datagent.agentv2.development.model.DevelopmentException;
 import com.datagent.agentv2.persistence.entity.development.*;
 import com.datagent.agentv2.persistence.service.development.*;
-import java.util.*;
+
 import lombok.RequiredArgsConstructor;
+
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
+
+import java.util.*;
 
 /** 预览与交付共用固定构建尝试推进；不推断外部业务成功，只消费构建和部署事实。 */
 @Service
@@ -45,10 +46,6 @@ public class DevelopmentBuildService {
         Phase done = production ? Phase.RELEASED : Phase.DEPLOYED;
         var context = operations.context(row);
         var config = context.configSnapshot();
-        // 升级前受理的快照不能擅自补写目标 schema；释放原操作，要求配置后新建意图。
-        if (row.getBuildId() == null
-                && (config.previewSchemaName() == null || config.productionSchemaName() == null))
-            return operations.fail(row, OperationStatus.FAILED, SCHEMA_REQUIRED);
         String sha = production ? row.getMergeSha() : row.getPushedSha();
         if (sha == null) throw new DevelopmentException(PROTOCOL, "构建前必须核实已推送的固定 SHA", 409);
         var request =
@@ -56,12 +53,7 @@ public class DevelopmentBuildService {
                         context.repository(),
                         production ? MAIN : context.branchName(),
                         sha,
-                        environment,
-                        production ? config.productionBinding() : config.previewBinding(),
-                        production
-                                ? config.productionConfigVersion()
-                                : config.previewConfigVersion(),
-                        production ? config.productionSchemaName() : config.previewSchemaName(),
+                        production ? config.productionExecution() : config.previewExecution(),
                         DeploymentPolicy.ON_SUCCESS,
                         row.getOperationId() + SEPARATOR + row.getAttemptNumber(),
                         new Origin(context.sessionId(), row.getOperationId()));
@@ -128,7 +120,7 @@ public class DevelopmentBuildService {
         if (deployment == null
                 || !build.buildId().equals(deployment.buildId())
                 || !request.repository().equals(deployment.repository())
-                || environment != deployment.environment()
+                || !request.execution().environmentId().equals(deployment.environmentId())
                 || !request.branchName().equals(deployment.branchName())) {
             return operations.view(
                     operations.update(
@@ -164,9 +156,7 @@ public class DevelopmentBuildService {
                 || !request.branchName().equals(build.branchName())
                 || !request.commitSha().equals(build.requestedCommitSha())
                 || build.commitSha() != null && !request.commitSha().equals(build.commitSha())
-                || request.environment() != build.environment()
-                || !request.executionBinding().equals(build.executionBinding())
-                || !request.configVersion().equals(build.configVersion())) {
+                || !request.execution().equals(build.execution())) {
             throw new DevelopmentException(PROTOCOL, "引擎响应不属于固定构建输入", 409);
         }
     }

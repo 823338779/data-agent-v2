@@ -7,12 +7,16 @@ import com.datagent.agentv2.persistence.entity.development.DevelopmentSessionEnt
 import com.datagent.agentv2.persistence.service.ConversationProjectService;
 import com.datagent.agentv2.persistence.service.ConversationSessionService;
 import com.datagent.agentv2.persistence.service.development.DevelopmentContextPersistenceService;
-import java.util.Objects;
-import java.util.UUID;
+
 import lombok.RequiredArgsConstructor;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import tools.jackson.databind.ObjectMapper;
+
+import java.util.Objects;
+import java.util.UUID;
 
 /** 只管理 Agent 开发上下文；不依赖预览、交付或恢复服务。 */
 @Service
@@ -29,7 +33,6 @@ public class DevelopmentContextService {
     @Transactional
     public DevelopmentConfig configure(
             String projectId, DevelopmentConfig request, long expectedVersion) {
-        request.requireSchemas();
         if (projects.lockByProjectId(projectId) == null)
             throw new DevelopmentException(NOT_FOUND, "项目不存在", 404);
         var row = new DevelopmentProjectEntity();

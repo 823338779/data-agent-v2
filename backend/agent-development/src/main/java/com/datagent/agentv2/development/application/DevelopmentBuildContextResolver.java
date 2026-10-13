@@ -3,12 +3,17 @@ package com.datagent.agentv2.development.application;
 import com.datagent.agentv2.dbt.client.DbtServiceClient;
 import com.datagent.agentv2.dbt.model.DbtContracts.*;
 import com.datagent.agentv2.dbt.port.BuildContextResolver;
+import com.datagent.agentv2.development.model.DevelopmentContracts.DevelopmentConfig;
 import com.datagent.agentv2.development.model.DevelopmentException;
 import com.datagent.agentv2.persistence.service.development.DevelopmentContextPersistenceService;
-import java.util.UUID;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+
+import tools.jackson.databind.ObjectMapper;
+
+import java.util.UUID;
 
 /** 首次分析选择部署后固定build；普通会话仅使用显式受控配置，开发预览缺失不回退。 */
 @Component
@@ -27,6 +32,9 @@ public final class DevelopmentBuildContextResolver implements BuildContextResolv
     /** 唯一服务客户端。 */
     private final DbtServiceClient client;
 
+    /** 读取会话受理时保存的完整环境快照。 */
+    private final ObjectMapper json;
+
     /** 仅供非开发会话的明确受控构建。 */
     private final UUID ordinaryBuild;
 
@@ -34,10 +42,12 @@ public final class DevelopmentBuildContextResolver implements BuildContextResolv
             DevelopmentContextPersistenceService records,
             com.datagent.agentv2.persistence.service.AgentExecutionService executions,
             DbtServiceClient client,
+            ObjectMapper json,
             @Value("${data-agent.dbt.analysis-build-id:}") String selected) {
         this.records = records;
         this.executions = executions;
         this.client = client;
+        this.json = json;
         this.ordinaryBuild =
                 selected == null || selected.isBlank() ? null : UUID.fromString(selected);
     }
@@ -66,13 +76,16 @@ public final class DevelopmentBuildContextResolver implements BuildContextResolv
             return UUID.fromString(session.getSelectedBuildId());
         // 远端读取不处于数据库事务内；空值CAS保留并发解析中的唯一获胜构建。
         try {
+            var config = json.readValue(session.getConfigSnapshot(), DevelopmentConfig.class);
+            var execution =
+                    MAIN.equals(session.getBranchName())
+                            ? config.productionExecution()
+                            : config.previewExecution();
             var target =
                     client.currentDeployment(
                             new DeploymentKey(
                                     session.getRepository(),
-                                    MAIN.equals(session.getBranchName())
-                                            ? Environment.PRODUCTION
-                                            : Environment.PREVIEW,
+                                    execution.environmentId(),
                                     session.getBranchName()));
             if (target.activeBuildId() == null) throw missing();
             return records.selectBuildIfAbsent(sessionId, target.activeBuildId());

@@ -9,9 +9,11 @@ import com.datagent.agentv2.development.application.DevelopmentBuildContextResol
 import com.datagent.agentv2.persistence.entity.development.DevelopmentSessionEntity;
 import com.datagent.agentv2.persistence.service.AgentExecutionService;
 import com.datagent.agentv2.persistence.service.development.DevelopmentContextPersistenceService;
-import java.util.UUID;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import java.util.UUID;
 
 /** 分析只在首次选择时读取部署，未部署开发分支绝不借用普通会话配置。 */
 class DevelopmentBuildContextResolverTest {
@@ -34,7 +36,12 @@ class DevelopmentBuildContextResolverTest {
         row.setSelectedBuildId(build.toString());
         when(records.session("s")).thenReturn(row);
         assertThat(
-                        new DevelopmentBuildContextResolver(records, executions, client, "")
+                        new DevelopmentBuildContextResolver(
+                                        records,
+                                        executions,
+                                        client,
+                                        new tools.jackson.databind.ObjectMapper(),
+                                        "")
                                 .resolve("s", "execution"))
                 .isEqualTo(build);
         verifyNoInteractions(client);
@@ -45,13 +52,18 @@ class DevelopmentBuildContextResolverTest {
         var row = new DevelopmentSessionEntity();
         row.setRepository("repo");
         row.setBranchName("feature/a");
+        row.setConfigSnapshot(ExecutionFixtures.CONFIG);
         when(records.session("s")).thenReturn(row);
         UUID observed = UUID.randomUUID(), winner = UUID.randomUUID();
-        when(client.currentDeployment(new DeploymentKey("repo", Environment.PREVIEW, "feature/a")))
+        when(client.currentDeployment(
+                        new DeploymentKey(
+                                "repo",
+                                ExecutionFixtures.config().previewExecution().environmentId(),
+                                "feature/a")))
                 .thenReturn(
                         new DeploymentTargetView(
                                 "repo",
-                                Environment.PREVIEW,
+                                ExecutionFixtures.config().previewExecution().environmentId(),
                                 "feature/a",
                                 1,
                                 1,
@@ -63,7 +75,12 @@ class DevelopmentBuildContextResolverTest {
                                 "ACTIVE"));
         when(records.selectBuildIfAbsent("s", observed)).thenReturn(winner);
         assertThat(
-                        new DevelopmentBuildContextResolver(records, executions, client, "")
+                        new DevelopmentBuildContextResolver(
+                                        records,
+                                        executions,
+                                        client,
+                                        new tools.jackson.databind.ObjectMapper(),
+                                        "")
                                 .resolve("s", "execution"))
                 .isEqualTo(winner);
     }
@@ -73,12 +90,13 @@ class DevelopmentBuildContextResolverTest {
         var row = new DevelopmentSessionEntity();
         row.setRepository("repo");
         row.setBranchName("feature/a");
+        row.setConfigSnapshot(ExecutionFixtures.CONFIG);
         when(records.session("s")).thenReturn(row);
         when(client.currentDeployment(any()))
                 .thenReturn(
                         new DeploymentTargetView(
                                 "repo",
-                                Environment.PREVIEW,
+                                ExecutionFixtures.config().previewExecution().environmentId(),
                                 "feature/a",
                                 0,
                                 0,
@@ -94,6 +112,7 @@ class DevelopmentBuildContextResolverTest {
                                                 records,
                                                 executions,
                                                 client,
+                                                new tools.jackson.databind.ObjectMapper(),
                                                 UUID.randomUUID().toString())
                                         .resolve("s", "execution"))
                 .isInstanceOfSatisfying(
@@ -107,12 +126,21 @@ class DevelopmentBuildContextResolverTest {
         UUID build = UUID.randomUUID();
         assertThat(
                         new DevelopmentBuildContextResolver(
-                                        records, executions, client, build.toString())
+                                        records,
+                                        executions,
+                                        client,
+                                        new tools.jackson.databind.ObjectMapper(),
+                                        build.toString())
                                 .resolve("ordinary", "execution"))
                 .isEqualTo(build);
         assertThatThrownBy(
                         () ->
-                                new DevelopmentBuildContextResolver(records, executions, client, "")
+                                new DevelopmentBuildContextResolver(
+                                                records,
+                                                executions,
+                                                client,
+                                                new tools.jackson.databind.ObjectMapper(),
+                                                "")
                                         .resolve("ordinary", "execution"))
                 .isInstanceOf(
                         com.datagent.agentv2.conversation.exception.ToolBusinessException.class);
@@ -133,7 +161,9 @@ class DevelopmentBuildContextResolverTest {
                         call ->
                                 pinned.computeIfAbsent(
                                         call.getArgument(0), key -> call.getArgument(2)));
-        var resolver = new DevelopmentBuildContextResolver(records, executions, client, "");
+        var resolver =
+                new DevelopmentBuildContextResolver(
+                        records, executions, client, new tools.jackson.databind.ObjectMapper(), "");
         assertThat(resolver.resolve("s", "first-execution")).isEqualTo(first);
         row.setSelectedBuildId(second.toString());
         assertThat(resolver.resolve("s", "first-execution")).isEqualTo(first);

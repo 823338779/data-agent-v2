@@ -9,9 +9,11 @@ import com.datagent.agentv2.development.application.*;
 import com.datagent.agentv2.development.model.DevelopmentContracts.*;
 import com.datagent.agentv2.development.model.DevelopmentOverview.DeliveryScope;
 import com.datagent.agentv2.git.model.GitException;
-import java.util.*;
+
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+
+import java.util.*;
 
 /** 真Git/数据库固定实际合并M，覆盖丢失响应和发布失败后显式重试。 */
 class DeliveryIntegrationTest extends PreviewBuildIntegrationTest {
@@ -94,8 +96,9 @@ class DeliveryIntegrationTest extends PreviewBuildIntegrationTest {
         var captured = ArgumentCaptor.forClass(BuildRequest.class);
         verify(client).submitBuild(captured.capture());
         assertThat(captured.getValue().commitSha()).isEqualTo(candidate);
-        assertThat(captured.getValue().environment()).isEqualTo(Environment.PRODUCTION);
-        assertThat(captured.getValue().schemaName()).isEqualTo(PRODUCTION_SCHEMA);
+        assertThat(captured.getValue().execution())
+                .isEqualTo(ExecutionFixtures.config().productionExecution());
+        assertThat(captured.getValue().execution().schema()).isEqualTo(PRODUCTION_SCHEMA);
         assertThat(captured.getValue().branchName()).isEqualTo("main");
     }
 

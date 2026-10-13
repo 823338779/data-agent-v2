@@ -7,9 +7,11 @@ import com.datagent.agentv2.dbt.client.DbtServiceClient;
 import com.datagent.agentv2.dbt.model.DbtContracts.*;
 import com.datagent.agentv2.development.application.PreviewBuildService;
 import com.datagent.agentv2.development.model.DevelopmentContracts.*;
-import java.util.UUID;
+
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+
+import java.util.UUID;
 
 /** 使用真实保存前置，模拟引擎已受理但 HTTP 响应丢失。 */
 class PreviewBuildIntegrationTest extends SourceSaveIntegrationTest {
@@ -45,7 +47,7 @@ class PreviewBuildIntegrationTest extends SourceSaveIntegrationTest {
         assertThat(running.buildIds()).containsExactly(build);
         var submitted = ArgumentCaptor.forClass(BuildRequest.class);
         verify(client).submitBuild(submitted.capture());
-        assertThat(submitted.getValue().schemaName()).isEqualTo(PREVIEW_SCHEMA);
+        assertThat(submitted.getValue().execution().schema()).isEqualTo(PREVIEW_SCHEMA);
         // 已受理构建持有固定SHA，下一批编辑不参与原构建，也不被完成回写覆盖。
         var current = files.read(s, DRAFT_PATH);
         assertThat(
@@ -90,6 +92,24 @@ class PreviewBuildIntegrationTest extends SourceSaveIntegrationTest {
                 .thenAnswer(call -> buildView(build, call.getArgument(0), "SUCCEEDED", "DEPLOYED"));
         var unknown = preview.reconcile(accepted.operationId());
         assertThat(unknown.status()).isEqualTo(OperationStatus.RESULT_UNKNOWN);
+        // 修改下一次操作可见的配置；当前操作恢复仍须使用数据库中已冻结的快照。
+        var previous = context.forNewOperation(s);
+        var updated =
+                new com.datagent.agentv2.development.model.DevelopmentContracts.DevelopmentConfig(
+                        previous.repository(),
+                        previous.configSnapshot().productionExecution(),
+                        previous.configSnapshot().previewExecution(),
+                        previous.configSnapshot().version() + 1);
+        when(context.forNewOperation(s))
+                .thenReturn(
+                        new com.datagent.agentv2.development.model.DevelopmentContracts
+                                .DevelopmentContext(
+                                previous.sessionId(),
+                                previous.projectId(),
+                                previous.repository(),
+                                previous.branchName(),
+                                previous.baselineSha(),
+                                updated));
         // 模拟只保留数据库、无工具/SSE 对象的应用重启；原请求键和已推送 SHA 不变。
         preview =
                 new PreviewBuildService(
@@ -106,8 +126,9 @@ class PreviewBuildIntegrationTest extends SourceSaveIntegrationTest {
         verify(client, times(2)).submitBuild(requests.capture());
         assertThat(requests.getAllValues().get(0)).isEqualTo(requests.getAllValues().get(1));
         assertThat(requests.getValue().commitSha()).isEqualTo(result.pushedSha());
-        assertThat(requests.getValue().environment()).isEqualTo(Environment.PREVIEW);
-        assertThat(requests.getValue().schemaName()).isEqualTo(PREVIEW_SCHEMA);
+        assertThat(requests.getValue().execution())
+                .isEqualTo(ExecutionFixtures.config().previewExecution());
+        assertThat(requests.getValue().execution().schema()).isEqualTo(PREVIEW_SCHEMA);
         assertThat(requests.getValue().deploymentPolicy()).isEqualTo(DeploymentPolicy.ON_SUCCESS);
     }
 
@@ -173,7 +194,7 @@ class PreviewBuildIntegrationTest extends SourceSaveIntegrationTest {
         var attempt = node.putObject("initialDeployment");
         attempt.put("repository", request.repository());
         attempt.put("branchName", request.branchName());
-        attempt.put("environment", request.environment().name());
+        attempt.put("environmentId", request.execution().environmentId().toString());
         attempt.put("generation", 1);
         attempt.put("buildId", id.toString());
         attempt.put("deploymentStatus", deployment);

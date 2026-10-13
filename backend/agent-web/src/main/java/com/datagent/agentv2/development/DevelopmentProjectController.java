@@ -1,6 +1,7 @@
 package com.datagent.agentv2.development;
 
 import com.datagent.agentv2.conversation.domain.ConversationProject;
+import com.datagent.agentv2.dbt.model.DbtContracts.ExecutionSnapshot;
 import com.datagent.agentv2.development.application.*;
 import com.datagent.agentv2.development.model.DevelopmentContracts.*;
 import com.datagent.agentv2.development.model.DevelopmentException;
@@ -8,11 +9,14 @@ import com.datagent.agentv2.git.model.BranchInfo;
 import com.datagent.agentv2.persistence.entity.development.DevelopmentProjectEntity;
 import com.datagent.agentv2.persistence.service.ConversationProjectService;
 import com.datagent.agentv2.persistence.service.development.DevelopmentContextPersistenceService;
-import java.util.List;
+
 import lombok.RequiredArgsConstructor;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 /** Agent项目的开发配置及真实Git分支门面，不向dbt-service注册项目或分支。 */
 @RestController
@@ -85,31 +89,16 @@ public class DevelopmentProjectController {
     public record ConfigureRequest(
             /** 受控仓库。 */
             String repository,
-            /** 预览绑定。 */
-            String previewBinding,
-            /** 预览语义版本。 */
-            String previewConfigVersion,
-            /** 用户显式指定的预览目标 schema。 */
-            String previewSchemaName,
-            /** 正式绑定。 */
-            String productionBinding,
-            /** 正式语义版本。 */
-            String productionConfigVersion,
-            /** 用户显式指定的正式目标 schema。 */
-            String productionSchemaName,
+            /** 预览动作使用的完整执行快照。 */
+            ExecutionSnapshot previewExecution,
+            /** 交付动作使用的完整执行快照。 */
+            ExecutionSnapshot productionExecution,
             /** 配置CAS版本。 */
             long expectedVersion)
             implements com.datagent.agentv2.development.model.StrictDevelopmentRequest {
         DevelopmentConfig config() {
             return new DevelopmentConfig(
-                    repository,
-                    previewBinding,
-                    previewConfigVersion,
-                    previewSchemaName,
-                    productionBinding,
-                    productionConfigVersion,
-                    productionSchemaName,
-                    expectedVersion);
+                    repository, previewExecution, productionExecution, expectedVersion);
         }
     }
 

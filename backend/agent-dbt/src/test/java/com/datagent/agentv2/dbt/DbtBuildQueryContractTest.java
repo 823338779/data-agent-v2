@@ -6,7 +6,7 @@ import com.datagent.agentv2.dbt.client.DbtServiceClient;
 import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 
-/** v3 是唯一活动协议，旧业务方法必须完全退出。 */
+/** 执行快照是唯一活动协议，旧业务方法必须完全退出。 */
 class DbtBuildQueryContractTest {
     @Test
     void onlyTypedV3ContractIsExposed() {

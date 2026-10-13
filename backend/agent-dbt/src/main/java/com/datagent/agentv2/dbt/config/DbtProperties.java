@@ -1,16 +1,17 @@
 package com.datagent.agentv2.dbt.config;
 
-import java.net.URI;
-import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
+
+import java.net.URI;
+import java.time.Duration;
 
 /** 仅固定服务连接；仓库和构建选择来自可信业务上下文，启动不访问远端。 */
 @ConfigurationProperties("data-agent.dbt")
 public record DbtProperties(
         /** 能力开关。 */
         @DefaultValue("false") boolean enabled,
-        /** 受控服务根地址，不含/v3。 */
+        /** 受控服务根地址，不携带协议版本前缀。 */
         URI baseUrl,
         /** 连接截止时间。 */
         @DefaultValue("5s") Duration connectTimeout,

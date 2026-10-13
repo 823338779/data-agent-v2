@@ -3,12 +3,9 @@ package com.datagent.agentv2.dbt.client;
 import com.datagent.agentv2.conversation.exception.ToolBusinessException;
 import com.datagent.agentv2.dbt.config.DbtProperties;
 import com.datagent.agentv2.dbt.model.DbtContracts.*;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.Objects;
-import java.util.UUID;
-import java.util.concurrent.*;
+
 import lombok.RequiredArgsConstructor;
+
 import org.apache.hc.client5.http.classic.methods.HttpUriRequestBase;
 import org.apache.hc.client5.http.config.ConnectionConfig;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
@@ -17,10 +14,17 @@ import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.http.io.entity.ByteArrayEntity;
 import org.apache.hc.core5.io.CloseMode;
 import org.apache.hc.core5.util.Timeout;
+
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-/** 固定v3服务基址，禁止重定向及隐式重试；总截止时间覆盖完整响应读取。 */
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.*;
+
+/** 固定服务基址，禁止重定向及隐式重试；总截止时间覆盖完整响应读取。 */
 @RequiredArgsConstructor
 public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseable {
     private static final int MAX_BYTES = 8 * 1024 * 1024;
@@ -29,8 +33,7 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
             JSON = "application/json",
             ACCEPT = "Accept";
     private static final String UNAVAILABLE = "DBT_UNAVAILABLE", INVALID = "DBT_PROTOCOL_INVALID";
-    private static final String V3 = "/v3",
-            BUILDS = "/builds",
+    private static final String BUILDS = "/builds",
             DEPLOYMENTS = "/deployments",
             CURRENT = "/current";
     private static final String CATALOG = "/catalog",
@@ -47,7 +50,7 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
             ERROR_FIELD = "error",
             CODE = "code";
     private static final String REPOSITORY = "repository",
-            ENVIRONMENT = "environment",
+            ENVIRONMENT = "environmentId",
             BRANCH = "branchName",
             CURSOR = "cursor",
             LIMIT = "limit",
@@ -77,9 +80,7 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
                 || result.buildStatus() == null
                 || !Objects.equals(body.repository(), result.repository())
                 || !Objects.equals(body.branchName(), result.branchName())
-                || body.environment() != result.environment()
-                || !Objects.equals(body.executionBinding(), result.executionBinding())
-                || !Objects.equals(body.configVersion(), result.configVersion())
+                || !Objects.equals(body.execution(), result.execution())
                 || !Objects.equals(body.commitSha(), result.requestedCommitSha()))
             throw protocolError();
         return result;
@@ -89,7 +90,7 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
     public BuildView getBuild(UUID id) throws Exception {
         BuildView result = call(GET, BUILDS + SLASH + id, null, BuildView.class);
         same(id, result.buildId());
-        if (result.buildStatus() == null) throw protocolError();
+        if (result.buildStatus() == null || result.execution() == null) throw protocolError();
         return result;
     }
 
@@ -104,13 +105,13 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
                                         REPOSITORY,
                                         key.repository(),
                                         ENVIRONMENT,
-                                        key.environment(),
+                                        key.environmentId(),
                                         BRANCH,
                                         key.branchName()),
                         null,
                         DeploymentTargetView.class);
         if (!Objects.equals(key.repository(), result.repository())
-                || key.environment() != result.environment()
+                || !Objects.equals(key.environmentId(), result.environmentId())
                 || !Objects.equals(key.branchName(), result.branchName())) throw protocolError();
         return result;
     }
@@ -125,7 +126,7 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
                                 REPOSITORY,
                                 f.repository(),
                                 ENVIRONMENT,
-                                f.environment(),
+                                f.environmentId(),
                                 BRANCH,
                                 f.branchName(),
                                 CURSOR,
@@ -248,7 +249,7 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
     private <T> T call(String method, String suffix, Object body, Class<T> responseType)
             throws Exception {
         String base = properties.baseUrl().toString().replaceAll(TRAILING_SLASH, EMPTY);
-        var request = new HttpUriRequestBase(method, java.net.URI.create(base + V3 + suffix));
+        var request = new HttpUriRequestBase(method, java.net.URI.create(base + suffix));
         request.setHeader(ACCEPT, JSON);
         // 所有受理写入均需要服务凭据；禁用重定向以免跨来源携带凭据。
         if (POST.equals(method)) {
@@ -335,7 +336,7 @@ public final class HttpDbtServiceClient implements DbtServiceClient, AutoCloseab
     }
 
     private static ToolBusinessException protocolError() {
-        return new ToolBusinessException(INVALID, "dbt-service响应不符合v3协议或超过大小限制");
+        return new ToolBusinessException(INVALID, "dbt-service响应不符合执行快照协议或超过大小限制");
     }
 
     private static ToolBusinessException mapped(int status, JsonNode error) {

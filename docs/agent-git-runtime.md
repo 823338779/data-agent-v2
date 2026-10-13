@@ -2,9 +2,9 @@
 
 ## 启用与固定目标
 
-默认 `data-agent.git.enabled=false`。启用后，先创建 Agent 项目，通过 `/api/v1/agent-projects/{projectId}/development-config` 配置受控仓库、preview/production executionBinding 和 configVersion，再读取真实 Git 分支并创建绑定该项目、分支的开发会话。普通会话不自动绑定仓库。会话绑定后不可换分支或迁移项目，每个会话拥有独立本地目录。
+默认 `data-agent.git.enabled=false`。启用后，先创建 Agent 项目，通过 `/api/v1/agent-projects/{projectId}/development-config` 配置受控仓库、previewExecution 和 productionExecution 完整执行快照，再读取真实 Git 分支并创建绑定该项目、分支的开发会话。普通会话不自动绑定仓库。会话绑定后不可换分支或迁移项目，每个会话拥有独立本地目录。
 
-服务端使用运行账户的 Git/SSH 身份；凭据不能进入模型参数、API 返回值或项目仓库地址。仓库地址仅从项目开发配置取得，不再提供全局默认仓库环境变量。预览与正式交付需同时启用 dbt v3，配置服务端固定 base URL 和 service token。
+服务端使用运行账户的 Git/SSH 身份；凭据不能进入模型参数、API 返回值或项目仓库地址。仓库地址仅从项目开发配置取得，不再提供全局默认仓库环境变量。预览与正式交付需同时启用 dbt-service，配置服务端固定 base URL 和 service token。
 
 | 环境变量 | 默认值 | 含义 |
 | --- | --- | --- |
@@ -40,7 +40,7 @@
 
 ## HTTP 与契约
 
-完整且唯一的公开契约为 `contracts/openapi.yaml`，构建打包后由 `/api/v1/development/contract` 返回 `build-deployment-v3` 及完整 paths。
+完整且唯一的公开契约为 `contracts/openapi.yaml`，构建打包后由 `/api/v1/development/contract` 返回 `execution-snapshot` 及完整 paths。
 
 | 路径 | 用途 |
 | --- | --- |
@@ -57,4 +57,4 @@
 
 原 git-workspaces、metric-branches、Git 卡片确认/重试/取消/核实写接口已退役。历史 Git 卡片仅保留详情、files、diff 三个 GET；材料缺失或损坏时 reviewAvailable=false，不能解释成空差异。消息请求不再接受 workspaceId。
 
-数据库升级保留旧审计材料，不自动继续旧候选。新保存成功仅证明 Git 已接收；main 合并成功也不等于正式部署成功。构建失败或部署失败可恢复，不能把先前阶段成功当作最终交付成功。
+部署使用全新的开发配置和数据库。新保存成功仅证明 Git 已接收；main 合并成功也不等于正式部署成功。构建失败或部署失败可恢复，不能把先前阶段成功当作最终交付成功。

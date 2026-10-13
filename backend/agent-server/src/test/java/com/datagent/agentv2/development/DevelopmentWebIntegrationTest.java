@@ -9,9 +9,7 @@ import com.datagent.agentv2.conversation.tool.AgentTool;
 import com.datagent.agentv2.conversation.tool.runtime.ExecutionToolViews;
 import com.datagent.agentv2.skill.runtime.ExecutionSkillViews;
 import com.datagent.agentv2.skill.tool.SkillReadTool;
-import java.nio.file.*;
-import java.time.Duration;
-import java.util.*;
+
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,8 +20,13 @@ import org.springframework.test.context.*;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.postgresql.PostgreSQLContainer;
+
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+
+import java.nio.file.*;
+import java.time.Duration;
+import java.util.*;
 
 /** 真正的HTTP、数据库、裸Git及受管后台恢复，验证新版固定目标保存流程。 */
 @SpringBootTest(
@@ -120,6 +123,21 @@ class DevelopmentWebIntegrationTest {
         }
     }
 
+    /** Web 配置请求与动作受理使用相同的完整执行目标。 */
+    private com.datagent.agentv2.dbt.model.DbtContracts.ExecutionSnapshot executionConfig(
+            String schema, long version) {
+        return new com.datagent.agentv2.dbt.model.DbtContracts.ExecutionSnapshot(
+                UUID.nameUUIDFromBytes(schema.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                version,
+                new com.datagent.agentv2.dbt.model.DbtContracts.ConnectionTarget(
+                        "starrocks", "warehouse", "localhost", 9030, null),
+                "warehouse-test",
+                "default_catalog",
+                schema,
+                2,
+                "UTC");
+    }
+
     record Run(String project, String session, String branch, String execution) {}
 
     Run execution() throws Exception {
@@ -131,18 +149,10 @@ class DevelopmentWebIntegrationTest {
                 Map.of(
                         "repository",
                         ROOT.resolve("remote.git").toString(),
-                        "previewBinding",
-                        "preview",
-                        "previewConfigVersion",
-                        "v1",
-                        "previewSchemaName",
-                        PREVIEW_SCHEMA,
-                        "productionBinding",
-                        "prod",
-                        "productionConfigVersion",
-                        "v1",
-                        "productionSchemaName",
-                        PRODUCTION_SCHEMA,
+                        "previewExecution",
+                        executionConfig(PREVIEW_SCHEMA, 1),
+                        "productionExecution",
+                        executionConfig(PRODUCTION_SCHEMA, 1),
                         "expectedVersion",
                         0);
         mvc.perform(
@@ -360,12 +370,8 @@ class DevelopmentWebIntegrationTest {
         var original =
                 new com.datagent.agentv2.development.model.DevelopmentContracts.DevelopmentConfig(
                         ROOT.resolve("remote.git").toString(),
-                        "preview",
-                        "v1",
-                        PREVIEW_SCHEMA,
-                        "production",
-                        "v1",
-                        PRODUCTION_SCHEMA,
+                        executionConfig(PREVIEW_SCHEMA, 1),
+                        executionConfig(PRODUCTION_SCHEMA, 1),
                         0);
         contexts.configure(project, original, 0);
         org.mockito.Mockito.doAnswer(
@@ -376,12 +382,8 @@ class DevelopmentWebIntegrationTest {
                                     new com.datagent.agentv2.development.model.DevelopmentContracts
                                             .DevelopmentConfig(
                                             original.repository(),
-                                            "preview-changed",
-                                            "v2",
-                                            original.previewSchemaName(),
-                                            "production",
-                                            "v1",
-                                            original.productionSchemaName(),
+                                            executionConfig(PREVIEW_SCHEMA, 2),
+                                            original.productionExecution(),
                                             1),
                                     1);
                             return result;
@@ -434,7 +436,7 @@ class DevelopmentWebIntegrationTest {
                 org.mockito.Mockito.mock(com.datagent.agentv2.dbt.client.DbtServiceClient.class);
         var resolver =
                 new com.datagent.agentv2.development.application.DevelopmentBuildContextResolver(
-                        developmentRecords, executions, client, "");
+                        developmentRecords, executions, client, json, "");
         assertThat(resolver.resolve(r.session(), r.execution())).isEqualTo(first);
         jdbc.update(
                 "update development_session set selected_build_id=? where session_id=?",
@@ -442,7 +444,7 @@ class DevelopmentWebIntegrationTest {
                 r.session());
         var restored =
                 new com.datagent.agentv2.development.application.DevelopmentBuildContextResolver(
-                        developmentRecords, executions, client, "");
+                        developmentRecords, executions, client, json, "");
         assertThat(restored.resolve(r.session(), r.execution())).isEqualTo(first);
         mvc.perform(
                         post(

@@ -7,11 +7,14 @@ import com.datagent.agentv2.dbt.model.DbtContracts.*;
 import com.datagent.agentv2.dbt.model.DbtToolOutput;
 import com.datagent.agentv2.dbt.port.AnalysisSessionResolver;
 import com.datagent.agentv2.dbt.port.BuildContextResolver;
-import java.util.*;
+
 import lombok.RequiredArgsConstructor;
+
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
+
+import java.util.*;
 
 /** 分析目标仅取可信会话，目录、选项、查询及结果全程固定同一构建。 */
 @RequiredArgsConstructor
@@ -70,7 +73,7 @@ public final class DbtAnalysisTool implements AgentTool {
     /** 固定工具用途。 */
     private final Kind kind;
 
-    /** 唯一v3客户端。 */
+    /** 唯一执行快照客户端。 */
     private final DbtServiceClient client;
 
     /** 统一序列化器。 */

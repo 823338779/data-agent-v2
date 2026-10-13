@@ -1,5 +1,7 @@
 package com.datagent.agentv2.development.model;
 
+import com.datagent.agentv2.dbt.model.DbtContracts.ExecutionSnapshot;
+
 import java.util.List;
 import java.util.UUID;
 
@@ -7,10 +9,6 @@ import java.util.UUID;
 public final class DevelopmentContracts {
     private static final String SHA_PATTERN = "[0-9a-f]{40}(?:[0-9a-f]{24})?";
     private static final String DIGEST_PATTERN = "[0-9a-f]{64}";
-    private static final String SCHEMA_PATTERN = "[a-z][a-z0-9_]{0,255}";
-
-    /** 缺少显式数据库目标时的稳定诊断，供操作卡片提示补全配置。 */
-    public static final String SCHEMA_REQUIRED = "DEVELOPMENT_SCHEMA_REQUIRED";
 
     private static final String MAIN = "main", REFS = "refs/", SSH = "ssh", URI_SEPARATOR = "://";
     private static final String NEWLINE = "\n", RETURN = "\r", COLON = ":", DASH = "-";
@@ -54,45 +52,33 @@ public final class DevelopmentContracts {
         RELEASED
     }
 
-    /** 每个环境都固定绑定和语义配置版本；version 是 Agent 项目配置的 CAS 版本。 */
+    /** 预览与正式是 Agent 动作语义，不属于执行服务的环境身份。 */
+    public enum Environment {
+        PREVIEW,
+        PRODUCTION
+    }
+
+    /** 两套完整快照由 Agent 独立保存；version 是项目配置的 CAS 版本。 */
     public record DevelopmentConfig(
-            /** 受控Git仓库地址，不含凭据。 */
+            /** 受控 Git 仓库地址，不含凭据。 */
             String repository,
-            /** 预览环境执行绑定。 */
-            String previewBinding,
-            /** 预览语义配置版本。 */
-            String previewConfigVersion,
-            /** 预览构建目标 schema；旧快照未配置时为 null，不能启动新构建。 */
-            String previewSchemaName,
-            /** 正式环境执行绑定。 */
-            String productionBinding,
-            /** 正式语义配置版本。 */
-            String productionConfigVersion,
-            /** 正式构建目标 schema；旧快照未配置时为 null，不能启动新构建。 */
-            String productionSchemaName,
-            /** Agent配置的并发更新版本。 */
-            long version) {
+            /** 预览动作使用的完整执行快照。 */
+            ExecutionSnapshot previewExecution,
+            /** 交付动作使用的完整执行快照。 */
+            ExecutionSnapshot productionExecution,
+            /** Agent 配置的并发更新版本。 */
+            long version)
+            implements StrictDevelopmentRequest {
         public DevelopmentConfig {
-            for (String value :
-                    new String[] {
-                        repository,
-                        previewBinding,
-                        previewConfigVersion,
-                        productionBinding,
-                        productionConfigVersion
-                    }) {
-                if (value == null || value.isBlank())
-                    throw new IllegalArgumentException("开发配置不能为空");
-            }
-            if (version < 0 || repository.contains(NEWLINE) || repository.contains(RETURN)) {
-                throw new IllegalArgumentException("开发配置无效");
-            }
-            // 兼容读取升级前的快照；任何显式提供的 schema 都须符合服务端约束。
-            for (String schema : new String[] {previewSchemaName, productionSchemaName}) {
-                if (schema != null && !schema.matches(SCHEMA_PATTERN))
-                    throw new IllegalArgumentException("schema 必须以小写字母开头，只包含小写字母、数字、下划线，最多256字符");
-            }
-            // HTTP仓库禁止嵌入凭据；SSH仅允许用户名，凭据由部署侧提供。
+            if (repository == null
+                    || repository.isBlank()
+                    || version < 0
+                    || repository.contains(NEWLINE)
+                    || repository.contains(RETURN)
+                    || previewExecution == null
+                    || productionExecution == null)
+                throw new IllegalArgumentException("开发配置必须包含仓库及两套完整执行快照");
+            // HTTP 仓库禁止嵌入凭据；SSH 仅允许用户名，凭据由部署侧提供。
             if (repository.contains(URI_SEPARATOR)) {
                 var uri = java.net.URI.create(repository);
                 if (uri.getQuery() != null
@@ -105,24 +91,7 @@ public final class DevelopmentContracts {
         }
 
         public DevelopmentConfig atVersion(long value) {
-            return new DevelopmentConfig(
-                    repository,
-                    previewBinding,
-                    previewConfigVersion,
-                    previewSchemaName,
-                    productionBinding,
-                    productionConfigVersion,
-                    productionSchemaName,
-                    value);
-        }
-
-        /** 新配置和新构建必须由用户补全两个环境，不从绑定名推断数据库写入目标。 */
-        public void requireSchemas() {
-            if (previewSchemaName == null || productionSchemaName == null)
-                throw new DevelopmentException(
-                        SCHEMA_REQUIRED,
-                        "目标 schema 缺失，请在项目开发配置中填写 previewSchemaName 和 productionSchemaName，再发起新的预览或交付操作",
-                        409);
+            return new DevelopmentConfig(repository, previewExecution, productionExecution, value);
         }
     }
 
