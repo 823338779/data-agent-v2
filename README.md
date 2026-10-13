@@ -17,14 +17,27 @@ Data Agent V2 是面向单实例部署的对话 Agent 工程，包含后端 Mave
 
 ## 验证
 
-在仓库根目录执行：
+在仓库根目录按修改范围选择一组命令，不要依次执行所有命令。日常开发指定受影响的测试；`-am` 同时构建依赖模块，`-Dtest` 限定实际执行的用例：
 
 ```powershell
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-web -Dtest='com.datagent.agentv2.contracts.*Test' test
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-persistence -am test
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am test
+# 接口契约修改
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-web -am '-Dtest=com.datagent.agentv2.contracts.*Test' '-Dsurefire.failIfNoSpecifiedTests=false' test
+
+# 保存、预览或交付流程修改：三个测试类合计覆盖 14 个独立场景
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-development -am '-Dtest=SourceSaveIntegrationTest,PreviewBuildIntegrationTest,DeliveryIntegrationTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+跨模块公共行为修改或需要完整验收时，执行一次全量验证；它已包含上述测试，不必先逐项重跑：
+
+```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B verify
 ```
+
+查看目标模块 `target/surefire-reports` 的用例数量、失败和耗时；定向运行可能保留其他测试的旧报告，应以本次 Maven 输出和本次更新的报告为准。不要在普通回归前执行 `clean`；删除、移动类或怀疑旧构建产物时再清理受影响模块。
+
+集成测试共用准备逻辑时，继承不含 `@Test` 的辅助基类，不继承具体测试类，避免 JUnit 重复执行父类用例。相同业务在单元、HTTP 契约和持久化边界的断言不自动视为重复；只有输入、执行路径和断言等价且保留覆盖时才合并。
+
+前端在 `frontend/` 目录运行 `npm test -- src/components/memory/PersonalMemoryPanel.test.tsx` 等定向测试；跨组件修改时再运行 `npm test`。仅首次安装或锁文件变化时运行 `npm ci`。异步页面测试应等待实际操作的控件就绪，不能用始终显示的标题代替加载完成条件，也不通过固定睡眠或重复重试掩盖竞争。
 
 契约来源、权威边界和独立验证要求见 [docs/contracts.md](docs/contracts.md)。
 
@@ -198,11 +211,11 @@ Agent 与指标平台不直接交互。前端仅展示操作对应的固定 buil
 
 使用全新数据库启动配套 dbt-service、Agent 和平台；不执行旧开发配置或持久化数据的兼容迁移。
 
-接入验证使用临时真实 Git 仓库和 Testcontainers PostgreSQL，需要 Docker：
+接入验证使用临时真实 Git 仓库和 Testcontainers PostgreSQL，需要 Docker。按影响范围选择一条命令，Web 验证已包含保存、预览和交付场景：
 
 ```powershell
 .\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-development -am '-Dtest=Development*Test,SourceSaveIntegrationTest,PreviewBuildIntegrationTest,DeliveryIntegrationTest,GitDevelopmentRepositoryTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
-.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am '-Dtest=Dbt*Test,Development*Test' '-Dsurefire.failIfNoSpecifiedTests=false' test
+.\backend\mvnw.cmd -f .\backend\pom.xml -B -pl agent-server -am '-Dtest=Dbt*Test,Development*Test,SourceSaveIntegrationTest,PreviewBuildIntegrationTest,DeliveryIntegrationTest,GitDevelopmentRepositoryTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
 ```
 
 更多接口和恢复限制见 [开发运行说明](docs/agent-git-runtime.md)。

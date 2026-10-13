@@ -5,6 +5,9 @@ import { MemoryApiError, MemoryClient } from '../../api/memoryClient';
 import { MemoryEntry, MemoryListView, MemoryOutcome } from '../../domain/memory';
 import { PersonalMemoryPanel } from './PersonalMemoryPanel';
 
+// 标题在加载阶段就存在，写入场景必须等表单出现后再操作。
+const MEMORY_CONTENT_LABEL = '记忆内容';
+
 function createMemoryClientStub() {
   return {
     list: vi.fn().mockResolvedValue({
@@ -157,7 +160,7 @@ describe('PersonalMemoryPanel', () => {
         .mockRejectedValueOnce(new MemoryApiError(503, 'UNAVAILABLE', 'unknown commit'))
         .mockResolvedValueOnce(outcome());
       render(<PersonalMemoryPanel client={client} onClose={() => {}} />);
-      await screen.findByRole('heading', { name: '个人记忆' });
+      await screen.findByLabelText(MEMORY_CONTENT_LABEL);
       fireEvent.change(screen.getByLabelText('记忆内容'), { target: { value: '住在杭州' } });
       fireEvent.click(screen.getByRole('button', { name: '保存记忆' }));
       await screen.findByText('保存失败，请重试。');
@@ -217,7 +220,7 @@ describe('PersonalMemoryPanel', () => {
     render(<PersonalMemoryPanel client={client} onClose={onClose} />);
 
     expect(await screen.findByRole('heading', { name: '个人记忆' })).toBeInTheDocument();
-    expect(screen.getByText('还没有个人画像记忆。')).toBeInTheDocument();
+    expect(await screen.findByText('还没有个人画像记忆。')).toBeInTheDocument();
     expect(screen.getByText('还没有协作偏好记忆。')).toBeInTheDocument();
     expect(screen.getByText('已用 0 / 800 字符')).toBeInTheDocument();
     expect(screen.getByText('已用 0 / 1500 字符')).toBeInTheDocument();
@@ -271,7 +274,7 @@ describe('PersonalMemoryPanel', () => {
       .mockRejectedValueOnce(new TypeError('network'))
       .mockResolvedValueOnce(outcome());
     render(<PersonalMemoryPanel client={client} onClose={() => {}} />);
-    await screen.findByRole('heading', { name: '个人记忆' });
+    await screen.findByLabelText(MEMORY_CONTENT_LABEL);
 
     fireEvent.change(screen.getByLabelText('记忆内容'), { target: { value: '偏好短回答' } });
     fireEvent.click(screen.getByRole('button', { name: '保存记忆' }));
@@ -306,7 +309,7 @@ describe('PersonalMemoryPanel', () => {
         outcome({ status: 'ALREADY_EXISTS', created: false, targetExists: true }),
       );
     render(<PersonalMemoryPanel client={client} onClose={() => {}} />);
-    await screen.findByRole('heading', { name: '个人记忆' });
+    await screen.findByLabelText(MEMORY_CONTENT_LABEL);
 
     fireEvent.change(screen.getByLabelText('记忆内容'), { target: { value: '住在杭州' } });
     fireEvent.click(screen.getByRole('button', { name: '保存记忆' }));
@@ -333,7 +336,7 @@ describe('PersonalMemoryPanel', () => {
       .mockRejectedValueOnce(new MemoryApiError(422, 'QUOTA_EXCEEDED', '个人画像容量不足'))
       .mockResolvedValueOnce(outcome());
     render(<PersonalMemoryPanel client={client} onClose={() => {}} />);
-    await screen.findByRole('heading', { name: '个人记忆' });
+    await screen.findByLabelText(MEMORY_CONTENT_LABEL);
 
     fireEvent.change(screen.getByLabelText('记忆内容'), { target: { value: '仍需保留的草稿' } });
     fireEvent.click(screen.getByRole('button', { name: '保存记忆' }));
@@ -356,7 +359,7 @@ describe('PersonalMemoryPanel', () => {
       new MemoryApiError(400, 'UNSAFE_CONTENT', '内容不符合安全要求'),
     );
     render(<PersonalMemoryPanel client={client} onClose={() => {}} />);
-    await screen.findByRole('heading', { name: '个人记忆' });
+    await screen.findByLabelText(MEMORY_CONTENT_LABEL);
 
     fireEvent.change(screen.getByLabelText('记忆内容'), { target: { value: '待检查内容' } });
     fireEvent.click(screen.getByRole('button', { name: '保存记忆' }));

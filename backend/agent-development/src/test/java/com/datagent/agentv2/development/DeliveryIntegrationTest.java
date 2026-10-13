@@ -16,7 +16,7 @@ import org.mockito.ArgumentCaptor;
 import java.util.*;
 
 /** 真Git/数据库固定实际合并M，覆盖丢失响应和发布失败后显式重试。 */
-class DeliveryIntegrationTest extends PreviewBuildIntegrationTest {
+class DeliveryIntegrationTest extends AbstractDevelopmentIntegrationSupport {
     String savedSession() {
         String s = session();
         edit(s, "macros/deliver.sql", "select 42");

@@ -14,7 +14,7 @@ import org.mockito.ArgumentCaptor;
 import java.util.UUID;
 
 /** 使用真实保存前置，模拟引擎已受理但 HTTP 响应丢失。 */
-class PreviewBuildIntegrationTest extends SourceSaveIntegrationTest {
+class PreviewBuildIntegrationTest extends AbstractDevelopmentIntegrationSupport {
     private static final String DRAFT_PATH = "models/next.sql",
             FIRST_CONTENT = "select 1",
             NEXT_CONTENT = "select 2",
@@ -173,36 +173,5 @@ class PreviewBuildIntegrationTest extends SourceSaveIntegrationTest {
         assertThat(result.buildIds()).isEmpty();
         preview.reconcile(accepted.operationId());
         verify(client, times(1)).submitBuild(any());
-    }
-
-    BuildView buildView(UUID id, BuildRequest request, String status, String deployment) {
-        var body = json.valueToTree(request).deepCopy();
-        var node = (tools.jackson.databind.node.ObjectNode) body;
-        node.remove("deploymentPolicy");
-        node.remove("idempotencyKey");
-        node.remove("origin");
-        node.put("buildId", id.toString());
-        node.put("requestedCommitSha", request.commitSha());
-        node.put("toolchainVersion", "test");
-        node.put("buildStatus", status);
-        node.put("phase", "SEALED");
-        node.put("createdAt", "2026-10-10T00:00:00Z");
-        node.put("updatedAt", "2026-10-10T00:00:00Z");
-        node.put("catalogAvailable", true);
-        node.put("queryAvailable", true);
-        node.put("cancelRequested", false);
-        var attempt = node.putObject("initialDeployment");
-        attempt.put("repository", request.repository());
-        attempt.put("branchName", request.branchName());
-        attempt.put("environmentId", request.execution().environmentId().toString());
-        attempt.put("generation", 1);
-        attempt.put("buildId", id.toString());
-        attempt.put("deploymentStatus", deployment);
-        attempt.put("createdAt", "2026-10-10T00:00:00Z");
-        try {
-            return json.treeToValue(node, BuildView.class);
-        } catch (Exception malformedFixture) {
-            throw new AssertionError("Invalid build fixture", malformedFixture);
-        }
     }
 }
